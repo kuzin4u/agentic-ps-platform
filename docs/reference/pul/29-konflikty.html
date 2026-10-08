@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Конфликтные ситуации агентной сделки по стадиям</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--acc:#1f7a5a;--warn:#a35c13;--bad:#a32a2a;--free:#7a1f6a;--ref:#1a3a8f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:16px;line-height:1.55}
+.wrap{max-width:1100px;margin:0 auto;padding:0 18px 70px}
+nav.strip{display:flex;flex-wrap:wrap;gap:4px;padding:14px 0 0}
+nav.strip a,nav.strip .cur{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 9px}
+nav.strip .cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+header.top{border-bottom:2px solid var(--ink);padding:18px 0 14px;margin-bottom:14px}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--acc);margin:0 0 6px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:28px;margin:0 0 8px;font-weight:600;line-height:1.15}
+.tagline{color:var(--ink2);margin:0;max-width:82ch}
+h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:20px;margin:28px 0 8px;font-weight:600}
+h3{font-size:16px;margin:0 0 4px}
+p{max-width:84ch}
+a{color:var(--ref)}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:12px 0 6px}
+.bar button{font:500 12.5px 'IBM Plex Sans';background:#fff;border:1px solid var(--line);padding:6px 10px;cursor:pointer;color:var(--ink);text-align:left}
+.bar button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.bar button .num{display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink2)}
+.bar button[aria-pressed="true"] .num{color:#cfd6dd}
+.bar .cnt{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2);margin-left:6px}
+button:focus-visible,a:focus-visible{outline:2px solid var(--ref);outline-offset:2px}
+.map{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:10px 0 4px}
+.map .st{background:var(--card);border:1px solid var(--line);padding:8px 9px;font-size:12px}
+.map .st b{display:block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink2);font-weight:500}
+.map .st .n{font-weight:600;font-size:13px}
+.map .st .k{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ref);margin-top:4px;display:block}
+.c{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--warn);padding:13px 16px;margin:10px 0;scroll-margin-top:60px}
+.c.hidden{display:none}
+.c .head{display:flex;flex-wrap:wrap;gap:9px;align-items:baseline;margin-bottom:5px}
+.c .code{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2)}
+.c .stage{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1px solid var(--acc);color:var(--acc);padding:1px 6px}
+.c .status{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1px solid currentColor;padding:1px 6px;margin-left:auto}
+.status.ok{color:var(--acc)}.status.part{color:var(--warn)}.status.open{color:var(--bad)}.status.zam{color:var(--free)}
+.c .who{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);margin-bottom:6px}
+.c .row{margin:6px 0;font-size:14.3px}
+.c .row b{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);font-weight:500;display:block;margin-bottom:2px}
+.c ul.var{margin:3px 0 0;padding-left:20px}
+.c ul.var li{margin:3px 0;font-size:14.2px}
+.c .sol{border-left:3px solid var(--acc);background:#f4f9f6;padding:8px 11px;margin:8px 0;font-size:14.3px}
+.c .sol b{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--acc);font-weight:500;display:block;margin-bottom:2px}
+.c ul.docs{margin:3px 0 0;padding-left:20px}
+.c ul.docs li{margin:3px 0;font-size:14.1px}
+.dref{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ref);border:1px solid var(--line);padding:0 5px;white-space:nowrap}
+.c .gap{border-left:3px solid var(--warn);background:#fffdf5;padding:7px 11px;margin-top:8px;font-size:13.9px}
+.c .gap b{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--warn);font-weight:500}
+.c .q{border-left:3px solid var(--ref);background:#f4f7fb;padding:7px 11px;margin-top:8px;font-size:14px}
+.c .refs{font-family:'IBM Plex Mono',monospace;font-size:11px;margin-top:7px}
+.c .refs a{margin-right:5px}
+table{width:100%;border-collapse:collapse;background:var(--card);font-size:13.5px;margin-top:8px}
+th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+th{background:#ecece7;font-size:12px;font-weight:600}
+td.code{font-family:'IBM Plex Mono',monospace;font-size:11.5px;width:44px;color:var(--ink2)}
+td.nm{font-weight:600;width:19%}
+.note{font-size:13px;color:var(--ink2)}
+.box{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--acc);padding:13px 16px;margin:14px 0}
+.box b{display:block;margin-bottom:4px}
+.box ul{margin:4px 0 0;padding-left:20px;font-size:14.4px}
+footer{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+@media(max-width:900px){.map{grid-template-columns:repeat(4,1fr)}h1{font-size:23px}}
+</style><link rel="icon" type="image/png" href="data:image/png;base64,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"><style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style><style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style><style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style></head><body><div class="wrap">
+
+<nav class="strip">
+ <a href="00-ukazatel-pula.html">Указатель пула</a>
+ <a href="01-ierarhiya-tranzakcii.html">Стадии транзакции</a>
+ <a href="24-scenariy-operacii.html">Сквозной пример</a>
+ <a href="21-drafty-dokumentov.html">Драфты</a>
+ <a href="28-tezisy-i-otzyv.html">Тезисы и отзыв</a>
+ <a href="25-glossariy.html">Глоссарий</a>
+ <span class="cur" aria-current="page">Конфликты</span>
+</nav>
+
+<header class="top">
+ <p class="eyebrow">20 конфликтов по восьми стадиям · 12 вопросов к решению</p>
+ <h1>Где агентная сделка ломается: конфликты, варианты решений и открытые вопросы</h1>
+ <p class="tagline">Каждый конфликт привязан к стадии, на которой он возникает, и разобран одинаково: стороны, существо столкновения, его структурная причина, варианты, принятое направление решения, конкретные пункты документов, где оно закреплено, и то, чего пока нет.</p>
+</header>
+
+<h2>Карта: где что возникает</h2>
+<div class="map">
+<div class="st"><b>стадия 0</b><span class="n">Допуск</span><span class="k">К1 К2</span></div><div class="st"><b>стадия 1</b><span class="n">Поручение</span><span class="k">К3 К4 К5</span></div><div class="st"><b>стадия 2</b><span class="n">Поиск</span><span class="k">К6 К7</span></div><div class="st"><b>стадия 3</b><span class="n">Заказ</span><span class="k">К8 К9</span></div><div class="st"><b>стадия 4</b><span class="n">Подтверждение</span><span class="k">К10 К11</span></div><div class="st"><b>стадия 5</b><span class="n">Авторизация</span><span class="k">К12 К13 К14</span></div><div class="st"><b>стадия 6</b><span class="n">Расчёт</span><span class="k">К15 К16</span></div><div class="st"><b>стадия 7</b><span class="n">После сделки</span><span class="k">К17 К18 К19 К20</span></div>
+</div>
+<p class="note">Конфликты распределены неравномерно: больше всего их на поручении, авторизации и после сделки — там, где решение принимается в условиях неполной информации или спустя время.</p>
+
+<div class="bar" id="fbar">
+ <button data-s="all" aria-pressed="true">Все стадии</button>
+ <button data-s="0" aria-pressed="false"><span class="num">стадия 0</span>Допуск</button><button data-s="1" aria-pressed="false"><span class="num">стадия 1</span>Поручение</button><button data-s="2" aria-pressed="false"><span class="num">стадия 2</span>Поиск</button><button data-s="3" aria-pressed="false"><span class="num">стадия 3</span>Заказ</button><button data-s="4" aria-pressed="false"><span class="num">стадия 4</span>Подтверждение</button><button data-s="5" aria-pressed="false"><span class="num">стадия 5</span>Авторизация</button><button data-s="6" aria-pressed="false"><span class="num">стадия 6</span>Расчёт</button><button data-s="7" aria-pressed="false"><span class="num">стадия 7</span>После сделки</button>
+ <span class="cnt" id="cnt"></span>
+</div>
+
+<article class="c" id="К1" data-s="0">
+ <div class="head">
+  <span class="code">К1</span>
+  <h3>Отказ в допуске агента</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-0">стадия 0</a></span>
+  <span class="status part">частично закрыт</span>
+ </div>
+ <div class="who">Оператор Системы ↔ оператор агента</div>
+ <div class="row"><b>в чём столкновение</b>Оператор вправе не допустить агента в реестр, но отказ закрывает ему рынок целиком: без кода агент не может совершить ни одной операции.</div>
+ <div class="row"><b>почему оно структурное</b>Допуск одновременно является процедурой безопасности и барьером входа. Совмещение этих ролей в одном лице создаёт соблазн управлять составом рынка.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Закрытый перечень оснований отказа, мотивированное решение и срок рассмотрения — принято у нас.</li><li>Апелляционная процедура с участием независимой стороны — не описана.</li><li>Уведомительный порядок с последующей проверкой — быстрее, но снимает контроль на входе.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Допуск остаётся разрешительным, но связывается процедурой: закрытый перечень оснований, мотивированное решение, срок рассмотрения и запрет использовать допуск как рычаг в коммерческих переговорах.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A2 п. 3.1–3.4</span> — порядок допуска, состав заявления, сроки и присвоение кода</li><li><span class="dref">A2 п. 1.3</span> — включение в реестр не создаёт преимуществ при формировании выдачи</li><li><span class="dref">A6 п. 1.2–1.3</span> — условия доступа публичны и едины, отказ только по основаниям из перечня</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Процедура обжалования отказа не описана ни в одном документе.</div>
+ <div class="q"><b>вопрос к проработке:</b> Нужна ли апелляция на отказ и кто её рассматривает: коллегиальный орган Системы, регулятор или суд общей юрисдикции.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k1">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A2">A2</a> <a href="02-funkcii-i-roli.html#F1">F1</a></div>
+</article><article class="c" id="К2" data-s="0">
+ <div class="head">
+  <span class="code">К2</span>
+  <h3>Блокировка неопознанного агента продавцом</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-0">стадия 0</a></span>
+  <span class="status part">закрыт частично</span>
+ </div>
+ <div class="who">Продавец ↔ агент покупателя</div>
+ <div class="row"><b>в чём столкновение</b>Продавец защищается от автоматических обращений, но добросовестный агент с действующим кодом внешне похож на парсер и получает отказ.</div>
+ <div class="row"><b>почему оно структурное</b>Защита от нежелательного сбора данных и обслуживание агентов решаются одними и теми же средствами, а разделить их можно только по факту опознания.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Обязанность обслуживать опознанного агента на общих условиях — принято у нас как условие знака готовности.</li><li>Обязанность для всех продавцов независимо от знака — тяжело исполнимо для малых.</li><li>Оставить на усмотрение продавца — тогда доступность рынка для агентов не гарантирована.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Обязанность обслуживать опознанного агента вводится не для всех, а как условие знака готовности: рынок делится на сегмент с гарантиями и сегмент без них, и человек видит это различие.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A5 п. 2.1–2.2</span> — право ограничивать автоматические обращения при условии возможности опознания; опознанный агент обслуживается на общих условиях</li><li><span class="dref">A5 п. 5.1–5.3</span> — знак готовности, порядок получения и приостановки</li><li><span class="dref">A6 п. 3.1</span> — платформа раскрывает пользователю, распространяются ли гарантии Системы</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Порядок для продавцов без знака: обязать опознавать через площадку или допустить закрытый сегмент.</div>
+ <div class="q"><b>вопрос к проработке:</b> Что делать с продавцами без знака готовности: обязать опознавать агентов через площадку или допустить закрытый для агентов сегмент рынка.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k2">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A5">A5</a> <a href="02-funkcii-i-roli.html#F13">F13</a></div>
+</article><article class="c" id="К3" data-s="1">
+ <div class="head">
+  <span class="code">К3</span>
+  <h3>Агент понял поручение не так</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-1">стадия 1</a></span>
+  <span class="status part">не закрыт</span>
+ </div>
+ <div class="who">Принципал ↔ оператор агента</div>
+ <div class="row"><b>в чём столкновение</b>Человек просил одно, агент сформулировал мандат иначе, клиент подписал не читая — операция формально в пределах, фактически не та.</div>
+ <div class="row"><b>почему оно структурное</b>Между волей человека и текстом мандата стоит модель, а подпись клиента переносит риск формулировки на него же.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Краткое изложение запроса на естественном языке в составе мандата — есть в рамке, у нас не закреплено.</li><li>Обязательный показ ключевых параметров отдельно от текста мандата перед подписанием.</li><li>Оставить как есть: подписал — согласился; юридически чисто, по существу спорно.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Риск формулировки снижается показом ключевых параметров отдельно от текста мандата, а не переносом ответственности на клиента подписью.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A7 п. 2.1–2.2</span> — обязательные реквизиты и недействительность при их отсутствии</li><li><span class="dref">A7 п. 3.1–3.2</span> — подписание и его виды</li><li><span class="dref">ТЗ Т3</span> — агент показывает границы поручения и остаток лимита в любой момент диалога</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Краткое изложение запроса на естественном языке в составе мандата не введено; статус расхождения изложения и параметров не определён.</div>
+ <div class="q"><b>вопрос к проработке:</b> Считать ли расхождение изложения запроса и параметров мандата основанием для оспаривания, и как это доказывается.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k3">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A7">A7</a> <a href="02-funkcii-i-roli.html#F7">F7</a></div>
+</article><article class="c" id="К4" data-s="1">
+ <div class="head">
+  <span class="code">К4</span>
+  <h3>Слишком широкий мандат</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-1">стадия 1</a></span>
+  <span class="status part">частично закрыт</span>
+ </div>
+ <div class="who">Принципал ↔ участник, обслуживающий плательщика</div>
+ <div class="row"><b>в чём столкновение</b>Клиент выдаёт мандат на крупную сумму и длительный срок, снимая с себя трение, но создавая риск, который потом станет предметом спора.</div>
+ <div class="row"><b>почему оно структурное</b>Свобода распоряжения средствами конфликтует с обязанностью банка предотвращать операции без согласия и защищать потребителя.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Предельные значения для мандатов без подтверждения, установленные Системой — у нас есть как порог, значение не определено.</li><li>Ступенчатое подтверждение: чем шире мандат, тем строже способ подписания — частично есть.</li><li>Полная свобода клиента с информированием о рисках.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Широкий мандат допускается, но сопровождается более строгим способом подписания и обязательным подтверждением свыше порога: свобода сохраняется, цена риска растёт вместе с объёмом.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A7 п. 3.2</span> — усиленная подпись для крупных сумм и длительных сроков</li><li><span class="dref">A3 п. 1.1</span> — обязательный состав ограничений, включая сумму за период и срок</li><li><span class="dref">A5 п. 3.1</span> — подтверждение клиентом свыше порога</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Верхние значения суммы и срока не установлены — считаются по данным пилота.</div>
+ <div class="q"><b>вопрос к проработке:</b> Где проходит граница между свободой распоряжения и защитой: допустимы ли мандаты без верхнего предела и на какой срок.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k4">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A3">A3</a> <a href="21-drafty-dokumentov.html#A7">A7</a> <a href="02-funkcii-i-roli.html#F6">F6</a></div>
+</article><article class="c" id="К5" data-s="1">
+ <div class="head">
+  <span class="code">К5</span>
+  <h3>Кто держит журнал согласий</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-1">стадия 1</a></span>
+  <span class="status open">открытый вопрос</span>
+ </div>
+ <div class="who">Оператор Системы ↔ банки-участники</div>
+ <div class="row"><b>в чём столкновение</b>Держатель журнала видит все поручения и становится точкой, через которую проходит вся агентная торговля.</div>
+ <div class="row"><b>почему оно структурное</b>Функция требует нейтральности и общей видимости, но одновременно даёт наблюдательную позицию, которую участники рынка не хотят отдавать конкуренту.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Журнал у оператора Системы: нейтрален, виден всем, но концентрирует сведения.</li><li>Журнал у банка плательщика: меньше концентрации, но нет общей точки ссылки для продавца и эквайрера.</li><li>Распределённая схема со ссылками: сложнее и, по признанию самой рамки, практически непригодна.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Журнал ведёт оператор Системы как нейтральная сторона, при этом ему прямо запрещается оценивать исполнение — наблюдательная позиция отделяется от решающей.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A7 п. 4.3</span> — держатель журнала определяется правилами Системы</li><li><span class="dref">A7 п. 9.1–9.2</span> — проверка мандата третьими лицами без раскрытия предмета поручения</li><li><span class="dref">A3 п. 4.3</span> — состояние ведёт участник, обслуживающий плательщика, либо держатель журнала</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Выбор между оператором и банком плательщика формально не сделан: это решение руководства, а не документа.</div>
+ <div class="q"><b>вопрос к проработке:</b> Основной нерешённый вопрос модели. Требует решения до начала разработки, поскольку определяет интерфейсы всех остальных документов.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k5">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A7">A7</a> <a href="02-funkcii-i-roli.html#F8">F8</a></div>
+</article><article class="c" id="К6" data-s="2">
+ <div class="head">
+  <span class="code">К6</span>
+  <h3>Платное влияние на выдачу</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-2">стадия 2</a></span>
+  <span class="status ok">закрыт</span>
+ </div>
+ <div class="who">Оператор агентной платформы ↔ продавцы ↔ потребитель</div>
+ <div class="row"><b>в чём столкновение</b>Платформа, получающая вознаграждение от продавца, заинтересована показать агенту его предложение выше прочих.</div>
+ <div class="row"><b>почему оно структурное</b>Агент выбирает за человека, а человек не видит альтернатив — значит влияние на выдачу напрямую конвертируется в деньги и незаметно для потребителя.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Прямой запрет платного влияния на выдачу и на показатели — принято у нас.</li><li>Раскрытие факта вознаграждения потребителю — принято дополнительно.</li><li>Рыночное регулирование без запрета — приведёт к торговле местом в выдаче.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Запрет платного влияния вводится как безусловный и распространяется не только на выдачу, но и на показатели исполнения — иначе запрет обходится через репутацию.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A6 п. 2.1–2.2</span> — запрет приобретения влияния на выдачу, на допуск и на оценку; приостановление доступа при нарушении</li><li><span class="dref">A8 п. 5.3</span> — приобретение влияния на показатели не допускается</li><li><span class="dref">A6 п. 3.2</span> — раскрытие факта вознаграждения от продавца</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Способ контроля соблюдения не описан: жалобы, выборочные проверки или раскрытие правил ранжирования.</div>
+ <div class="q"><b>вопрос к проработке:</b> Как проверять соблюдение запрета: по жалобам, выборочным проверкам или обязательному раскрытию алгоритма ранжирования.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k6">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A6">A6</a> <a href="02-funkcii-i-roli.html#F12">F12</a></div>
+</article><article class="c" id="К7" data-s="2">
+ <div class="head">
+  <span class="code">К7</span>
+  <h3>Сведения о товаре для агента и для человека</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-2">стадия 2</a></span>
+  <span class="status part">закрыт частично</span>
+ </div>
+ <div class="who">Продавец ↔ агент</div>
+ <div class="row"><b>в чём столкновение</b>Продавец может показать агенту иной набор сведений: скрыть доплаты, показать другую цену, ограничить ассортимент.</div>
+ <div class="row"><b>почему оно структурное</b>Агент не человек и не заметит того, что заметил бы покупатель; проверить равенство раскрытия извне трудно.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Требование равного объёма сведений и квалификация расхождения как введения в заблуждение — принято у нас.</li><li>Контрольные закупки агентом Системы для проверки равенства.</li><li>Саморегулирование площадок.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Равенство раскрытия закрепляется как требование с квалификацией расхождения как введения в заблуждение, а проверка строится на обычной работе с жалобами и знаком готовности.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A5 п. 1.1–1.3</span> — машиночитаемое описание, равный объём сведений, расхождение как нарушение</li><li><span class="dref">A5 п. 5.3</span> — приостановка знака при выявлении расхождения</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Инструмент систематической проверки равенства не предусмотрен.</div>
+ <div class="q"><b>вопрос к проработке:</b> Нужен ли инструмент контроля равенства раскрытия и кто его ведёт.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k7">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A5">A5</a> <a href="02-funkcii-i-roli.html#F10">F10</a></div>
+</article><article class="c" id="К8" data-s="3">
+ <div class="head">
+  <span class="code">К8</span>
+  <h3>Цена изменилась после согласования</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-3">стадия 3</a></span>
+  <span class="status ok">закрыт</span>
+ </div>
+ <div class="who">Агент ↔ продавец ↔ принципал</div>
+ <div class="row"><b>в чём столкновение</b>Клиент согласовал состав и цену, к моменту исполнения цена или наличие изменились. Исполнять по новой цене нельзя, а возвращаться к человеку — терять смысл автономности.</div>
+ <div class="row"><b>почему оно структурное</b>Между согласованием и исполнением проходит время, а мандат корзины фиксирует состояние на момент согласования.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Новый мандат корзины при любом изменении — принято у нас, строго и безопасно.</li><li>Допуск изменения в пределах заданного клиентом коридора — удобнее, но размывает границу согласия.</li><li>Удержание заказа до подтверждения с ограничением по времени — добавлено после сверки с рамкой.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Любое изменение существенных условий требует нового мандата корзины; для случая, когда клиент недоступен, вводится удержание заказа на ограниченное время вместо отказа.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A7 п. 5.2</span> — расширение полномочий оформляется новой записью с подтверждением клиентом</li><li><span class="dref">A7 п. 7.2</span> — переход в немедленный режим и удержание заказа: ограничено по времени, однократно, снимается подтверждением</li><li><span class="dref">A7 п. 7.3</span> — истечение срока удержания прекращает заказ без исполнения</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Коридор допустимого отклонения цены не введён — вопрос данных пилота.</div>
+ <div class="q"><b>вопрос к проработке:</b> Допускать ли коридор отклонения цены и на какую величину; решается по данным пилота.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k8">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A7">A7</a> <a href="02-funkcii-i-roli.html#F11">F11</a></div>
+</article><article class="c" id="К9" data-s="3">
+ <div class="head">
+  <span class="code">К9</span>
+  <h3>Корзина из нескольких продавцов</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-3">стадия 3</a></span>
+  <span class="status part">закрыт частично</span>
+ </div>
+ <div class="who">Покупатель ↔ продавцы ↔ участники расчёта</div>
+ <div class="row"><b>в чём столкновение</b>Заказ исполнен частично: один продавец подтвердил, другой отказал. Что считать состоявшейся сделкой и как быть с уже списанными средствами.</div>
+ <div class="row"><b>почему оно структурное</b>Заказ как единица исполнения не совпадает с платёжной операцией, а мандат один на всю корзину.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Раздельные заказы с независимым исполнением и раздельными чеками — принято после сверки с рамкой.</li><li>Всё или ничего: отмена всей корзины при отказе любого продавца — проще, но хуже для покупателя.</li><li>Частичное исполнение с автоматическим возвратом непокрытой части.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Корзина разбирается на заказы: каждый исполняется и закрывается самостоятельно, чек формируется по каждому продавцу, покупателю обеспечивается совместный показ.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A1 п. 6.3</span> — заказ как единица исполнения, допускающая несколько платёжных событий</li><li><span class="dref">A5 п. 4.2</span> — отдельный чек по каждому продавцу и их совместное представление</li><li><span class="dref">A1 п. 6.1</span> — запись об исполнении с ссылкой на заказ</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Порядок возврата по неисполненной части и момент закрытия заказа не описаны.</div>
+ <div class="q"><b>вопрос к проработке:</b> Порядок возврата при частичном исполнении и момент, с которого заказ считается закрытым.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k9">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A5">A5</a> <a href="21-drafty-dokumentov.html#A1">A1</a> <a href="02-funkcii-i-roli.html#F16">F16</a></div>
+</article><article class="c" id="К10" data-s="4">
+ <div class="head">
+  <span class="code">К10</span>
+  <h3>Обход порога подтверждения дроблением</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-4">стадия 4</a></span>
+  <span class="status part">закрыт частично</span>
+ </div>
+ <div class="who">Агент ↔ участник, обслуживающий плательщика</div>
+ <div class="row"><b>в чём столкновение</b>Сумма выше порога требует подтверждения человеком; агент разбивает покупку на несколько операций ниже порога.</div>
+ <div class="row"><b>почему оно структурное</b>Порог задан на операцию, а поручение — на задачу; между ними зазор, который закрывается только состоянием.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Выявление дробления по совокупности операций в пределах мандата — принято у нас как сценарий испытаний.</li><li>Порог не только на операцию, но и на сумму за короткое окно — требует состояния.</li><li>Подтверждение по каждой операции сверх числа в окне.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Порог применяется не только к операции, но и к совокупности операций по одному мандату: без состояния дробление не выявляется, поэтому оно опирается на те же переменные, что и бюджет.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A3 п. 4.1–4.2</span> — ограничения с состоянием и перечень переменных</li><li><span class="dref">A3 п. 4.4</span> — неделимое однократное расходование</li><li><span class="dref">ТЗ П13</span> — сценарий испытаний: попытка обойти подтверждение дроблением суммы</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Алгоритм выявления и его параметры определяются по данным прогона.</div>
+ <div class="q"><b>вопрос к проработке:</b> Алгоритм выявления дробления и его параметры: окно, число операций, суммарный порог.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k10">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A3">A3</a> <a href="02-funkcii-i-roli.html#F6">F6</a></div>
+</article><article class="c" id="К11" data-s="4">
+ <div class="head">
+  <span class="code">К11</span>
+  <h3>Цена трения</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-4">стадия 4</a></span>
+  <span class="status part">частично закрыт</span>
+ </div>
+ <div class="who">Продавцы и платформы ↔ банки ↔ потребитель</div>
+ <div class="row"><b>в чём столкновение</b>Низкий порог подтверждения снижает риск, но убивает смысл автономного агента; высокий повышает удобство и риск одновременно.</div>
+ <div class="row"><b>почему оно структурное</b>Выгоду от удобства получают продавец и платформа, а убыток от неавторизованной операции несёт банк плательщика.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Единый порог, установленный Системой — принято, значение не определено.</li><li>Порог, выбираемый клиентом в пределах коридора — гибко, но усложняет разбор споров.</li><li>Порог, зависящий от оценки исполнения агента — привлекательно, но требует накопленных данных.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Порог устанавливается единым для рынка, чтобы продавцы не конкурировали снижением требований безопасности; зависимость от репутации агента возможна только после накопления данных.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A5 п. 3.1</span> — единый порог подтверждения</li><li><span class="dref">A3 п. 1.2</span> — дополнительные ограничения на усмотрение клиента</li><li><span class="dref">A8 п. 3.1</span> — оценка исполнения влияет на уровень допуска</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Значение порога и допустимость его зависимости от репутации не определены.</div>
+ <div class="q"><b>вопрос к проработке:</b> Значение порога и допустимость его зависимости от репутации агента. Считается по данным пилота.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k11">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A3">A3</a> <a href="21-drafty-dokumentov.html#A8">A8</a> <a href="02-funkcii-i-roli.html#F26">F26</a></div>
+</article><article class="c" id="К12" data-s="5">
+ <div class="head">
+  <span class="code">К12</span>
+  <h3>Состояние недоступно в момент операции</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-5">стадия 5</a></span>
+  <span class="status part">закрыт с открытым параметром</span>
+ </div>
+ <div class="who">Участник ↔ держатель журнала</div>
+ <div class="row"><b>в чём столкновение</b>Сервис не ответил: разрешить операцию, рискуя перерасходом бюджета, или отказать добросовестному клиенту.</div>
+ <div class="row"><b>почему оно структурное</b>Ограничения с состоянием нельзя проверить локально, а сеть не гарантирует доступности в окне авторизации.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Отказ как исход по умолчанию — принято у нас, безопасно, но чувствительно к сбоям.</li><li>Работа по кэшированному состоянию ограниченное время — компромисс, значение не определено.</li><li>Разрешение с последующей сверкой — перекладывает риск на участника.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Невозможность подтвердить состояние приравнивается к выходу за пределы мандата: система отказывает, а не рискует. Работа по кэшу допускается, но ограниченно по времени.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A3 п. 4.5</span> — неподтверждённое состояние означает выход за пределы и отклонение</li><li><span class="dref">A2 п. 5.2</span> — доступ к сведениям реестра в режиме реального времени</li><li><span class="dref">ТЗ Т14 и П23</span> — агент останавливается при недоступности; сценарий недоступности реестра дольше допустимого</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Допустимое время работы по кэшу не установлено.</div>
+ <div class="q"><b>вопрос к проработке:</b> Допустимое время работы по кэшу и порядок сверки после восстановления связи.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k12">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A3">A3</a> <a href="21-drafty-dokumentov.html#A2">A2</a> <a href="02-funkcii-i-roli.html#F18">F18</a></div>
+</article><article class="c" id="К13" data-s="5">
+ <div class="head">
+  <span class="code">К13</span>
+  <h3>Разные выводы участников по одному мандату</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-5">стадия 5</a></span>
+  <span class="status zam">предмет замечания</span>
+ </div>
+ <div class="who">Эмитент ↔ эквайрер ↔ продавец</div>
+ <div class="row"><b>в чём столкновение</b>Эмитент отклонил операцию из-за нераспознанного типа ограничения, эквайрер его пропустил бы. По одному и тому же мандату стороны приходят к разным выводам.</div>
+ <div class="row"><b>почему оно структурное</b>Рамка задаёт смысл ограничений, но не порядок их применения, а режимы обработки настраиваются каждым участником самостоятельно.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Строгий режим по умолчанию для платёжных ограничений плюс общий реестр типов — наше замечание 03.</li><li>Полная свобода настройки — приводит к непредсказуемости для продавца.</li><li>Единая точка оценки у обслуживающего плательщика участника — снимает расхождение, но концентрирует ответственность.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Строгий режим делается обязательным для платёжных ограничений, а перечень типов ведётся централизованно: без общего реестра типов требование строгости неисполнимо.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A1 п. 5.2–5.3</span> — проверка кода по реестру и отдельный код отказа</li><li><span class="dref">A3 п. 4.5</span> — отказ при невозможности оценить ограничение</li><li><span class="dref">Отзыв, замечание 03</span> — строгий режим по умолчанию для платёжных ограничений</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Держатель реестра типов ограничений и порядок доведения изменений не определены.</div>
+ <div class="q"><b>вопрос к проработке:</b> Кто ведёт реестр типов ограничений и как его изменения доводятся до участников.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k13">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A1">A1</a> <a href="21-drafty-dokumentov.html#A3">A3</a> <a href="02-funkcii-i-roli.html#F19">F19</a></div>
+</article><article class="c" id="К14" data-s="5">
+ <div class="head">
+  <span class="code">К14</span>
+  <h3>Антифрод против агентного трафика</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-5">стадия 5</a></span>
+  <span class="status part">закрыт частично</span>
+ </div>
+ <div class="who">Служба мониторинга ↔ операторы агентов ↔ потребители</div>
+ <div class="row"><b>в чём столкновение</b>Агентные операции внешне похожи на автоматизированное мошенничество: нетипичное время, серия мелких покупок, новые получатели.</div>
+ <div class="row"><b>почему оно структурное</b>Модели мониторинга обучены на человеческом поведении, а агент ведёт себя иначе по определению.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Признак агентной операции как вход для модели и раздельные коды отказа — принято у нас.</li><li>Отдельная модель для агентных операций — требует накопленных данных.</li><li>Смягчение правил для агентов из реестра с высоким уровнем допуска.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Агентная операция помечается признаком до массовых сценариев, коды отказа разделяются, а доля ложных отказов измеряется с первого дня — модель настраивается на данных, а не на предположениях.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A1 п. 3.1</span> — состав признака: флаг, код агента, идентификатор мандата</li><li><span class="dref">A3 п. 5.2</span> — отдельный код отказа при превышении полномочий</li><li><span class="dref">Программа работ, риск Р7</span> — ранний признак: доля отказов по агентным операциям выше обычной</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Момент перехода на отдельную модель мониторинга не определён.</div>
+ <div class="q"><b>вопрос к проработке:</b> Как измерять и удерживать долю ложных отказов по агентным операциям и с какого момента вводить отдельную модель.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k14">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A1">A1</a> <a href="21-drafty-dokumentov.html#A8">A8</a> <a href="02-funkcii-i-roli.html#F18">F18</a></div>
+</article><article class="c" id="К15" data-s="6">
+ <div class="head">
+  <span class="code">К15</span>
+  <h3>Чек и вознаграждение посредников</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-6">стадия 6</a></span>
+  <span class="status open">открытый вопрос</span>
+ </div>
+ <div class="who">Продавцы ↔ платформа ↔ налоговый орган</div>
+ <div class="row"><b>в чём столкновение</b>В корзине из нескольких продавцов покупатель ожидает один документ, а чеков несколько; статус вознаграждения платформы в чеке не определён.</div>
+ <div class="row"><b>почему оно структурное</b>Кассовая дисциплина построена вокруг одного продавца и одного расчёта, а агентная сделка объединяет несколько.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Отдельный чек по каждому продавцу с совместным показом покупателю — принято у нас.</li><li>Агрегированный документ платформы в дополнение к чекам — требует согласования с налоговым органом.</li><li>Признание платформы агентом продавца для целей расчётов — меняет налоговую конструкцию.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Чек остаётся обязанностью продавца, покупателю обеспечивается совместный показ документов; статус вознаграждения выносится на согласование с налоговым органом до массового запуска.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A5 п. 4.1–4.2</span> — чек формируется продавцом; отдельный чек по каждому продавцу</li><li><span class="dref">Программа работ, риск Р11</span> — фискализация агентской сделки как риск с ранним признаком</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Порядок фискализации вознаграждения посредников не определён — требует внешнего разъяснения.</div>
+ <div class="q"><b>вопрос к проработке:</b> Кто фискализирует вознаграждение и в каком документе покупатель видит итог. Требует разъяснения налогового органа.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k15">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A5">A5</a> <a href="02-funkcii-i-roli.html#F20">F20</a></div>
+</article><article class="c" id="К16" data-s="6">
+ <div class="head">
+  <span class="code">К16</span>
+  <h3>Возврат при частичном исполнении</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-6">стадия 6</a></span>
+  <span class="status part">частично закрыт</span>
+ </div>
+ <div class="who">Покупатель ↔ продавцы ↔ банк</div>
+ <div class="row"><b>в чём столкновение</b>Часть заказа исполнена, часть нет. Возврат по неисполненной части должен пройти до того, как истечёт срок мандата, иначе повторная попытка невозможна.</div>
+ <div class="row"><b>почему оно структурное</b>Мандат ограничен во времени, а сроки исполнения у продавцов разные.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Возврат по каждому заказу отдельно с восстановлением позиции состояния — логично, у нас описано частично.</li><li>Блокировка остатка до завершения всех заказов — хуже для клиента.</li><li>Автоматическое прекращение мандата при первом отказе.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Возврат идёт по каждому заказу отдельно, не затрагивая остальные, а мандат не прекращается автоматически при отказе одного продавца.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A1 п. 6.3</span> — заказ как самостоятельная единица исполнения</li><li><span class="dref">A4 п. 4.1</span> — в первую очередь восстанавливается положение клиента</li><li><span class="dref">A3 п. 7.1</span> — хранение состава ограничений на момент каждой операции</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Восстановление израсходованной части бюджета при возврате не описано.</div>
+ <div class="q"><b>вопрос к проработке:</b> Восстанавливается ли израсходованная часть бюджета при возврате и в какой срок.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k16">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A3">A3</a> <a href="21-drafty-dokumentov.html#A4">A4</a> <a href="02-funkcii-i-roli.html#F16">F16</a></div>
+</article><article class="c" id="К17" data-s="7">
+ <div class="head">
+  <span class="code">К17</span>
+  <h3>Товар не тот, но мандат соблюдён</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-7">стадия 7</a></span>
+  <span class="status ok">закрыт</span>
+ </div>
+ <div class="who">Покупатель ↔ продавец ↔ оператор агента</div>
+ <div class="row"><b>в чём столкновение</b>Агент купил ровно то, что разрешено мандатом, но человек имел в виду другое или товар оказался неподходящим.</div>
+ <div class="row"><b>почему оно структурное</b>Пределы мандата описывают допустимое, но не совпадение с ожиданием; качество товара и полномочия — разные основания спора.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Разделение споров: качество — по общему порядку, полномочия — по механической проверке. Принято у нас.</li><li>Расширенное право отказа от покупки, совершённой агентом, в течение срока — защищает потребителя, ухудшает положение продавца.</li><li>Ответственность оператора агента за подбор — превращает его в продавца-консультанта.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Основания спора разделяются: полномочия проверяются механически, качество товара рассматривается обычным порядком. Оператор агента не становится ответственным за потребительские свойства.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A4 п. 1.2–1.3</span> — операция в пределах мандата считается совершённой с согласия; спор о качестве рассматривается независимо</li><li><span class="dref">A4 п. 3.3</span> — соответствие пределам устанавливается сопоставлением параметров с записью мандата</li><li><span class="dref">A4 п. 5.1</span> — обеспечение оператора агента при работе без подтверждения</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Особый порядок отказа от покупки, совершённой агентом, не вводился.</div>
+ <div class="q"><b>вопрос к проработке:</b> Нужен ли особый порядок отказа от товара, приобретённого агентом, и за чей счёт.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k17">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A4">A4</a> <a href="02-funkcii-i-roli.html#F23">F23</a></div>
+</article><article class="c" id="К18" data-s="7">
+ <div class="head">
+  <span class="code">К18</span>
+  <h3>Регресс к оператору агента</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-7">стадия 7</a></span>
+  <span class="status part">частично закрыт</span>
+ </div>
+ <div class="who">Участник ↔ оператор агента</div>
+ <div class="row"><b>в чём столкновение</b>Клиенту возмещено, убыток относится на оператора агента, но его платёжеспособность может не покрывать сумму.</div>
+ <div class="row"><b>почему оно структурное</b>Операторы агентов — технологические компании без капитальных требований, а объём поручений не ограничен их размером.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Обеспечение как условие работы без подтверждения — принято, размер не определён.</li><li>Ограничение суммарного объёма поручений размером обеспечения.</li><li>Страхование ответственности с обязательным минимальным покрытием.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Обеспечение становится условием работы без подтверждения клиентом, а систематические нарушения влекут понижение уровня допуска независимо от возмещения убытков.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A4 п. 5.1</span> — требование обеспечения</li><li><span class="dref">A4 п. 5.2</span> — неоднократный выход за пределы как основание понижения или прекращения допуска</li><li><span class="dref">A4 п. 4.3</span> — право требования к оператору агента у возместившего участника</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Размер обеспечения и способ его расчёта не установлены.</div>
+ <div class="q"><b>вопрос к проработке:</b> Размер обеспечения и способ его расчёта: от объёма операций, от их числа или от уровня допуска.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k18">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A4">A4</a> <a href="02-funkcii-i-roli.html#F21">F21</a></div>
+</article><article class="c" id="К19" data-s="7">
+ <div class="head">
+  <span class="code">К19</span>
+  <h3>Оспаривание оценки исполнения</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-7">стадия 7</a></span>
+  <span class="status part">закрыт частично</span>
+ </div>
+ <div class="who">Оператор агента ↔ оператор Системы</div>
+ <div class="row"><b>в чём столкновение</b>Понижение уровня допуска сокращает права агента и его рыночные возможности; оператор агента оспаривает учёт конкретных случаев.</div>
+ <div class="row"><b>почему оно структурное</b>Оценка влияет на доступ к рынку, а рассчитывает её сторона, которая одновременно ведёт реестр и правила.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Расшифровка расчёта и срок на оспаривание — принято у нас.</li><li>Независимая проверка методики по требованию.</li><li>Автоматический пересчёт после разрешения спора в пользу агента.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Оценка влияет на уровень допуска, но не на выдачу; методика публикуется, расчёт раскрывается оператору агента, изменения не применяются к прошедшим периодам.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A8 п. 3.1–3.2</span> — оценка применяется при определении уровня допуска и не применяется при формировании выдачи</li><li><span class="dref">A8 п. 5.1</span> — право запросить расчёт и оспорить учёт случаев</li><li><span class="dref">A8 п. 5.2</span> — публикация методики и запрет ретроспективного пересчёта</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Порядок пересчёта после успешного оспаривания и его влияние на уже принятые решения не описаны.</div>
+ <div class="q"><b>вопрос к проработке:</b> Порядок пересчёта оценки после успешного оспаривания и влияние на уже принятые решения об уровне.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k19">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A8">A8</a> <a href="02-funkcii-i-roli.html#F4">F4</a></div>
+</article><article class="c" id="К20" data-s="7">
+ <div class="head">
+  <span class="code">К20</span>
+  <h3>Доказательства спустя время</h3>
+  <span class="stage"><a href="01-ierarhiya-tranzakcii.html#stage-7">стадия 7</a></span>
+  <span class="status ok">закрыт</span>
+ </div>
+ <div class="who">Все стороны спора</div>
+ <div class="row"><b>в чём столкновение</b>Через несколько месяцев нужно установить, что именно было разрешено. Журнал недоступен, формат устарел, участник вышел из состава.</div>
+ <div class="row"><b>почему оно структурное</b>Срок хранения сведений об операции и срок жизни технических форматов не совпадают.</div>
+ <div class="row"><b>варианты</b><ul class="var"><li>Хранение записи мандата и записи об исполнении вместе со сведениями об операции — принято у нас.</li><li>Обязанность предоставлять выписку в читаемой форме независимо от формата хранения — принято.</li><li>Депонирование записей у третьей стороны — не рассматривалось.</li></ul></div>
+ <div class="sol"><b>решение или направление</b>Запись мандата и запись об исполнении хранятся вместе со сведениями об операции и предоставляются в читаемой форме независимо от формата хранения.</div>
+ <div class="row"><b>как отражено в документах</b><ul class="docs"><li><span class="dref">A1 п. 7.1–7.2</span> — срок хранения признака и ссылка на запись мандата</li><li><span class="dref">A7 п. 9.3</span> — выписка из журнала согласий по запросу клиента, участника и уполномоченных органов</li><li><span class="dref">A4 п. 2.2</span> — запись мандата и признак как подтверждение пределов</li></ul></div>
+ <div class="gap"><b>чего пока нет:</b> Резервный держатель записей на случай прекращения деятельности участника не предусмотрен.</div>
+ <div class="q"><b>вопрос к проработке:</b> Нужен ли резервный держатель записей на случай прекращения деятельности участника.</div>
+ <div class="refs"><a href="35-model-konfliktov.html#k20">прогнать в модели →</a> <a href="21-drafty-dokumentov.html#A7">A7</a> <a href="21-drafty-dokumentov.html#A4">A4</a> <a href="02-funkcii-i-roli.html#F22">F22</a></div>
+</article>
+
+<h2>Вопросы, требующие решения</h2>
+<p>Двенадцать вопросов, вытекающих из конфликтов. Для каждого указано, чем именно он закрывается: решением руководства, данными испытаний, юридической оценкой или внешним согласованием. Это разные сроки и разные исполнители, и смешивать их не следует.</p>
+<table><tbody>
+<tr><th style="width:44px">№</th><th style="width:18%">Вопрос</th><th style="width:9%">Из чего</th><th style="width:26%">Существо</th><th>Чем закрывается</th><th style="width:14%">Тип</th></tr>
+<tr><td class="code">В1</td><td class="nm">Держатель журнала согласий</td><td class="code">К5</td><td>Решение о том, кто ведёт журнал: оператор Системы или банк плательщика.</td><td>Стратегическое решение до начала разработки: определяет интерфейсы всех документов.</td><td class="note">решение руководства</td></tr><tr><td class="code">В2</td><td class="nm">Порог подтверждения</td><td class="code">К11, К10</td><td>Значение порога и допустимость его зависимости от репутации агента.</td><td>Данные пилота: доля операций выше порога, влияние на конверсию и на фрод.</td><td class="note">данные испытаний</td></tr><tr><td class="code">В3</td><td class="nm">Время работы по кэшу</td><td class="code">К12</td><td>Сколько участник вправе действовать по последнему известному состоянию.</td><td>Данные о доступности сервиса и о доле сделок, срывающихся из-за отказа.</td><td class="note">данные испытаний</td></tr><tr><td class="code">В4</td><td class="nm">Размер обеспечения</td><td class="code">К18</td><td>Способ расчёта обеспечения оператора агента.</td><td>Оценка типового объёма операций и накопленной статистики нарушений.</td><td class="note">расчёт и юридическая оценка</td></tr><tr><td class="code">В5</td><td class="nm">Фискализация агентской сделки</td><td class="code">К15</td><td>Кто фискализирует вознаграждение и какой документ видит покупатель.</td><td>Разъяснение налогового органа; без него конструкция не может быть закреплена.</td><td class="note">внешнее согласование</td></tr><tr><td class="code">В6</td><td class="nm">Реестр типов ограничений</td><td class="code">К13</td><td>Кто ведёт перечень типов и как доводятся изменения.</td><td>Проектное решение плюс согласование с участниками.</td><td class="note">проектное решение</td></tr><tr><td class="code">В7</td><td class="nm">Коридор изменения цены</td><td class="code">К8</td><td>Допускается ли исполнение при отклонении цены и на какую величину.</td><td>Данные пилота о частоте изменений между согласованием и исполнением.</td><td class="note">данные испытаний</td></tr><tr><td class="code">В8</td><td class="nm">Возврат и восстановление бюджета</td><td class="code">К16</td><td>Восстанавливается ли израсходованная часть при возврате.</td><td>Юридическая оценка: является ли восстановление изменением мандата.</td><td class="note">юридическая оценка</td></tr><tr><td class="code">В9</td><td class="nm">Апелляция на отказ в допуске</td><td class="code">К1</td><td>Нужна ли процедура обжалования и кто её ведёт.</td><td>Юридическая оценка и практика антимонопольного регулирования.</td><td class="note">юридическая оценка</td></tr><tr><td class="code">В10</td><td class="nm">Расхождение изложения и параметров</td><td class="code">К3</td><td>Основание ли это для оспаривания операции.</td><td>Юридическая оценка: соотношение с пороком воли.</td><td class="note">юридическая оценка</td></tr><tr><td class="code">В11</td><td class="nm">Контроль равенства раскрытия</td><td class="code">К7</td><td>Нужен ли инструмент проверки и кто его ведёт.</td><td>Проектное решение и оценка нагрузки.</td><td class="note">проектное решение</td></tr><tr><td class="code">В12</td><td class="nm">Особый порядок отказа от покупки агента</td><td class="code">К17</td><td>Нужны ли дополнительные права потребителя и за чей счёт.</td><td>Юридическая оценка и позиция регулятора по защите прав потребителей.</td><td class="note">юридическая оценка</td></tr>
+</tbody></table>
+
+<div class="box"><b>Что из этого первоочередное</b>
+<ul>
+<li><b>Держатель журнала согласий</b> — единственный вопрос, который блокирует разработку: от него зависят интерфейсы всех девяти документов. Решается не расчётом, а выбором.</li>
+<li><b>Фискализация агентской сделки</b> — зависит от внешнего разъяснения, поэтому запрашивать нужно раньше, чем понадобится ответ.</li>
+<li><b>Четыре вопроса закрываются данными пилота</b> — порог подтверждения, время работы по кэшу, коридор цены, параметры выявления дробления. Их нельзя решить кабинетно, и это аргумент за то, чтобы прогон состоялся раньше, а не после написания документов.</li>
+<li><b>Пять вопросов требуют юридической оценки</b> и могут идти параллельно технической работе.</li>
+</ul></div>
+
+<footer>
+<p>Связанные материалы: <a href="01-ierarhiya-tranzakcii.html">стадии транзакции</a> · <a href="24-scenariy-operacii.html">сквозной пример операции</a> · <a href="21-drafty-dokumentov.html">драфты</a> · <a href="26-programma-rabot.html">программа работ и риски</a> · <a href="28-tezisy-i-otzyv.html">замечания к международной рамке</a></p>
+<p class="note">Отметка статуса показывает состояние на 17.09.2026: закрыт — решение принято и записано в драфте; закрыт частично — принято в основном, остался параметр или процедура; открытый вопрос — решения нет; предмет замечания — вынесено в отзыв на международную рамку.</p>
+<div id="pool-logo">
+ <img src="data:image/png;base64,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" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a> · <a href="18-svyazka.html">сквозная связка</a></div>
+</div></footer>
+
+</div>
+<script>
+(function(){
+ var cards=[].slice.call(document.querySelectorAll('.c'));
+ var btns=[].slice.call(document.querySelectorAll('#fbar button'));
+ var cnt=document.getElementById('cnt');
+ function apply(s){
+  var n=0;
+  cards.forEach(function(c){
+   var vis = s==='all' || c.dataset.s===s;
+   c.classList.toggle('hidden',!vis); if(vis)n++;
+  });
+  cnt.textContent='показано '+n+' из '+cards.length;
+  if(s!=='all') history.replaceState(null,'','#stage-'+s);
+ }
+ btns.forEach(function(b){ b.addEventListener('click',function(){
+  btns.forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});
+  apply(b.dataset.s);
+ });});
+ var m=/^#stage-(\d)$/.exec(location.hash);
+ if(m){ var t=btns.filter(function(b){return b.dataset.s===m[1];})[0]; if(t){t.click();} } else apply('all');
+})();
+</script>
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script><script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script></body></html>

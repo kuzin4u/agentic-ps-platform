@@ -1,0 +1,486 @@
+openapi: 3.0.3
+info:
+  title: Интерфейсы Платформы с процессингом и участниками
+  version: 1.0.0-draft
+  description: Каноническая модель. Номера полей и кодов внешних форматов — по альбомам оператора, см. PROCESSING-INTERFACE.md
+    [альбом].
+components:
+  schemas:
+    Instrument:
+      type: object
+      required:
+      - kind
+      properties:
+        kind:
+          type: string
+          enum:
+          - AGENT_TOKEN
+          - ACCOUNT_LINK
+          - CARD_TOKEN
+        token_ref:
+          type: string
+        cryptogram:
+          type: string
+        account_link_ref:
+          type: string
+        issuer_id:
+          type: string
+    Merchant:
+      type: object
+      properties:
+        id:
+          type: string
+        mcc:
+          type: string
+        acquirer_id:
+          type: string
+        name:
+          type: string
+    Aoi:
+      type: object
+      properties:
+        indicator:
+          type: boolean
+        agent_code:
+          type: string
+        mandate_id:
+          type: string
+        fulfilment_ref:
+          type: string
+          nullable: true
+        deal_ref:
+          type: string
+          nullable: true
+    CanonicalMessage:
+      type: object
+      required:
+      - op_ref
+      - msg_type
+      - channel
+      - amount
+      - currency
+      - merchant
+      - instrument
+      properties:
+        op_ref:
+          type: string
+        msg_type:
+          type: string
+          enum:
+          - AUTH_REQUEST
+          - ISSUER_RESPONSE
+          - REVERSAL
+          - PRESENTMENT
+          - REFUND
+          - CHARGEBACK
+          - AUTH_EXPIRED
+        seq:
+          type: integer
+        channel:
+          type: string
+          enum:
+          - CARD
+          - SBP
+        amount:
+          type: integer
+        currency:
+          type: string
+        merchant:
+          $ref: '#/components/schemas/Merchant'
+        instrument:
+          $ref: '#/components/schemas/Instrument'
+        aoi:
+          $ref: '#/components/schemas/Aoi'
+        confirmation_ref:
+          type: string
+          nullable: true
+        order_ref:
+          type: string
+        reservation_id:
+          type: string
+          nullable: true
+        issuer_approved:
+          type: boolean
+          nullable: true
+        ts:
+          type: string
+          format: date-time
+    Decision:
+      type: object
+      required:
+      - decision
+      - decided_in_ms
+      properties:
+        decision:
+          type: string
+          enum:
+          - APPROVE
+          - DECLINE
+          - CONFIRMATION_REQUIRED
+          - BYPASS
+        reason:
+          type: string
+          nullable: true
+          enum:
+          - null
+          - AOI_MISSING
+          - AOI_MISMATCH
+          - AGENT_UNKNOWN
+          - AGENT_SUSPENDED
+          - CREDENTIAL_INVALID
+          - MANDATE_NOT_FOUND
+          - MANDATE_EXPIRED
+          - MANDATE_REVOKED
+          - MANDATE_SCOPE
+          - LIMIT_EXCEEDED
+          - STATE_UNAVAILABLE
+          - CONFIRMATION_REQUIRED
+          - ADP_UNAVAILABLE
+        split_detected:
+          type: boolean
+        reservation_id:
+          type: string
+          nullable: true
+        agent_level:
+          type: integer
+        mandate_left_after:
+          type: integer
+        decided_in_ms:
+          type: number
+    Limits:
+      type: object
+      properties:
+        per_operation:
+          type: integer
+        per_period:
+          type: integer
+        period:
+          type: string
+        merchant_categories:
+          type: array
+          items:
+            type: string
+        confirm_above:
+          type: integer
+    StateOp:
+      type: object
+      required:
+      - mandate_id
+      - op_ref
+      - amount
+      properties:
+        mandate_id:
+          type: string
+        op_ref:
+          type: string
+        amount:
+          type: integer
+        reservation_id:
+          type: string
+    DealView:
+      type: object
+      properties:
+        deal_ref:
+          type: string
+        status:
+          type: string
+          enum:
+          - AWAITING_FUNDING
+          - FUNDED
+          - RELEASED
+          - RETURNED
+          - PARTIAL
+          - CANCELLED
+        amount:
+          type: integer
+        currency:
+          type: string
+        payee_merchant_id:
+          type: string
+        valid_to:
+          type: string
+          format: date-time
+    DealOutcome:
+      type: object
+      required:
+      - outcome
+      - at
+      properties:
+        outcome:
+          type: string
+          enum:
+          - RELEASED
+          - RETURNED
+          - PARTIAL
+        released_amount:
+          type: integer
+        returned_amount:
+          type: integer
+        at:
+          type: string
+          format: date-time
+        evidence_hash:
+          type: string
+paths:
+  /adp/v1/decide:
+    post:
+      summary: ПИ-1 Точка решения
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CanonicalMessage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Decision'
+  /adp/v1/events:
+    post:
+      summary: ПИ-3 События операции
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CanonicalMessage'
+      responses:
+        '202':
+          description: Принято
+  /participants/v1/instruments/{funding_ref}/limits:
+    put:
+      summary: ПИ-8 Ограничения клиента (эмитент)
+      parameters:
+      - name: funding_ref
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Limits'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Limits'
+    get:
+      summary: Ограничения
+      parameters:
+      - name: funding_ref
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Limits'
+  /participants/v1/mandates/{id}/sign:
+    post:
+      summary: ПИ-8 Подпись мандата клиентом
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - decision
+              - signature_type
+              - signature_ref
+              properties:
+                decision:
+                  type: string
+                  enum:
+                  - SIGN
+                  - REJECT
+                signature_type:
+                  type: string
+                  enum:
+                  - simple
+                  - qualified
+                  - gov_id
+                signature_ref:
+                  type: string
+                token_consent:
+                  type: boolean
+      responses:
+        '200':
+          description: OK
+  /participants/v1/principals/{ref}/revoke-all:
+    post:
+      summary: ПИ-8 Прекращение полномочий одним действием
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+  /participants/v1/confirmations/{id}:
+    post:
+      summary: ПИ-8/ПИ-6 Результат подтверждения
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                decision:
+                  type: string
+                  enum:
+                  - APPROVE
+                  - REJECT
+                instrument_chosen:
+                  type: string
+      responses:
+        '200':
+          description: OK
+  /participants/v1/state/reserve:
+    post:
+      summary: 'Режим «сам эмитент»: резерв'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StateOp'
+      responses:
+        '200':
+          description: OK
+  /participants/v1/state/commit:
+    post:
+      summary: Закрепление
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StateOp'
+      responses:
+        '200':
+          description: OK
+  /participants/v1/state/release:
+    post:
+      summary: Освобождение
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StateOp'
+      responses:
+        '200':
+          description: OK
+  /participants/v1/agents/{code}/status:
+    get:
+      summary: Статус агента для продавца
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+  /participants/v1/merchants/{id}/readiness:
+    post:
+      summary: Заявка на знак готовности
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          description: Принято
+  /disputes/v1/scope-check:
+    post:
+      summary: ПИ-7/П7 Вычисление in_scope по op_ref
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                op_ref:
+                  type: string
+      responses:
+        '200':
+          description: in_scope + выписка
+  /cx/v1/deals/{deal_ref}/outcome:
+    post:
+      summary: Итог сделки от поставщика условного исполнения (хостит платформа)
+      parameters:
+      - name: deal_ref
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DealOutcome'
+      responses:
+        '202':
+          description: Принято
+  /cx/v1/operations:
+    get:
+      summary: Операции по сделке
+      parameters:
+      - name: deal_ref
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+  /cx/v1/deals/{deal_ref}:
+    get:
+      summary: Состояние сделки (хостит поставщик, вызывает платформа)
+      parameters:
+      - name: deal_ref
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DealView'

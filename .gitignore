@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.claude/hooks.log
+.claude/session-summary.md
+.claude/settings.local.json
+runs/
+tmp/
+.DS_Store

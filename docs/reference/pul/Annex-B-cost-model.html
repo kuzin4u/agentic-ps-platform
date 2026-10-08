@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Cost model: gaps in the Framework versus the cost of stricter handling</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--acc:#1f7a5a;--warn:#a35c13;--bad:#a32a2a;--ref:#1a3a8f;--fw:#8a8a80}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:15px;line-height:1.5}
+.wrap{max-width:1200px;margin:0 auto;padding:0 18px 70px}
+nav.strip{display:flex;flex-wrap:wrap;gap:4px;padding:14px 0 0}
+nav.strip a,nav.strip .cur{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 9px}
+nav.strip .cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+header.top{border-bottom:2px solid var(--ink);padding:18px 0 14px;margin-bottom:12px}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--acc);margin:0 0 6px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:27px;margin:0 0 8px;font-weight:600;line-height:1.15}
+h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:19px;margin:22px 0 8px}
+.tagline{color:var(--ink2);margin:0;max-width:88ch}
+a{color:var(--ref)}
+.warnbox{border-left:4px solid var(--warn);background:#fffdf5;padding:10px 14px;margin:12px 0;font-size:14px}
+.presets{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.presets button{font:500 12.5px 'IBM Plex Sans';background:#fff;border:1px solid var(--line);padding:7px 12px;cursor:pointer}
+.presets button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.params{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:8px}
+.par{background:var(--card);border:1px solid var(--line);padding:8px 10px}
+.par label{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.par label b{font-family:'IBM Plex Mono',monospace;font-size:12.5px;white-space:nowrap}
+.par input[type=range]{width:100%;margin:4px 0 0}
+.par .h{font-size:11.5px;color:var(--ink2)}
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+.kpi div{background:var(--card);border:1px solid var(--line);padding:10px 12px}
+.kpi .l{font-size:12px;color:var(--ink2)}
+.kpi .v{font-family:'IBM Plex Serif',Georgia,serif;font-size:23px;line-height:1.1}
+.kpi .s{font-size:11.5px;color:var(--ink2)}
+.kpi .fw .v{color:var(--bad)}.kpi .st .v{color:var(--warn)}.kpi .net .v{color:var(--acc)}
+.mech{background:var(--card);border:1px solid var(--line);margin:10px 0}
+.mech .hd{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;padding:9px 14px;background:#f1f1ec;border-bottom:1px solid var(--line)}
+.mech .hd h3{margin:0;font-size:15.5px}
+.mech .hd .z{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2)}
+.mech .hd .res{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:12px}
+.mech .body{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 14px}
+.mech .bars{grid-column:1/-1}
+.bar{display:grid;grid-template-columns:190px 1fr 120px;gap:8px;align-items:center;font-size:12.5px;margin:3px 0}
+.bar .track{background:#eeece6;height:14px;position:relative}
+.bar .fill{height:14px}
+.bar .fill.fw{background:var(--bad)}.bar .fill.st{background:var(--warn)}.bar .fill.gain{background:var(--acc)}
+.bar .num{font-family:'IBM Plex Mono',monospace;font-size:12px;text-align:right}
+.mech .note{font-size:12.5px;color:var(--ink2);grid-column:1/-1}
+.mech .note b{color:var(--ink)}
+.tag{font-family:'IBM Plex Mono',monospace;font-size:11px;padding:1px 6px;border:1px solid currentColor}
+.tag.pos{color:var(--acc)}.tag.neg{color:var(--bad)}.tag.nil{color:var(--ink2)}
+table.sum{width:100%;border-collapse:collapse;background:var(--card);font-size:13.2px;margin-top:8px}
+table.sum th,table.sum td{border:1px solid var(--line);padding:6px 8px;text-align:left}
+table.sum th{background:#ecece7;font-size:11.5px}
+table.sum td.n{font-family:'IBM Plex Mono',monospace;text-align:right;white-space:nowrap}
+.box{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--acc);padding:12px 16px;margin:14px 0;font-size:14.3px}
+.box b{display:block;margin-bottom:4px}
+.box ul{margin:4px 0 0;padding-left:20px}
+.box li{margin:5px 0}
+footer{margin-top:36px;border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+@media(max-width:900px){.kpi{grid-template-columns:1fr 1fr}.mech .body{grid-template-columns:1fr}.bar{grid-template-columns:120px 1fr 90px}h1{font-size:22px}}
+</style></head><body><div class="wrap">
+
+<nav class="strip">
+ <a href="index.html">Overview</a>
+ <a href="Annex-A-discussion-points.html">Annex A · Discussion points</a>
+ <span class="cur" aria-current="page">Annex B · Cost model</span>
+ <a href="EMV-Agentic-Framework-Feedback-Form.docx">Feedback form (DOCX)</a>
+</nav>
+
+<header class="top">
+ <p class="eyebrow">Annex B to the feedback · parametric model · 7 discussion points · monthly figures</p>
+ <h1>What permissive handling costs, and what stricter handling costs the business</h1>
+ <p class="tagline">For each of the seven discussion points the model computes two values: expected losses if the Framework is implemented as drafted, and the business cost of our stricter proposal — lost sales, abandoned purchases, operating costs. All parameters are adjustable; results update instantly.</p>
+</header>
+
+<div class="warnbox"><b>This is a model, not a forecast.</b> Default values are order-of-magnitude assumptions. Actual rates of errors, declines and disputes can only come from pilot operation. The purpose is to show which parameters drive the outcome, and where stricter handling pays off and where it does not.</div>
+
+<h2>Scale and economics</h2>
+<div class="presets" id="currency" style="margin-bottom:4px">
+ <span style="font-size:12.5px;color:var(--ink2);align-self:center">Currency:</span>
+ <button data-c="RUB" aria-pressed="false">RUB</button>
+ <button data-c="EUR" aria-pressed="true">EUR</button>
+ <label style="font-size:12.5px;color:var(--ink2);align-self:center;margin-left:8px">RUB per EUR <input type="number" id="rate" value="95" min="10" max="500" step="1" style="width:64px;font:inherit;padding:3px 6px;border:1px solid var(--line)"></label>
+</div>
+<div class="presets" id="presets">
+ <button data-p="pilot">Pilot · 10k transactions</button>
+ <button data-p="year" aria-pressed="true">Market in a year · 1m</button>
+ <button data-p="scale">At scale · 20m</button>
+ <button data-p="stress">Stress case for strictness</button>
+</div>
+<div class="params"><div class="par"><label for="N">Agentic transactions per month <b><span id="v_N"></span> <span id="u_N"></span></b></label>
+ <input type="range" id="N" min="1000" max="20000000" step="1000" value="1000000"><div class="h">Volume of agentic traffic in scope.</div></div><div class="par"><label for="AOV">Average ticket <b><span id="v_AOV"></span> <span id="u_AOV">RUB</span></b></label>
+ <input type="range" id="AOV" min="100" max="50000" step="100" value="2500"><div class="h">Average amount of an agentic transaction.</div></div><div class="par"><label for="auto">Share of autonomous transactions <b><span id="v_auto"></span> <span id="u_auto">%</span></b></label>
+ <input type="range" id="auto" min="0" max="100" step="1" value="40"><div class="h">Transactions executed without the consumer present.</div></div><div class="par"><label for="take">System revenue on turnover <b><span id="v_take"></span> <span id="u_take">%</span></b></label>
+ <input type="range" id="take" min="0" max="3" step="0.05" value="0.4"><div class="h">Combined share of the scheme and banks.</div></div><div class="par"><label for="marg">Merchant margin <b><span id="v_marg"></span> <span id="u_marg">%</span></b></label>
+ <input type="range" id="marg" min="0" max="60" step="1" value="20"><div class="h">Used to value merchants’ lost sales.</div></div><div class="par"><label for="dispute">Cost of a manual dispute <b><span id="v_dispute"></span> <span id="u_dispute">RUB</span></b></label>
+ <input type="range" id="dispute" min="0" max="20000" step="100" value="3000"><div class="h">Issuer cost per dispute handled without records.</div></div><div class="par"><label for="aband">Abandonment when confirmation is requested <b><span id="v_aband"></span> <span id="u_aband">%</span></b></label>
+ <input type="range" id="aband" min="0" max="100" step="1" value="25"><div class="h">Share of purchases abandoned when the agent asks the consumer to confirm.</div></div></div>
+
+<div class="kpi">
+ <div class="fw"><div class="l">Losses per the Framework</div><div class="v" id="kFw">—</div><div class="s">per month, all participants</div></div>
+ <div class="st"><div class="l">Cost of stricter handling</div><div class="v" id="kSt">—</div><div class="s">lost revenue and costs</div></div>
+ <div class="net"><div class="l">Net effect of strictness</div><div class="v" id="kNet">—</div><div class="s" id="kNetS">per month</div></div>
+ <div><div class="l">Lost turnover</div><div class="v" id="kGmv">—</div><div class="s" id="kGmvS">from strict declines</div></div>
+</div>
+
+<h2>By mechanism</h2>
+<section class="mech" data-z="C01">
+ <div class="hd"><span class="z">C01</span><h3>Budget state held by the Agent</h3><span class="res" id="res_C01"></span></div>
+ <div class="body">
+  <div class="par"><label for="e1">Agent error in tracking remaining budget <b><span id="v_e1"></span> <span id="u_e1">% of auto txns</span></b></label>
+ <input type="range" id="e1" min="0" max="2" step="0.01" value="0.2"></div><div class="par"><label for="o1">Average overspend per error <b><span id="v_o1"></span> <span id="u_o1">% of ticket</span></b></label>
+ <input type="range" id="o1" min="0" max="100" step="5" value="40"></div><div class="par"><label for="r1">Legitimate declines due to atomic consumption <b><span id="v_r1"></span> <span id="u_r1">% of auto txns</span></b></label>
+ <input type="range" id="r1" min="0" max="1" step="0.01" value="0.05"></div><div class="par"><label for="u1">State service unavailable <b><span id="v_u1"></span> <span id="u_u1">% of auto txns</span></b></label>
+ <input type="range" id="u1" min="0" max="1" step="0.01" value="0.03"></div>
+  <div class="bars">
+   <div class="bar"><span>Losses per the Framework</span><div class="track"><div class="fill fw" id="bf_C01"></div></div><span class="num" id="nf_C01"></span></div>
+   <div class="bar"><span>Cost of strictness</span><div class="track"><div class="fill st" id="bs_C01"></div></div><span class="num" id="ns_C01"></span></div>
+  </div>
+  <div class="note" id="note_C01"></div>
+ </div>
+</section><section class="mech" data-z="C02">
+ <div class="hd"><span class="z">C02</span><h3>Fulfilment record</h3><span class="res" id="res_C02"></span></div>
+ <div class="body">
+  <div class="par"><label for="d2">Disputes over partial fulfilment <b><span id="v_d2"></span> <span id="u_d2">% of txns</span></b></label>
+ <input type="range" id="d2" min="0" max="3" step="0.05" value="0.3"></div><div class="par"><label for="c2">Dispute cost with a record <b><span id="v_c2"></span> <span id="u_c2">RUB</span></b></label>
+ <input type="range" id="c2" min="0" max="5000" step="50" value="300"></div><div class="par"><label for="k2">Cost of creating the record <b><span id="v_k2"></span> <span id="u_k2">RUB per txn</span></b></label>
+ <input type="range" id="k2" min="0" max="5" step="0.05" value="0.1"></div>
+  <div class="bars">
+   <div class="bar"><span>Losses per the Framework</span><div class="track"><div class="fill fw" id="bf_C02"></div></div><span class="num" id="nf_C02"></span></div>
+   <div class="bar"><span>Cost of strictness</span><div class="track"><div class="fill st" id="bs_C02"></div></div><span class="num" id="ns_C02"></span></div>
+  </div>
+  <div class="note" id="note_C02"></div>
+ </div>
+</section><section class="mech" data-z="C03">
+ <div class="hd"><span class="z">C03</span><h3>Strict mode for unrecognised constraints</h3><span class="res" id="res_C03"></span></div>
+ <div class="body">
+  <div class="par"><label for="n3">Mandates with new constraint types <b><span id="v_n3"></span> <span id="u_n3">% of txns</span></b></label>
+ <input type="range" id="n3" min="0" max="10" step="0.1" value="1"></div><div class="par"><label for="x3">Participants diverge in permissive mode <b><span id="v_x3"></span> <span id="u_x3">%</span></b></label>
+ <input type="range" id="x3" min="0" max="100" step="5" value="30"></div><div class="par"><label for="l3">Sales lost on strict decline <b><span id="v_l3"></span> <span id="u_l3">% of such txns</span></b></label>
+ <input type="range" id="l3" min="0" max="100" step="5" value="60"></div>
+  <div class="bars">
+   <div class="bar"><span>Losses per the Framework</span><div class="track"><div class="fill fw" id="bf_C03"></div></div><span class="num" id="nf_C03"></span></div>
+   <div class="bar"><span>Cost of strictness</span><div class="track"><div class="fill st" id="bs_C03"></div></div><span class="num" id="ns_C03"></span></div>
+  </div>
+  <div class="note" id="note_C03"></div>
+ </div>
+</section><section class="mech" data-z="C04">
+ <div class="hd"><span class="z">C04</span><h3>Revocation checked at execution</h3><span class="res" id="res_C04"></span></div>
+ <div class="body">
+  <div class="par"><label for="v4">Transactions after mandate revocation <b><span id="v_v4"></span> <span id="u_v4">% of auto txns</span></b></label>
+ <input type="range" id="v4" min="0" max="2" step="0.01" value="0.05"></div><div class="par"><label for="q4">Cost of a state query <b><span id="v_q4"></span> <span id="u_q4">RUB per txn</span></b></label>
+ <input type="range" id="q4" min="0" max="1" step="0.01" value="0.03"></div><div class="par"><label for="u4">Declines when the check is unavailable <b><span id="v_u4"></span> <span id="u_u4">% of auto txns</span></b></label>
+ <input type="range" id="u4" min="0" max="1" step="0.01" value="0.02"></div>
+  <div class="bars">
+   <div class="bar"><span>Losses per the Framework</span><div class="track"><div class="fill fw" id="bf_C04"></div></div><span class="num" id="nf_C04"></span></div>
+   <div class="bar"><span>Cost of strictness</span><div class="track"><div class="fill st" id="bs_C04"></div></div><span class="num" id="ns_C04"></span></div>
+  </div>
+  <div class="note" id="note_C04"></div>
+ </div>
+</section><section class="mech" data-z="C05">
+ <div class="hd"><span class="z">C05</span><h3>Instrument chosen at payment time</h3><span class="res" id="res_C05"></span></div>
+ <div class="body">
+  <div class="par"><label for="i5">Instrument invalid by execution <b><span id="v_i5"></span> <span id="u_i5">% of auto txns</span></b></label>
+ <input type="range" id="i5" min="0" max="10" step="0.1" value="1.5"></div><div class="par"><label for="s5">Transactions saved by choosing an instrument <b><span id="v_s5"></span> <span id="u_s5">%</span></b></label>
+ <input type="range" id="s5" min="0" max="100" step="5" value="70"></div><div class="par"><label for="k5">Payment page adaptation <b><span id="v_k5"></span> <span id="u_k5">RUB per txn</span></b></label>
+ <input type="range" id="k5" min="0" max="2" step="0.05" value="0.05"></div>
+  <div class="bars">
+   <div class="bar"><span>Losses per the Framework</span><div class="track"><div class="fill fw" id="bf_C05"></div></div><span class="num" id="nf_C05"></span></div>
+   <div class="bar"><span>Cost of strictness</span><div class="track"><div class="fill st" id="bs_C05"></div></div><span class="num" id="ns_C05"></span></div>
+  </div>
+  <div class="note" id="note_C05"></div>
+ </div>
+</section><section class="mech" data-z="C06">
+ <div class="hd"><span class="z">C06</span><h3>Agent execution history</h3><span class="res" id="res_C06"></span></div>
+ <div class="body">
+  <div class="par"><label for="a6">Share of transactions by non-compliant agents <b><span id="v_a6"></span> <span id="u_a6">%</span></b></label>
+ <input type="range" id="a6" min="0" max="20" step="0.5" value="3"></div><div class="par"><label for="b6">Out-of-mandate actions by such agents <b><span id="v_b6"></span> <span id="u_b6">%</span></b></label>
+ <input type="range" id="b6" min="0" max="30" step="0.5" value="5"></div><div class="par"><label for="h6">Their transactions routed to confirmation <b><span id="v_h6"></span> <span id="u_h6">%</span></b></label>
+ <input type="range" id="h6" min="0" max="100" step="5" value="100"></div>
+  <div class="bars">
+   <div class="bar"><span>Losses per the Framework</span><div class="track"><div class="fill fw" id="bf_C06"></div></div><span class="num" id="nf_C06"></span></div>
+   <div class="bar"><span>Cost of strictness</span><div class="track"><div class="fill st" id="bs_C06"></div></div><span class="num" id="ns_C06"></span></div>
+  </div>
+  <div class="note" id="note_C06"></div>
+ </div>
+</section><section class="mech" data-z="C07">
+ <div class="hd"><span class="z">C07</span><h3>Indicator with reference to evidence</h3><span class="res" id="res_C07"></span></div>
+ <div class="body">
+  <div class="par"><label for="d7">Disputes on agentic transactions <b><span id="v_d7"></span> <span id="u_d7">% of txns</span></b></label>
+ <input type="range" id="d7" min="0" max="3" step="0.05" value="0.4"></div><div class="par"><label for="f7">Evidence search without a reference <b><span id="v_f7"></span> <span id="u_f7">RUB per dispute</span></b></label>
+ <input type="range" id="f7" min="0" max="10000" step="100" value="1500"></div><div class="par"><label for="g7">Evidence search by reference <b><span id="v_g7"></span> <span id="u_g7">RUB per dispute</span></b></label>
+ <input type="range" id="g7" min="0" max="5000" step="50" value="150"></div><div class="par"><label for="k7">Extra fields in the message <b><span id="v_k7"></span> <span id="u_k7">RUB per txn</span></b></label>
+ <input type="range" id="k7" min="0" max="1" step="0.01" value="0.02"></div>
+  <div class="bars">
+   <div class="bar"><span>Losses per the Framework</span><div class="track"><div class="fill fw" id="bf_C07"></div></div><span class="num" id="nf_C07"></span></div>
+   <div class="bar"><span>Cost of strictness</span><div class="track"><div class="fill st" id="bs_C07"></div></div><span class="num" id="ns_C07"></span></div>
+  </div>
+  <div class="note" id="note_C07"></div>
+ </div>
+</section>
+
+<h2>Summary</h2>
+<table class="sum"><tbody id="sumt"></tbody></table>
+<div class="box" id="concl"></div>
+
+<footer>
+<p>Losses per the Framework are expected damages and dispute handling costs; the cost of strictness is lost revenue of the system and merchants’ margin on lost sales, plus operating costs. Turnover is shown separately and not converted to revenue. Inputs are held in roubles; the currency switch converts all displayed amounts at the rate shown. Comment codes C01–C07 correspond to rows 01–07 of the enclosed feedback form.</p>
+</footer>
+
+</div>
+<script>
+(function(){
+ var G=[["N","Agentic transactions per month",1000,20000000,1000,1000000,"","Volume of agentic traffic in scope."],["AOV","Average ticket",100,50000,100,2500,"RUB","Average amount of an agentic transaction."],["auto","Share of autonomous transactions",0,100,1,40,"%","Transactions executed without the consumer present."],["take","System revenue on turnover",0,3,0.05,0.4,"%","Combined share of the scheme and banks."],["marg","Merchant margin",0,60,1,20,"%","Used to value merchants’ lost sales."],["dispute","Cost of a manual dispute",0,20000,100,3000,"RUB","Issuer cost per dispute handled without records."],["aband","Abandonment when confirmation is requested",0,100,1,25,"%","Share of purchases abandoned when the agent asks the consumer to confirm."]], M=[{"z":"C01","t":"Budget state held by the Agent","p":[["e1","Agent error in tracking remaining budget",0,2,0.01,0.2,"% of auto txns"],["o1","Average overspend per error",0,100,5,40,"% of ticket"],["r1","Legitimate declines due to atomic consumption",0,1,0.01,0.05,"% of auto txns"],["u1","State service unavailable",0,1,0.01,0.03,"% of auto txns"]],"who":"payer’s issuer"},{"z":"C02","t":"Fulfilment record","p":[["d2","Disputes over partial fulfilment",0,3,0.05,0.3,"% of txns"],["c2","Dispute cost with a record",0,5000,50,300,"RUB"],["k2","Cost of creating the record",0,5,0.05,0.1,"RUB per txn"]],"who":"issuers and merchants"},{"z":"C03","t":"Strict mode for unrecognised constraints","p":[["n3","Mandates with new constraint types",0,10,0.1,1,"% of txns"],["x3","Participants diverge in permissive mode",0,100,5,30,"%"],["l3","Sales lost on strict decline",0,100,5,60,"% of such txns"]],"who":"merchants"},{"z":"C04","t":"Revocation checked at execution","p":[["v4","Transactions after mandate revocation",0,2,0.01,0.05,"% of auto txns"],["q4","Cost of a state query",0,1,0.01,0.03,"RUB per txn"],["u4","Declines when the check is unavailable",0,1,0.01,0.02,"% of auto txns"]],"who":"payer’s issuer"},{"z":"C05","t":"Instrument chosen at payment time","p":[["i5","Instrument invalid by execution",0,10,0.1,1.5,"% of auto txns"],["s5","Transactions saved by choosing an instrument",0,100,5,70,"%"],["k5","Payment page adaptation",0,2,0.05,0.05,"RUB per txn"]],"who":"merchants and consumers"},{"z":"C06","t":"Agent execution history","p":[["a6","Share of transactions by non-compliant agents",0,20,0.5,3,"%"],["b6","Out-of-mandate actions by such agents",0,30,0.5,5,"%"],["h6","Their transactions routed to confirmation",0,100,5,100,"%"]],"who":"issuers and consumers"},{"z":"C07","t":"Indicator with reference to evidence","p":[["d7","Disputes on agentic transactions",0,3,0.05,0.4,"% of txns"],["f7","Evidence search without a reference",0,10000,100,1500,"RUB per dispute"],["g7","Evidence search by reference",0,5000,50,150,"RUB per dispute"],["k7","Extra fields in the message",0,1,0.01,0.02,"RUB per txn"]],"who":"issuers"}], PRESETS={"pilot":{"N":10000,"AOV":2500,"auto":30},"year":{"N":1000000,"AOV":2500,"auto":40},"scale":{"N":20000000,"AOV":2000,"auto":55},"stress":{"N":1000000,"AOV":2500,"auto":40,"e1":0.02,"x3":5,"l3":90,"aband":60,"v4":0.005,"d2":0.05,"d7":0.05,"b6":1,"r1":0.2,"u1":0.1}};
+ var all=G.concat([].concat.apply([],M.map(function(m){return m.p;})));
+ function v(k){ return parseFloat(document.getElementById(k).value); }
+ var CUR='EUR';
+ function rate(){ return Math.max(1,parseFloat(document.getElementById('rate').value)||95); }
+ function rub(x){
+  var y = CUR==='EUR' ? x/rate() : x, sym = CUR==='EUR' ? '€' : 'RUB';
+  var a=Math.abs(y), s=y<0?'−':'';
+  if(a>=1e9) return s+sym+' '+(a/1e9).toFixed(2)+' bn';
+  if(a>=1e6) return s+sym+' '+(a/1e6).toFixed(2)+' m';
+  if(a>=1e3) return s+sym+' '+Math.round(a/1e3).toLocaleString('en-US')+'k';
+  return s+sym+' '+(a<10?a.toFixed(2):Math.round(a).toLocaleString('en-US'));
+ }
+ function isMoney(p){ return /RUB/.test(p[6]); }
+ function fmt(p){
+  var x=v(p[0]);
+  if(isMoney(p) && CUR==='EUR'){ var y=x/rate(); return y<10? y.toFixed(3).replace(/0+$/,'').replace(/.$/,'') : (y<1000? y.toFixed(1) : Math.round(y).toLocaleString('en-US')); }
+  return (p[4]<1? x.toLocaleString('en-US',{maximumFractionDigits:2}) : Math.round(x).toLocaleString('en-US'));
+ }
+ function unitLabel(p){ return isMoney(p) ? p[6].replace('RUB', CUR==='EUR'?'€':'RUB') : p[6]; }
+ function calc(){
+  all.forEach(function(p){ document.getElementById('v_'+p[0]).textContent=fmt(p); var u=document.getElementById('u_'+p[0]); if(u) u.textContent=unitLabel(p); });
+  var N=v('N'), AOV=v('AOV'), A=N*v('auto')/100, take=v('take')/100, marg=v('marg')/100, D=v('dispute'), ab=v('aband')/100;
+  var tm=take+marg, lostIncome=function(ops){ return ops*AOV*tm; };
+  var pct=function(x){ return (x*100).toLocaleString('en-US',{maximumFractionDigits:3})+'%'; };
+  var R={};
+  var fail=A*v('e1')/100;
+  R['C01']={fw: fail*AOV*v('o1')/100 + fail*D, st: lostIncome(A*(v('r1')+v('u1'))/100), gmv: A*(v('r1')+v('u1'))/100*AOV,
+   note:'Framework: overspend on agent error plus handling of each case. Strictness: legitimate declines from atomic consumption and state service unavailability.',
+   be:'strictness pays off while declines plus unavailability stay below '+pct(v('e1')/100*(AOV*v('o1')/100+D)/(AOV*tm))};
+  var d2=N*v('d2')/100;
+  R['C02']={fw: d2*D, st: d2*v('c2') + N*v('k2'), gmv:0,
+   note:'Framework: every partial-fulfilment dispute is handled manually. Strictness: cost of creating a record per transaction and cheap resolution by record.',
+   be:'pays off when partial-fulfilment disputes exceed '+pct(v('k2')/Math.max(1,D-v('c2')))};
+  var n3=N*v('n3')/100;
+  R['C03']={fw: n3*v('x3')/100*AOV, st: lostIncome(n3*v('l3')/100), gmv: n3*v('l3')/100*AOV,
+   note:'Framework: when participants diverge, the merchant ships without payment and loses the full amount. Strictness: such transactions are declined until the type registry is updated.',
+   be:'pays off while participants diverge in more than '+pct(v('l3')/100*tm)+' of cases'};
+  var v4=A*v('v4')/100;
+  R['C04']={fw: v4*(AOV+D), st: A*v('q4') + lostIncome(A*v('u4')/100), gmv: A*v('u4')/100*AOV,
+   note:'Framework: payment after revocation — refund and dispute. Strictness: a state query per autonomous transaction and declines when the check is unavailable.',
+   be:'pays off when post-revocation transactions exceed '+pct((v('q4')+v('u4')/100*AOV*tm)/(AOV+D))};
+  var i5=A*v('i5')/100;
+  R['C05']={fw: lostIncome(i5*v('s5')/100), st: N*v('k5'), gmv: -i5*v('s5')/100*AOV,
+   note:'Here our proposal is not stricter but more flexible: transactions the Framework loses to an invalid instrument are saved by choosing on the payment page.',
+   be:'pays off when invalid instruments exceed '+pct(N*v('k5')/Math.max(1,A*v('s5')/100*AOV*tm))};
+  var a6=N*v('a6')/100;
+  R['C06']={fw: a6*v('b6')/100*(AOV*0.5 + D), st: lostIncome(a6*v('h6')/100*ab), gmv: a6*v('h6')/100*ab*AOV,
+   note:'Framework: non-compliant agents operate on standard terms; their out-of-mandate actions become disputes. Strictness: their transactions require confirmation; some purchases are abandoned.',
+   be:'pays off when out-of-mandate actions by such agents exceed '+pct(v('h6')/100*ab*AOV*tm/(0.5*AOV+D))};
+  var d7=N*v('d7')/100;
+  R['C07']={fw: d7*v('f7'), st: d7*v('g7') + N*v('k7'), gmv:0,
+   note:'Framework: evidence for a dispute is sought through indirect data. Strictness: extra fields in each message and fast lookup by reference.',
+   be:'pays off when disputes exceed '+pct(v('k7')/Math.max(1,v('f7')-v('g7')))};
+  var F=0,T=0,GM=0,max=1;
+  M.forEach(function(m){ var r=R[m.z]; F+=r.fw; T+=r.st; GM+=r.gmv; max=Math.max(max,r.fw,r.st); });
+  M.forEach(function(m){
+   var r=R[m.z], net=r.fw-r.st;
+   document.getElementById('bf_'+m.z).style.width=(r.fw/max*100)+'%';
+   document.getElementById('bs_'+m.z).style.width=(r.st/max*100)+'%';
+   document.getElementById('nf_'+m.z).textContent=rub(r.fw);
+   document.getElementById('ns_'+m.z).textContent=rub(r.st);
+   document.getElementById('res_'+m.z).innerHTML= net>=0?'<span class="tag pos">strictness pays off: '+rub(net)+'</span>':'<span class="tag neg">strictness costs more: '+rub(-net)+'</span>';
+   document.getElementById('note_'+m.z).innerHTML=r.note+' Risk under the Framework falls on: '+m.who+'.<br><b>Break-even:</b> '+r.be+'.';
+  });
+  var NET=F-T;
+  document.getElementById('kFw').textContent=rub(F);
+  document.getElementById('kSt').textContent=rub(T);
+  document.getElementById('kNet').textContent=rub(NET);
+  document.getElementById('kNet').style.color= NET>=0?'var(--acc)':'var(--bad)';
+  document.getElementById('kNetS').textContent= NET>=0?'strictness better per month':'strictness costlier per month';
+  document.getElementById('kGmv').textContent=rub(Math.max(0,GM));
+  document.getElementById('kGmvS').textContent=(Math.max(0,GM)/(N*AOV)*100).toFixed(2)+'% of agentic turnover';
+  var rows='<tr><th>Comment</th><th>Mechanism</th><th>Losses per Framework</th><th>Cost of strictness</th><th>Lost turnover</th><th>Result</th></tr>';
+  M.forEach(function(m){ var r=R[m.z], net=r.fw-r.st;
+   rows+='<tr><td>'+m.z+'</td><td>'+m.t+'</td><td class="n">'+rub(r.fw)+'</td><td class="n">'+rub(r.st)+'</td><td class="n">'+(r.gmv<0?'+'+rub(-r.gmv)+' saved':rub(r.gmv))+'</td><td>'+(net>=0?'<span class="tag pos">pays off</span>':'<span class="tag neg">costlier</span>')+'</td></tr>'; });
+  rows+='<tr><td></td><td><b>Total</b></td><td class="n"><b>'+rub(F)+'</b></td><td class="n"><b>'+rub(T)+'</b></td><td class="n"><b>'+rub(Math.max(0,GM))+'</b></td><td><b>'+(NET>=0?'better by '+rub(NET):'costlier by '+rub(-NET))+'</b></td></tr>';
+  document.getElementById('sumt').innerHTML=rows;
+  var worse=M.filter(function(m){return R[m.z].fw<R[m.z].st;}).map(function(m){return m.z+' “'+m.t.toLowerCase()+'”';});
+  document.getElementById('concl').innerHTML='<b>What the model shows with the current parameters</b><ul>'+
+   '<li>Overall, stricter handling '+(NET>=0?'<b>pays off</b>: Framework losses exceed its cost by '+rub(NET)+' per month.':'<b>costs more</b> by '+rub(-NET)+' per month.')+'</li>'+
+   (worse.length?'<li>Strictness costs more than the Framework for: '+worse.join(', ')+'. These are candidates for a compromise, such as bounded use of cached state or permissive handling for non-payment constraints.</li>':'<li>With these parameters strictness pays off for every mechanism.</li>')+
+   '<li>Each mechanism shows a break-even value — the level of its key parameter at which strictness stops paying off. These are the values a pilot should measure first.</li>'+
+   '<li>The business cost of strictness concentrates in two places: declines on unrecognised constraints and purchases abandoned when confirmation is required.</li>'+
+   '<li>Permissive handling and strict handling burden different participants: the former as losses for issuers and merchants, the latter as lost sales across the market. The discussion is therefore about the allocation of risk, not only its size.</li></ul>';
+ }
+ all.forEach(function(p){ document.getElementById(p[0]).addEventListener('input',calc); });
+ [].forEach.call(document.querySelectorAll('#currency button'),function(b){ b.addEventListener('click',function(){
+  CUR=b.dataset.c; [].forEach.call(document.querySelectorAll('#currency button'),function(x){ x.setAttribute('aria-pressed',String(x===b)); }); calc(); });});
+ document.getElementById('rate').addEventListener('input',calc);
+ [].forEach.call(document.querySelectorAll('#presets button'),function(b){ b.addEventListener('click',function(){
+  var P=PRESETS[b.dataset.p]; Object.keys(P).forEach(function(k){ document.getElementById(k).value=P[k]; });
+  [].forEach.call(document.querySelectorAll('#presets button'),function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+  calc(); });});
+ calc();
+})();
+</script>
+</body></html>

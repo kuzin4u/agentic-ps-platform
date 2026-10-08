@@ -1,0 +1,31 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Доступ к agentic-core, если он станет закрытым (без секрета шаг ничего не делает)
+        env:
+          CORE_READ_TOKEN: ${{ secrets.CORE_READ_TOKEN }}
+        run: |
+          if [ -n "$CORE_READ_TOKEN" ]; then
+            git config --global url."https://x-access-token:${CORE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+      - name: Установка зависимостей
+        run: if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Проверка типов
+        run: npm run check
+      - name: Тесты и сценарии приёмки
+        run: npm test
+      - name: Поиск ключей и реквизитов
+        run: python3 .claude/hooks/scan_secrets.py .

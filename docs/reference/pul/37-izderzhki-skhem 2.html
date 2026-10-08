@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Издержки схем: слабости рамки против цены строгости</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--acc:#1f7a5a;--warn:#a35c13;--bad:#a32a2a;--ref:#1a3a8f;--fw:#8a8a80}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:15px;line-height:1.5}
+.wrap{max-width:1200px;margin:0 auto;padding:0 18px 70px}
+nav.strip{display:flex;flex-wrap:wrap;gap:4px;padding:14px 0 0}
+nav.strip a,nav.strip .cur{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 9px}
+nav.strip .cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+header.top{border-bottom:2px solid var(--ink);padding:18px 0 14px;margin-bottom:12px}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--acc);margin:0 0 6px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:27px;margin:0 0 8px;font-weight:600;line-height:1.15}
+h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:19px;margin:22px 0 8px}
+.tagline{color:var(--ink2);margin:0;max-width:88ch}
+a{color:var(--ref)}
+.warnbox{border-left:4px solid var(--warn);background:#fffdf5;padding:10px 14px;margin:12px 0;font-size:14px}
+.presets{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.presets button{font:500 12.5px 'IBM Plex Sans';background:#fff;border:1px solid var(--line);padding:7px 12px;cursor:pointer}
+.presets button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.params{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:8px}
+.par{background:var(--card);border:1px solid var(--line);padding:8px 10px}
+.par label{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.par label b{font-family:'IBM Plex Mono',monospace;font-size:12.5px;white-space:nowrap}
+.par input[type=range]{width:100%;margin:4px 0 0}
+.par .h{font-size:11.5px;color:var(--ink2)}
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+.kpi div{background:var(--card);border:1px solid var(--line);padding:10px 12px}
+.kpi .l{font-size:12px;color:var(--ink2)}
+.kpi .v{font-family:'IBM Plex Serif',Georgia,serif;font-size:23px;line-height:1.1}
+.kpi .s{font-size:11.5px;color:var(--ink2)}
+.kpi .fw .v{color:var(--bad)}.kpi .st .v{color:var(--warn)}.kpi .net .v{color:var(--acc)}
+.mech{background:var(--card);border:1px solid var(--line);margin:10px 0}
+.mech .hd{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;padding:9px 14px;background:#f1f1ec;border-bottom:1px solid var(--line)}
+.mech .hd h3{margin:0;font-size:15.5px}
+.mech .hd .z{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2)}
+.mech .hd .res{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:12px}
+.mech .body{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 14px}
+.mech .bars{grid-column:1/-1}
+.bar{display:grid;grid-template-columns:190px 1fr 120px;gap:8px;align-items:center;font-size:12.5px;margin:3px 0}
+.bar .track{background:#eeece6;height:14px;position:relative}
+.bar .fill{height:14px}
+.bar .fill.fw{background:var(--bad)}.bar .fill.st{background:var(--warn)}.bar .fill.gain{background:var(--acc)}
+.bar .num{font-family:'IBM Plex Mono',monospace;font-size:12px;text-align:right}
+.mech .note{font-size:12.5px;color:var(--ink2);grid-column:1/-1}
+.mech .note b{color:var(--ink)}
+.tag{font-family:'IBM Plex Mono',monospace;font-size:11px;padding:1px 6px;border:1px solid currentColor}
+.tag.pos{color:var(--acc)}.tag.neg{color:var(--bad)}.tag.nil{color:var(--ink2)}
+table.sum{width:100%;border-collapse:collapse;background:var(--card);font-size:13.2px;margin-top:8px}
+table.sum th,table.sum td{border:1px solid var(--line);padding:6px 8px;text-align:left}
+table.sum th{background:#ecece7;font-size:11.5px}
+table.sum td.n{font-family:'IBM Plex Mono',monospace;text-align:right;white-space:nowrap}
+.box{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--acc);padding:12px 16px;margin:14px 0;font-size:14.3px}
+.box b{display:block;margin-bottom:4px}
+.box ul{margin:4px 0 0;padding-left:20px}
+.box li{margin:5px 0}
+footer{margin-top:36px;border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+@media(max-width:900px){.kpi{grid-template-columns:1fr 1fr}.mech .body{grid-template-columns:1fr}.bar{grid-template-columns:120px 1fr 90px}h1{font-size:22px}}
+</style><link rel="icon" type="image/png" href="data:image/png;base64,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"><style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style><style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style><style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style></head><body><div class="wrap">
+
+<nav class="strip">
+ <a href="00-ukazatel-pula.html">Указатель пула</a>
+ <a href="36-spornye-mesta-ramki.html">Спорные места рамки</a>
+ <a href="28-tezisy-i-otzyv.html">Тезисы и замечания</a>
+ <a href="30-otkrytye-pozicii.html">Открытые позиции</a>
+ <a href="31-mvp.html">MVP</a>
+ <span class="cur" aria-current="page">Издержки схем</span>
+</nav>
+
+<header class="top">
+ <p class="eyebrow">параметрическая модель · 7 спорных мест · сравнение двух схем в рублях в месяц</p>
+ <h1>Во что обходится мягкость рамки и что мы теряем, требуя строгости</h1>
+ <p class="tagline">Для каждого из семи спорных мест посчитаны две величины: ожидаемые потери, если реализовать рамку в нынешней редакции, и цена нашей строгой схемы для бизнеса — упущенные продажи, брошенные покупки, операционные расходы. Параметры меняются ползунками; итог пересчитывается сразу.</p>
+</header>
+
+<div class="warnbox"><b>Это модель, а не прогноз.</b> Значения по умолчанию — экспертные допущения порядка величины. Реальные доли сбоев, отказов и споров появятся только из пилота: ровно эти параметры стоят в перечне того, что должен дать прогон (<a href="30-otkrytye-pozicii.html">открытые позиции</a>). Модель нужна, чтобы увидеть, какие параметры решают исход, и где строгость окупается, а где нет.</div>
+
+<h2>Масштаб и экономика</h2>
+<div class="presets" id="currency" style="margin-bottom:4px">
+ <span style="font-size:12.5px;color:var(--ink2);align-self:center">Валюта:</span>
+ <button data-c="RUB" aria-pressed="true">₽</button>
+ <button data-c="EUR" aria-pressed="false">€</button>
+ <label style="font-size:12.5px;color:var(--ink2);align-self:center;margin-left:8px">курс ₽ за € <input type="number" id="rate" value="95" min="10" max="500" step="1" style="width:64px;font:inherit;padding:3px 6px;border:1px solid var(--line)"></label>
+</div>
+<div class="presets" id="presets">
+ <button data-p="pilot">Пилот · 10 тыс. операций</button>
+ <button data-p="year" aria-pressed="true">Рынок через год · 1 млн</button>
+ <button data-p="scale">Масштаб · 20 млн</button>
+ <button data-p="stress">Стресс для строгости</button>
+</div>
+<div class="params"><div class="par "><label for="N">Агентных операций в месяц <b><span id="v_N"></span> <span id="u_N">шт</span></b></label>
+ <input type="range" id="N" min="1000" max="20000000" step="1000" value="1000000"><div class="h">Объём агентного трафика в контуре.</div></div><div class="par "><label for="AOV">Средний чек <b><span id="v_AOV"></span> <span id="u_AOV">₽</span></b></label>
+ <input type="range" id="AOV" min="100" max="50000" step="100" value="2500"><div class="h">Средняя сумма агентной операции.</div></div><div class="par "><label for="auto">Доля автономных операций <b><span id="v_auto"></span> <span id="u_auto">%</span></b></label>
+ <input type="range" id="auto" min="0" max="100" step="1" value="40"><div class="h">Операции без участия человека в момент оплаты.</div></div><div class="par "><label for="take">Доход системы с оборота <b><span id="v_take"></span> <span id="u_take">%</span></b></label>
+ <input type="range" id="take" min="0" max="3" step="0.05" value="0.4"><div class="h">Совокупная доля оператора и банков в сумме операции.</div></div><div class="par "><label for="marg">Маржа продавца <b><span id="v_marg"></span> <span id="u_marg">%</span></b></label>
+ <input type="range" id="marg" min="0" max="60" step="1" value="20"><div class="h">Для оценки потерь продавцов от сорванных продаж.</div></div><div class="par "><label for="dispute">Стоимость ручного разбора спора <b><span id="v_dispute"></span> <span id="u_dispute">₽</span></b></label>
+ <input type="range" id="dispute" min="0" max="20000" step="100" value="3000"><div class="h">Затраты банка на один спор без записей.</div></div><div class="par "><label for="aband">Отказ клиента при запросе подтверждения <b><span id="v_aband"></span> <span id="u_aband">%</span></b></label>
+ <input type="range" id="aband" min="0" max="100" step="1" value="25"><div class="h">Доля покупок, брошенных, когда агент просит человека подтвердить.</div></div></div>
+
+<div class="kpi" id="kpi">
+ <div class="fw"><div class="l">Потери по рамке</div><div class="v" id="kFw">—</div><div class="s">в месяц, все участники</div></div>
+ <div class="st"><div class="l">Цена строгой схемы</div><div class="v" id="kSt">—</div><div class="s">упущенный доход и расходы</div></div>
+ <div class="net"><div class="l">Чистый эффект строгости</div><div class="v" id="kNet">—</div><div class="s" id="kNetS">в месяц</div></div>
+ <div><div class="l">Упущенный оборот</div><div class="v" id="kGmv">—</div><div class="s" id="kGmvS">из-за строгих отказов</div></div>
+</div>
+
+<h2>По механизмам</h2>
+<div id="mechs">
+<section class="mech" data-z="З01">
+ <div class="hd"><span class="z">З01</span><h3>Состояние бюджета у агента</h3><span class="res" id="res_З01"></span></div>
+ <div class="body">
+  <div class="par "><label for="e1">Сбой учёта остатка агентом <b><span id="v_e1"></span> <span id="u_e1">% авт. операций</span></b></label>
+ <input type="range" id="e1" min="0" max="2" step="0.01" value="0.2"></div><div class="par "><label for="o1">Средний перерасход при сбое <b><span id="v_o1"></span> <span id="u_o1">% чека</span></b></label>
+ <input type="range" id="o1" min="0" max="100" step="5" value="40"></div><div class="par "><label for="r1">Легитимные отказы из-за неделимого расходования <b><span id="v_r1"></span> <span id="u_r1">% авт. операций</span></b></label>
+ <input type="range" id="r1" min="0" max="1" step="0.01" value="0.05"></div><div class="par "><label for="u1">Недоступность сервиса состояния <b><span id="v_u1"></span> <span id="u_u1">% авт. операций</span></b></label>
+ <input type="range" id="u1" min="0" max="1" step="0.01" value="0.03"></div>
+  <div class="bars">
+   <div class="bar"><span>Потери по рамке</span><div class="track"><div class="fill fw" id="bf_З01"></div></div><span class="num" id="nf_З01"></span></div>
+   <div class="bar"><span>Цена строгой схемы</span><div class="track"><div class="fill st" id="bs_З01"></div></div><span class="num" id="ns_З01"></span></div>
+  </div>
+  <div class="note" id="note_З01"></div>
+ </div>
+</section><section class="mech" data-z="З02">
+ <div class="hd"><span class="z">З02</span><h3>Запись об исполнении</h3><span class="res" id="res_З02"></span></div>
+ <div class="body">
+  <div class="par "><label for="d2">Споры о частичном исполнении <b><span id="v_d2"></span> <span id="u_d2">% операций</span></b></label>
+ <input type="range" id="d2" min="0" max="3" step="0.05" value="0.3"></div><div class="par "><label for="c2">Стоимость спора с записью <b><span id="v_c2"></span> <span id="u_c2">₽</span></b></label>
+ <input type="range" id="c2" min="0" max="5000" step="50" value="300"></div><div class="par "><label for="k2">Затраты на формирование записи <b><span id="v_k2"></span> <span id="u_k2">₽ на операцию</span></b></label>
+ <input type="range" id="k2" min="0" max="5" step="0.05" value="0.1"></div>
+  <div class="bars">
+   <div class="bar"><span>Потери по рамке</span><div class="track"><div class="fill fw" id="bf_З02"></div></div><span class="num" id="nf_З02"></span></div>
+   <div class="bar"><span>Цена строгой схемы</span><div class="track"><div class="fill st" id="bs_З02"></div></div><span class="num" id="ns_З02"></span></div>
+  </div>
+  <div class="note" id="note_З02"></div>
+ </div>
+</section><section class="mech" data-z="З03">
+ <div class="hd"><span class="z">З03</span><h3>Строгий режим для неизвестных ограничений</h3><span class="res" id="res_З03"></span></div>
+ <div class="body">
+  <div class="par "><label for="n3">Мандаты с новыми типами ограничений <b><span id="v_n3"></span> <span id="u_n3">% операций</span></b></label>
+ <input type="range" id="n3" min="0" max="10" step="0.1" value="1"></div><div class="par "><label for="x3">Расхождение участников в мягком режиме <b><span id="v_x3"></span> <span id="u_x3">%</span></b></label>
+ <input type="range" id="x3" min="0" max="100" step="5" value="30"></div><div class="par "><label for="l3">Потерянные продажи при строгом отказе <b><span id="v_l3"></span> <span id="u_l3">% таких операций</span></b></label>
+ <input type="range" id="l3" min="0" max="100" step="5" value="60"></div>
+  <div class="bars">
+   <div class="bar"><span>Потери по рамке</span><div class="track"><div class="fill fw" id="bf_З03"></div></div><span class="num" id="nf_З03"></span></div>
+   <div class="bar"><span>Цена строгой схемы</span><div class="track"><div class="fill st" id="bs_З03"></div></div><span class="num" id="ns_З03"></span></div>
+  </div>
+  <div class="note" id="note_З03"></div>
+ </div>
+</section><section class="mech" data-z="З04">
+ <div class="hd"><span class="z">З04</span><h3>Проверка отзыва в момент операции</h3><span class="res" id="res_З04"></span></div>
+ <div class="body">
+  <div class="par "><label for="v4">Операции после отзыва мандата <b><span id="v_v4"></span> <span id="u_v4">% авт. операций</span></b></label>
+ <input type="range" id="v4" min="0" max="2" step="0.01" value="0.05"></div><div class="par "><label for="q4">Стоимость запроса состояния <b><span id="v_q4"></span> <span id="u_q4">₽ на операцию</span></b></label>
+ <input type="range" id="q4" min="0" max="1" step="0.01" value="0.03"></div><div class="par "><label for="u4">Отказы при недоступности проверки <b><span id="v_u4"></span> <span id="u_u4">% авт. операций</span></b></label>
+ <input type="range" id="u4" min="0" max="1" step="0.01" value="0.02"></div>
+  <div class="bars">
+   <div class="bar"><span>Потери по рамке</span><div class="track"><div class="fill fw" id="bf_З04"></div></div><span class="num" id="nf_З04"></span></div>
+   <div class="bar"><span>Цена строгой схемы</span><div class="track"><div class="fill st" id="bs_З04"></div></div><span class="num" id="ns_З04"></span></div>
+  </div>
+  <div class="note" id="note_З04"></div>
+ </div>
+</section><section class="mech" data-z="З05">
+ <div class="hd"><span class="z">З05</span><h3>Выбор инструмента в момент оплаты</h3><span class="res" id="res_З05"></span></div>
+ <div class="body">
+  <div class="par "><label for="i5">Инструмент недействителен к исполнению <b><span id="v_i5"></span> <span id="u_i5">% авт. операций</span></b></label>
+ <input type="range" id="i5" min="0" max="10" step="0.1" value="1.5"></div><div class="par "><label for="s5">Сделки, спасённые выбором инструмента <b><span id="v_s5"></span> <span id="u_s5">%</span></b></label>
+ <input type="range" id="s5" min="0" max="100" step="5" value="70"></div><div class="par "><label for="k5">Доработка платёжной страницы <b><span id="v_k5"></span> <span id="u_k5">₽ на операцию</span></b></label>
+ <input type="range" id="k5" min="0" max="2" step="0.05" value="0.05"></div>
+  <div class="bars">
+   <div class="bar"><span>Потери по рамке</span><div class="track"><div class="fill fw" id="bf_З05"></div></div><span class="num" id="nf_З05"></span></div>
+   <div class="bar"><span>Цена строгой схемы</span><div class="track"><div class="fill st" id="bs_З05"></div></div><span class="num" id="ns_З05"></span></div>
+  </div>
+  <div class="note" id="note_З05"></div>
+ </div>
+</section><section class="mech" data-z="З06">
+ <div class="hd"><span class="z">З06</span><h3>История исполнения агента</h3><span class="res" id="res_З06"></span></div>
+ <div class="body">
+  <div class="par "><label for="a6">Доля операций агентов-нарушителей <b><span id="v_a6"></span> <span id="u_a6">%</span></b></label>
+ <input type="range" id="a6" min="0" max="20" step="0.5" value="3"></div><div class="par "><label for="b6">Выход за мандат у таких агентов <b><span id="v_b6"></span> <span id="u_b6">%</span></b></label>
+ <input type="range" id="b6" min="0" max="30" step="0.5" value="5"></div><div class="par "><label for="h6">Их операции переводятся на подтверждение <b><span id="v_h6"></span> <span id="u_h6">%</span></b></label>
+ <input type="range" id="h6" min="0" max="100" step="5" value="100"></div>
+  <div class="bars">
+   <div class="bar"><span>Потери по рамке</span><div class="track"><div class="fill fw" id="bf_З06"></div></div><span class="num" id="nf_З06"></span></div>
+   <div class="bar"><span>Цена строгой схемы</span><div class="track"><div class="fill st" id="bs_З06"></div></div><span class="num" id="ns_З06"></span></div>
+  </div>
+  <div class="note" id="note_З06"></div>
+ </div>
+</section><section class="mech" data-z="З07">
+ <div class="hd"><span class="z">З07</span><h3>Индикатор со ссылкой на доказательства</h3><span class="res" id="res_З07"></span></div>
+ <div class="body">
+  <div class="par "><label for="d7">Споры по агентным операциям <b><span id="v_d7"></span> <span id="u_d7">% операций</span></b></label>
+ <input type="range" id="d7" min="0" max="3" step="0.05" value="0.4"></div><div class="par "><label for="f7">Поиск доказательств без ссылки <b><span id="v_f7"></span> <span id="u_f7">₽ на спор</span></b></label>
+ <input type="range" id="f7" min="0" max="10000" step="100" value="1500"></div><div class="par "><label for="g7">Поиск доказательств по ссылке <b><span id="v_g7"></span> <span id="u_g7">₽ на спор</span></b></label>
+ <input type="range" id="g7" min="0" max="5000" step="50" value="150"></div><div class="par "><label for="k7">Доп. поля в сообщении <b><span id="v_k7"></span> <span id="u_k7">₽ на операцию</span></b></label>
+ <input type="range" id="k7" min="0" max="1" step="0.01" value="0.02"></div>
+  <div class="bars">
+   <div class="bar"><span>Потери по рамке</span><div class="track"><div class="fill fw" id="bf_З07"></div></div><span class="num" id="nf_З07"></span></div>
+   <div class="bar"><span>Цена строгой схемы</span><div class="track"><div class="fill st" id="bs_З07"></div></div><span class="num" id="ns_З07"></span></div>
+  </div>
+  <div class="note" id="note_З07"></div>
+ </div>
+</section>
+</div>
+
+<h2>Сводка</h2>
+<table class="sum"><tbody id="sumt"></tbody></table>
+
+<div class="box" id="concl"></div>
+
+<footer>
+<p>Связанные материалы: <a href="36-spornye-mesta-ramki.html">спорные места рамки на примере сделки</a> · <a href="28-tezisy-i-otzyv.html">замечания к черновику</a> · <a href="30-otkrytye-pozicii.html">параметры, которые даёт пилот</a> · <a href="31-mvp.html">постановка MVP</a></p>
+<p class="note">Потери по рамке — ожидаемые убытки и расходы на споры; цена строгости — упущенный доход системы и маржа продавцов от сорванных продаж плюс операционные расходы. Оборот указан отдельно, в доход не пересчитан. Исходные значения хранятся в рублях; переключатель валюты пересчитывает все показанные суммы по указанному курсу.</p>
+<div id="pool-logo">
+ <img src="data:image/png;base64,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" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a> · <a href="18-svyazka.html">сквозная связка</a></div>
+</div></footer>
+
+</div>
+<script>
+(function(){
+ var G=[["N","Агентных операций в месяц",1000,20000000,1000,1000000,"шт","Объём агентного трафика в контуре."],["AOV","Средний чек",100,50000,100,2500,"₽","Средняя сумма агентной операции."],["auto","Доля автономных операций",0,100,1,40,"%","Операции без участия человека в момент оплаты."],["take","Доход системы с оборота",0,3,0.05,0.4,"%","Совокупная доля оператора и банков в сумме операции."],["marg","Маржа продавца",0,60,1,20,"%","Для оценки потерь продавцов от сорванных продаж."],["dispute","Стоимость ручного разбора спора",0,20000,100,3000,"₽","Затраты банка на один спор без записей."],["aband","Отказ клиента при запросе подтверждения",0,100,1,25,"%","Доля покупок, брошенных, когда агент просит человека подтвердить."]], M=[{"z":"З01","t":"Состояние бюджета у агента","p":[["e1","Сбой учёта остатка агентом",0,2,0.01,0.2,"% авт. операций"],["o1","Средний перерасход при сбое",0,100,5,40,"% чека"],["r1","Легитимные отказы из-за неделимого расходования",0,1,0.01,0.05,"% авт. операций"],["u1","Недоступность сервиса состояния",0,1,0.01,0.03,"% авт. операций"]],"who":"банк плательщика"},{"z":"З02","t":"Запись об исполнении","p":[["d2","Споры о частичном исполнении",0,3,0.05,0.3,"% операций"],["c2","Стоимость спора с записью",0,5000,50,300,"₽"],["k2","Затраты на формирование записи",0,5,0.05,0.1,"₽ на операцию"]],"who":"банки и продавцы"},{"z":"З03","t":"Строгий режим для неизвестных ограничений","p":[["n3","Мандаты с новыми типами ограничений",0,10,0.1,1,"% операций"],["x3","Расхождение участников в мягком режиме",0,100,5,30,"%"],["l3","Потерянные продажи при строгом отказе",0,100,5,60,"% таких операций"]],"who":"продавцы"},{"z":"З04","t":"Проверка отзыва в момент операции","p":[["v4","Операции после отзыва мандата",0,2,0.01,0.05,"% авт. операций"],["q4","Стоимость запроса состояния",0,1,0.01,0.03,"₽ на операцию"],["u4","Отказы при недоступности проверки",0,1,0.01,0.02,"% авт. операций"]],"who":"банк плательщика"},{"z":"З05","t":"Выбор инструмента в момент оплаты","p":[["i5","Инструмент недействителен к исполнению",0,10,0.1,1.5,"% авт. операций"],["s5","Сделки, спасённые выбором инструмента",0,100,5,70,"%"],["k5","Доработка платёжной страницы",0,2,0.05,0.05,"₽ на операцию"]],"who":"продавцы и клиенты"},{"z":"З06","t":"История исполнения агента","p":[["a6","Доля операций агентов-нарушителей",0,20,0.5,3,"%"],["b6","Выход за мандат у таких агентов",0,30,0.5,5,"%"],["h6","Их операции переводятся на подтверждение",0,100,5,100,"%"]],"who":"банки и клиенты"},{"z":"З07","t":"Индикатор со ссылкой на доказательства","p":[["d7","Споры по агентным операциям",0,3,0.05,0.4,"% операций"],["f7","Поиск доказательств без ссылки",0,10000,100,1500,"₽ на спор"],["g7","Поиск доказательств по ссылке",0,5000,50,150,"₽ на спор"],["k7","Доп. поля в сообщении",0,1,0.01,0.02,"₽ на операцию"]],"who":"банки"}], PRESETS={"pilot":{"N":10000,"AOV":2500,"auto":30},"year":{"N":1000000,"AOV":2500,"auto":40},"scale":{"N":20000000,"AOV":2000,"auto":55},"stress":{"N":1000000,"AOV":2500,"auto":40,"e1":0.02,"x3":5,"l3":90,"aband":60,"v4":0.005,"d2":0.05,"d7":0.05,"b6":1,"r1":0.2,"u1":0.1}};
+ var all=G.concat([].concat.apply([],M.map(function(m){return m.p;})));
+ function v(k){ return parseFloat(document.getElementById(k).value); }
+ var CUR='RUB';
+ function rate(){ return Math.max(1,parseFloat(document.getElementById('rate').value)||95); }
+ function rub(x){
+  var y = CUR==='EUR' ? x/rate() : x, sym = CUR==='EUR' ? '€' : '₽';
+  var a=Math.abs(y), s=y<0?'−':'';
+  if(a>=1e9) return s+(a/1e9).toFixed(2).replace('.',',')+' млрд '+sym;
+  if(a>=1e6) return s+(a/1e6).toFixed(2).replace('.',',')+' млн '+sym;
+  if(a>=1e3) return s+Math.round(a/1e3).toLocaleString('ru-RU')+' тыс. '+sym;
+  return s+(a<10?a.toFixed(2).replace('.',','):Math.round(a).toLocaleString('ru-RU'))+' '+sym;
+ }
+ function isMoney(p){ return /₽/.test(p[6]); }
+ function fmt(p){
+  var x=v(p[0]);
+  if(isMoney(p) && CUR==='EUR'){ var y=x/rate(); return (y<10? y.toFixed(3).replace(/0+$/,'').replace(/.$/,'') : (y<1000? y.toFixed(1) : Math.round(y).toLocaleString('ru-RU'))).replace('.',','); }
+  return (p[4]<1? x.toLocaleString('ru-RU',{maximumFractionDigits:2}) : Math.round(x).toLocaleString('ru-RU'));
+ }
+ function unitLabel(p){ return isMoney(p) ? p[6].replace('₽', CUR==='EUR'?'€':'₽') : p[6]; }
+
+ function calc(){
+  all.forEach(function(p){ document.getElementById('v_'+p[0]).textContent=fmt(p); var u=document.getElementById('u_'+p[0]); if(u) u.textContent=unitLabel(p); });
+  var N=v('N'), AOV=v('AOV'), A=N*v('auto')/100, take=v('take')/100, marg=v('marg')/100, D=v('dispute'), ab=v('aband')/100;
+  var lostIncome=function(ops){ return ops*AOV*(take+marg); };   // упущенный доход системы и продавцов
+  var R={};
+  // З01
+  var fail=A*v('e1')/100;
+  R['З01']={fw: fail*AOV*v('o1')/100 + fail*D,
+            st: lostIncome(A*(v('r1')+v('u1'))/100),
+            gmv: A*(v('r1')+v('u1'))/100*AOV,
+            note:'По рамке: перерасход при сбое агента плюс разбор каждого случая. Строгость: отказы добросовестных операций из-за неделимого расходования и недоступности сервиса состояния.'};
+  // З02
+  var d2=N*v('d2')/100;
+  R['З02']={fw: d2*D, st: d2*v('c2') + N*v('k2'), gmv:0,
+            note:'По рамке: каждый спор о частичном исполнении разбирается вручную. Строгость: затраты на формирование записи по каждой операции и дешёвый разбор по записи.'};
+  // З03
+  var n3=N*v('n3')/100;
+  R['З03']={fw: n3*v('x3')/100*AOV,
+            st: lostIncome(n3*v('l3')/100),
+            gmv: n3*v('l3')/100*AOV,
+            note:'По рамке: при расхождении участников продавец отгружает без оплаты и теряет полную сумму. Строгость: такие операции отклоняются до обновления реестра типов — часть продаж теряется.'};
+  // З04
+  var v4=A*v('v4')/100;
+  R['З04']={fw: v4*(AOV+D),
+            st: A*v('q4') + lostIncome(A*v('u4')/100),
+            gmv: A*v('u4')/100*AOV,
+            note:'По рамке: платёж после отзыва — возврат клиенту и спор. Строгость: запрос состояния на каждую автономную операцию и отказы при недоступности проверки.'};
+  // З05 — здесь наше предложение мягче рамки
+  var i5=A*v('i5')/100;
+  R['З05']={fw: lostIncome(i5*v('s5')/100),
+            st: N*v('k5'),
+            gmv: -i5*v('s5')/100*AOV,
+            note:'Здесь наша схема не строже, а гибче: сделки, которые рамка срывает из-за недействительного инструмента, спасаются выбором на платёжной странице. Цена — доработка страницы.'};
+  // З06
+  var a6=N*v('a6')/100;
+  R['З06']={fw: a6*v('b6')/100*(AOV*0.5 + D),
+            st: lostIncome(a6*v('h6')/100*ab),
+            gmv: a6*v('h6')/100*ab*AOV,
+            note:'По рамке: агенты-нарушители работают на общих условиях, их выходы за мандат превращаются в споры. Строгость: их операции уходят на подтверждение, часть покупок клиенты бросают.'};
+  // З07
+  var d7=N*v('d7')/100;
+  R['З07']={fw: d7*v('f7'), st: d7*v('g7') + N*v('k7'), gmv:0,
+            note:'По рамке: доказательства по спору ищут по косвенным данным. Строгость: дополнительные поля в каждом сообщении и быстрый поиск по ссылке.'};
+
+  var tm=take+marg, pct=function(x){ return (x*100).toLocaleString('ru-RU',{maximumFractionDigits:3})+'%'; };
+  R['З01'].be='строгость окупается, пока суммарная доля ложных отказов и недоступности ниже '+pct(v('e1')/100*(AOV*v('o1')/100+D)/(AOV*tm));
+  R['З02'].be='окупается при доле споров о частичном исполнении выше '+pct(v('k2')/Math.max(1,D-v('c2')));
+  R['З03'].be='окупается, пока участники в мягком режиме расходятся чаще '+pct(v('l3')/100*tm)+' случаев';
+  R['З04'].be='окупается при доле операций после отзыва выше '+pct((v('q4')+v('u4')/100*AOV*tm)/(AOV+D));
+  R['З05'].be='окупается при доле недействительных инструментов выше '+pct(N*v('k5')/Math.max(1,A*v('s5')/100*AOV*tm)*A/Math.max(1,A));
+  R['З06'].be='окупается при доле выходов за мандат у нарушителей выше '+pct(v('h6')/100*ab*AOV*tm/(0.5*AOV+D));
+  R['З07'].be='окупается при доле споров выше '+pct(v('k7')/Math.max(1,v('f7')-v('g7')));
+  var F=0,T=0,GM=0, max=1;
+  M.forEach(function(m){ var r=R[m.z]; F+=r.fw; T+=r.st; GM+=r.gmv; max=Math.max(max,r.fw,r.st); });
+  M.forEach(function(m){
+   var r=R[m.z], net=r.fw-r.st;
+   document.getElementById('bf_'+m.z).style.width=(r.fw/max*100)+'%';
+   document.getElementById('bs_'+m.z).style.width=(r.st/max*100)+'%';
+   document.getElementById('nf_'+m.z).textContent=rub(r.fw);
+   document.getElementById('ns_'+m.z).textContent=rub(r.st);
+   var tag = Math.abs(net)<1 ? '<span class="tag nil">паритет</span>' : (net>0?'<span class="tag pos">строгость окупается: '+rub(net)+'</span>':'<span class="tag neg">строгость дороже: '+rub(-net)+'</span>');
+   document.getElementById('res_'+m.z).innerHTML=tag;
+   document.getElementById('note_'+m.z).innerHTML=r.note+' Риск по рамке несёт: '+m.who+'.<br><b>Точка безубыточности:</b> '+r.be+'.';
+  });
+  var NET=F-T;
+  document.getElementById('kFw').textContent=rub(F);
+  document.getElementById('kSt').textContent=rub(T);
+  document.getElementById('kNet').textContent=rub(NET);
+  document.getElementById('kNetS').textContent= NET>=0 ? 'строгость выгоднее в месяц' : 'строгость дороже в месяц';
+  document.getElementById('kNet').style.color= NET>=0 ? 'var(--acc)' : 'var(--bad)';
+  document.getElementById('kGmv').textContent=rub(Math.max(0,GM));
+  var turn=N*AOV;
+  document.getElementById('kGmvS').textContent= turn ? ('это '+(Math.max(0,GM)/turn*100).toFixed(2).replace('.',',')+'% агентного оборота') : '';
+
+  var rows='<tr><th>Замеч.</th><th>Механизм</th><th>Потери по рамке</th><th>Цена строгости</th><th>Упущенный оборот</th><th>Итог</th></tr>';
+  M.forEach(function(m){ var r=R[m.z], net=r.fw-r.st;
+   rows+='<tr><td>'+m.z+'</td><td>'+m.t+'</td><td class="n">'+rub(r.fw)+'</td><td class="n">'+rub(r.st)+'</td><td class="n">'+(r.gmv<0?'+'+rub(-r.gmv)+' спасено':rub(r.gmv))+'</td><td>'+(net>=0?'<span class="tag pos">окупается</span>':'<span class="tag neg">дороже</span>')+'</td></tr>'; });
+  rows+='<tr><td></td><td><b>Итого</b></td><td class="n"><b>'+rub(F)+'</b></td><td class="n"><b>'+rub(T)+'</b></td><td class="n"><b>'+rub(Math.max(0,GM))+'</b></td><td><b>'+(NET>=0?'выгоднее на '+rub(NET):'дороже на '+rub(-NET))+'</b></td></tr>';
+  document.getElementById('sumt').innerHTML=rows;
+
+  // вывод
+  var worse=M.filter(function(m){return R[m.z].fw<R[m.z].st;}).map(function(m){return m.z+' «'+m.t.toLowerCase()+'»';});
+  var best=M.slice().sort(function(a,b){return (R[b.z].fw-R[b.z].st)-(R[a.z].fw-R[a.z].st);})[0];
+  document.getElementById('concl').innerHTML='<b>Что показывает расчёт при текущих параметрах</b><ul>'+
+   '<li>Строгая схема в целом '+(NET>=0?'<b>окупается</b>: потери по рамке выше её цены на '+rub(NET)+' в месяц.':'<b>обходится дороже</b> на '+rub(-NET)+' в месяц.')+'</li>'+
+   '<li>Наибольший выигрыш даёт '+best.z+' «'+best.t.toLowerCase()+'».</li>'+
+   (worse.length?'<li>Строгость дороже рамки в: '+worse.join(', ')+'. Здесь стоит искать компромисс — например, работу по кэшу состояния или мягкий режим для неплатёжных ограничений.</li>':'<li>При этих параметрах строгость окупается по всем механизмам.</li>')+
+   '<li>У каждого механизма указана точка безубыточности — значение ключевого параметра, при котором строгость перестаёт окупаться. Это и есть то, что надо измерить в пилоте в первую очередь: не абсолютные значения, а по какую сторону порога мы находимся.</li>'+
+   '<li>Бизнес теряет главным образом на двух вещах: строгих отказах при неизвестных ограничениях и брошенных покупках при переводе на подтверждение. Оба параметра нельзя назначить — их даёт пилот.</li>'+
+   '<li>Потери по рамке и цена строгости ложатся на разных участников: мягкость бьёт по банкам и продавцам как убытки, строгость — по всему рынку как упущенные продажи. Поэтому спор о строгости — это спор о распределении риска, а не только о его величине.</li></ul>';
+ }
+ all.forEach(function(p){ document.getElementById(p[0]).addEventListener('input',calc); });
+ [].forEach.call(document.querySelectorAll('#currency button'),function(b){ b.addEventListener('click',function(){
+  CUR=b.dataset.c; [].forEach.call(document.querySelectorAll('#currency button'),function(x){ x.setAttribute('aria-pressed',String(x===b)); }); calc(); });});
+ document.getElementById('rate').addEventListener('input',calc);
+ [].forEach.call(document.querySelectorAll('#presets button'),function(b){ b.addEventListener('click',function(){
+  var P=PRESETS[b.dataset.p]; Object.keys(P).forEach(function(k){ document.getElementById(k).value=P[k]; });
+  [].forEach.call(document.querySelectorAll('#presets button'),function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+  calc(); });});
+ calc();
+})();
+</script>
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script><script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script></body></html>
