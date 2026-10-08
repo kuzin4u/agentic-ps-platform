@@ -15,4 +15,5 @@
 | [`ROADMAP.md`](ROADMAP.md) | 7 этапов, 27 сессий |
 | [`STATUS.md`](STATUS.md) | Состояние и следующая сессия |
 | [`GLOSSARY.md`](GLOSSARY.md) | Термины |
+| [`../reference/joint-plan.md`](../reference/joint-plan.md) | Совместный план с агентом и agentic-core: коды задач PS/AG/CO, связи, точки сверки С0–С5 |
 | [`../reference/`](../reference/) | Обзорная страница и исходный пул (только чтение) |
