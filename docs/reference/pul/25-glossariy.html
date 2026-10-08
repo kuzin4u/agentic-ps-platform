@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Глоссарий агентной коммерции</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--acc:#1f7a5a;--warn:#a35c13;--free:#7a1f6a;--ref:#1a3a8f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:16px;line-height:1.55}
+.wrap{max-width:1040px;margin:0 auto;padding:0 18px 70px}
+nav.strip{display:flex;flex-wrap:wrap;gap:4px;padding:14px 0 0}
+nav.strip a,nav.strip .cur{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 9px}
+nav.strip .cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+header.top{border-bottom:2px solid var(--ink);padding:18px 0 14px;margin-bottom:16px}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--acc);margin:0 0 6px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:28px;margin:0 0 8px;font-weight:600;line-height:1.15}
+.tagline{color:var(--ink2);margin:0;max-width:80ch}
+h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:19px;margin:26px 0 6px;font-weight:600}
+a{color:var(--ref)}
+.bar{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin:14px 0 8px}
+.bar button{font:500 12.5px 'IBM Plex Sans';background:#fff;border:1px solid var(--line);padding:6px 10px;cursor:pointer;color:var(--ink)}
+.bar button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.bar input{font:400 13.5px 'IBM Plex Sans';padding:7px 10px;border:1px solid var(--line);min-width:230px}
+.bar .cnt{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2)}
+button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(--ref);outline-offset:2px}
+.term{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--line);padding:11px 14px;margin:7px 0;scroll-margin-top:60px}
+.term.sub{border-left-color:#1a3a8f}.term.pow{border-left-color:#7a1f6a}.term.op{border-left-color:#a35c13}
+.term.adm{border-left-color:#1f7a5a}.term.pay{border-left-color:#16202a}.term.mod{border-left-color:#8a8a80}.term.intl{border-left-color:#3a6b8f}
+.term h3{margin:0 0 2px;font-size:16px;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.term .en{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);font-weight:400}
+.term p{margin:0 0 6px;font-size:14.4px;max-width:88ch}
+.term .refs a{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1px solid var(--line);padding:1px 6px;margin-right:4px;text-decoration:none;display:inline-block;margin-bottom:3px}
+.term .refs a:hover{border-color:var(--ink)}
+.term.hidden{display:none}
+.gh{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);margin:18px 0 2px}
+.gh.hidden{display:none}
+.note{font-size:13px;color:var(--ink2)}
+footer{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+@media(max-width:700px){h1{font-size:23px}}
+</style><link rel="icon" type="image/png" href="data:image/png;base64,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"><style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style><style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style><style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style></head><body><div class="wrap">
+
+<nav class="strip">
+ <a href="00-ukazatel-pula.html">Указатель пула</a>
+ <a href="24-scenariy-operacii.html">Сквозной пример</a>
+ <a href="01-ierarhiya-tranzakcii.html">Стадии транзакции</a>
+ <a href="21-drafty-dokumentov.html">Драфты</a>
+ <a href="03-reestr-dokumentov.html">Реестр документов</a>
+ <span class="cur" aria-current="page">Глоссарий</span>
+</nav>
+
+<header class="top">
+ <p class="eyebrow">Глоссарий пула · 96 терминов в семи группах</p>
+ <h1>Глоссарий агентной коммерции</h1>
+ <p class="tagline">Все термины, которыми пользуются материалы пула: субъекты, полномочия, операция, допуск, расчёт, понятия самой модели и международные эквиваленты. У каждого термина — определение в том значении, в каком он употребляется в планах и драфтах, и ссылки на нормы, функции и роли.</p>
+</header>
+
+<div class="bar">
+ <input type="search" id="q" placeholder="поиск по термину и определению" aria-label="Поиск по глоссарию">
+ <button data-g="all" aria-pressed="true">Все</button>
+ <button data-g="sub" aria-pressed="false">Субъекты</button><button data-g="pow" aria-pressed="false">Полномочия и мандаты</button><button data-g="op" aria-pressed="false">Операция и её признаки</button><button data-g="adm" aria-pressed="false">Допуск и надзор за агентами</button><button data-g="pay" aria-pressed="false">Расчёт и платёжные рельсы</button><button data-g="mod" aria-pressed="false">Термины модели пула</button><button data-g="intl" aria-pressed="false">Международные термины</button>
+ <span class="cnt" id="cnt"></span>
+</div>
+
+
+<h2 class="gh-title" data-g="sub">Субъекты <span class="note">15</span></h2>
+<article class="term sub" data-g="sub" id="эквайрер">
+ <h3>Эквайрер<span class="en">acquirer</span></h3>
+ <p>Банк, обслуживающий торгово-сервисное предприятие. Через договор с ним до продавца доходят требования платёжной системы.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A5" title="драфт A5">A5</a><a href="03-reestr-dokumentov.html#D27" title="документ D27">D27</a></div>
+</article><article class="term sub" data-g="sub" id="эмитент">
+ <h3>Эмитент<span class="en">issuer</span></h3>
+ <p>Банк, выпустивший платёжный инструмент клиенту; проверяет ограничения полномочий и подтверждает операцию.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A3" title="драфт A3">A3</a><a href="03-reestr-dokumentov.html#D27" title="документ D27">D27</a></div>
+</article><article class="term sub" data-g="sub" id="агент">
+ <h3>Агент<span class="en">agent</span></h3>
+ <p>Программное средство, совершающее действия по поручению клиента в пределах выданного мандата. Само по себе в реестр не включается — включается его оператор.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A1" title="драфт A1">A1</a><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="02-funkcii-i-roli.html#F1" title="функция F1">F1</a></div>
+</article><article class="term sub" data-g="sub" id="оператор-агента">
+ <h3>Оператор агента<span class="en">agent operator</span></h3>
+ <p>Юридическое лицо, отвечающее за агента перед платёжной системой: ключи, поведение, участие в разборе инцидентов. Именно оно получает допуск и код.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="20-plany-dokumentov.html#P2" title="план P2">P2</a><a href="02-funkcii-i-roli.html#role=R1" title="роль R1">R1</a></div>
+</article><article class="term sub" data-g="sub" id="принципал">
+ <h3>Принципал<span class="en">principal</span></h3>
+ <p>Клиент, выдавший мандат. В правовой конструкции — представляемый: агент действует как его представитель.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A4" title="драфт A4">A4</a><a href="20-plany-dokumentov.html#P4" title="план P4">P4</a><a href="02-funkcii-i-roli.html#F7" title="функция F7">F7</a></div>
+</article><article class="term sub" data-g="sub" id="агент-покупателя">
+ <h3>Агент покупателя<span class="en">buyer agent</span></h3>
+ <p>Класс агента, действующего по мандату клиента: вправе инициировать заказ и платёж в его пределах.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="20-plany-dokumentov.html#P2" title="план P2">P2</a></div>
+</article><article class="term sub" data-g="sub" id="агент-продавца">
+ <h3>Агент продавца<span class="en">merchant agent</span></h3>
+ <p>Класс агента, действующего от имени торгово-сервисного предприятия: согласовывает условия, но не инициирует платёж от имени покупателя.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="03-reestr-dokumentov.html#D12" title="документ D12">D12</a></div>
+</article><article class="term sub" data-g="sub" id="агент-поверхности">
+ <h3>Агент поверхности<span class="en">surface agent</span></h3>
+ <p>Класс агента, который показывает выдачу на чужом экране и передаёт решение человеку; права ограничены чтением.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="21-drafty-dokumentov.html#A6" title="драфт A6">A6</a><a href="02-funkcii-i-roli.html#F24" title="функция F24">F24</a></div>
+</article><article class="term sub" data-g="sub" id="служебный-агент-участника">
+ <h3>Служебный агент участника<span class="en">internal agent</span></h3>
+ <p>Класс агента, работающего внутри контура участника; наружу не выходит, в испытаниях используется для проверки изоляции классов.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a></div>
+</article><article class="term sub" data-g="sub" id="оператор-плат-жной-системы">
+ <h3>Оператор платёжной системы<span class="en">payment system operator</span></h3>
+ <p>Лицо, определяющее правила системы и состав её участников. В агентной модели — автор норм о признаке операции, реестре и ответственности.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A1" title="драфт A1">A1</a><a href="02-funkcii-i-roli.html#role=R5" title="роль R5">R5</a><a href="03-reestr-dokumentov.html#D27" title="документ D27">D27</a></div>
+</article><article class="term sub" data-g="sub" id="участник-плат-жной-системы">
+ <h3>Участник платёжной системы<span class="en">participant</span></h3>
+ <p>Банк или иная организация, присоединившаяся к правилам системы; через него требования доходят до торговых точек.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A1" title="драфт A1">A1</a><a href="21-drafty-dokumentov.html#A5" title="драфт A5">A5</a><a href="03-reestr-dokumentov.html#D27" title="документ D27">D27</a></div>
+</article><article class="term sub" data-g="sub" id="торгово-сервисное-предприятие">
+ <h3>Торгово-сервисное предприятие<span class="en">merchant</span></h3>
+ <p>Продавец, принимающий оплату. Требования к нему доводятся через договор эквайринга, а не напрямую.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A5" title="драфт A5">A5</a><a href="20-plany-dokumentov.html#P5" title="план P5">P5</a><a href="02-funkcii-i-roli.html#F20" title="функция F20">F20</a></div>
+</article><article class="term sub" data-g="sub" id="оператор-агентной-платформы">
+ <h3>Оператор агентной платформы<span class="en">agentic platform operator</span></h3>
+ <p>Оператор агента, предоставляющий пользователям ассистента. Статуса участника платёжной системы не получает.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A6" title="драфт A6">A6</a><a href="20-plany-dokumentov.html#P6" title="план P6">P6</a><a href="02-funkcii-i-roli.html#role=R9" title="роль R9">R9</a></div>
+</article><article class="term sub" data-g="sub" id="оператор-поверхности">
+ <h3>Оператор поверхности<span class="en">surface operator</span></h3>
+ <p>Сторона, на чьём экране показывается каталог: мессенджер, медиа, чужая агентская платформа. Шестой тип участника в ранней модели.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D9" title="документ D9">D9</a><a href="02-funkcii-i-roli.html#F24" title="функция F24">F24</a></div>
+</article><article class="term sub" data-g="sub" id="внешний-агент">
+ <h3>Внешний агент<span class="en">third-party agent</span></h3>
+ <p>Ассистент или агентный браузер, не включённый в наш реестр. По умолчанию получает гостевой уровень: чтение без права на платёж.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="02-funkcii-i-roli.html#F2" title="функция F2">F2</a><a href="03-reestr-dokumentov.html#D16" title="документ D16">D16</a></div>
+</article>
+<h2 class="gh-title" data-g="pow">Полномочия и мандаты <span class="note">15</span></h2>
+<article class="term pow" data-g="pow" id="есиа">
+ <h3>ЕСИА<span class="en">unified identification system</span></h3>
+ <p>Государственная система идентификации и аутентификации; один из способов подтверждения мандата клиентом.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A7" title="драфт A7">A7</a><a href="20-plany-dokumentov.html#P7" title="план P7">P7</a></div>
+</article><article class="term pow" data-g="pow" id="ебс">
+ <h3>ЕБС<span class="en">unified biometric system</span></h3>
+ <p>Единая биометрическая система; возможный способ подтверждения при выдаче долгосрочных полномочий.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A7" title="драфт A7">A7</a><a href="20-plany-dokumentov.html#P7" title="план P7">P7</a></div>
+</article><article class="term pow" data-g="pow" id="мандат">
+ <h3>Мандат<span class="en">mandate</span></h3>
+ <p>Подписанное клиентом поручение агенту с указанием предмета, предельной суммы, срока и допустимых продавцов. Читается как доверенность в электронной форме.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A7" title="драфт A7">A7</a><a href="20-plany-dokumentov.html#P7" title="план P7">P7</a><a href="02-funkcii-i-roli.html#F7" title="функция F7">F7</a></div>
+</article><article class="term pow" data-g="pow" id="мандат-намерения">
+ <h3>Мандат намерения<span class="en">intent mandate</span></h3>
+ <p>Первый мандат: задача и границы. Из него вырастают мандат корзины и мандат платежа.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A7" title="драфт A7">A7</a><a href="03-reestr-dokumentov.html#D13" title="документ D13">D13</a><a href="02-funkcii-i-roli.html#F7" title="функция F7">F7</a></div>
+</article><article class="term pow" data-g="pow" id="мандат-корзины">
+ <h3>Мандат корзины<span class="en">cart mandate</span></h3>
+ <p>Фиксирует конкретный состав и стоимость, согласованные с клиентом, со ссылкой на мандат намерения.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A7" title="драфт A7">A7</a><a href="03-reestr-dokumentov.html#D13" title="документ D13">D13</a></div>
+</article><article class="term pow" data-g="pow" id="мандат-платежа">
+ <h3>Мандат платежа<span class="en">payment mandate</span></h3>
+ <p>Разрешение на списание в установленных пределах; выдаётся только при действующем мандате корзины.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A7" title="драфт A7">A7</a><a href="21-drafty-dokumentov.html#A3" title="драфт A3">A3</a></div>
+</article><article class="term pow" data-g="pow" id="пределы-мандата">
+ <h3>Пределы мандата<span class="en">mandate scope</span></h3>
+ <p>Содержание мандата на момент операции. По ним механически определяется, была ли операция в границах поручения.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A4" title="драфт A4">A4</a><a href="20-plany-dokumentov.html#P4" title="план P4">P4</a></div>
+</article><article class="term pow" data-g="pow" id="обязательные-реквизиты-мандата">
+ <h3>Обязательные реквизиты мандата<span class="en">mandate attributes</span></h3>
+ <p>Предмет, предельная сумма, срок, допустимые получатели, порядок отзыва, код агента, сведения о принципале. Отсутствие любого влечёт недействительность.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A7" title="драфт A7">A7</a><a href="20-plany-dokumentov.html#P7" title="план P7">P7</a></div>
+</article><article class="term pow" data-g="pow" id="отзыв-мандата">
+ <h3>Отзыв мандата<span class="en">mandate revocation</span></h3>
+ <p>Прекращение полномочий по модели отмены доверенности: действует с момента, когда об отзыве узнала сторона, полагавшаяся на полномочия.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A7" title="драфт A7">A7</a><a href="20-plany-dokumentov.html#P7" title="план P7">P7</a></div>
+</article><article class="term pow" data-g="pow" id="журнал-согласий">
+ <h3>Журнал согласий<span class="en">consent log</span></h3>
+ <p>Неизменяемое хранилище мандатов; записи связаны между собой, поэтому изменение задним числом обнаруживается. Доказательство в споре и перед надзором.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A7" title="драфт A7">A7</a><a href="21-drafty-dokumentov.html#A4" title="драфт A4">A4</a><a href="02-funkcii-i-roli.html#F8" title="функция F8">F8</a></div>
+</article><article class="term pow" data-g="pow" id="жизненный-цикл-намерения">
+ <h3>Жизненный цикл намерения<span class="en">intent lifecycle</span></h3>
+ <p>Управление мандатом во времени: расходование лимита, обновление, отзыв. Центральный предмет черновика отраслевой рамки.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D1" title="документ D1">D1</a><a href="20-plany-dokumentov.html#P7" title="план P7">P7</a><a href="02-funkcii-i-roli.html#F8" title="функция F8">F8</a></div>
+</article><article class="term pow" data-g="pow" id="ограничения-полномочий">
+ <h3>Ограничения полномочий<span class="en">user controls</span></h3>
+ <p>Разовая сумма, сумма за период, срок, категории продавцов, порог подтверждения. Живут в платёжном инструменте, а не в приложении агента.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A3" title="драфт A3">A3</a><a href="20-plany-dokumentov.html#P3" title="план P3">P3</a><a href="02-funkcii-i-roli.html#F6" title="функция F6">F6</a></div>
+</article><article class="term pow" data-g="pow" id="порог-подтверждения">
+ <h3>Порог подтверждения<span class="en">confirmation threshold</span></h3>
+ <p>Сумма, свыше которой операция совершается только при явном подтверждении клиентом.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A3" title="драфт A3">A3</a><a href="21-drafty-dokumentov.html#A5" title="драфт A5">A5</a><a href="02-funkcii-i-roli.html#F26" title="функция F26">F26</a></div>
+</article><article class="term pow" data-g="pow" id="подтверждение-человеком">
+ <h3>Подтверждение человеком<span class="en">human confirmation</span></h3>
+ <p>Явное действие клиента, разрешающее конкретную операцию. Имитация подтверждения агентом запрещена.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A5" title="драфт A5">A5</a><a href="02-funkcii-i-roli.html#F26" title="функция F26">F26</a><a href="02-funkcii-i-roli.html#role=R6" title="роль R6">R6</a></div>
+</article><article class="term pow" data-g="pow" id="прекращение-полномочий">
+ <h3>Прекращение полномочий<span class="en">instant revoke</span></h3>
+ <p>Отмена полномочий агента одним действием в приложении участника; авторизованные операции исполняются, неавторизованные отклоняются.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A3" title="драфт A3">A3</a><a href="20-plany-dokumentov.html#P3" title="план P3">P3</a></div>
+</article>
+<h2 class="gh-title" data-g="op">Операция и её признаки <span class="note">12</span></h2>
+<article class="term op" data-g="op" id="строгая-аутентификация-клиента">
+ <h3>Строгая аутентификация клиента<span class="en">strong customer authentication, SCA</span></h3>
+ <p>Требование подтверждать операцию двумя независимыми факторами. Агент по определению не проходит её как человек — отсюда переход к разовой подписи долгосрочных ограниченных полномочий.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D2" title="документ D2">D2</a><a href="03-reestr-dokumentov.html#D25" title="документ D25">D25</a><a href="02-funkcii-i-roli.html#F7" title="функция F7">F7</a></div>
+</article><article class="term op" data-g="op" id="европейская-плат-жная-директива">
+ <h3>Европейская платёжная директива<span class="en">PSD2, PSD3</span></h3>
+ <p>Европейские правила, из которых пришло требование строгой аутентификации. В России не применяются, но задали отраслевой словарь, которым пользуются международные материалы.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D2" title="документ D2">D2</a></div>
+</article><article class="term op" data-g="op" id="агентская-операция">
+ <h3>Агентская операция<span class="en">agentic transaction</span></h3>
+ <p>Операция, инициированная агентом от имени принципала в пределах мандата. Автоплатёж по расписанию агентской не является.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A1" title="драфт A1">A1</a><a href="20-plany-dokumentov.html#P1" title="план P1">P1</a><a href="02-funkcii-i-roli.html#F19" title="функция F19">F19</a></div>
+</article><article class="term op" data-g="op" id="признак-агентной-операции">
+ <h3>Признак агентной операции<span class="en">agentic transaction indicator</span></h3>
+ <p>Указание на агентский характер плюс код агента и идентификатор мандата. Переносится без изменений до стадии спора.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A1" title="драфт A1">A1</a><a href="03-reestr-dokumentov.html#D1" title="документ D1">D1</a><a href="02-funkcii-i-roli.html#F19" title="функция F19">F19</a></div>
+</article><article class="term op" data-g="op" id="код-агента">
+ <h3>Код агента<span class="en">agent code</span></h3>
+ <p>Идентификатор вида «пространство имён — идентификатор — версия», присваиваемый при допуске и неизменный.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="20-plany-dokumentov.html#P2" title="план P2">P2</a></div>
+</article><article class="term op" data-g="op" id="идентификатор-мандата">
+ <h3>Идентификатор мандата<span class="en">mandate id</span></h3>
+ <p>Ссылка на запись журнала согласий, по которой проверяются пределы поручения.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A1" title="драфт A1">A1</a><a href="21-drafty-dokumentov.html#A7" title="драфт A7">A7</a></div>
+</article><article class="term op" data-g="op" id="подпись-обращения">
+ <h3>Подпись обращения<span class="en">request signature</span></h3>
+ <p>Криптографическая подпись метода, пути, времени, хэша тела и кода агента. Проверяется до бизнес-логики.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="03-reestr-dokumentov.html#D16" title="документ D16">D16</a><a href="02-funkcii-i-roli.html#F2" title="функция F2">F2</a></div>
+</article><article class="term op" data-g="op" id="ключ-идемпотентности">
+ <h3>Ключ идемпотентности<span class="en">idempotency key</span></h3>
+ <p>Признак повторного обращения: повтор с тем же ключом возвращает прежний результат и не приводит к двойному списанию.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A1" title="драфт A1">A1</a></div>
+</article><article class="term op" data-g="op" id="коды-отказа">
+ <h3>Коды отказа<span class="en">decline codes</span></h3>
+ <p>Раздельные причины: неизвестный агент, приостановленный агент, недействительный мандат, превышение лимита, требуется подтверждение, недостаток средств.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A1" title="драфт A1">A1</a><a href="21-drafty-dokumentov.html#A3" title="драфт A3">A3</a></div>
+</article><article class="term op" data-g="op" id="операция-без-добровольного-согласия-клиента">
+ <h3>Операция без добровольного согласия клиента<span class="en">unauthorised transaction</span></h3>
+ <p>Механизм действующего законодательства, к которому приравнивается действие агента за пределами мандата: возврат по установленному порядку.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A4" title="драфт A4">A4</a><a href="20-plany-dokumentov.html#P4" title="план P4">P4</a></div>
+</article><article class="term op" data-g="op" id="нахождение-в-пределах-мандата">
+ <h3>Нахождение в пределах мандата<span class="en">in-scope check</span></h3>
+ <p>Признак, вычисляемый платформой сопоставлением параметров операции с записью мандата, а не заявляемый сторонами.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A4" title="драфт A4">A4</a><a href="20-plany-dokumentov.html#P4" title="план P4">P4</a></div>
+</article><article class="term op" data-g="op" id="спор">
+ <h3>Спор<span class="en">dispute</span></h3>
+ <p>Рассмотрение претензии по операции. При действии вне мандата разбирательства по существу не требуется.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A4" title="драфт A4">A4</a><a href="02-funkcii-i-roli.html#F22" title="функция F22">F22</a></div>
+</article>
+<h2 class="gh-title" data-g="adm">Допуск и надзор за агентами <span class="note">11</span></h2>
+<article class="term adm" data-g="adm" id="дроппер">
+ <h3>Дроппер<span class="en">money mule</span></h3>
+ <p>Лицо, через счёт которого выводятся средства. Массовые выплаты множеству мелких получателей внешне похожи на такую схему — отсюда внимание антифрода к агентным платформам.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D25" title="документ D25">D25</a><a href="02-funkcii-i-roli.html#F18" title="функция F18">F18</a></div>
+</article><article class="term adm" data-g="adm" id="под-фт">
+ <h3>ПОД/ФТ<span class="en">AML/CFT</span></h3>
+ <p>Противодействие отмыванию доходов и финансированию терроризма: основание для передачи сведений об операциях и для идентификации участников.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D22" title="документ D22">D22</a><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="02-funkcii-i-roli.html#F27" title="функция F27">F27</a></div>
+</article><article class="term adm" data-g="adm" id="ккт">
+ <h3>ККТ<span class="en">cash register</span></h3>
+ <p>Контрольно-кассовая техника: чек формирует продавец, в том числе при агентной сделке; порядок для мульти-продавцовой корзины пока открыт.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A5" title="драфт A5">A5</a><a href="20-plany-dokumentov.html#P5" title="план P5">P5</a><a href="02-funkcii-i-roli.html#F20" title="функция F20">F20</a></div>
+</article><article class="term adm" data-g="adm" id="реестр-агентов">
+ <h3>Реестр агентов<span class="en">agent registry</span></h3>
+ <p>Перечень допущенных операторов агентов с кодами, классами, уровнями и ключами. Источник истины о том, кто такой агент.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="20-plany-dokumentov.html#P2" title="план P2">P2</a><a href="02-funkcii-i-roli.html#role=R1" title="роль R1">R1</a></div>
+</article><article class="term adm" data-g="adm" id="класс-агента">
+ <h3>Класс агента<span class="en">agent class</span></h3>
+ <p>Назначение агента: покупателя, продавца, поверхности, служебный. Определяет доступные действия.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a></div>
+</article><article class="term adm" data-g="adm" id="уровень-допуска">
+ <h3>Уровень допуска<span class="en">access level</span></h3>
+ <p>Объём прав агента, включая необходимость подтверждения клиентом. Повышается по статистике, понижается по инцидентам.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="21-drafty-dokumentov.html#A8" title="драфт A8">A8</a></div>
+</article><article class="term adm" data-g="adm" id="приостановление-допуска">
+ <h3>Приостановление допуска<span class="en">suspension</span></h3>
+ <p>Немедленное прекращение работы агента при компрометации ключей, систематическом выходе за мандаты или недостоверных сведениях.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a></div>
+</article><article class="term adm" data-g="adm" id="ротация-и-отзыв-ключа">
+ <h3>Ротация и отзыв ключа<span class="en">key rotation</span></h3>
+ <p>Плановая смена ключа с периодом одновременного действия и немедленный отзыв при компрометации.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A2" title="драфт A2">A2</a><a href="03-reestr-dokumentov.html#D16" title="документ D16">D16</a></div>
+</article><article class="term adm" data-g="adm" id="оценка-исполнения">
+ <h3>Оценка исполнения<span class="en">execution score</span></h3>
+ <p>Показатели поведения агента: соблюдение пределов, доля споров, сроки, устойчивость. Влияет на уровень допуска, но не на выдачу.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A8" title="драфт A8">A8</a><a href="20-plany-dokumentov.html#P8" title="план P8">P8</a><a href="02-funkcii-i-roli.html#F4" title="функция F4">F4</a></div>
+</article><article class="term adm" data-g="adm" id="знак-готовности">
+ <h3>Знак готовности<span class="en">readiness mark</span></h3>
+ <p>Отметка соответствия торгово-сервисного предприятия требованиям к агентным операциям; на порядок выдачи не влияет.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A5" title="драфт A5">A5</a><a href="20-plany-dokumentov.html#P5" title="план P5">P5</a><a href="02-funkcii-i-roli.html#F20" title="функция F20">F20</a></div>
+</article><article class="term adm" data-g="adm" id="машиночитаемое-описание">
+ <h3>Машиночитаемое описание<span class="en">machine-readable listing</span></h3>
+ <p>Состав, цена, наличие, срок и условия возврата в структурированном виде, доступные агенту в том же объёме, что и человеку.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A5" title="драфт A5">A5</a><a href="02-funkcii-i-roli.html#F10" title="функция F10">F10</a></div>
+</article>
+<h2 class="gh-title" data-g="pay">Расчёт и платёжные рельсы <span class="note">15</span></h2>
+<article class="term pay" data-g="pay" id="emv-3-d-secure">
+ <h3>EMV 3-D Secure<span class="en">3DS</span></h3>
+ <p>Международный протокол аутентификации держателя при удалённой оплате: решение принимается по совокупности факторов, подтверждение кодом запрашивается при необходимости.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D2" title="документ D2">D2</a><a href="03-reestr-dokumentov.html#D25" title="документ D25">D25</a><a href="02-funkcii-i-roli.html#F18" title="функция F18">F18</a></div>
+</article><article class="term pay" data-g="pay" id="mir-accept">
+ <h3>Mir Accept<span class="en">—</span></h3>
+ <p>Российская реализация протокола аутентификации; с 2024 года машинное обучение примерно вдвое расширило долю операций, проходящих без дополнительного подтверждения.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D25" title="документ D25">D25</a><a href="02-funkcii-i-roli.html#F18" title="функция F18">F18</a></div>
+</article><article class="term pay" data-g="pay" id="par">
+ <h3>PAR<span class="en">payment account reference</span></h3>
+ <p>Ссылочный идентификатор платёжного счёта, позволяющий связать разные токены одной карты, не раскрывая её номер.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D3" title="документ D3">D3</a><a href="02-funkcii-i-roli.html#F5" title="функция F5">F5</a></div>
+</article><article class="term pay" data-g="pay" id="оспаривание-по-правилам-системы">
+ <h3>Оспаривание по правилам системы<span class="en">chargeback</span></h3>
+ <p>Существующий механизм возврата средств по инициативе держателя через его банк. Под агентные сценарии не адаптирован.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D27" title="документ D27">D27</a><a href="02-funkcii-i-roli.html#F22" title="функция F22">F22</a><a href="21-drafty-dokumentov.html#A4" title="драфт A4">A4</a></div>
+</article><article class="term pay" data-g="pay" id="сбп">
+ <h3>СБП<span class="en">faster payments system</span></h3>
+ <p>Система быстрых платежей: переводы по инициативе получателя, привязка счёта, возвраты. Один из трёх каналов, где нужен признак агентной операции.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D26" title="документ D26">D26</a><a href="21-drafty-dokumentov.html#A1" title="драфт A1">A1</a><a href="02-funkcii-i-roli.html#F15" title="функция F15">F15</a></div>
+</article><article class="term pay" data-g="pay" id="опкц">
+ <h3>ОПКЦ<span class="en">operational and clearing centre</span></h3>
+ <p>Операционный и клиринговый центр: процессинг внутрироссийских операций по картам всех систем и расчёты между банками.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D28" title="документ D28">D28</a><a href="02-funkcii-i-roli.html#F16" title="функция F16">F16</a></div>
+</article><article class="term pay" data-g="pay" id="плат-жный-инструмент">
+ <h3>Платёжный инструмент<span class="en">payment instrument</span></h3>
+ <p>Средство, которым совершается операция: токенизированная карта, привязка счёта, оплата по универсальному коду. Носитель ограничений полномочий.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A3" title="драфт A3">A3</a><a href="03-reestr-dokumentov.html#D3" title="документ D3">D3</a></div>
+</article><article class="term pay" data-g="pay" id="плат-жный-токен">
+ <h3>Платёжный токен<span class="en">payment token</span></h3>
+ <p>Замена номера карты, к которой привязываются агент, область продавцов и политика согласия. Технический фундамент агентных учётных данных.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D3" title="документ D3">D3</a><a href="03-reestr-dokumentov.html#D10" title="документ D10">D10</a><a href="02-funkcii-i-roli.html#F5" title="функция F5">F5</a></div>
+</article><article class="term pay" data-g="pay" id="привязка-сч-та">
+ <h3>Привязка счёта<span class="en">account binding</span></h3>
+ <p>Механика быстрых платежей, позволяющая совершать последующие операции без повторного ввода реквизитов; второй носитель ограничений.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D26" title="документ D26">D26</a><a href="21-drafty-dokumentov.html#A3" title="драфт A3">A3</a></div>
+</article><article class="term pay" data-g="pay" id="универсальный-плат-жный-код">
+ <h3>Универсальный платёжный код<span class="en">universal payment code</span></h3>
+ <p>Единый код, обязательный с 1 сентября 2026 года: человек сканирует и сам выбирает инструмент оплаты на платёжной странице.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D19" title="документ D19">D19</a><a href="03-reestr-dokumentov.html#D20" title="документ D20">D20</a><a href="02-funkcii-i-roli.html#F26" title="функция F26">F26</a></div>
+</article><article class="term pay" data-g="pay" id="оператор-услуг-по-предоставлению-универсального-плат-жного-кода">
+ <h3>Оператор услуг по предоставлению универсального платёжного кода<span class="en">UPC services operator</span></h3>
+ <p>Статус, введённый законом № 248-ФЗ; основание для того, чтобы закрепить сценарий подтверждения агентной операции человеком.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D19" title="документ D19">D19</a><a href="03-reestr-dokumentov.html#D21" title="документ D21">D21</a><a href="02-funkcii-i-roli.html#role=R6" title="роль R6">R6</a></div>
+</article><article class="term pay" data-g="pay" id="цифровой-рубль">
+ <h3>Цифровой рубль<span class="en">digital ruble</span></h3>
+ <p>Третья форма национальной валюты; оплата предполагается через код на инфраструктуре оператора.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D24" title="документ D24">D24</a><a href="02-funkcii-i-roli.html#F17" title="функция F17">F17</a></div>
+</article><article class="term pay" data-g="pay" id="платформа-коммерческих-смарт-контрактов">
+ <h3>Платформа коммерческих смарт-контрактов<span class="en">commercial smart contracts platform</span></h3>
+ <p>Платформа Банка России, исполняющая условия сделки автоматически. Ближайший государственный аналог условного исполнения.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D23" title="документ D23">D23</a><a href="02-funkcii-i-roli.html#F17" title="функция F17">F17</a><a href="02-funkcii-i-roli.html#role=R8" title="роль R8">R8</a></div>
+</article><article class="term pay" data-g="pay" id="условное-исполнение">
+ <h3>Условное исполнение<span class="en">conditional settlement</span></h3>
+ <p>Удержание средств до наступления условия сделки. В карточном контуре отсутствует как механизм.</p>
+ <div class="refs"><a href="20-plany-dokumentov.html#P4" title="план P4">P4</a><a href="02-funkcii-i-roli.html#F17" title="функция F17">F17</a><a href="02-funkcii-i-roli.html#role=R8" title="роль R8">R8</a></div>
+</article><article class="term pay" data-g="pay" id="клиринг">
+ <h3>Клиринг<span class="en">clearing</span></h3>
+ <p>Расчёт взаимных обязательств между участниками. Не путать с распределением суммы заказа внутри одной операции — это разные слои.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D28" title="документ D28">D28</a><a href="02-funkcii-i-roli.html#F16" title="функция F16">F16</a></div>
+</article>
+<h2 class="gh-title" data-g="mod">Термины модели пула <span class="note">10</span></h2>
+<article class="term mod" data-g="mod" id="стадия-транзакции">
+ <h3>Стадия транзакции<span class="en">transaction stage</span></h3>
+ <p>Один из восьми этапов сделки: допуск, поручение, поиск, заказ, подтверждение, авторизация, расчёт, после сделки.</p>
+ <div class="refs"><a href="02-funkcii-i-roli.html#F19" title="функция F19">F19</a></div>
+</article><article class="term mod" data-g="mod" id="функция">
+ <h3>Функция<span class="en">function</span></h3>
+ <p>Единица работы рынка: опознать агента, выдать ограниченные реквизиты, поймать мошенническую операцию. Всего 27.</p>
+ <div class="refs"><a href="02-funkcii-i-roli.html#F1" title="функция F1">F1</a></div>
+</article><article class="term mod" data-g="mod" id="роль-оператора">
+ <h3>Роль оператора<span class="en">operator role</span></h3>
+ <p>Позиция, из которой работа делается и которая остаётся при смене технологии. Всего 11, из них 8 кандидатов.</p>
+ <div class="refs"><a href="02-funkcii-i-roli.html#role=R1" title="роль R1">R1</a><a href="02-funkcii-i-roli.html#role=R5" title="роль R5">R5</a></div>
+</article><article class="term mod" data-g="mod" id="происхождение-строки">
+ <h3>Происхождение строки<span class="en">provenance</span></h3>
+ <p>Пометка у функции: документ — перенесено из акта, наблюдение — снято с продукта, вывод — реконструкция. Определяет, что можно предъявлять вовне.</p>
+ <div class="refs"><a href="02-funkcii-i-roli.html#F19" title="функция F19">F19</a></div>
+</article><article class="term mod" data-g="mod" id="основание-стадии">
+ <h3>Основание стадии<span class="en">stage basis</span></h3>
+ <p>Канон карточного цикла, протокол или авторская рамка. Показывает, насколько стадия общепринята.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D2" title="документ D2">D2</a><a href="03-reestr-dokumentov.html#D12" title="документ D12">D12</a></div>
+</article><article class="term mod" data-g="mod" id="узкое-место">
+ <h3>Узкое место<span class="en">bottleneck</span></h3>
+ <p>Минимальная оценка в наборе по опоре на актив и скорости: набор не стартует быстрее самой медленной части.</p>
+ <div class="refs"><a href="02-funkcii-i-roli.html#role=R8" title="роль R8">R8</a></div>
+</article><article class="term mod" data-g="mod" id="позиция-по-сильнейшему">
+ <h3>Позиция по сильнейшему<span class="en">strongest link</span></h3>
+ <p>Максимальная оценка по защищённости и независимости: повторить набор можно, лишь повторив самую защищённую его часть.</p>
+ <div class="refs"><a href="02-funkcii-i-roli.html#role=R6" title="роль R6">R6</a></div>
+</article><article class="term mod" data-g="mod" id="свободная-зона">
+ <h3>Свободная зона<span class="en">white space</span></h3>
+ <p>Функции, которые не взял никто: ответственность за ошибку агента, оспаривание, репутация исполнения, подтверждение на нейтральной поверхности, условное исполнение.</p>
+ <div class="refs"><a href="02-funkcii-i-roli.html#F21" title="функция F21">F21</a><a href="02-funkcii-i-roli.html#F22" title="функция F22">F22</a><a href="02-funkcii-i-roli.html#F26" title="функция F26">F26</a></div>
+</article><article class="term mod" data-g="mod" id="журнал-расхождений">
+ <h3>Журнал расхождений<span class="en">divergence log</span></h3>
+ <p>Перечень сознательных отступлений от международной рамки с обоснованием. Будущий план сближения при снятии ограничений.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A9" title="драфт A9">A9</a><a href="20-plany-dokumentov.html#P9" title="план P9">P9</a></div>
+</article><article class="term mod" data-g="mod" id="профиль-совместимости">
+ <h3>Профиль совместимости<span class="en">compatibility profile</span></h3>
+ <p>Описанное соответствие международной рамке вместо собственного протокола; основание для взаимного признания реестров.</p>
+ <div class="refs"><a href="21-drafty-dokumentov.html#A9" title="драфт A9">A9</a><a href="02-funkcii-i-roli.html#role=R7" title="роль R7">R7</a><a href="03-reestr-dokumentov.html#D7" title="документ D7">D7</a></div>
+</article>
+<h2 class="gh-title" data-g="intl">Международные термины <span class="note">18</span></h2>
+<article class="term intl" data-g="intl" id="ap2">
+ <h3>AP2<span class="en">agent payments protocol</span></h3>
+ <p>Открытый протокол платежей агентов, выпущенный в сентябре 2025 года: мандат намерения и мандат корзины как подписанные артефакты. Обе международные сети присоединились к нему.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D13" title="документ D13">D13</a><a href="02-funkcii-i-roli.html#F7" title="функция F7">F7</a><a href="02-funkcii-i-roli.html#F8" title="функция F8">F8</a></div>
+</article><article class="term intl" data-g="intl" id="acp">
+ <h3>ACP<span class="en">agentic commerce protocol</span></h3>
+ <p>Торговый протокол оформления заказа по инициативе агента: корзина, чекаут, делегирование платежа, товарный фид, заказы.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D12" title="документ D12">D12</a><a href="02-funkcii-i-roli.html#F11" title="функция F11">F11</a><a href="02-funkcii-i-roli.html#F9" title="функция F9">F9</a></div>
+</article><article class="term intl" data-g="intl" id="ucp">
+ <h3>UCP<span class="en">universal commerce protocol</span></h3>
+ <p>Стандарт коммерческих операций для агентов, к которому сместился агентный чекаут после отказа ассистента оформлять покупку внутри диалога.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D14" title="документ D14">D14</a><a href="02-funkcii-i-roli.html#F10" title="функция F10">F10</a></div>
+</article><article class="term intl" data-g="intl" id="mcp">
+ <h3>MCP<span class="en">model context protocol</span></h3>
+ <p>Протокол, по которому агент вызывает внешние инструменты и источники данных; торговый протокол описывает стыковку с ним.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D15" title="документ D15">D15</a><a href="02-funkcii-i-roli.html#F14" title="функция F14">F14</a></div>
+</article><article class="term intl" data-g="intl" id="a2a">
+ <h3>A2A<span class="en">agent-to-agent</span></h3>
+ <p>Взаимодействие агентов между собой: согласование условий, обмен подписанными карточками. В нашей модели — переговоры агента покупателя с агентом продавца.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D13" title="документ D13">D13</a><a href="02-funkcii-i-roli.html#F14" title="функция F14">F14</a></div>
+</article><article class="term intl" data-g="intl" id="карточка-агента">
+ <h3>Карточка агента<span class="en">agent card</span></h3>
+ <p>Описание агента, которым он представляется: имя, оператор, ожидаемая частота обращений, открытые ключи. Основа опознания на уровне веба.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D16" title="документ D16">D16</a><a href="02-funkcii-i-roli.html#F2" title="функция F2">F2</a></div>
+</article><article class="term intl" data-g="intl" id="emvco">
+ <h3>EMVCo<span class="en">—</span></h3>
+ <p>Отраслевой орган платёжных систем, выпускающий спецификации токенизации, аутентификации, удалённой оплаты и черновик рамки агентных платежей.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D1" title="документ D1">D1</a><a href="03-reestr-dokumentov.html#D2" title="документ D2">D2</a><a href="03-reestr-dokumentov.html#D3" title="документ D3">D3</a></div>
+</article><article class="term intl" data-g="intl" id="перенос-ответственности">
+ <h3>Перенос ответственности<span class="en">liability shift</span></h3>
+ <p>Правило, по которому риск неавторизованной операции переходит к той стороне, что не обеспечила аутентификацию. В агентной практике сети переносят его к владельцу агента.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D1" title="документ D1">D1</a><a href="02-funkcii-i-roli.html#F21" title="функция F21">F21</a><a href="21-drafty-dokumentov.html#A4" title="драфт A4">A4</a></div>
+</article><article class="term intl" data-g="intl" id="знай-своего-агента">
+ <h3>Знай своего агента<span class="en">know your agent, KYA</span></h3>
+ <p>Опознание агента и подтверждение его легитимности. У сетей реализовано как идентификатор проверенного агента и каталог.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D7" title="документ D7">D7</a><a href="03-reestr-dokumentov.html#D8" title="документ D8">D8</a><a href="02-funkcii-i-roli.html#F1" title="функция F1">F1</a></div>
+</article><article class="term intl" data-g="intl" id="агентный-токен">
+ <h3>Агентный токен<span class="en">agentic token</span></h3>
+ <p>Токен, привязанный к агенту, области продавцов и политике согласия; номер карты агенту не раскрывается.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D10" title="документ D10">D10</a><a href="03-reestr-dokumentov.html#D9" title="документ D9">D9</a><a href="02-funkcii-i-roli.html#F5" title="функция F5">F5</a></div>
+</article><article class="term intl" data-g="intl" id="подтверждаемое-намерение">
+ <h3>Подтверждаемое намерение<span class="en">verifiable intent</span></h3>
+ <p>Криптографическое доказательство того, что человек разрешил агенту действовать, как отдельный артефакт рядом с платежом.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D10" title="документ D10">D10</a><a href="03-reestr-dokumentov.html#D1" title="документ D1">D1</a></div>
+</article><article class="term intl" data-g="intl" id="протокол-доверенного-агента">
+ <h3>Протокол доверенного агента<span class="en">trusted agent protocol</span></h3>
+ <p>Решение сети: идентификатор проверенного агента и запись согласия, подписанная эмитентом.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D8" title="документ D8">D8</a><a href="02-funkcii-i-roli.html#F1" title="функция F1">F1</a></div>
+</article><article class="term intl" data-g="intl" id="подпись-запроса-агента">
+ <h3>Подпись запроса агента<span class="en">web bot auth</span></h3>
+ <p>Криптографическая подпись обращения к сайту и открытый реестр ключей; сделано инфраструктурой веба и встроено сетями.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D16" title="документ D16">D16</a><a href="03-reestr-dokumentov.html#D17" title="документ D17">D17</a><a href="02-funkcii-i-roli.html#F2" title="функция F2">F2</a></div>
+</article><article class="term intl" data-g="intl" id="торговый-протокол">
+ <h3>Торговый протокол<span class="en">agentic commerce protocol</span></h3>
+ <p>Открытый стандарт оформления заказа по инициативе агента: корзина, чекаут, делегирование платежа, товарный фид.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D12" title="документ D12">D12</a><a href="02-funkcii-i-roli.html#F11" title="функция F11">F11</a></div>
+</article><article class="term intl" data-g="intl" id="универсальная-корзина">
+ <h3>Универсальная корзина<span class="en">universal cart</span></h3>
+ <p>Стандарт коммерческих операций для агентов: подбор, корзина, передача заказа продавцу.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D14" title="документ D14">D14</a><a href="02-funkcii-i-roli.html#F10" title="функция F10">F10</a></div>
+</article><article class="term intl" data-g="intl" id="протокол-доступа-к-инструментам">
+ <h3>Протокол доступа к инструментам<span class="en">model context protocol</span></h3>
+ <p>Стандарт, по которому агент вызывает внешние инструменты и источники данных.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D15" title="документ D15">D15</a><a href="02-funkcii-i-roli.html#F14" title="функция F14">F14</a></div>
+</article><article class="term intl" data-g="intl" id="оформление-в-один-шаг">
+ <h3>Оформление в один шаг<span class="en">secure remote commerce</span></h3>
+ <p>Спецификация удалённой оплаты с выбором инструмента на стороне сети. Ближайший аналог нейтральной поверхности, но без обязательности.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D4" title="документ D4">D4</a><a href="02-funkcii-i-roli.html#F26" title="функция F26">F26</a><a href="02-funkcii-i-roli.html#role=R6" title="роль R6">R6</a></div>
+</article><article class="term intl" data-g="intl" id="оценка-готовности-продавца">
+ <h3>Оценка готовности продавца<span class="en">agent readiness score</span></h3>
+ <p>Продукт сети: насколько магазин пригоден для работы с агентами; каталог проверенных агентов и продавцов.</p>
+ <div class="refs"><a href="03-reestr-dokumentov.html#D9" title="документ D9">D9</a><a href="02-funkcii-i-roli.html#F20" title="функция F20">F20</a><a href="02-funkcii-i-roli.html#role=R10" title="роль R10">R10</a></div>
+</article>
+
+<footer>
+<p>Связанные материалы: <a href="24-scenariy-operacii.html">сквозной пример операции</a> · <a href="21-drafty-dokumentov.html">драфты</a> · <a href="20-plany-dokumentov.html">планы</a> · <a href="03-reestr-dokumentov.html">реестр документов</a> · <a href="02-funkcii-i-roli.html">функции и роли</a></p>
+<p class="note">Английские эквиваленты приведены для сопоставления с международными материалами и не всегда совпадают дословно: там, где значение расходится, в определении указано различие.</p>
+<div id="pool-logo">
+ <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFgAAABWCAYAAABLn1FEAAAdPElEQVR42u19eZRlVXnv79vTOXeq6qrupgFpGhBEQcb2gQwJKqAPCUoYlNeKEB+axCRqXGqIA01D4oAJ+lzGEXFKRLuBQMDgisw0SpBGEUHDFBGQsaequnXPsPf+3h97n3tvFT1UV1V3teu9s9Zd59y6Z9j7d779+8a9C9jxG23m7wL/f5vZxswEACtXrlw49vzzl65/5plPrn/++b9/4pFHTgJAK1eulJt5IRRfQPWhvs9Ovakd+bALL7yQACAfG1vcaLX+GsxAmqLIsssB3PDAAw9oAHwmQM8BdCvgJeCr9zP5fg6g1wBql/jbqrDnTZ37/4YEL18uAOjPX3rpCfnGjVkxOtrmonC//tnPvrQU0MxMmxDJFMA8oL4bkmQvpOliAAsANCefKKN4Lw87tTNI+A6V4FUHHkgAhGIeBLNi7wnMonSuWAO0aPHiYST1ffdJxJFNogMMY8FCSfW6QFoXotEkNAqmYqyZjLUdsg3ej4+ARy3w6GOlvzcbtz8Fit+tADYA8ALAxwGxIgDt50KydyjAN954o1gEqKEFCxSIyHsv4D3fdPPNxx5EuPKYcvyYPYdTs58S2E0KzBfU1XwV4VYI+fh9jBnPOsbj1uPhpsOTrvbQPaW/7THr7vLj49esANaJSCcUhHyHAr2jACYAdPlll5UWKB995pk9AQj2HoVnvPLZJw+/eEDjgFaCxHsuwOwYbJlh+4Y5TzJDCOAagH0l4eVKiZNJ0Yjnl61nvOznpXvXram6+AHrb/p1zpdT3r6VABfvIxGPt/e23U2jMwEpAjbeDg4eOES4rHPP3R9RREzMROypVRS+KYQf84z1zNQBiVIIyUJICNG1Hih+qu8MSAfIDJAjzLTOMxjgRQT7xkT6z8yr7f6FodrZHxlKbjlssPUjrjXP4NAet7xnjfzeSjBx6IEDGovm1flDpyq85/h5ae3lrRpsNeSZkee5cEQgcBCtPAc725VTmaYgoi0Ojz77jjJAMQMM5iWS/Hl1LU6rqRNuyOwJV+nWzT8vyhUrsux2Efgi7n6/AJYCcAQA9dY7T0rpwj9pmMWHJxrPbchcqbUgImIiwHtwnkEQASRQtkcx9LZz0TjyKLjxNnhsDM99+fPA6CiklFPno3g4zpAAcx1w76hpOj5Rr7uiLY9dqfW3nh3ljwqMPX86IFdtJ8oQ2wtcDyzYfaD57b8b1F//7Lx08VIt3KhnHmeWOq0RKDyavYfL8yChROgUBdIjjsLCtyzDLsvOwfBb345cG3jmaXdQAOQAuZ5ZDBH8B1qJ+cq89F2vHZJ3epm8btV2pAyxHUaE82l61HHzBm770rza2W+vKV8y/BhDBhZgIDG9rjDD5xmICB6MDjMKZ+GyDG5sDOXYKMbyApZnrvolgBIQG5n5IE3us/OS/f58uHZdvV7/0ArAU3gE7ZQAR2VmUaud/tZGcuPnhtIDXqmE28BBiERU38yAND1OZe/howQzAzkDTmmQkICUYBA61sLPUrcjX9MYQ2rAf7iV1C8arF2yqNX4CgOaZxmXWbnRcYC6Mkju2ec2kn9ZMZjUa4AbZZ7ImgR4ZohaCuqniCIPHAzAsQdJGWwwAMwezlow0awar9E2FiPMfGZN2s/Mq717cavxPQrC4GdLkmcDYHk7YDmtn/NXA7Vv/+2ASSzD58AmVRIzQ5pkAkVwlqHfSCCp+i8AOxcUF8+ufxAjSLSeoV6rRXnJYO20xa3GlR5IeMuRvx0GsJSA41rtjL8YMF97X1P7kuF9RQmb6BKDIdMUXSXHHj4vuhINBoTuhRHYeXRll7aP2SoBrGXoo4ywl8yrn7pPq3k5AXTmLCi+mQAsBeBcrXbksob+9vubRncY5IMzsOlgTyXBSdq1Gthzl4PBHIAXEgAHXrYW4O3vEUgA6xnqGEP2/IF02YJm85KrAHfmDIVwuhcTBVNs/pFGff0DrbQWJXerMsbMEGnSO5MZnPdRhBAR7BiSdHaHhQ4UgHUe8g2JdOfU9ft9rXbGlcE+FjsSYFoOkAdo31brnz4+mB44BLhis7QwkfSYGcokIKLgyTkLOButCAYpEZQcOEh4lOAdFXmUAG1kFu9uavnHdfMVNs2XR6UndhTA4mLAU9p4yzua+q0HK3KjcVBvPSAcFBhpHemA4PIcYI5WBANCgoToCi07hx3CEZOaSYB7XysZ3i/Fpz0glk9T6W0rwMSA943GLiem4jOnpYo3MkhM8cHMHlAKpHQ4JoLNMsD7XuuFiGMhIOytBe1YfCEAjDPk3gL23Ib5I91oLLt4mlK8rRcIAfA8wgf/tJUsrgVoxFQ7z8wgrbsSTESweQ5wANgzg2SQYI4S7p2N5tmOTU4IABsZ8rRUi+OMvMhjaJCnYR9vC8CCAc9Il5ycqnceqiWPTYV3+9UiM0gpCK17AEaKqDw76kpwTENYOycJtkhYlBLcsrreWzWK/x1Vr9guAC8PJ/MeTfHe0+p6PmPbxIqZQ8AmAgwfQHV5BvK+0oCBg6XscnTg4LnZBIA2M73aSD4pEe8BsGBbpXiqAIuLAc/1+m5HJfqthyrJ47xtr5K6HKyjBHuARFBynqOA9yu5ILdsA0XMVfbSAqJO4DfWzEsHm81TRch6i9kGmOIwPen1Nf0SCqQppjPmKiUXaCEE1ycEsYToenkAwVuLudyCFINfbSTvp+lsBuiAbTDMxRRPcgzQsUa+7WAlkPN0nNbgtZEKSo598Np8V4KjHSxFn5KLdvIcljlQlOJBIhxn5OGo1f7HRYEm5GwBHM9JlrxCiaN2k4RsGlGBKjImtII0kSIEwRWBgyl6dYhhysq58NZFAZ/TEgcisDsm0c2U6DUcwrOzJsHkAQw25esPT1RSMryYps3EACD7KAIEl+VdhdZ1lYUAI/JyzM3NJbwEIGOI3QXh1Ua+AQBdNcUU01YBPi72bRji6EO0FJZ52rFv9r5rpgVprTw5302AVhRRsYK3FjTHlVAEIAdoV0lYrMSrAMynKXp2WwOYbgcsgMYBWuw/IELKZboA++hoSG0CHxOFdBH7boCHpIR4USyC51yKqxH4MiVqqNdf5WcLYAKAJNltL00HaAB+2v2MACoNUip4b0TwRQ7yUaGBoxVBPTMtBtvneiOALLPfV0u9mxCHchjdYnYAdmJ4FykH0uAS0HRb6Nm/2JPLcsB7UJUjihxcPd1bG6hj7gGGZ/g9pIAk2hsAxmZBggP7aew2NAs9ZMYEDqboKnd9QuaQ7BQyvAD0lNzOIMYOoAYBQwJDAHBPoM/pA7w8hmE0qeE6EdxMu9kvwTE87/IMogr2ACApYrVUtJ2tm/Vc3HQluAJsHlGzCnxt7dVPydFoST+QEoERS9Snq+SioyErKwKAL4oAPFGfHSy6nl7Pk5t7EfbRx2wINAAkU2nR1AAGhhqCZqGAi0FaxYxFSGhyWXRT9lU0jfpjdC6YaTvLXAFFhEHCIIBk1lxlJnIzLRTgcB+IJO06Ft5Z+LLspo96GY2Kg8M5YOw0szE4cLHDFAsGpwTwiOP1bR9KdGbKhiJNg7kmghvsiwIiWtYc7eBuNC3awTsDB0ew2DFjo8dGhCKkWQKYxWjGMw8IMBFkkgZ7FwE8XxYgBHXB4BdRxFzGgzfDwxgHxgEUM5bgFZHUvXXPjzFDzUCAmTlQxAQJLsFlCap8QwYg+wPuIR6MnYCDuZJgAC9YHgXAF2Drg3oqmXaA8cx6z/CzEBMQJunj4EAR3To15onBnioevJNMyop5OowzrwWA66cQshRbFTwAkH7ts46fz3q233RtiCDB/RRhbdeKYAAkZK/whAC2OwdFRIIUv7UeOdHDANCcAhZTAzjLnnnY+l8WDKgZlNt7ACJNYoWUCG5wUQAi1KyBfeDfiiJAYFeljGiuAWZDJB4qbfFcWd4rANw2BSy2CvAfhoqi/KHC/dfaAPC0dToRIJOkS1vsLLgMFBGpKIQrqdcsv5MoOQrmGR61PIIsu69Pa8zMirgt3mQD3G1rcusUkZwOwGFSCkEmte5489YGM61LERzDlSFlRETgsuwqvLmkhwTgpxzz46W/HcAIzxbACPOF0W5nN99furYICVDe9kZGKyJJohscKaIsewB3o2my13bvdgoLwhD4Cefp7tLeFKeNTmkC0VQA5jgZ8Ln7Sv/Dxz2jDnieZkNlGu3gaIL5sphgXofCk34lN7dJz17TSd7csWu9czdTT6XMjqMRJwDi54VdeW/hnKRuGn/btASCoxGSFQLsXJDgricXS6eqjAZozgPuDMAA/hnPfFdpf4yi+PXpvSm5swMwEOegdDo/uqFTPmqDzPltbShTmFSIPgmGtcF7Iwppg2pyZ5RgH1NGNEdZZQ+gRkR3FJYeKtzlAsCqbbSdp4TP6YAkYGRNbi9bXThq0rbN3KtKfGWSRE9OwJUl7NgoOHKxL8vYKtmthicfQpkUuZmkhFAK1P+JUt/9RGel63ZTTENVn23YNOA3MNP1nfKeotO50fVm7k8t+jbVE1cF3iUaH7/8X1P558fo2l5yiiWd3FVzCBQBBjiAphbsAmiFEgybFfC1WjeLzN6jLArkWYnOyChEWYC9A5wPOBEFEy8CN3lfHfd/hyAIObVuOwADRLyyU4o7Cv85AsZoGyeSb8tUWqYgxWt/mPvPn1K4z56YKB5hnlKJC3eVXJg+UGYdDO69D15z9Q8AW8LnOZpPPgVXq8PnOURiwEWBgVPPwPDRx2LBwCCoLMBlEaQ9z8F5Dl8U4bjI4YscnBfhOM/BRTgO5+VAWQDtcbjRjWF2yxakmaP0rmWWqzrlT5e22yvviYXZ2xQ/3lZK8gBRu/3lryrx9sO1XNogeLuVVH6fjQBhQsqevQMJgWThLqEAhT1qjRbKsgxJUCHhrUXjgIPQPOoY7LJoUZA8ESXSc0g7ed/bc/93F/YufGdrIdIEo2t+iv9+75/C5NkW5z57gAcJ/qtjRXF3pzhfACVNYxmEbQW4kuJsTV7+9TfH1S0fbmla78Fya66AZwhjINM6VC0NJVRS9irarUM63gGPt7sV78wMAYZyDpTnICp6ZbBVUnTSvs/eA0kBqDgXxHuoZhNWG4w7110XgTZDDS2Cv9eyWtkuv0Z5fvN0J4xPZ7a9Z0CILLvj+1JecpgWf3tCotyGybM6N6HgNIA1F30M+cAgrFRQSQJpEsjEgLTB2pERLDr4ECxZckYIY0qJ3/3yfjyTZxjZ/SXxfAMd9zJJoEwCZQxUkkAoFXg3+uXVPhI6pDGw1qJTWjQ2M+YYQELwGxnyH0eyXz3dpgtiYde0jPHpAMxAXAun3b7wk4KW7jUsXr9EkBsP6cpNUoQkQuoZz11/DdaXJTIHOGZ4jl6LAp7vAIf/2Xmgs5bBj4xASIkHv/MNPH3bzVgwPD8qqTgLSfQsBkgRLQgFlSaQSQqVpJBpCpWmUEkClSRoDgxCPP07iM0Ejyr3V4Po70bysdVjnXMJ9gWawZoS010vgmMwvni0tO/61Gi2+h8Ga4tTwOWbAVkCqAvC7kNDWIBQD9uzjwFHhOfWrccurVagEyJ457FAEFKtMEQc8nMO8EWgiYouqr1n7pp3loGSQwyb4981M4aMxsJ6HUKIkIrqU3Qe4CEBf3m7lFeO5x+S1t7tZrj8zEwW5PAekDLLfnujc2++kMQNFw0ki5LNgExBK0OyRwpMmIDAzHAQKAWjrmR3bQj2DvWsg3pZYMiVEN6H3AYFpwVEYd8t3qauQ1PlQHw8P/wsoImRxBeOaF+HQ+J5RLQqc/Jz7XJF3ul8+czAuzNKps90xRPnACnK8mfXbMzPsMzXfWIwnZcCLpsEcpU5Fi82LQAQHBEMCahoo1Z1EkP7vBQYG8FAow6ywTLotxqqY3gfymQ8w3sXCrz7rAyOv5MPcWfnGc77oBy9Z3jP323nxd+PuwsAXNIHLs8lwECYUquEzVZfP0L/k0DXfHww2XU+YEcBJbfpVhQKA8Fg9iCp8KpP/mNIfEYHg70DOx+/u/jdBSBd7xy43nns4ouJ96nOr84h7zDqnDiERV6ccsoBLzz55Ct233//Xy9fvpxWrFgx5wADgA0gd/7zulE6ab33qy4YTPfdX5LbwBBTcVC7S3Yp2fVKqqI/kgpQahOCT337GMuoPLhJfw9/6x1HqmGAwELwkFZ2L6AG4JzHn376+wB+deCBB854uYfZXBTJekBSOf7z1UX9D9+zvvPlv2wlb/qjRMJyjzJoKykPoUycZmAgtO7FIaIFEWbjT3plXIXreOJxL9Lf/VuI3TODwPA+AOgsoSyEC9fww489pqLK8DsTwIjGgRTj408/Arz5g9b/zf11vfy8pqntKsi3OUwo2RTQ7D1MYvDEdVfjsfvvQ8d5sJIQQkIoCSFUKAyUCqIb2BEQSkFI1Q0CCSUho8kmZPgupAyzm6TkptbeCymfIUFqeP7Tuy1a9BwRKRJCaGNQSxL38COPFAD0qlWr8tlINW2PTTDAAmBOW0cfZHDx2xr6dafUFBqAazOonAS0Zca4B17IOnh2vIO2Z9josXGfIHLQUT3N07fQLfcFeLpWRmSEVAgvieSjHrg1t2t/ldtrHXAHACsAghBkjCmMMeuyLPtNURRPA2jPVIq3+zoXcYkvgbR+9gk1df7pdf3yo4zEPEHc8extWHJLVLZrQYQOAMtVz6pYHE0IGnFfrq93TnBafMxRK8An8f6PWY//6BTjP8nd1euK4ttw7ikA9Uk4uAjqegAjAPKZWhE7Iordk2agiXp92WsT/e7jU7n0NYnCLoJgAFcwU4cZBUDRMdjkPBPexL5a5Q8gJAROCOwAOc7Az0qHW7Jy3a2Z++7agv8FtvOz+YBZ20SCMfgBANxqUWULSynd+vXrC4TSKLezUsSmniPihEYwUEOtdsL+Si57VSKPOTbRi/dWhCWSUANQcsXnYcJtrGikKrksgvMHQeCY8BcyLtT6lGP8xjHWFGVxZ+bvfKgof7gxy74L4EkCcDig12x52POkCOvvBcATwhIiMEBofZouAdERrzTquD2lOHGxpPn7aTF/TymxSFLw/ihoYxUJ0UYKcQA2MuNJ6/GY9WMPF27Dc8B9Py79v/vM3QPbubtK2/iej+N3dIfnYiMAdBwgbgfsxBxMsq9sikMGQPtKj4ULlRhuCWo2BDVbRK3ccz4KHhnz3F7rsHGE3VoI9fiotQ+i07kPQKcC1QH0FkCsmqPFmXeWTQCQy6NVsQXLXiJUlevNDo2YTj0zHEr8HiyiPyMJnQngxwHqOEBxzx+b8C8I+oDUkT2293rAW+vTZn/fkuDQFiRh0rK93XupSY4MbeH8func0v/XkBMt3gmfLV3b/8zquP+j8OLF9Cffj7bQp031S2CKM/GnI3n9jZwK109+62KOR92W+oRNADv5muRF5xpjPmSM+dikGxAADA4O7q2UuiJJkr36zS0A0FofqpT6dq1We0l1vtZ6qTHmCmPMXVrrO5MkWbFo0aIGACRJcoJS6mvz589v9TWeAEAp9TGt9ScmdUgEIyM9Wil1ebPZXDC5DWmaHm2MuaLRaCya1GECIIaHhweUUt9KkuQEY8yZSqlVWutrtdbXxc9Vxpi/GRwcHAKAWq32EqXUFY1G45VVI9I0XWKM+Yox5sda658YY/6pXq/v1vf7nsaYL2qt79Za/1Rr/UNjzCndzCAzv5GZ37wpgIuiWEhEZznnFk7uHBEtIaKzrbULAbAx5k0A7vDe7w/gegC3e+/PW7du3Y0AEufc/kR0Xp7nab/NaYz5AhH9hZTyOkycTxRm8Tr3MiL6k7Ism31/ZwCUZdmDzLy0KIovordgUdVGPzY29mkiOllr/XMAJxHR6cw8ysxjcU/M/IF2u7262WwucM7VieissiwXV0Lkvb/de38iM99CRDd4748viuLONPw/j4XOuZuY+WQAa5j5ewAUM/+b1vo8AAyt9TVa6x9NGhICAOr1+uFa61JrfdhkjjXGnKS1HjfG7AegqbX+nVLq2v7xUqvVdtdaj2qt/8EYc7rWem2j0dil+t0Y83Wt9eNpmi7ZHM1orf+X1np9mqZ7bqqNxphXxDYui3/XccS8QWvNaZoeE8/7hjFm9WQOSNN0idZ6rdb6061Wa77WukyS5LXx2T9WSv1i0tDXxphfaq2vNcZ8SGv9QrPZXDghgqbU9VrrdrPZXCD6CH9zvKS2oOS0ECLTWr8ZwK5Kqb+qsANgOp3O74joY0RUJ6L5AGS73S5jh7/HzK+VUh6bZdnj2HxBHW0m6ucByKIofkVEHwXw5VqttgcA12q15nvvvwXg0izL7kSv3KkewUrjvhGffQuAQ6y1CQDlnMvq9fqhAI5i5vfHmISJ15QAzieiEWbeG8DI2NjYC5VMAVBEtBzAd6y19ZkqlWpYHsHMv8iy7LexM5UvL4qi+EJRFH/pnFMAylarJYwx32fmo5MkOTLLsicw/cSii8+4hIh+aa29DIDP8/xzADYuWbLkIz3zGCKCkwPI4r4NoMbMrwawptPpVFOzbFmWRwB41jl3T+xTdS0VRfGDoijeAeBLAOYZY76vtV4anRxbluWasiz/LMuy3840HszMLADsRUSPbULSfRyylogsAJll2TUAlgJ4OvLqC7PhZTHzuwDcGkfGG5j5TY888kheSb/3viSiPYwx76u8bu+9JqI3AXi8LMtLkyQZ9KHY0ALYh5mfjS+jXzdUx6Isy/uVUicz8xeJ6Cat9SMA1mitvzo+Pr4GAKkZmDDdBxJRxszNzQBV9u2HACRCiIO999/03q8EcDR6i71NB2gPQJZl+UCSJBd6778AYIW19o5+2iGiEsB8Zl7GzAqAJqJXhp/oFABrvfe79vUti8IhNjNyHQBYa38C4LA0TY/13h/PzMeUZXm3lPJi59wKtRWpoL6bTTChiMj1lS09CmBZn/LxfebcYUS0KxHVvPdtIcRb8zz/7yRJzvHe36e1vrAsy49iZvUHDICklKu99857f/uL03dUA/BgURR/UDlXaZou8N5/ipm/unTp0iX3339/waHOQhLRfxHRno1GY6DdbheYuKzinlrrI4QQzwshRjudzr1Zlq0GsDr2+VwhxDeUUndNtjsneEnM/DwAEkLs2gcaxeG1EIDJ8/xZIcRNRLQkSZIT+2ihkp4LvPef8t5nAIokSTYCEHmeP0pE5wD4SJIkr4vgyq2FPDfhyfXTlYn3MJsZDS7qhgzAeNQZFwHY7cEHHzxMStmplLRS6nYAaZ7nZ6G3TpoE4LXW5wL4gvf+49baS+PvaVRy4tRTT/0OgPXMvH8lbUXcuz6J5ahhb/bef94Ys3+MFJaNRuMgAJ8E8G8AOnme38LMN3nv/1lrfWikg1JrfRaAN0kp/w8RjUYurIBXRVFcBeBL3vsrhoeHB7Dp1aYZgFVKtSe18UXxWiKqopl+M+D6vhcle0E3bHDOLSAiB8BKKdNOp/MUEX2ViD5njHlj1fc0TY8C8GEA3wTwDQB/YIw5Ob60DgB/7bXXfhBAQym1uvLF36C1fqzPHHIIlfOXGGPOyvN8JTPfZYx5wntPRVHsAWB1WZbvrCRaa312WZZfB3C7UupxIkoAvATAV/I8v0wp9V4iGprEneLggw9+33333Xfs6OjodQBORpho3S+ZBsC8PM9/obUu+kBJAdxbluXpsXNg5irwYzYB8AAzD016KV5K2bHW1pl5DwD3xut1tBY+aIzRzPx9pdSTALxzbi8A/1GW5ScAbFBKnQDgaq31T4joNwAOYub9iOj88fHxNZQkyfHOuZdVN+2TGgngbmvtndFu/WNmPiRKyZqiKH4wafgyABXf9mEAciHEnVmW3RGvP4CZjyjL8nsVINV1SZLs45x7o7X2uwDW9bcjSZKXOudOiKCJvvYpInq6LMtVUbrQbDYXZll2mrX23wE8Mek+r2Hm4aIorp4caNJan87Mj1lr71dKnau1vr7T6TzVDTAkyeuY+cgI/r2T+g5jzGnMfCIRDTPzb5VSV3Y6nf8EgP8LOQ4wK9NImK4AAAAASUVORK5CYII=" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a> · <a href="18-svyazka.html">сквозная связка</a></div>
+</div></footer>
+
+</div>
+<script>
+(function(){
+ var terms=[].slice.call(document.querySelectorAll('.term'));
+ var heads=[].slice.call(document.querySelectorAll('.gh-title'));
+ var btns=[].slice.call(document.querySelectorAll('.bar button'));
+ var q=document.getElementById('q'), cnt=document.getElementById('cnt');
+ var g='all';
+ function apply(){
+  var text=(q.value||'').toLowerCase().trim();
+  var n=0;
+  terms.forEach(function(t){
+   var okG = g==='all' || t.dataset.g===g;
+   var okT = !text || t.textContent.toLowerCase().indexOf(text)>=0;
+   var vis=okG&&okT;
+   t.classList.toggle('hidden',!vis); if(vis)n++;
+  });
+  heads.forEach(function(h){
+   var any=false, el=h.nextElementSibling;
+   while(el && el.classList.contains('term')){ if(!el.classList.contains('hidden'))any=true; el=el.nextElementSibling; }
+   h.classList.toggle('hidden',!any);
+  });
+  cnt.textContent='показано '+n+' из '+terms.length;
+ }
+ btns.forEach(function(b){ b.addEventListener('click',function(){
+  g=b.dataset.g; btns.forEach(function(x){x.setAttribute('aria-pressed',String(x===b));}); apply(); });});
+ q.addEventListener('input',apply);
+ apply();
+})();
+</script>
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script><script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script></body></html>

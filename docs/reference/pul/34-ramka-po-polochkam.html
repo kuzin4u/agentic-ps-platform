@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Рамка по полочкам и три комплекта документа</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--acc:#1f7a5a;--warn:#a35c13;--bad:#a32a2a;--ref:#1a3a8f;--free:#7a1f6a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:15.5px;line-height:1.5}
+.wrap{max-width:1120px;margin:0 auto;padding:0 18px 70px}
+nav.strip{display:flex;flex-wrap:wrap;gap:4px;padding:14px 0 0}
+nav.strip a,nav.strip .cur{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 9px}
+nav.strip .cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+header.top{border-bottom:2px solid var(--ink);padding:18px 0 14px;margin-bottom:12px}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--acc);margin:0 0 6px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:27px;margin:0 0 8px;font-weight:600;line-height:1.15}
+.tagline{color:var(--ink2);margin:0;max-width:84ch}
+a{color:var(--ref)}
+.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0 8px}
+.tab{background:var(--card);border:1px solid var(--line);padding:11px 13px;cursor:pointer;text-align:left;font:inherit;color:inherit}
+.tab:hover{border-color:var(--ink)}
+.tab[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 -3px 0 var(--ink)}
+.tab .n{font-family:'IBM Plex Serif',Georgia,serif;font-size:24px;line-height:1}
+.tab .l{font-weight:600;font-size:14px;margin-top:3px}
+.tab .d{font-size:12.3px;color:var(--ink2);margin-top:2px}
+.intro{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--acc);padding:12px 16px;margin:10px 0 14px;font-size:14.4px}
+.shelf{background:var(--card);border:1px solid var(--line);margin:12px 0}
+.shelf.hidden{display:none}
+.shelf .sh{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;padding:10px 15px;background:#f1f1ec;border-bottom:1px solid var(--line)}
+.shelf .sh h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:18px;margin:0}
+.shelf .sh .q{font-size:13px;color:var(--ink2)}
+.shelf .sh .k{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);margin-left:auto}
+.shelf ol{margin:0;padding:6px 15px 6px 15px;list-style:none}
+.shelf li{display:grid;grid-template-columns:52px 52px 1fr 108px;gap:10px;padding:6px 0;border-bottom:1px dotted var(--line);font-size:14.2px}
+.shelf li:last-child{border-bottom:none}
+.shelf li.hidden{display:none}
+.shelf li .c,.shelf li .s{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2)}
+.shelf li .m{font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-align:right}
+.m.must{color:var(--bad);font-weight:600}.m.should{color:var(--warn)}.m.nodef{color:#6a6a60}.m.ask{color:#b0480e}.m.def{color:var(--ink2)}.m.ill{color:#9a9a90}
+.w3 .t{font-weight:600}
+.w0 .t{color:#8a8a80}
+.ours{border-top:1px solid var(--line);padding:9px 15px;font-size:13.6px;background:#f7faf8}
+.ours b{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--acc);font-weight:500;margin-right:6px}
+.ours a{margin-left:6px;font-family:'IBM Plex Mono',monospace;font-size:11.5px}
+.qs{border-top:1px solid var(--line);padding:9px 15px;background:#fbf8f2;font-size:13.4px}
+.qs b{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--warn);font-weight:500;margin-right:6px}
+.qs .qv{color:var(--ink2)}
+.qs .qrow{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.qs .ql{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink2);width:100%}
+.qs a.qz,.qs a.qo{font-family:'IBM Plex Mono',monospace;font-size:11px;text-decoration:none;border:1px solid currentColor;padding:0 5px}
+.qs a.qz{color:var(--free)}.qs a.qo{color:var(--ref)}
+.qs .qt{font-size:13px;margin-right:10px}
+details.qsum{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--warn);padding:10px 14px;margin:12px 0}
+details.qsum summary{cursor:pointer;font-weight:600;font-size:14.5px}
+table.qtab{width:100%;border-collapse:collapse;font-size:13.4px;margin-top:10px}
+table.qtab th,table.qtab td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+table.qtab th{background:#ecece7;font-size:12px}
+table.qtab td.num{text-align:center;font-family:'IBM Plex Mono',monospace;width:78px}
+table.qtab td.nm{font-weight:600;width:20%}
+.note{font-size:13px;color:var(--ink2)}
+.legend{font-size:13px;color:var(--ink2);margin:6px 0}
+.dist{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:10px 0}
+.dist div{background:var(--card);border:1px solid var(--line);padding:7px 9px;font-size:12.5px}
+.dist b{font-family:'IBM Plex Serif',Georgia,serif;font-size:18px;display:block}
+footer{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+@media(max-width:820px){.tabs{grid-template-columns:1fr 1fr}.shelf li{grid-template-columns:44px 1fr}.shelf li .s,.shelf li .m{display:none}.dist{grid-template-columns:1fr 1fr}h1{font-size:22px}}
+</style><link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAfCAYAAACGVs+MAAAHs0lEQVR42p2XaYydVRnHf885513unbl3lrYz02lBYSiFIlRkERG6UKVqiwSwgDHECIZFiSGiH1iStiKSGAMRDY0YNQbDh2kCakkgjQoSoqEpi1VRoJRVwGI7W+cu7/ue8/jh3hmmZaatPslN7nmXc/7P//9sLxzBVFUAeWr79sHJffvuUNX+wz4PZgNYjtLckR64/7rrnIG8c9GH+8u9vbffc+cdr3+pqzS6pLdnqas3qor4CR/2vx30xV/Vms9Jvf5WG4hsAtkMgf/XhsEiAhDfff21322OjefbVp7jn5uX6MsLO/W1oX59dWhAdw/167PH9ekjx8yfuG9h7yOXzuu+aGqPI7FhDkOlvRz8hQMLPv2LrmTnynffvK0Q7ILxUVNZeYGvfOf7xajXYtL7ohG0SMEvjWzn+nK07pZq/NsfD/Y+NlipnLgV/MbDMD0rgMfBCfhr+7puvrVktq9K7akuTbyC1MbHKJadZjsv+6KrheAEnCKuAFtT1RGvvhP8xeV47Zae5M+f6al8bjMUc4Ews9G+GoobFnTfckNH8oNjrIT9RfAaJ1ZU0SyDEMj37yMET0siRVqbiRFsDnZ/EYqPRrb3pkr6m3VtELPJcRCADWCvAH/JvO7PX9URf68qFBOKGNSaJAVVyDMkjlEUUZ2VVgGM4EaC+pMj467pSB48oVodGoaw8ZAzZy5kGILS1X1parYssqITinEgqopJU0KeQ1Fg4gj1vgXoMGbBjgYtzk5s1/Vle5+AbpqLgY1gBfSmPvnaJ9JocCKot+37qoqUSoQ8IxQecTFaFC0AcvhMEnAHgvrz0ujC9fO61giEmVJMA9gEHkjOiOzVDtTPuKeASVM0y8EXEEVoMcWAHAkAOeigFV0du+vacXYwAxva3p9TrS4/1pmhelBkGoCAKiYttyTwARNFqC+OKMGUBbCFIsdaVgJV03JWpgEsay/OTu3H+qwhgJ/yS1rnY0olNM/QAiSO3pfgKExAmqq6wJq+s6rVE7XltJkGsKr9YLewMJYW5QcXJcWmJTTPwYO4iDDFgMhRgVDQTiMMxbZ/zjSMRBKZ/eVWFjSbiIJEMRxFFhy6jQUiCUlb9g8CqCtj4YPtEESQNCU06q0u4xxa+DnrwFwyZArjgTGArTMBPNFevOmLPZNBMSB6EAOCSVN8o9GKh/8xCGkVJjMSQv7XLLzRjjudbsdTLXP7RPPpK0txc0lkklxRmcoxI5gkJWRNxBokiloSABg7O5AZ1xRCIiJ7ve7eMzHxajtywkwJgoL5d7P52p4QnkpFlKk+rjrNQDE2ivcBMaaVEbUm2qijWRPyDIpWpZwG9z7NIYC8UISHgeKJGYVoukNd3vb2dzW9+5xY11RBm1MeGINLS3QsWkzXuediunsJzQbxySfhKp0UjUYrQ/IcLXI0LzChBcKDVgWzK/O14bH6TwRYPWNIkUPHKYFw10DPtqs64vX7ghbOGDdRqzH/3p+yYNUFTIyOkJbKKBBUqVYqqG8HZFGABnyjwctfvgL76itEaeqjEOyPJhq3/3Dv6J3D7TljVgCAUdCOcnng/t7yjlWJXbw/aBFU3Ts2ohbFjI+PsfKBrUy+t5cdN32dnsWLUWsxSYJJU0ypTJQklP/0JF21Az6JIrtN3fZv7x1bNwx6ect7nWsmDJvA1Gu1d+6KWe8oPXZ+6gZGPfnCInORz2R0cpwOI8xbtozkkkuI0xJFs0HIc0Ke4/MMn+eh8qkLQwl1u/Kwb2d1/lfNli3F3zduNGzerIf2ig/YBrBbwQ9WKiduqsYPrE7d2RZoIH68Vie9dZN0r7hAjLWIc4gxGGvVWKuxtZRF7KQGQlKquzgOr+z6y5ozV6zYoaoiIuGIAGaCAJKb+7u/eV7svnFSZAdSgdcbTf6TFSjtDDEGZy3GWvYj/C3w0g7rfn6g0vt8pVyWf42MPLN79+735uqW0tZEZlReAXQluCdajUmhc/6NfdFlJzm5eNCaUztE+pwQB0WbIWSTqm+9XejTzzYav35grP4ocGC2QamVGJj2OhxVJzFtVDPE60h7enpPE6mMq5p/ZtleJidHgazVQeXQj5u5Ny+VSovbf6udnZ3z29cGAZxz50dRdDpQBSrDYBfF8ZJ29UrbP8rl8kLTGsHoTtMPRVF0urV2bRzHS9rvJkmSHBfH8WcBieN4SRzHFwGdVkS+FUJ43Fp7bgjhjBDCLuBqY8yZItIFdDvnvmKM2fOQtSsa1pIXxRvlOF5rjVl+Wwgv/BHWuSgasFHksxAuA84A/qGqH7fWrrfW9gNnAQeMMdeIyFLv/ZvW2jVGRIoZcZABGGMiERnK8/xneZ4/CPweuAewjUbjSUC9SDOINDeD5nm+VVWXe+9vzLLslwDW2g4gVdW3gU8C27IseyhN07tCCHuttZ3W2keNqjpARaQJdLXliIFGqVQaLJVKg6q6RkTuVdVqHMdL27pGM4LWe++fV9XXgH1ApSiKpjGmKiINYMJ7fzzg6vX6lcBOVX0phHCjtdZ+wRhziogYVS1bay8SkZ0i8ocQwg3e+xOAd621jzvnXvDerw0hPCMiPcDFxpiPOOdGRGTSGGO89y9baxcXRfGQiDSMMacADwPLrbXrRWRv+7zjgRf/C3z5hc7EDxRkAAAAAElFTkSuQmCC"><style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style><style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style><style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style></head><body><div class="wrap">
+
+<nav class="strip">
+ <a href="00-ukazatel-pula.html">Указатель пула</a>
+ <a href="33-ramka-po-kostochkam.html">Рамка по косточкам</a>
+ <a href="27-konspekt-ramki-d1.html">Конспект D1</a>
+ <a href="28-tezisy-i-otzyv.html">Тезисы и отзыв</a>
+ <a href="21-drafty-dokumentov.html">Драфты</a>
+ <span class="cur" aria-current="page">Рамка по полочкам</span>
+</nav>
+
+<header class="top">
+ <p class="eyebrow">этап 2 из 2 · 172 косточек · 10 полочек · 3 комплекта</p>
+ <h1>Рамка по полочкам и три комплекта документа</h1>
+ <p class="tagline">Каждой косточке присвоены полочка — вопрос, на который она отвечает, — и значимость по четырёхступенчатой шкале. Из этого собраны три сокращённых комплекта: минимальное ядро, документ без малосущественного и выжимка по Парето.</p>
+</header>
+
+<div class="dist"><div><b>17</b>несущее</div><div><b>78</b>существенное</div><div><b>67</b>второстепенное</div><div><b>10</b>служебное</div><div><b>172</b>всего</div></div>
+
+<div class="tabs" id="tabs">
+ <button class="tab" data-v="shelves" aria-pressed="true"><div class="n">172</div><div class="l">По полочкам</div><div class="d">весь документ, 10 вопросов</div></button>
+ <button class="tab" data-v="core" aria-pressed="false"><div class="n">17</div><div class="l">Минимальное ядро</div><div class="d">10% · несущий каркас</div></button>
+ <button class="tab" data-v="full" aria-pressed="false"><div class="n">95</div><div class="l">Без малосущественного</div><div class="d">55% · убрано служебное</div></button>
+ <button class="tab" data-v="par" aria-pressed="false"><div class="n">34</div><div class="l">Парето 20/80</div><div class="d">20% документа · 80% сути</div></button>
+</div>
+
+<details class="qsum" open><summary>Наши вопросы по полочкам: 12 замечаний к рамке и 31 открытая позиция наших документов</summary>
+<table class="qtab"><tbody>
+<tr><th>Полочка</th><th>Косточек</th><th>Замечаний к рамке</th><th>Открытых позиций</th><th>Всего</th><th>Что это значит</th></tr>
+<tr><td class="nm">Замысел, статус и область</td><td class="num">31</td><td class="num">2</td><td class="num">—</td><td class="num"><b>2</b></td><td class="note">Вопросы о границах: область сужена до одного инструмента, а статус заимствованного механизма не обозначен.</td></tr><tr><td class="nm">Участники и агент</td><td class="num">13</td><td class="num">1</td><td class="num">7</td><td class="num"><b>8</b></td><td class="note">Вопросы сосредоточены в допуске агента: сроки, обжалование, оценка. Рамка здесь только обозначает повестку.</td></tr><tr><td class="nm">Объекты и артефакты</td><td class="num">24</td><td class="num">1</td><td class="num">1</td><td class="num"><b>2</b></td><td class="note">Вопросов мало: объекты у нас и в рамке совпадают, открыт лишь правовой режим мандата.</td></tr><tr><td class="nm">Режимы и слои</td><td class="num">18</td><td class="num">—</td><td class="num">4</td><td class="num"><b>4</b></td><td class="note">Все вопросы — численные: пороги, сроки удержания. Решаются только данными пилота.</td></tr><tr><td class="nm">Проверка и привязка</td><td class="num">14</td><td class="num">2</td><td class="num">2</td><td class="num"><b>4</b></td><td class="note">Главный узел: что именно доказывает исполнение и как проверяются ограничения.</td></tr><tr><td class="nm">Ограничения и состояние</td><td class="num">12</td><td class="num">1</td><td class="num">4</td><td class="num"><b>5</b></td><td class="note">Самое спорное место рамки: здесь наше главное замечание — кто держит состояние и как им распоряжаться.</td></tr><tr><td class="nm">Сервис намерения</td><td class="num">15</td><td class="num">2</td><td class="num">3</td><td class="num"><b>5</b></td><td class="note">Здесь блокирующий выбор — держатель журнала — и вопрос проверяемости отзыва.</td></tr><tr><td class="nm">Данные и раскрытие</td><td class="num">9</td><td class="num">1</td><td class="num">2</td><td class="num"><b>3</b></td><td class="note">Вопросы о минимизации: что можно раскрывать и как проверять равенство сведений.</td></tr><tr><td class="nm">Вне области и открытое</td><td class="num">31</td><td class="num">—</td><td class="num">7</td><td class="num"><b>7</b></td><td class="note">Больше всего наших вопросов — там, где рамка молчит: ответственность, фискализация, продавцы, возврат.</td></tr><tr><td class="nm">Связь со стандартами</td><td class="num">5</td><td class="num">2</td><td class="num">1</td><td class="num"><b>3</b></td><td class="note">Вопросы о канале: как признак и намерение перенести за пределы карточных сообщений.</td></tr>
+</tbody></table>
+<p class="note">Вопросы группируются не там, где документ толще, а там, где он уходит от ответа или оставляет решение другим: больше всего их на полочках «участники и агент» и «вне области», затем «ограничения и состояние» и «сервис намерения». И наоборот, самая объёмная полочка — замысел и область, 31 косточка, — даёт всего два вопроса. Основная работа, таким образом, не в сближении с рамкой, а в заполнении того, что она оставила открытым.</p>
+</details>
+
+<div class="intro" id="intro">Все 172 косточек разложены по десяти полочкам — по вопросу, на который каждая отвечает. Жирным выделены несущие элементы, серым — служебные. Под каждой полочкой — чем этот вопрос закрыт в наших документах.</div>
+<p class="legend">Значимость: <b>жирным</b> — несущее, обычным — существенное и второстепенное, <span style="color:#8a8a80">серым</span> — служебное. Любой комплект можно распечатать или выгрузить в Word кнопками вверху страницы — в файл попадает только то, что видно.</p>
+
+<section class="shelf" data-sh="p1">
+ <div class="sh"><h2>Замысел, статус и область</h2><span class="q">Зачем документ и в каких пределах действует</span><span class="k" data-k="p1">31</span></div>
+ <ol><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К001</span><span class="s">1</span><span class="t">Агент может приобретать товары и услуги от имени потребителя; исполнение платежа может быть оторвано от присутствия потребителя.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К002</span><span class="s">1</span><span class="t">Традиционная связь «присутствие — оформление — авторизация — исполнение» в агентной торговле ослабевает или исчезает.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К003</span><span class="s">1</span><span class="t">Без общей семантики намерения на платёжном слое растут расхождения толкования, собственные расширения и фрагментация.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К004</span><span class="s">1.1</span><span class="t">Рамка информативна: общая терминология, обязанности, границы, жизненный цикл и семантика платёжного слоя.</span><span class="m def">определяет</span></li><li class="w0" data-core="0" data-full="0" data-par="0">
+  <span class="c">К006</span><span class="s">1.1</span><span class="t">Примеры объектов, полей, идентификаторов и структур не следует толковать как нормативные.</span><span class="m should">следует</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К008</span><span class="s">1.2</span><span class="t">Платёжные учётные данные выбираются и связываются с намерением до исполнения; выбор агентом между несколькими инструментами — вне области.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К009</span><span class="s">1.2.1</span><span class="t">В области: одни учётные данные на исполнение намерения.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К010</span><span class="s">1.2.1</span><span class="t">В области: семантика платёжного мандата — потребитель одобрил платёжное намерение и обработку платежа.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К011</span><span class="s">1.2.1</span><span class="t">В области: типы ограничений, задающие допустимые границы и оцениваемые при обработке платежа.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К012</span><span class="s">1.2.1</span><span class="t">В области: семантика привязки контекста оформления к исполнению платежа.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К013</span><span class="s">1.2.1</span><span class="t">В области: общие понятия жизненного цикла и состояния — одноразовость, бюджеты, повторяемость.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К014</span><span class="s">1.2.1</span><span class="t">В области: сервисы намерения — регистрация, координация жизненного цикла, устойчивые ссылки, совместимые идентификаторы, санкционированное извлечение.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К015</span><span class="s">1.2.1</span><span class="t">В области: два режима исполнения, различающиеся числом слоёв учётных данных и содержанием платёжного мандата.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К024</span><span class="s">1.3</span><span class="t">Законы и подзаконные акты имеют приоритет над отраслевыми стандартами.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К025</span><span class="s">1.3</span><span class="t">Спецификации не предписывают единственного подхода к реализации.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К027</span><span class="s">1.4.1</span><span class="t">Назначение: общая понятийная основа для совместимой агентной, делегированной и асинхронной торговли.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К028</span><span class="s">1.4.2</span><span class="t">Замысел: отделить семантику платёжного слоя от реализации и слоя идентичности, снизить неоднозначность будущих спецификаций.</span><span class="m def">определяет</span></li><li class="w0" data-core="0" data-full="0" data-par="0">
+  <span class="c">К029</span><span class="s">1.5</span><span class="t">Применяется последняя редакция ссылочных документов, если дата не указана явно.</span><span class="m must">обязательно</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К035</span><span class="s">1.6</span><span class="t">Слой — логический уровень рамки с отдельной ответственностью; их три.</span><span class="m def">определяет</span></li><li class="w0" data-core="0" data-full="0" data-par="0">
+  <span class="c">К038</span><span class="s">1.7.1</span><span class="t">Сокращения: 3DS, ACS, DPC, KYA, SRC, API, VC, FIDO.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К060</span><span class="s">4</span><span class="t">Разным участникам нужны разные категории сведений; согласие, делегирование и платёж должны оставаться связанными на всём жизненном цикле.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К071</span><span class="s">4.2</span><span class="t">Проверяемость нужна против галлюцинаций агента, неверного толкования, риска и мошенничества.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К073</span><span class="s">4.2</span><span class="t">Иные подходы к достижению доверия признаются, но вне области.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К078</span><span class="s">4.2.3</span><span class="t">Семантику слоя 2 определяют органы стандартизации идентичности.</span><span class="m should">следует</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К079</span><span class="s">4.2.3</span><span class="t">Артефакты слоя 2 доступны как входные данные; внутренняя структура не определяется.</span><span class="m should">следует</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К081</span><span class="s">4.2.4</span><span class="t">Слой 3 определяет: мандат, типы ограничений, привязку, исполнение, жизненный цикл и состояние.</span><span class="m must">обязательно</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К082</span><span class="s">4.3</span><span class="t">Любой механизм намерения должен поддерживать пять базовых понятий платёжного слоя.</span><span class="m must">обязательно</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К124</span><span class="s">6</span><span class="t">Предложения по структуре механизма подаются в его репозиторий, а не через рецензирование рамки.</span><span class="m should">следует</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К126</span><span class="s">6.1</span><span class="t">Добавляет: криптографическую проверяемость, переносимость, выборочное раскрытие, привязку к оформлению.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К167</span><span class="s">8</span><span class="t">Участникам нужно определять, была ли операция инициирована, обеспечена или исполнена агентом.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К168</span><span class="s">8</span><span class="t">Индикаторы нужны для риска, фрода, споров, прозрачности, аудита, отчётности, подотчётности.</span><span class="m def">определяет</span></li></ol>
+ <div class="ours"><b>как у нас</b>Подход рамки принят; наши замечания касаются качества реализации, а не смены подхода.<a href="28-tezisy-i-otzyv.html">Позиция по подходу</a></div>
+ <div class="qs"><b>наши вопросы</b><span class="qv">Вопросы о границах: область сужена до одного инструмента, а статус заимствованного механизма не обозначен.</span>
+   <div class="qrow"><span class="ql">к рамке</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Допустить выбор инструмента человеком в момент исполнения">З05</a><span class="qt">Допустить выбор инструмента человеком в момент исполнения</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Пометить раздел о подтверждаемом намерении как информативный">З11</a><span class="qt">Пометить раздел о подтверждаемом намерении как информативный</span></div>
+   
+  </div>
+</section><section class="shelf" data-sh="p2">
+ <div class="sh"><h2>Участники и агент</h2><span class="q">Кто участвует и что обязан агент</span><span class="k" data-k="p2">13</span></div>
+ <ol><li class="w0" data-core="0" data-full="0" data-par="0">
+  <span class="c">К026</span><span class="s">1.4</span><span class="t">Аудитория: платёжные системы и финансовые организации, поставщики технологий, продавцы и эквайреры.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К040</span><span class="s">2.1</span><span class="t">Потребитель — физическое лицо, формирующее исходное намерение и делегирующее агенту покупку.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К041</span><span class="s">2.1</span><span class="t">Намерение, включающее платёжное действие, должно быть санкционировано потребителем.</span><span class="m should">следует</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К044</span><span class="s">2.2</span><span class="t">Агент — система, уполномоченная действовать от имени потребителя; может выдавать неточные и непреднамеренные результаты.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К045</span><span class="s">2.2</span><span class="t">Агент никогда не исполняет платежи без предварительной авторизации потребителя и действует в пределах намерения.</span><span class="m must">обязательно</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К046</span><span class="s">2.3</span><span class="t">Поставщик учётных данных — выпускает учётные данные, аутентифицирует потребителя, выпускает удостоверения; эмитент, сеть, поставщик токенов, кошелёк.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К047</span><span class="s">2.4</span><span class="t">Платёжная система — инфраструктура и правила; может вести записи намерения и интерфейсы их извлечения.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К048</span><span class="s">2.5</span><span class="t">Поставщик сервиса намерения — регистрирует, хранит, предоставляет доступ; не порождает намерение и не решает об авторизации.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К049</span><span class="s">2.6</span><span class="t">Продавец и эквайрер — роль не меняется; могут различать человека и агента и знать о намерении в автономной операции.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К051</span><span class="s">3</span><span class="t">Опознание агента — согласованная идентификация и связь с устойчивыми метаданными для обработки, ответственности, риска, аудита.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К067</span><span class="s">4.1.2</span><span class="t">Агент отслеживает поручение, ищет товар и исполняет в пределах ограничений; уведомляет, в том числе о невозможности исполнения.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К068</span><span class="s">4.1.2</span><span class="t">Агент должен уметь сформировать краткое изложение запроса на естественном языке.</span><span class="m should">следует</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К072</span><span class="s">4.2</span><span class="t">Кто пользуется намерением: агент, кошелёк, продавец, платёжная система, поставщик токенов, эмитент, справочная служба, стороны спора.</span><span class="m def">определяет</span></li></ol>
+ <div class="ours"><b>как у нас</b>Реестр агентов, классы, уровни допуска; агент как переносчик поручения, а не источник полномочий.<a href="21-drafty-dokumentov.html#A2">A2</a><a href="21-drafty-dokumentov.html#A7">A7 разд. 8</a></div>
+ <div class="qs"><b>наши вопросы</b><span class="qv">Вопросы сосредоточены в допуске агента: сроки, обжалование, оценка. Рамка здесь только обозначает повестку.</span>
+   <div class="qrow"><span class="ql">к рамке</span><a class="qz" href="28-tezisy-i-otzyv.html" title="История исполнения как элемент опознания агента">З06</a><span class="qt">История исполнения как элемент опознания агента</span></div>
+   <div class="qrow"><span class="ql">к нашим документам</span><a class="qo" href="30-otkrytye-pozicii.html" title="Срок рассмотрения заявления о допуске">O01</a><span class="qt">Срок рассмотрения заявления о допуске</span><a class="qo" href="30-otkrytye-pozicii.html" title="Срок действия ключа и период параллельного действия">O02</a><span class="qt">Срок действия ключа и период параллельного действия</span><a class="qo" href="30-otkrytye-pozicii.html" title="Перерегистрация временных допусков">O04</a><span class="qt">Перерегистрация временных допусков</span><a class="qo" href="30-otkrytye-pozicii.html" title="Минимальный объём данных для оценки агента">O09</a><span class="qt">Минимальный объём данных для оценки агента</span><a class="qo" href="30-otkrytye-pozicii.html" title="Сроки оспаривания оценки">O10</a><span class="qt">Сроки оспаривания оценки</span><a class="qo" href="30-otkrytye-pozicii.html" title="Обжалование отказа в допуске">O15</a><span class="qt">Обжалование отказа в допуске</span><a class="qo" href="30-otkrytye-pozicii.html" title="Пересчёт оценки после оспаривания">O21</a><span class="qt">Пересчёт оценки после оспаривания</span></div>
+  </div>
+</section><section class="shelf" data-sh="p3">
+ <div class="sh"><h2>Объекты и артефакты</h2><span class="q">Что создаётся и передаётся</span><span class="k" data-k="p3">24</span></div>
+ <ol><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К031</span><span class="s">1.6</span><span class="t">Намерение — санкционированная потребителем деятельность, из которой выводятся мандаты, ограничения, привязки и исполнение; не зависит от реализации.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К032</span><span class="s">1.6</span><span class="t">Контекст оформления — что приобретается: позиции, количества, продавец и прочие существенные сведения.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К033</span><span class="s">1.6</span><span class="t">Платёжный мандат — структурированные платёжные данные, задающие границы одной или нескольких операций, а не одну фиксированную операцию.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К034</span><span class="s">1.6</span><span class="t">Ограничения — условия, задающие допустимые границы действий агента: оформление, платёж, жизненный цикл.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К036</span><span class="s">1.6</span><span class="t">Пара мандатов — связь контекста оформления с платёжным мандатом в пределах одной операции.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К037</span><span class="s">1.6</span><span class="t">Исполнение — итоговые значения взаимодействия по операции.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К064</span><span class="s">4.1.1</span><span class="t">Немедленный режим: намерение содержит одобренные значения корзины, платежа и итоговые.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К066</span><span class="s">4.1.2</span><span class="t">Автономный режим: намерение содержит предварительно санкционированные границы; итоговые значения проверяются против исходного намерения.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К083</span><span class="s">4.3.1</span><span class="t">Намерение: коренится в согласии, охватывает действия во времени, на него можно ссылаться, у него есть жизненный цикл.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К084</span><span class="s">4.3.2</span><span class="t">Платёжный мандат — конкретный платёж или набор допустимых платежей; ссылка на учётные данные, получатель, сумма или диапазон, срок, ссылка на оформление.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К085</span><span class="s">4.3.2</span><span class="t">Мандат не исполняет платёж, а задаёт условия.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К094</span><span class="s">4.3.6</span><span class="t">Цепочка: намерение → мандат и ограничения → привязка → исполнение.</span><span class="m def">определяет</span></li><li class="w0" data-core="0" data-full="0" data-par="0">
+  <span class="c">К106</span><span class="s">5.2</span><span class="t">Результат регистрации: ссылка, отметки времени, начальный статус, связь с заказами.</span><span class="m ill">иллюстративно</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К107</span><span class="s">5.2</span><span class="t">Состав регистрации: контекстные идентификаторы, указание на агента, артефакты намерения, необязательные платёжные сводки.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К117</span><span class="s">5.6</span><span class="t">Заказ — единица исполнения; одно намерение даёт несколько заказов; заказ не равен операции.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К118</span><span class="s">5.6</span><span class="t">Завершённые заказы могут оформляться артефактами исполнения, но не обязаны.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К125</span><span class="s">6</span><span class="t">Проверяемое удостоверение — подписанная структура с выборочным раскрытием; цепочка из трёх слоёв, в каждом мандат.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К127</span><span class="s">6.2</span><span class="t">Мандат — набор атрибутов удостоверения, фиксирующий одобренное потребителем.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К128</span><span class="s">6.2.1</span><span class="t">Мандат оформления: позиции, продавец, подписанная продавцом запись корзины; раскрывается продавцу.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К129</span><span class="s">6.2.2</span><span class="t">Платёжный мандат: ссылка на учётные данные, получатель, сумма и валюта; раскрывается платёжной системе, эквайреру, эмитенту.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К131</span><span class="s">6.2.4</span><span class="t">Открытый мандат — ограничения; закрытый — итоговые значения.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К157</span><span class="s">6.8.1</span><span class="t">Регистрация с артефактами: идентификаторы, агент, цепочка слоёв 1–2, необязательные сводки слоя 3.</span><span class="m def">определяет</span></li><li class="w0" data-core="0" data-full="0" data-par="0">
+  <span class="c">К159</span><span class="s">6.9.1</span><span class="t">Запись намерения: идентификаторы, ссылка, статус, цепочка удостоверений, массив заказов.</span><span class="m ill">иллюстративно</span></li><li class="w0" data-core="0" data-full="0" data-par="0">
+  <span class="c">К160</span><span class="s">6.9.2</span><span class="t">Запись заказа: ссылка, статус, срок, тип, привязка, сводка мандата, сводки ограничений, метаданные.</span><span class="m ill">иллюстративно</span></li></ol>
+ <div class="ours"><b>как у нас</b>Три вида мандата, открытые и закрытые значения, заказ как единица исполнения.<a href="21-drafty-dokumentov.html#A7">A7</a><a href="21-drafty-dokumentov.html#A1">A1 разд. 6</a></div>
+ <div class="qs"><b>наши вопросы</b><span class="qv">Вопросов мало: объекты у нас и в рамке совпадают, открыт лишь правовой режим мандата.</span>
+   <div class="qrow"><span class="ql">к рамке</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Оборванное определение исполнения">З12</a><span class="qt">Оборванное определение исполнения</span></div>
+   <div class="qrow"><span class="ql">к нашим документам</span><a class="qo" href="30-otkrytye-pozicii.html" title="Мандат как доверенность в электронной форме">O31</a><span class="qt">Мандат как доверенность в электронной форме</span></div>
+  </div>
+</section><section class="shelf" data-sh="p4">
+ <div class="sh"><h2>Режимы и слои</h2><span class="q">Как сделка устроена во времени и по уровням доверия</span><span class="k" data-k="p4">18</span></div>
+ <ol><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К042</span><span class="s">2.1</span><span class="t">Авторизация может быть непосредственно перед платежом или задолго до него; во втором случае потребитель в момент платежа отсутствует.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К061</span><span class="s">4.1</span><span class="t">Два режима по характеру взаимодействия и доступности потребителя в момент исполнения.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К062</span><span class="s">4.1</span><span class="t">Автономный режим может перейти в немедленный, если потребуется участие потребителя.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К063</span><span class="s">4.1.1</span><span class="t">Немедленный режим: потребитель выбрал вариант, уполномочил, присутствует; агент исполняет сразу.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К065</span><span class="s">4.1.2</span><span class="t">Автономный режим: потребитель задаёт ограничения заранее и отсутствует в момент исполнения.</span><span class="m def">определяет</span></li><li class="w0" data-core="0" data-full="0" data-par="0">
+  <span class="c">К074</span><span class="s">4.2.1</span><span class="t">Схемы: цепочка делегирования намерения и поток операции при слоистом делегировании.</span><span class="m ill">иллюстративно</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К075</span><span class="s">4.2.2</span><span class="t">Слой 1 — якорь доверия: криптографическая основа, внешняя зависимость для рамки.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К077</span><span class="s">4.2.3</span><span class="t">Слой 2 — санкционированное намерение: согласие, делегированные полномочия, выборочное раскрытие.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К080</span><span class="s">4.2.4</span><span class="t">Слой 3 — автономное исполнение: основная область рамки.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К137</span><span class="s">6.4</span><span class="t">Цепочка из трёх удостоверений, каждое подписано ключом, делегированным выше.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К138</span><span class="s">6.4.1</span><span class="t">Подтверждаемое намерение — одна из реализаций трёх понятийных слоёв рамки.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К139</span><span class="s">6.4.2</span><span class="t">Слой 1: выпускает поставщик учётных данных, встраивает ключ потребителя, долгоживущий.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К141</span><span class="s">6.4.3</span><span class="t">Слой 2: предлагает агент, подписывает потребитель — подпись и есть согласие.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К142</span><span class="s">6.4.3</span><span class="t">В автономном режиме слой 2 встраивает ключ агента; подпись покрывает и ограничения, и ключ.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К144</span><span class="s">6.4.4</span><span class="t">Слой 3: только автономный режим, подписывает агент, короткоживущий, конечный.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К161</span><span class="s">6.9.3</span><span class="t">Соответствие слоёв: доверие, делегирование, платежи.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К162</span><span class="s">6.10.1</span><span class="t">Немедленный поток: слои 1 и 2, ограничения минимальны.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К163</span><span class="s">6.10.2</span><span class="t">Автономный поток: слои 1–3, мандаты, ограничения, привязка, состояние.</span><span class="m def">определяет</span></li></ol>
+ <div class="ours"><b>как у нас</b>Немедленный и автономный режимы с удержанием заказа при переходе.<a href="21-drafty-dokumentov.html#A7">A7 разд. 7</a></div>
+ <div class="qs"><b>наши вопросы</b><span class="qv">Все вопросы — численные: пороги, сроки удержания. Решаются только данными пилота.</span>
+   
+   <div class="qrow"><span class="ql">к нашим документам</span><a class="qo" href="30-otkrytye-pozicii.html" title="Порог обязательного подтверждения">O05</a><span class="qt">Порог обязательного подтверждения</span><a class="qo" href="30-otkrytye-pozicii.html" title="Пороги для усиленной подписи">O08</a><span class="qt">Пороги для усиленной подписи</span><a class="qo" href="30-otkrytye-pozicii.html" title="Срок удержания заказа">O14</a><span class="qt">Срок удержания заказа</span><a class="qo" href="30-otkrytye-pozicii.html" title="Зависимость порога от репутации">O26</a><span class="qt">Зависимость порога от репутации</span></div>
+  </div>
+</section><section class="shelf" data-sh="p5">
+ <div class="sh"><h2>Проверка и привязка</h2><span class="q">Как убеждаются, что оплачено одобренное</span><span class="k" data-k="p5">14</span></div>
+ <ol><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К089</span><span class="s">4.3.4</span><span class="t">Привязка связывает мандат с контекстом оформления, из которого он выведен.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К090</span><span class="s">4.3.4</span><span class="t">Привязка на уровне раскрытия и на уровне исполнения.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К091</span><span class="s">4.3.4</span><span class="t">Вывод привязки детерминирован: независимые стороны получают одинаковые ссылки.</span><span class="m must">обязательно</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К092</span><span class="s">4.3.5</span><span class="t">Исполнение должно соответствовать мандату и ограничениям.</span><span class="m should">следует</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К130</span><span class="s">6.2.3</span><span class="t">Пара мандатов связана идентификатором из подписанного представления оформления.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К132</span><span class="s">6.2.4</span><span class="t">В автономном режиме проверяются оба и соответствие закрытого открытому.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К140</span><span class="s">6.4.2</span><span class="t">При недействительности слоя 1 агент обращается к потребителю для исправления.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К147</span><span class="s">6.6</span><span class="t">Привязка в момент делегирования и в момент исполнения.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К148</span><span class="s">6.6</span><span class="t">Идентификатор операции в платёжном удостоверении равен ссылке на оформление в удостоверении оформления.</span><span class="m must">обязательно</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К150</span><span class="s">6.7.2</span><span class="t">Привязка к держателю через встроенный открытый ключ; слой 3 ключа не несёт.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К151</span><span class="s">6.7.3</span><span class="t">Каждое удостоверение привязано хэшем к вышестоящему; слой 3 — к выборочному представлению слоя 2.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К152</span><span class="s">6.7.3</span><span class="t">Ключ агента в слое 3 указывается идентификатором, чтобы исключить подмену.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К154</span><span class="s">6.7.5</span><span class="t">Привязка исполнения — хэш токена оформления продавца; делегирования — хэш раскрытия мандата оформления.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К156</span><span class="s">6.7.6</span><span class="t">Критичные к безопасности проверяющие считают нераспознанный тип ограничения отказом.</span><span class="m should">следует</span></li></ol>
+ <div class="ours"><b>как у нас</b>Признак операции, запись об исполнении, механическая проверка пределов мандата.<a href="21-drafty-dokumentov.html#A1">A1</a><a href="21-drafty-dokumentov.html#A4">A4</a></div>
+ <div class="qs"><b>наши вопросы</b><span class="qv">Главный узел: что именно доказывает исполнение и как проверяются ограничения.</span>
+   <div class="qrow"><span class="ql">к рамке</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Минимальный состав записи об исполнении на уровне заказа">З02</a><span class="qt">Минимальный состав записи об исполнении на уровне заказа</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Строгий режим по умолчанию для нераспознанных платёжных ограничений">З03</a><span class="qt">Строгий режим по умолчанию для нераспознанных платёжных ограничений</span></div>
+   <div class="qrow"><span class="ql">к нашим документам</span><a class="qo" href="30-otkrytye-pozicii.html" title="Очереди внедрения признака операции">O03</a><span class="qt">Очереди внедрения признака операции</span><a class="qo" href="30-otkrytye-pozicii.html" title="Коридор изменения цены">O27</a><span class="qt">Коридор изменения цены</span></div>
+  </div>
+</section><section class="shelf" data-sh="p6">
+ <div class="sh"><h2>Ограничения и состояние</h2><span class="q">Что ограничивается и где хранится память</span><span class="k" data-k="p6">12</span></div>
+ <ol><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К086</span><span class="s">4.3.3</span><span class="t">Типы ограничений: получатели, лимит на операцию, бюджет, повторяемость и частота, срок.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К087</span><span class="s">4.3.3</span><span class="t">Ограничения без состояния — в каждой операции; с состоянием — во времени.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К111</span><span class="s">5.4</span><span class="t">Состояния намерения: зарегистрировано, одобрено, завершено, завершено с исключениями, частично завершено, отозвано, приостановлено, не исполнено.</span><span class="m ill">иллюстративно</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К112</span><span class="s">5.4</span><span class="t">Заказы имеют свой статус и срок независимо от намерения.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К114</span><span class="s">5.5</span><span class="t">Переменные состояния: признак исполненности, накопленные расходы, счётчик повторений и окно.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К115</span><span class="s">5.5</span><span class="t">Координация состояния между поставщиками сервисов непрактична и возлагается на агента.</span><span class="m should">следует</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К133</span><span class="s">6.3</span><span class="t">Ограничения встроены в открытые мандаты; закрытый мандат оценивается против них.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К134</span><span class="s">6.3.1</span><span class="t">Ограничения оформления: списки продавцов, позиционные ограничения.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К135</span><span class="s">6.3.2</span><span class="t">Платёжные ограничения: получатели, диапазон суммы, срок, бюджетный потолок.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К136</span><span class="s">6.3.2</span><span class="t">Бюджетные потолки требуют состояния, которое обычно ведёт платёжная система.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К143</span><span class="s">6.4.3</span><span class="t">Срок слоя 2: немедленный — одна сессия; автономный — от часов до недель.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К155</span><span class="s">6.7.6</span><span class="t">Ограничения — типизированный расширяемый массив с пространством имён.</span><span class="m def">определяет</span></li></ol>
+ <div class="ours"><b>как у нас</b>Два вида ограничений, состояние вне агента, неделимое расходование, отказ при неподтверждённом состоянии.<a href="21-drafty-dokumentov.html#A3">A3 разд. 4</a></div>
+ <div class="qs"><b>наши вопросы</b><span class="qv">Самое спорное место рамки: здесь наше главное замечание — кто держит состояние и как им распоряжаться.</span>
+   <div class="qrow"><span class="ql">к рамке</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Состояние бюджета и повторяемости не должно храниться у агента">З01</a><span class="qt">Состояние бюджета и повторяемости не должно храниться у агента</span></div>
+   <div class="qrow"><span class="ql">к нашим документам</span><a class="qo" href="30-otkrytye-pozicii.html" title="Время работы по кэшу состояния">O12</a><span class="qt">Время работы по кэшу состояния</span><a class="qo" href="30-otkrytye-pozicii.html" title="Выявление дробления суммы">O19</a><span class="qt">Выявление дробления суммы</span><a class="qo" href="30-otkrytye-pozicii.html" title="Возврат и восстановление бюджета">O20</a><span class="qt">Возврат и восстановление бюджета</span><a class="qo" href="30-otkrytye-pozicii.html" title="Реестр типов ограничений">O23</a><span class="qt">Реестр типов ограничений</span></div>
+  </div>
+</section><section class="shelf" data-sh="p7">
+ <div class="sh"><h2>Сервис намерения</h2><span class="q">Кто хранит намерение и что с ним делает</span><span class="k" data-k="p7">15</span></div>
+ <ol><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К095</span><span class="s">5</span><span class="t">Сервисы намерения: регистрация, ссылка, извлечение и управление намерением.</span><span class="m def">определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К096</span><span class="s">5</span><span class="t">Точка координации, а не источник намерения; не исполняют, не авторизуют, не принуждают.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К097</span><span class="s">5</span><span class="t">Переносят артефакты слоёв 1 и 2; могут переносить семантику оформления и платежа слоя 3.</span><span class="m should">следует</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К098</span><span class="s">5.1</span><span class="t">Регистрация — запись артефакта с устойчивым идентификатором.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К099</span><span class="s">5.1</span><span class="t">Извлечение — доступ к текущему состоянию и сведениям о мандатах и заказах.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К100</span><span class="s">5.1</span><span class="t">Координация жизненного цикла — состояние уровня намерения и уровня заказа.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К101</span><span class="s">5.1</span><span class="t">Ссылка для совместимости — устойчивые ссылки без доступа к содержимому.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К102</span><span class="s">5.1</span><span class="t">Поддержка до операции — выпуск учётных данных, проверка мандата, риск, фрод, сверка.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К103</span><span class="s">5.1</span><span class="t">Поддержка после операции — споры, аудит, сверка, расследования, отчётность.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К104</span><span class="s">5.2</span><span class="t">Регистрация не есть момент возникновения намерения, а момент, с которого на него можно ссылаться.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К105</span><span class="s">5.2</span><span class="t">Регистрация не означает одобрения авторизации, исполнения, принятия риска, гарантии платежа.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К119</span><span class="s">5.7</span><span class="t">Учёт слоёв: сервисы не переопределяют выпуск удостоверений и не толкуют криптографию.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К120</span><span class="s">5.7</span><span class="t">Сервис — оркестрирующее посредническое хранилище, не действует по данным и не толкует их.</span><span class="m should">следует</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К122</span><span class="s">5.9</span><span class="t">Без общей семантики совместимость смещается в собственные расширения; рамка сохраняет самостоятельность систем в решениях о риске.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К158</span><span class="s">6.8.2</span><span class="t">Извлечение раскрывает ссылку, состояние, заказы и платёжную семантику без обработки полной цепочки.</span><span class="m def">определяет</span></li></ol>
+ <div class="ours"><b>как у нас</b>Журнал согласий; держатель пока не выбран — главная открытая позиция.<a href="21-drafty-dokumentov.html#A7">A7 разд. 4</a><a href="30-otkrytye-pozicii.html">O25</a></div>
+ <div class="qs"><b>наши вопросы</b><span class="qv">Здесь блокирующий выбор — держатель журнала — и вопрос проверяемости отзыва.</span>
+   <div class="qrow"><span class="ql">к рамке</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Отзыв намерения должен быть проверяем в момент исполнения">З04</a><span class="qt">Отзыв намерения должен быть проверяем в момент исполнения</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Явно отделить раскрытие признаков от оценки исполнения">З08</a><span class="qt">Явно отделить раскрытие признаков от оценки исполнения</span></div>
+   <div class="qrow"><span class="ql">к нашим документам</span><a class="qo" href="30-otkrytye-pozicii.html" title="Время распространения отзыва">O13</a><span class="qt">Время распространения отзыва</span><a class="qo" href="30-otkrytye-pozicii.html" title="Резервный держатель записей">O22</a><span class="qt">Резервный держатель записей</span><a class="qo" href="30-otkrytye-pozicii.html" title="Держатель журнала согласий">O25</a><span class="qt">Держатель журнала согласий</span></div>
+  </div>
+</section><section class="shelf" data-sh="p8">
+ <div class="sh"><h2>Данные и раскрытие</h2><span class="q">Кто что видит и сколько сведений допустимо</span><span class="k" data-k="p8">9</span></div>
+ <ol><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К023</span><span class="s">1.3</span><span class="t">Минимизация данных и ограничение цели: собирать, хранить и раскрывать сведения только там, где это уместно для функции и роли.</span><span class="m should">следует</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К069</span><span class="s">4.1.2</span><span class="t">Изложение запроса — с минимизацией чувствительных сведений и ограничением раскрытия.</span><span class="m should">следует</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К070</span><span class="s">4.2</span><span class="t">Учётные данные возвращаются только для использования в пределах санкционированных ограничений намерения.</span><span class="m should">следует</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К108</span><span class="s">5.2</span><span class="t">Регистрация минимизирует сбор и хранение сведений.</span><span class="m should">следует</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К109</span><span class="s">5.3</span><span class="t">Извлечение раскрывает только минимально необходимое.</span><span class="m should">следует</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К110</span><span class="s">5.3</span><span class="t">Доступ соответствует роли запрашивающего и цели.</span><span class="m should">следует</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К145</span><span class="s">6.5</span><span class="t">Видимость по ролям — структурное свойство формата, а не политика доступа.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К146</span><span class="s">6.5</span><span class="t">Элементы списков допустимого раскрываются по отдельности; нераскрытые не считаются нарушением.</span><span class="m def">определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К153</span><span class="s">6.7.4</span><span class="t">Выборочное раскрытие — солёные хэши; не полученное раскрытие восстановить нельзя.</span><span class="m def">определяет</span></li></ol>
+ <div class="ours"><b>как у нас</b>Проверка мандата возвращает только действительность, сумму и срок; раздельное раскрытие по ролям.<a href="21-drafty-dokumentov.html#A7">A7 п. 9.2</a><a href="21-drafty-dokumentov.html#A6">A6 разд. 4</a></div>
+ <div class="qs"><b>наши вопросы</b><span class="qv">Вопросы о минимизации: что можно раскрывать и как проверять равенство сведений.</span>
+   <div class="qrow"><span class="ql">к рамке</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Статус и чувствительность краткого изложения запроса">З09</a><span class="qt">Статус и чувствительность краткого изложения запроса</span></div>
+   <div class="qrow"><span class="ql">к нашим документам</span><a class="qo" href="30-otkrytye-pozicii.html" title="Изложение запроса в составе мандата">O17</a><span class="qt">Изложение запроса в составе мандата</span><a class="qo" href="30-otkrytye-pozicii.html" title="Контроль равенства раскрытия">O18</a><span class="qt">Контроль равенства раскрытия</span></div>
+  </div>
+</section><section class="shelf" data-sh="p9">
+ <div class="sh"><h2>Вне области и открытое</h2><span class="q">Что документ оставляет другим</span><span class="k" data-k="p9">31</span></div>
+ <ol><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К005</span><span class="s">1.1</span><span class="t">Документ не является спецификацией EMV: не задаёт протоколы, форматы сообщений, конструкции учётных данных, интерфейсы, правила применения и требования к реализации.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К007</span><span class="s">1.1</span><span class="t">Дальнейшая работа может добавить рамки, спецификации интерфейсов, сценарии, руководства, в том числе по идентификации агента и индикаторам.</span><span class="m ask">вопрос рецензентам</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К016</span><span class="s">1.2.2</span><span class="t">Вне области: некарточные сценарии.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К017</span><span class="s">1.2.2</span><span class="t">Вне области: несколько карт на одно исполнение намерения.</span><span class="m nodef">не определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К018</span><span class="s">1.2.2</span><span class="t">Вне области: координация между несколькими поставщиками сервисов намерения.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К019</span><span class="s">1.2.2</span><span class="t">Вне области: примитивы формата учётных данных и криптография цепочки делегирования.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К020</span><span class="s">1.2.2</span><span class="t">Вне области: правила выборочного раскрытия и протоколы предъявления.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К021</span><span class="s">1.2.2</span><span class="t">Вне области: схемы оформления и логика проверки оформления у продавца.</span><span class="m nodef">не определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К022</span><span class="s">1.2.2</span><span class="t">Вне области: решение об авторизации, программы соответствия, требования платёжных систем, решения об одобрении или отклонении намерения.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К039</span><span class="s">2</span><span class="t">Не предписывается, кто какую роль исполняет; одно лицо может исполнять несколько ролей; новые участники не вводятся.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К043</span><span class="s">2.1</span><span class="t">Механизмы получения согласия определяются внешними стандартами идентичности.</span><span class="m nodef">не определяет</span></li><li class="w0" data-core="0" data-full="0" data-par="0">
+  <span class="c">К050</span><span class="s">3</span><span class="t">Курсивные вставки — вопросы к рецензентам: включить в спецификацию, изменить или исключить.</span><span class="m ask">вопрос рецензентам</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К052</span><span class="s">3</span><span class="t">Не задаёт модель доверия, аккредитацию, программу квалификации, управление; не подразумевает одинаковой видимости сведений.</span><span class="m nodef">не определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="1">
+  <span class="c">К053</span><span class="s">3</span><span class="t">Не определяет оценку доверия, решение об авторизации, распределение ответственности, принуждение и требования к приёму у продавца.</span><span class="m nodef">не определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К054</span><span class="s">3</span><span class="t">Будущее: устойчивые идентификаторы агентов.</span><span class="m ask">вопрос рецензентам</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К055</span><span class="s">3</span><span class="t">Будущее: определение версии или модели агента.</span><span class="m ask">вопрос рецензентам</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К056</span><span class="s">3</span><span class="t">Будущее: регистрация агента и ссылки на реестр.</span><span class="m ask">вопрос рецензентам</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К057</span><span class="s">3</span><span class="t">Будущее: базовые критерии регистрации, квалификации, проверки.</span><span class="m ask">вопрос рецензентам</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К058</span><span class="s">3</span><span class="t">Будущее: метаданные агента и их формат.</span><span class="m ask">вопрос рецензентам</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К059</span><span class="s">3</span><span class="t">Будущее: требования к видимости — кому и при каких условиях нужны сведения об агенте.</span><span class="m ask">вопрос рецензентам</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К076</span><span class="s">4.2.2</span><span class="t">Не определяет выпуск удостоверений, управление ключами, иерархию доверия.</span><span class="m nodef">не определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К088</span><span class="s">4.3.3</span><span class="t">Рамка определяет смысл ограничений, но не способ их применения.</span><span class="m nodef">не определяет</span></li><li class="w3" data-core="1" data-full="1" data-par="1">
+  <span class="c">К093</span><span class="s">4.3.5</span><span class="t">Как оценивается исполнение, не определяется; участники применяют свою логику.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К113</span><span class="s">5.4</span><span class="t">Правила вывода состояния намерения из состояния заказов — вне области.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К116</span><span class="s">5.5</span><span class="t">Защита от повторов обозначена, механизмы и окна не предписываются.</span><span class="m nodef">не определяет</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К121</span><span class="s">5.8</span><span class="t">Сервисы не определяют интерфейсы, решения, пороги, аккредитацию, ответственность, споры, программы соответствия.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К123</span><span class="s">6</span><span class="t">Раздел — срез версии 0.1 механизма, который развивается вне документа, в репозитории FIDO.</span><span class="m ask">вопрос рецензентам</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К166</span><span class="s">7</span><span class="t">Вопрос рецензентам по связи с технологиями EMV.</span><span class="m ask">вопрос рецензентам</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К169</span><span class="s">8</span><span class="t">Вопрос рецензентам по индикаторам агентной операции.</span><span class="m ask">вопрос рецензентам</span></li><li class="w2" data-core="0" data-full="1" data-par="0">
+  <span class="c">К170</span><span class="s">8.1</span><span class="t">Конкретные индикаторы и изменения сообщений не определены.</span><span class="m nodef">не определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К172</span><span class="s">8.2</span><span class="t">EMVCo призывает органы стандартизации оценить необходимость индикаторов.</span><span class="m ask">вопрос рецензентам</span></li></ol>
+ <div class="ours"><b>как у нас</b>Там, где рамка молчит, у нас собственные решения: ответственность, допуск агентов, состав признака.<a href="21-drafty-dokumentov.html#A4">A4</a><a href="21-drafty-dokumentov.html#A2">A2</a><a href="21-drafty-dokumentov.html#A1">A1</a></div>
+ <div class="qs"><b>наши вопросы</b><span class="qv">Больше всего наших вопросов — там, где рамка молчит: ответственность, фискализация, продавцы, возврат.</span>
+   
+   <div class="qrow"><span class="ql">к нашим документам</span><a class="qo" href="30-otkrytye-pozicii.html" title="Оборот продавцов первой очереди">O06</a><span class="qt">Оборот продавцов первой очереди</span><a class="qo" href="30-otkrytye-pozicii.html" title="Размер обеспечения оператора агента">O07</a><span class="qt">Размер обеспечения оператора агента</span><a class="qo" href="30-otkrytye-pozicii.html" title="Срок досудебного ответа платформе">O11</a><span class="qt">Срок досудебного ответа платформе</span><a class="qo" href="30-otkrytye-pozicii.html" title="Продавцы без знака готовности">O16</a><span class="qt">Продавцы без знака готовности</span><a class="qo" href="30-otkrytye-pozicii.html" title="Особый порядок отказа от покупки агента">O28</a><span class="qt">Особый порядок отказа от покупки агента</span><a class="qo" href="30-otkrytye-pozicii.html" title="Фискализация агентской сделки">O29</a><span class="qt">Фискализация агентской сделки</span><a class="qo" href="30-otkrytye-pozicii.html" title="Толкование нормы о возврате">O30</a><span class="qt">Толкование нормы о возврате</span></div>
+  </div>
+</section><section class="shelf" data-sh="p10">
+ <div class="sh"><h2>Связь со стандартами</h2><span class="q">На какие спецификации опирается и какие затронет</span><span class="k" data-k="p10">5</span></div>
+ <ol><li class="w0" data-core="0" data-full="0" data-par="0">
+  <span class="c">К030</span><span class="s">1.5.1</span><span class="t">Ссылочные документы: протокол 3-D Secure, рамка платёжной токенизации, спецификация оформления удалённой оплаты.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К149</span><span class="s">6.7.1</span><span class="t">Формат удостоверений — SD-JWT VC; тип объявляет схему и версию.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К164</span><span class="s">7</span><span class="t">Намерение может использоваться в SRC, 3DS, оценке риска; изменения структур сообщений не определяются.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К165</span><span class="s">7</span><span class="t">Возможные доработки: SRC, 3DS, токенизация, цифровые платёжные учётные данные, иные спецификации.</span><span class="m def">определяет</span></li><li class="w1" data-core="0" data-full="0" data-par="0">
+  <span class="c">К171</span><span class="s">8.2</span><span class="t">Индикаторы нужны за пределами EMVCo: ISO 8583, ISO 20022, SWIFT, автоматизированный клиринг.</span><span class="m def">определяет</span></li></ol>
+ <div class="ours"><b>как у нас</b>Совместимость односторонняя; расхождения фиксируются в журнале.<a href="21-drafty-dokumentov.html#A9">A9</a></div>
+ <div class="qs"><b>наши вопросы</b><span class="qv">Вопросы о канале: как признак и намерение перенести за пределы карточных сообщений.</span>
+   <div class="qrow"><span class="ql">к рамке</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Индикатор должен нести ссылку на намерение и запись об исполнении">З07</a><span class="qt">Индикатор должен нести ссылку на намерение и запись об исполнении</span><a class="qz" href="28-tezisy-i-otzyv.html" title="Семантика намерения не должна зависеть от карточного канала">З10</a><span class="qt">Семантика намерения не должна зависеть от карточного канала</span></div>
+   <div class="qrow"><span class="ql">к нашим документам</span><a class="qo" href="30-otkrytye-pozicii.html" title="Отдельная модель мониторинга">O24</a><span class="qt">Отдельная модель мониторинга</span></div>
+  </div>
+</section>
+
+<footer>
+<p>Связанные материалы: <a href="33-ramka-po-kostochkam.html">рамка по косточкам</a> · <a href="27-konspekt-ramki-d1.html">конспект</a> · <a href="28-tezisy-i-otzyv.html">тезисы и замечания</a> · <a href="21-drafty-dokumentov.html">драфты</a> · <a href="30-otkrytye-pozicii.html">открытые позиции</a></p>
+<p class="note">Значимость — экспертная оценка роли элемента в конструкции, а не частоты его упоминания. Формулировки передают смысл оригинала; полный текст с переводом — во внутренней папке.</p>
+<div id="pool-logo">
+ <img src="data:image/png;base64,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" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a> · <a href="18-svyazka.html">сквозная связка</a></div>
+</div></footer>
+
+</div>
+<script>
+(function(){
+ var INTRO={"shelves":"Все 172 косточек разложены по десяти полочкам — по вопросу, на который каждая отвечает. Жирным выделены несущие элементы, серым — служебные. Под каждой полочкой — чем этот вопрос закрыт в наших документах.","core":"<b>Минимальное ядро — 17 элементов, 10% документа.</b> То, без чего конструкция перестаёт быть собой: разрыв между согласием и исполнением, намерение как корень, цепочка вывода, два режима, запрет агенту платить без авторизации, два вида ограничений и где живёт состояние, детерминированная привязка, открытый и закрытый мандат, подпись как согласие, сервис как хранилище без решений, отказ при нераспознанном ограничении, видимость по ролям как свойство формата.","full":"<b>Комплект без малосущественного — 95 элементов, 55% документа.</b> Убраны служебные и второстепенные позиции: аудитория, сокращения, ссылочные редакции, иллюстративные схемы и модели данных, повторы, описания статуса и вопросы к рецензентам, не содержащие предмета.","par":"<b>Комплект по Парето — 34 элементов, 20% документа.</b> Ядро плюс наиболее значимые из существенных: определения мандата, ограничений, пары и исполнения; переход между режимами; границы автономного режима; область применения учётных данных; типы ограничений; заказ как единица исполнения; бюджет у платёжной системы — прямое противоречие с состоянием у агента; привязка слоёв хэшем; отсутствие в рамке ответственности; потребность в индикаторах. По этим элементам можно восстановить всю логику документа."};
+ var tabs=[].slice.call(document.querySelectorAll('.tab'));
+ var shelves=[].slice.call(document.querySelectorAll('.shelf'));
+ function apply(v){
+  document.getElementById('intro').innerHTML=INTRO[v];
+  shelves.forEach(function(sh){
+   var items=[].slice.call(sh.querySelectorAll('li')), n=0;
+   items.forEach(function(li){
+    var ok = v==='shelves' || li.dataset[v]==='1';
+    li.classList.toggle('hidden',!ok); if(ok)n++;
+   });
+   sh.querySelector('.k').textContent=n+(v==='shelves'?'':' из '+items.length);
+   sh.classList.toggle('hidden',n===0);
+  });
+ }
+ tabs.forEach(function(t){ t.addEventListener('click',function(){
+  tabs.forEach(function(x){x.setAttribute('aria-pressed',String(x===t));});
+  apply(t.dataset.v);
+  history.replaceState(null,'','#'+t.dataset.v);
+ });});
+ var h=(location.hash||'').slice(1);
+ var start=tabs.filter(function(t){return t.dataset.v===h;})[0];
+ if(start) start.click(); else apply('shelves');
+})();
+</script>
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script><script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script></body></html>

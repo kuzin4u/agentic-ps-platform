@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сквозная связка: транзакция — стадии — функции — роли — документы</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--acc:#1f7a5a;--warn:#a35c13;--free:#7a1f6a;--ref:#1a3a8f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:16px;line-height:1.5}
+.wrap{max-width:1300px;margin:0 auto;padding:0 18px 60px}
+nav.strip{display:flex;flex-wrap:wrap;gap:4px;padding:14px 0 0}
+nav.strip a{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 9px}
+nav.strip a.cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+header.top{border-bottom:2px solid var(--ink);padding:16px 0 12px;margin-bottom:16px}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--acc);margin:0 0 6px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:27px;margin:0 0 6px;font-weight:600;line-height:1.15}
+.tagline{color:var(--ink2);margin:0;max-width:84ch;font-size:15px}
+h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:19px;margin:26px 0 6px;font-weight:600}
+a{color:var(--ref)}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0 8px}
+.bar button{font:500 12.5px 'IBM Plex Sans';background:#fff;border:1px solid var(--line);padding:6px 10px;cursor:pointer;color:var(--ink)}
+.bar button:hover{border-color:var(--ink)}
+.bar .st{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2)}
+button:focus-visible,a:focus-visible{outline:2px solid var(--ref);outline-offset:2px}
+.cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start}
+.col{background:var(--card);border:1px solid var(--line);display:flex;flex-direction:column;min-height:120px}
+.col h3{margin:0;font-size:13px;font-family:'IBM Plex Mono',monospace;font-weight:600;padding:9px 12px;border-bottom:1px solid var(--line);background:#ecece7;display:flex;justify-content:space-between}
+.col h3 span{font-weight:400;color:var(--ink2)}
+.list{max-height:460px;overflow:auto;padding:6px}
+.it{display:block;width:100%;text-align:left;font:400 13px 'IBM Plex Sans';background:none;border:1px solid transparent;padding:6px 8px;cursor:pointer;color:var(--ink);border-radius:2px}
+.it:hover{background:#f1f1ec}
+.it .c{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink2);margin-right:6px}
+.it.rel{background:#eef4f1;border-color:#cfe0d6}
+.it.act{background:var(--ink);color:#fff;border-color:var(--ink)}
+.it.act .c{color:#cfd6dd}
+.it.dim{opacity:.3}
+.it .tag{font-family:'IBM Plex Mono',monospace;font-size:10px;border:1px solid currentColor;padding:0 4px;margin-left:5px}
+.tag.doc{color:var(--acc)}.tag.obs{color:var(--warn)}.tag.inf{color:var(--free)}
+.it.act .tag{color:#fff}
+.detail{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--ink);padding:14px 16px;margin-top:14px;min-height:150px}
+.detail h3{margin:0 0 4px;font-size:18px}
+.detail .m{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);margin-bottom:8px}
+.detail p{margin:0 0 8px;font-size:14.4px;max-width:90ch}
+.detail .row{font-size:13.6px;margin:5px 0}
+.detail .row b{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);font-weight:500;margin-right:6px}
+.chip{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1px solid currentColor;padding:1px 6px;margin:0 4px 4px 0;display:inline-block;text-decoration:none;cursor:pointer;background:#fff}
+.chip.s{color:var(--ink)}.chip.f{color:var(--ink2)}.chip.r{color:var(--ink)}.chip.d{color:var(--ref)}
+.chip:hover{background:currentColor}
+.chip:hover span{color:#fff}
+.out a{font-size:13px;margin-right:12px}
+.note{font-size:13px;color:var(--ink2)}
+footer{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+@media(max-width:1000px){.cols{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:620px){.cols{grid-template-columns:1fr}h1{font-size:22px}}
+</style><style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style><link rel="icon" type="image/png" href="data:image/png;base64,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">
+<style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style>
+
+<style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style>
+</head><body><div class="wrap">
+
+<nav class="strip">
+ <a href="00-ukazatel-pula.html">Указатель пула</a>
+ <a href="01-ierarhiya-tranzakcii.html">Иерархия транзакции</a>
+ <a href="02-funkcii-i-roli.html">Функции и роли</a>
+ <a href="03-reestr-dokumentov.html">Реестр документов</a>
+ <a href="04-ocenki-funkciy.html">Оценки функций</a>
+ <a href="05-vybor-roli.html">Выбор роли</a>
+ <a href="#" class="cur" aria-current="page">Сквозная связка</a>
+</nav>
+
+<header class="top">
+ <p class="eyebrow">Связка пула · 8 стадий · 27 функций · 11 ролей · 28 документов</p>
+ <h1>Сквозная связка: клик по любой позиции собирает все остальные</h1>
+ <p class="tagline">Четыре списка одной модели. Выберите стадию сделки, функцию, роль оператора или документ — и в остальных трёх колонках подсветится всё, что с ней связано, а внизу соберётся карточка с переходами в подробные файлы пула.</p>
+</header>
+
+<div class="bar">
+ <button id="clear">Сбросить выбор</button>
+ <button data-pick="stage:0">Начать со стадии 0</button>
+ <button data-pick="role:R5">Пример: роль R5</button>
+ <button data-pick="doc:D1">Пример: рамка D1</button>
+ <span class="st" id="status">ничего не выбрано — показаны все позиции</span>
+</div>
+
+<div class="cols">
+ <div class="col"><h3>Стадии транзакции <span id="c-stage"></span></h3><div class="list" id="l-stage"></div></div>
+ <div class="col"><h3>Функции <span id="c-func"></span></h3><div class="list" id="l-func"></div></div>
+ <div class="col"><h3>Роли оператора <span id="c-role"></span></h3><div class="list" id="l-role"></div></div>
+ <div class="col"><h3>Документы <span id="c-doc"></span></h3><div class="list" id="l-doc"></div></div>
+</div>
+
+<div class="detail" id="detail"></div>
+
+<h2>Как читать связку</h2>
+<p class="note">Связи однонаправленно выводятся из трёх таблиц: функция стоит на стадиях от и до, у функции есть роль оператора, у функции есть документы. Всё остальное — производные: роль покрывает стадии своих функций, документ обслуживает стадии тех функций, которые он регламентирует. Поэтому у документа может не быть роли, а у стадии — документов: это не пробел в данных, а состояние рынка.</p>
+
+<footer>
+<p>Подробные материалы: <a href="01-ierarhiya-tranzakcii.html">иерархия на оси сделки</a> · <a href="02-funkcii-i-roli.html">карта функций и ролей</a> · <a href="03-reestr-dokumentov.html">реестр документов</a> · <a href="04-ocenki-funkciy.html">оценки функций</a> · <a href="05-vybor-roli.html">выбор роли</a></p>
+<p class="note">Адрес страницы меняется при выборе: ссылку на конкретную стадию, функцию, роль или документ можно скопировать и переслать.</p>
+
+<div id="pool-logo">
+ <img src="data:image/png;base64,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" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a></div>
+</div>
+</footer>
+
+</div>
+<script>
+"use strict";
+(function(){
+var STAGES=[{"i":0,"n":"Допуск","d":"Агент получает идентичность и право обращаться: ключи, идентификатор, запись в реестре. Происходит один раз, до всякой покупки."},{"i":1,"n":"Поручение","d":"Человек делегирует: границы, бюджет, срок, подпись. Здесь же выпускаются ограниченные учётные данные."},{"i":2,"n":"Поиск","d":"Агент обращается к площадкам и каталогам, площадка решает, пускать ли его, и что показать."},{"i":3,"n":"Заказ","d":"Состав, цена и условия фиксируются: корзина, оформление, передача права на списание продавцу."},{"i":4,"n":"Подтверждение","d":"Проверяется, что за операцией стоит поручение человека, и операция помечается как агентная."},{"i":5,"n":"Авторизация","d":"Скоринг, авторизация платежа, при условной схеме — удержание средств."},{"i":6,"n":"Расчёт","d":"Списание, распределение сумм, перевод продавцу и участникам."},{"i":7,"n":"После сделки","d":"Возвраты, спор, ответственность за ошибку, накопление репутации, надзорный след."}];
+var FUNCS=[{"id":"F1","n":"Опознание агента","s":0,"e":5,"r":"R1","o":"doc","own":"сети","note":"выдаётся в стадии допуска, предъявляется на каждом последующем шаге","cross":false},{"id":"F2","n":"Подпись запроса агента","s":2,"e":3,"r":"R1","o":"doc","own":"инфраструктура веба","note":"ключи регистрируются заранее, проверка — в момент обращения к площадке","cross":false},{"id":"F3","n":"Идентичность человека","s":1,"e":4,"r":null,"o":"doc","own":"органы по идентичности","note":"подпись поручения и повторное подтверждение при операции","cross":false},{"id":"F4","n":"Репутация агента по исполнению","s":7,"e":7,"r":"R1","o":"obs","own":"никто","note":"формируется после сделки и возвращается в стадию допуска следующей","cross":false},{"id":"F5","n":"Учётные данные с ограничением","s":1,"e":6,"r":"R2","o":"doc","own":"сети","note":"выпускаются при поручении, живут до расчёта","cross":false},{"id":"F6","n":"Ограничители пользователя","s":1,"e":5,"r":"R2","o":"obs","own":"сети и ассистенты","note":"задаются при поручении, проверяются при авторизации","cross":false},{"id":"F7","n":"Намерение и согласие","s":1,"e":1,"r":"R3","o":"doc","own":"сети","note":"одноразовый артефакт: подписанная запись о делегировании","cross":false},{"id":"F8","n":"Жизненный цикл намерения","s":1,"e":7,"r":"R3","o":"doc","own":"отраслевая рамка","note":"единственная функция, которую документ прямо описывает как сквозную — до, во время и после операции","cross":false},{"id":"F9","n":"Делегирование платежа продавцу","s":3,"e":5,"r":"R2","o":"doc","own":"торговые протоколы","note":"узкий токен передаётся магазину, списывает он сам","cross":false},{"id":"F10","n":"Передача каталога агенту","s":2,"e":2,"r":null,"o":"doc","own":"площадки и протоколы","note":"","cross":false},{"id":"F11","n":"Корзина и оформление","s":3,"e":3,"r":null,"o":"doc","own":"торговые протоколы","note":"вернулось от ассистентов к магазинам в марте 2026","cross":false},{"id":"F12","n":"Подбор товара","s":2,"e":2,"r":null,"o":"inf","own":"ИИ-платформы","note":"","cross":false},{"id":"F13","n":"Допуск агента на площадку","s":2,"e":2,"r":null,"o":"doc","own":"площадки","note":"","cross":false},{"id":"F14","n":"Инструментальный слой агента","s":2,"e":3,"r":null,"o":"doc","own":"открытые протоколы","note":"","cross":false},{"id":"F15","n":"Авторизация платежа","s":5,"e":5,"r":"R11","o":"doc","own":"сети и эмитенты","note":"","cross":false},{"id":"F16","n":"Расчёт, в том числе мульти-рельсовый","s":6,"e":6,"r":"R11","o":"obs","own":"сети","note":"","cross":false},{"id":"F17","n":"Условное исполнение","s":5,"e":7,"r":"R8","o":"doc","own":"никто в карточном контуре","note":"удержание с авторизации до подтверждения исполнения","cross":false},{"id":"F18","n":"Фрод в агентных потоках","s":4,"e":5,"r":"R4","o":"obs","own":"сети и эмитенты","note":"","cross":false},{"id":"F19","n":"Признак агентной операции","s":4,"e":7,"r":"R4","o":"doc","own":"отраслевая рамка","note":"проставляется при подтверждении и нужен вплоть до спора","cross":false},{"id":"F20","n":"Оценка готовности продавца","s":2,"e":2,"r":"R10","o":"obs","own":"сети","note":"","cross":false},{"id":"F21","n":"Ответственность за ошибку агента","s":7,"e":7,"r":"R5","o":"inf","own":"никто","note":"","cross":false},{"id":"F22","n":"Оспаривание агентной операции","s":7,"e":7,"r":"R5","o":"inf","own":"никто","note":"","cross":false},{"id":"F23","n":"Постпродажное обслуживание","s":7,"e":7,"r":null,"o":"inf","own":"магазины и кошельки","note":"","cross":false},{"id":"F26","n":"Подтверждение на нейтральной поверхности","s":4,"e":4,"r":"R6","o":"inf","own":"никто","note":"инфраструктура существует, агентный сценарий не описан","cross":false},{"id":"F24","n":"Дистрибуция через ИИ-платформы","r":"R9","o":"obs","own":"сети","note":"не стадия сделки, а канал, по которому функция доходит до пользователя","cross":true,"s":null,"e":null},{"id":"F25","n":"Стандартизация и совместимость","r":"R7","o":"doc","own":"отраслевые органы","note":"рамка, в которой описаны сами стадии","cross":true,"s":null,"e":null},{"id":"F27","n":"Регуляторные требования и надзор","r":null,"o":"doc","own":"регуляторы и суды","note":"действует на всех стадиях, усиливается после расчёта","cross":true,"s":null,"e":null}];
+var ROLEN={"R1":"Удостоверяющий центр агентов","R2":"Эмитент агентных учётных данных","R3":"Держатель намерения","R4":"Скоринг агентных операций","R5":"Автор правил и порядка споров","R6":"Нейтральная поверхность подтверждения","R7":"Профиль совместимости","R8":"Условное исполнение","R9":"Дистрибуция через ИИ-платформы","R10":"Оценка готовности продавца и каталог","R11":"Расчётный слой агентных операций"};
+var DOCS=[{"id":"D1","t":"EMV Agentic Payments — Framework for Specifications","pub":"EMVCo","date":"01.09.2026","st":"draft","stt":"черновик, комментарии до 30.09.2026","d":"Рамка для карточных агентных платежей. Вводит общий слой намерения: участники регистрируют, читают и обновляют разрешение, выданное человеком, потому что намерение живёт во времени — повторяющиеся покупки, накопленный бюджет, действия после операции. Отдельно рассматриваются механизм опознания агента и признак агентной операции.","f":["F1","F7","F8","F19","F21","F25"],"src":[["Сообщение EMVCo о выпуске рамки","https://www.emvco.com/knowledge-hub/how-emvco-is-working-to-enable-secure-interoperable-and-scalable-card-based-agentic-payments/"],["Разбор слоя намерения","https://finovate.com/emvco-releases-framework-for-card-based-agentic-payments/"],["Отраслевой комментарий","https://www.pymnts.com/news/artificial-intelligence/2026/emvco-proposes-intent-layer-for-agentic-card-payments"]],"cat":"spec"},{"id":"D2","t":"EMV 3-D Secure","pub":"EMVCo","date":"действует","st":"live","stt":"действует, развивается под агентные сценарии","d":"Протокол аутентификации держателя при удалённой оплате. Основа для решения о том, требовать ли дополнительное подтверждение. На нём построена российская реализация аутентификации.","f":["F7","F18"],"src":[["Приоритеты EMVCo на 2026 год","https://www.emvco.com/knowledge-hub/enabling-seamless-and-secure-payments-in-2026/"]],"cat":"spec"},{"id":"D3","t":"EMV Payment Tokenisation (включая PAR)","pub":"EMVCo","date":"действует","st":"live","stt":"действует, уточняется","d":"Замена номера карты платёжным токеном. Технический фундамент агентных учётных данных: агентный токен у сетей — расширение этой спецификации.","f":["F5","F9"],"src":[["Приоритеты EMVCo на 2026 год","https://www.emvco.com/knowledge-hub/enabling-seamless-and-secure-payments-in-2026/"]],"cat":"spec"},{"id":"D4","t":"EMV Secure Remote Commerce","pub":"EMVCo","date":"версия 1.5","st":"live","stt":"действует","d":"Спецификация оформления удалённой оплаты в один шаг. В версии 1.5 добавлена поддержка беспарольных ключей доступа, что упрощает криптографическое подтверждение права на использование платёжного средства.","f":["F9","F15"],"src":[["Приоритеты EMVCo на 2026 год","https://www.emvco.com/knowledge-hub/enabling-seamless-and-secure-payments-in-2026/"]],"cat":"spec"},{"id":"D5","t":"EMV Digital Payment Credential — схема данных","pub":"EMVCo","date":"работа 2026 года","st":"draft","stt":"в разработке","d":"Единый способ описания платёжных учётных данных для их выдачи, запроса и проверки. Разрабатывается как общий формат, к которому смогут обращаться в том числе агентные сценарии.","f":["F3","F5"],"src":[["Приоритеты EMVCo на 2026 год","https://www.emvco.com/knowledge-hub/enabling-seamless-and-secure-payments-in-2026/"],["Итоги совета консультантов EMVCo","https://www.emvco.com/knowledge-hub/agentic-payments-and-digital-payment-credentials-highlights-from-the-emvco-board-of-advisors-meeting/"]],"cat":"spec"},{"id":"D6","t":"Работа по цифровой идентичности в платежах","pub":"EMVCo, совместно с органами по беспарольной аутентификации и кошелькам","date":"2026","st":"draft","stt":"ведётся","d":"Направление, где сходятся платёжные спецификации и цифровая идентичность: ключи доступа, проверяемые удостоверения, кошельки. Определяет, чем человек подтверждает делегирование агенту.","f":["F3"],"src":[["Конвергенция идентичности и платежей","https://www.emvco.com/knowledge-hub/global-digital-collaboration-2026-addressing-the-convergence-of-digital-identity-and-payments/"]],"cat":"spec"},{"id":"D7","t":"Рамка совместимости опознания агентов","pub":"Visa, Mastercard, Ant International","date":"сентябрь 2026","st":"draft","stt":"принципы согласуются","d":"Договорённость об общих принципах опознания агентов при сохранении у каждой сети собственной процедуры проверки. Заявлено расширение сигналов: возможности агента, поведение, качество исполнения, данные о риске.","f":["F1","F4","F25"],"src":[["Сообщение о совместной работе","https://www.biometricupdate.com/202609/ant-international-visa-mastercard-work-to-make-agentic-protocols-interoperable"]],"cat":"spec"},{"id":"D8","t":"Visa Trusted Agent Protocol","pub":"Visa","date":"осень 2025","st":"live","stt":"опубликован, выравнивается с протоколом ассистента","d":"Идентификатор проверенного агента, выдаваемый сетью, и отдельная запись согласия, подписанная банком-эмитентом. Партнёры при запуске — торговые платформы и крупные ассистенты.","f":["F1","F7"],"src":[["Сравнение протоколов сетей","https://eco.com/support/en/articles/15192003-mastercard-agent-pay-vs-visa-trusted-agent-2026-compared"],["Обзор шагов сетей","https://www.paz.ai/blog/the-payment-networks-are-all-in-what-visa-mastercard-and-paypals-q4-moves-signal"]],"cat":"net"},{"id":"D9","t":"Visa Intelligent Commerce","pub":"Visa","date":"30.04.2025, расширение 10.06.2026","st":"live","stt":"действует","d":"Программа агентных платежей: токенизированные реквизиты, авторизация в реальном времени, заданные пользователем ограничители — потолок расходов, категории продавцов, обязательное подтверждение человеком. В июне 2026 добавлены оценка агентной готовности продавца, каталог проверенных агентов и продавцов и отдельная модель выявления фрода.","f":["F5","F6","F18","F20","F24"],"src":[["Разбор программ сетей и интеграции с ассистентом","https://universalcommerceprotocol.fr/en/visa-mastercard-agentic-commerce/"]],"cat":"net"},{"id":"D10","t":"Mastercard Agent Pay и агентные токены","pub":"Mastercard","date":"29.04.2025","st":"live","stt":"действует","d":"Агентный токен как расширение действующего сервиса токенизации: привязка к конкретному агенту, области продавцов и политике согласия, без раскрытия номера карты. Рядом развивается линия подтверждаемого намерения. Включает проверку подписи агента на уровне веба.","f":["F1","F5","F6","F7"],"src":[["Описание Agent Pay и агентных токенов","https://eco.com/support/en/articles/15192001-what-is-mastercard-agent-pay-ai-agent-commerce-protocol-in-2026"],["Связь с проверкой подписи агента","https://stellagent.ai/insights/cloudflare-web-bot-auth-agent-verification"]],"cat":"net"},{"id":"D11","t":"Mastercard Agent Pay for Machines","pub":"Mastercard","date":"июнь 2026","st":"live","stt":"объявлено","d":"Расширение для платежей между агентами: высокая частота, микросуммы, расчёт по нескольким рельсам — карты, счета и иные инструменты.","f":["F16"],"src":[["Сообщение Mastercard","https://www.mastercard.com/global/en/news-and-trends/press/2026/june/mastercard-launches-agent-pay-for-machines.html"]],"cat":"net"},{"id":"D12","t":"Agentic Commerce Protocol","pub":"OpenAI и Stripe, открытая лицензия","date":"29.09.2025, стабильная версия 17.04.2026","st":"live","stt":"развивается, роль сместилась к подбору","d":"Открытый стандарт оформления заказа по инициативе агента: передача выбора способа оплаты, узкий токен продавцу, при котором продавцом по сделке остаётся магазин. Версия покрывает чекаут, делегирование платежа, корзину, товарный фид, заказы и аутентификацию, а также стыковку с протоколом доступа агента к инструментам.","f":["F9","F10","F11"],"src":[["Разбор протокола и его версий","https://eco.com/support/en/articles/14845478-acp-agentic-commerce-protocol-explained"],["Партнёрство платёжного сервиса с ассистентом","https://s205.q4cdn.com/875401827/files/doc_news/OpenAI-and-PayPal-Team-Up-to-Power-Instant-Checkout-and-Agentic-Commerce-in-ChatGPT-2025.pdf"]],"cat":"proto"},{"id":"D13","t":"AP2 — протокол платежей агентов","pub":"Google и более шестидесяти партнёров","date":"сентябрь 2025","st":"live","stt":"действует, обе сети присоединились","d":"Открытый протокол авторизации агентных платежей. Определяет мандат намерения — что хочет человек, и мандат корзины — что именно собрал агент. Сети описывают свои решения как совместимые с ним.","f":["F7","F8"],"src":[["Сравнение с протоколами сетей","https://eco.com/support/en/articles/15192003-mastercard-agent-pay-vs-visa-trusted-agent-2026-compared"]],"cat":"proto"},{"id":"D14","t":"Универсальный коммерческий протокол и универсальная корзина","pub":"Google","date":"2026","st":"live","stt":"развивается","d":"Стандарт коммерческих операций для агентов: подбор, корзина, передача заказа продавцу. После отказа ассистента от оформления внутри диалога агентный чекаут сместился в эту сторону и к аналогичным решениям.","f":["F10","F11"],"src":[["Что произошло с оформлением внутри ассистента","https://www.hypotenuse.ai/blog/chatgpts-instant-checkout-the-next-phase-of-agentic-commerce"],["Разделение труда между протоколами и сетями","https://universalcommerceprotocol.fr/en/visa-mastercard-agentic-commerce/"]],"cat":"proto"},{"id":"D15","t":"Протокол доступа агента к инструментам","pub":"Anthropic, открытая спецификация","date":"действует","st":"live","stt":"действует","d":"Стандарт, по которому агент вызывает внешние инструменты и источники данных. Торговый протокол описывает стыковку с ним, то есть агентная покупка опирается на этот слой снизу.","f":["F14"],"src":[["Упоминание стыковки в описании торгового протокола","https://eco.com/support/en/articles/14845478-acp-agentic-commerce-protocol-explained"]],"cat":"proto"},{"id":"D16","t":"Подпись запроса агента и открытый реестр ключей","pub":"Cloudflare, совместно с облачной платформой агентов","date":"реестр — февраль 2026; поддержка на стороне облачного фильтра — ноябрь 2025","st":"live","stt":"действует","d":"Криптографическая подпись обращения агента к сайту и децентрализованный реестр открытых ключей: карточка агента с именем, оператором, ожидаемой частотой запросов и ключами. Проверка выполняется на границе сети, без доработок на стороне магазина. Позволяет пропускать проверенных агентов и отсекать неподписанные обходы.","f":["F2","F13"],"src":[["Разбор механизма проверки и реестра","https://stellagent.ai/insights/cloudflare-web-bot-auth-agent-verification"]],"cat":"web"},{"id":"D17","t":"Правила верификации ботов и последствия их нарушения","pub":"Cloudflare","date":"2025–2026","st":"live","stt":"применяется","d":"Требования к прозрачности агента: объявленный идентификатор, следование указаниям сайта. За скрытный обход запретов оператор исключается из числа проверенных, а его трафик блокируется эвристиками.","f":["F2","F13"],"src":[["Разбор случая скрытного обхода запретов","https://blog.cloudflare.com/perplexity-is-using-stealth-undeclared-crawlers-to-evade-website-no-crawl-directives/"]],"cat":"web"},{"id":"D18","t":"Судебная квалификация доступа агента к площадке","pub":"Апелляционный суд девятого округа США","date":"август 2026","st":"live","stt":"обеспечительная мера отменена, спор продолжается","d":"Суд признал, что обращение агентного браузера к площадке не является несанкционированным доступом: закон предполагает доступ лица, а ассистент — инструмент пользователя, а не самостоятельное лицо. Практическое следствие: пускать или не пускать агента — решение коммерческое, а не юридическое, и опирается на подпись и лимиты.","f":["F13","F27"],"src":[["Разбор решения и его последствий","https://nohacks.co/blog/agent-access-should-be-a-business-decision"],["Что изменило решение для площадок","https://dev.to/mikefluff/what-the-amazon-vs-perplexity-ruling-changed-5f96"],["История спора","https://techcrunch.com/2025/11/04/amazon-sends-legal-threats-to-perplexity-over-agentic-browsing/"]],"cat":"law"},{"id":"D19","t":"Закон о национальной платёжной системе, № 161-ФЗ","pub":"Российская Федерация","date":"действует, с изменениями","st":"live","stt":"действует","d":"Базовый закон отрасли. Изменениями в него оператором системы единых платёжных кодов определено АО «НСПК», одновременно являющееся оператором платёжной системы «Мир».","f":["F15","F26"],"src":[["Об операторе системы единых кодов","https://www.garant.ru/news/1976591/"]],"cat":"ru"},{"id":"D20","t":"Обязательность универсального платёжного кода с 01.09.2026","pub":"Российская Федерация, Банк России","date":"вступило в силу 01.09.2026","st":"live","stt":"действует, банкам дан переходный период","d":"Банки обязаны использовать единый код НСПК. Покупатель, отсканировав код, попадает на платёжную страницу и сам выбирает инструмент — быструю оплату, банковский сервис, рассрочку или цифровой рубль. Код предоставляется банкам бесплатно и не вводит отдельной комиссии для покупателя.","f":["F26"],"src":[["Позиция регулятора о связи кода и цифрового рубля","https://www.cbr.ru/press/event/?id=28439"],["Предложения о едином коде и равных условиях для банков","https://www.cbr.ru/press/event/?id=21084"],["Что меняется для бизнеса","https://www.klerk.ru/blogs/tsentr-obucheniya-klerk/707505/"],["О переходном периоде для банков","https://www.interfax.ru/business/1110976"]],"cat":"ru"},{"id":"D21","t":"Правила оказания услуги универсального кода","pub":"АО «НСПК»","date":"готовятся","st":"draft","stt":"в подготовке","d":"Документ, который определит порядок оказания услуги и перечень кодов, продолжающих работать без изменений. Место, где может появиться сценарий подтверждения агентной покупки человеком.","f":["F26"],"src":[["Упоминание о подготовке правил","https://www.klerk.ru/blogs/tsentr-obucheniya-klerk/707505/"]],"cat":"ru"},{"id":"D22","t":"Передача сведений об операциях в финансовый мониторинг","pub":"Российская Федерация","date":"вступило в силу 01.09.2026","st":"live","stt":"действует","d":"НСПК передаёт сведения об операциях по картам «Мир», через систему быстрых платежей и по единому коду. Передача не влияет на проведение переводов в реальном времени, факт передачи оператор раскрывать не вправе, порядок определяется соглашением с ведомством по согласованию с Банком России.","f":["F27"],"src":[["О вступлении нормы в силу","https://ria.ru/20260901/rosfinmonitoring-2114494442.html"],["О содержании нормы","https://www.garant.ru/news/1929563/"]],"cat":"ru"},{"id":"D23","t":"Платформа коммерческих смарт-контрактов Банка России","pub":"Банк России; позиция НСПК","date":"июль 2026","st":"draft","stt":"разрабатывается","d":"Платформа самоисполняемых сделок: условия фиксируются заранее и исполняются автоматически. НСПК публично допускает подключение «Мира» и системы быстрых платежей как пользовательских способов оплаты, подчёркивая, что выбор инструмента остаётся за человеком.","f":["F17"],"src":[["Заявление на Финансовом конгрессе","https://habr.com/ru/companies/nspk/news/1055804/"],["Изложение позиции","https://rg.ru/2026/07/03/nspk-dopuskaet-integraciiu-platformy-smart-kontraktov-s-kartami-mir-i-sbp.html"]],"cat":"ru"},{"id":"D24","t":"Концепция цифрового рубля","pub":"Банк России","date":"действующая редакция","st":"live","stt":"реализуется","d":"Описывает смарт-контракты как алгоритм, исполняющий условия сделки автоматически, и оплату в магазине и в интернете через коды на инфраструктуре НСПК.","f":["F15","F17"],"src":[["Документ Банка России","https://www.cbr.ru/Content/Document/File/177415/digital_ruble_30062025.pdf"]],"cat":"ru"},{"id":"D25","t":"Аутентификация Mir Accept 2.0 и машинное обучение в ней","pub":"АО «НСПК»","date":"протокол — с 2018, машинное обучение — с 2024","st":"live","stt":"действует","d":"Российская реализация аутентификации на базе международного протокола: решение принимается по совокупности факторов — платёжное поведение, параметры устройства, геолокация, — а подтверждение кодом запрашивается при необходимости. Машинное обучение примерно вдвое расширило долю операций, проходящих без дополнительного подтверждения; ИИ применяется также против дропперов в системе быстрых платежей.","f":["F7","F18"],"src":[["О применении ИИ в антифроде","https://www.nspk.ru/press-center/details/af126c4e-0232-41ca-a406-d0833c476ed3"],["Об эффекте машинного обучения","https://platforms.su/project/2410"],["О принципе принятия решения","https://www.assist.ru/ob-assist/novosti/1584/"],["О базовом протоколе","https://www.cnews.ru/news/line/2018-09-27_tehnologiya_mir_accept_20_pozvolit_vladeltsam"]],"cat":"ru"},{"id":"D26","t":"Агентская схема подключения к системе быстрых платежей","pub":"НСПК и банк-участник","date":"применяется","st":"live","stt":"действует","d":"Механизм, при котором нефинансовая организация подключает торговые точки к приёму оплаты через банк-участник. Даёт платформе возможность приводить мелких продавцов без банковского статуса.","f":["F5","F9"],"src":[["Сообщение о запуске схемы","https://asros.ru/news/members/bank-russkiy-standart-i-nspk-zapustili-agentskuyu-skhemu-podklyucheniya-k-sbp-dlya-nefinansovykh-org/"]],"cat":"ru"},{"id":"D27","t":"Правила платёжной системы «Мир» и требования безопасности","pub":"АО «НСПК»","date":"действуют","st":"live","stt":"действуют","d":"Правила системы, обязательные для банков-участников и через них для торговых точек: порядок операций, оспаривание, требования к защите данных. Агентная операция как отдельный вид в них пока не выделена.","f":["F15","F18","F22"],"src":[["О компании и её роли","https://www.nspk.ru/about/company"]],"cat":"ru"},{"id":"D28","t":"Роль операционного и клирингового центра","pub":"АО «НСПК»","date":"с 2015 года","st":"live","stt":"действует","d":"Внутрироссийские операции по картам всех платёжных систем обрабатываются через процессинг НСПК. Стопроцентный акционер — Банк России.","f":["F15","F16"],"src":[["О компании","https://www.nspk.ru/about/company"]],"cat":"ru"}];
+var CAT={"spec":"Международные спецификации","net":"Протоколы платёжных сетей","proto":"Открытые протоколы коммерции и агентов","web":"Инфраструктура веба","law":"Право и судебная практика","ru":"Российская нормативная база и инфраструктура"};
+var docsOfF={"F1":["D1","D7","D8","D10"],"F2":["D16","D17"],"F3":["D5","D6"],"F4":["D7"],"F5":["D3","D5","D9","D10","D26"],"F6":["D9","D10"],"F7":["D1","D2","D8","D10","D13","D25"],"F8":["D1","D13"],"F9":["D3","D4","D12","D26"],"F10":["D12","D14"],"F11":["D12","D14"],"F12":[],"F13":["D16","D17","D18"],"F14":["D15"],"F15":["D4","D19","D24","D27","D28"],"F16":["D11","D28"],"F17":["D23","D24"],"F18":["D2","D9","D25","D27"],"F19":["D1"],"F20":["D9"],"F21":["D1"],"F22":["D27"],"F23":[],"F26":["D19","D20","D21"],"F24":["D9"],"F25":["D1","D7"],"F27":["D18","D22"]};
+var funcsOfRole={"R1":["F1","F2","F4"],"R2":["F5","F6","F9"],"R3":["F7","F8"],"R4":["F18","F19"],"R5":["F21","F22"],"R6":["F26"],"R7":["F25"],"R8":["F17"],"R9":["F24"],"R10":["F20"],"R11":["F15","F16"]};
+var funcsOfStage={"0":["F1"],"1":["F1","F3","F5","F6","F7","F8"],"2":["F1","F2","F3","F5","F6","F8","F10","F12","F13","F14","F20"],"3":["F1","F2","F3","F5","F6","F8","F9","F11","F14"],"4":["F1","F3","F5","F6","F8","F9","F18","F19","F26"],"5":["F1","F5","F6","F8","F9","F15","F17","F18","F19"],"6":["F5","F8","F16","F17","F19"],"7":["F4","F8","F17","F19","F21","F22","F23"]};
+var ONAME={"doc":"документ","obs":"наблюдение","inf":"вывод"};
+var byF={}; FUNCS.forEach(function(f){byF[f.id]=f;});
+var byD={}; DOCS.forEach(function(d){byD[d.id]=d;});
+var ROLES=Object.keys(ROLEN);
+
+var sel=null; // {type,id}
+
+function stagesOfFunc(f){ return f.cross ? STAGES.map(function(s){return s.i;}) : STAGES.map(function(s){return s.i;}).filter(function(i){return f.s<=i&&f.e>=i;}); }
+function related(){
+ var R={stage:new Set(),func:new Set(),role:new Set(),doc:new Set()};
+ if(!sel) return R;
+ var fl=[];
+ if(sel.type==='stage') fl=funcsOfStage[sel.id]||[];
+ else if(sel.type==='func') fl=[sel.id];
+ else if(sel.type==='role') fl=funcsOfRole[sel.id]||[];
+ else if(sel.type==='doc') fl=(byD[sel.id]||{f:[]}).f.filter(function(x){return byF[x];});
+ fl.forEach(function(id){
+  var f=byF[id]; if(!f) return;
+  R.func.add(id);
+  stagesOfFunc(f).forEach(function(s){R.stage.add(s);});
+  if(f.r) R.role.add(f.r);
+  (docsOfF[id]||[]).forEach(function(d){R.doc.add(d);});
+ });
+ if(sel.type==='stage') R.stage=new Set([sel.id]);
+ if(sel.type==='role') R.role.add(sel.id);
+ if(sel.type==='doc') R.doc.add(sel.id);
+ return R;
+}
+
+function mk(type,id,code,label,tag){
+ var b=document.createElement('button');
+ b.className='it'; b.dataset.type=type; b.dataset.id=String(id);
+ b.innerHTML='<span class="c">'+code+'</span>'+label+(tag?'<span class="tag '+tag+'">'+ONAME[tag]+'</span>':'');
+ b.addEventListener('click',function(){ pick(type,id); });
+ return b;
+}
+
+function render(){
+ var R=related();
+ var L={stage:document.getElementById('l-stage'),func:document.getElementById('l-func'),
+        role:document.getElementById('l-role'),doc:document.getElementById('l-doc')};
+ Object.keys(L).forEach(function(k){L[k].innerHTML='';});
+
+ STAGES.forEach(function(s){ L.stage.appendChild(mk('stage',s.i,String(s.i),s.n)); });
+ FUNCS.forEach(function(f){ L.func.appendChild(mk('func',f.id,f.id,f.n,f.o)); });
+ ROLES.forEach(function(r){ L.role.appendChild(mk('role',r,r,ROLEN[r])); });
+ DOCS.forEach(function(d){ L.doc.appendChild(mk('doc',d.id,d.id,d.t)); });
+
+ Array.prototype.forEach.call(document.querySelectorAll('.it'),function(b){
+  var t=b.dataset.type, id=(t==='stage')?+b.dataset.id:b.dataset.id;
+  var isAct = sel && sel.type===t && String(sel.id)===String(id);
+  var isRel = sel && R[t].has(id);
+  b.classList.toggle('act',!!isAct);
+  b.classList.toggle('rel',!!isRel && !isAct);
+  b.classList.toggle('dim',!!sel && !isRel && !isAct);
+ });
+
+ document.getElementById('c-stage').textContent=sel?R.stage.size+' / '+STAGES.length:STAGES.length;
+ document.getElementById('c-func').textContent=sel?R.func.size+' / '+FUNCS.length:FUNCS.length;
+ document.getElementById('c-role').textContent=sel?R.role.size+' / '+ROLES.length:ROLES.length;
+ document.getElementById('c-doc').textContent=sel?R.doc.size+' / '+DOCS.length:DOCS.length;
+
+ detail(R);
+ document.getElementById('status').textContent = sel
+  ? ('выбрано: '+label(sel)+' · связано: стадий '+R.stage.size+', функций '+R.func.size+', ролей '+R.role.size+', документов '+R.doc.size)
+  : 'ничего не выбрано — показаны все позиции';
+}
+
+function label(s){
+ if(s.type==='stage') return 'стадия '+s.id+' '+(STAGES[s.id]||{}).n;
+ if(s.type==='func') return s.id+' '+(byF[s.id]||{}).n;
+ if(s.type==='role') return s.id+' '+ROLEN[s.id];
+ return s.id+' '+(byD[s.id]||{}).t;
+}
+function chips(type,ids){
+ return ids.map(function(id){
+  var txt = type==='stage' ? ('стадия '+id) : id;
+  return '<button class="chip '+(type==='stage'?'s':type==='func'?'f':type==='role'?'r':'d')+'" data-jump="'+type+':'+id+'"><span>'+txt+'</span></button>';
+ }).join('');
+}
+
+function detail(R){
+ var el=document.getElementById('detail');
+ if(!sel){
+  el.innerHTML='<h3>Ничего не выбрано</h3><p class="note">Выберите позицию в любой колонке. Связка работает в обе стороны: от стадии к документам и от документа к стадиям.</p>';
+  return;
+ }
+ var h='', m='', body='', out='';
+ if(sel.type==='stage'){
+  var s=STAGES[sel.id];
+  h='Стадия '+s.i+'. '+s.n;
+  m='функций на стадии: '+R.func.size+' · ролей: '+R.role.size+' · документов: '+R.doc.size;
+  body='<p>'+(s.d||'')+'</p>';
+  out='<a href="01-ierarhiya-tranzakcii.html#stage-'+s.i+'" target="_blank" rel="noopener">стадия в иерархии транзакции</a>';
+ } else if(sel.type==='func'){
+  var f=byF[sel.id];
+  h=f.id+'. '+f.n;
+  m=(f.cross?'сквозная функция':'стадии '+f.s+'–'+f.e)+' · роль: '+(f.r?f.r+' — '+ROLEN[f.r]:'вне ролей оператора')+' · на рынке: '+f.own+' · происхождение: '+ONAME[f.o];
+  body=(f.note?'<p>'+f.note+'</p>':'')+(f.d?'<p>'+f.d+'</p>':'');
+  out='<a href="02-funkcii-i-roli.html#'+f.id+'" target="_blank" rel="noopener">строка в карте функций</a>'+
+      (f.r?'<a href="02-funkcii-i-roli.html#role='+f.r+'" target="_blank" rel="noopener">все функции роли</a>':'');
+ } else if(sel.type==='role'){
+  h=sel.id+'. '+ROLEN[sel.id];
+  m='функций: '+(funcsOfRole[sel.id]||[]).length+' · стадий покрыто: '+R.stage.size+' · документов: '+R.doc.size;
+  body='<p class="note">Роль покрывает те стадии, на которых стоят её функции; документы — те, которыми эти функции обеспечены.</p>';
+  out='<a href="02-funkcii-i-roli.html#role='+sel.id+'" target="_blank" rel="noopener">роль в карте функций</a><a href="05-vybor-roli.html" target="_blank" rel="noopener">оценка роли и комбинации</a>';
+ } else {
+  var d=byD[sel.id];
+  h=d.id+'. '+d.t;
+  m=(CAT[d.cat]||'')+' · '+d.pub+' · '+d.date+' · '+d.stt;
+  body='<p>'+d.d+'</p>';
+  out='<a href="03-reestr-dokumentov.html#'+d.id+'" target="_blank" rel="noopener">карточка в реестре</a>'+
+      (d.src||[]).map(function(s){return '<a href="'+s[1]+'" target="_blank" rel="noopener">'+s[0]+'</a>';}).join('');
+ }
+ el.innerHTML='<h3>'+h+'</h3><div class="m">'+m+'</div>'+body+
+  '<div class="row"><b>стадии</b>'+(R.stage.size?chips('stage',[...R.stage].sort(function(a,b){return a-b;})):'<span class="note">—</span>')+'</div>'+
+  '<div class="row"><b>функции</b>'+(R.func.size?chips('func',[...R.func]):'<span class="note">—</span>')+'</div>'+
+  '<div class="row"><b>роли</b>'+(R.role.size?chips('role',[...R.role]):'<span class="note">нет роли оператора</span>')+'</div>'+
+  '<div class="row"><b>документы</b>'+(R.doc.size?chips('doc',[...R.doc]):'<span class="note">регламента нет</span>')+'</div>'+
+  '<div class="row out"><b>переходы</b>'+out+'</div>';
+ Array.prototype.forEach.call(el.querySelectorAll('[data-jump]'),function(b){
+  b.addEventListener('click',function(){ var p=b.dataset.jump.split(':'); pick(p[0], p[0]==='stage'?+p[1]:p[1]); });
+ });
+}
+
+function pick(type,id){
+ if(sel && sel.type===type && String(sel.id)===String(id)) sel=null;
+ else sel={type:type,id:id};
+ if(sel) history.replaceState(null,'','#'+sel.type+'-'+sel.id);
+ else history.replaceState(null,'',location.pathname);
+ render();
+ if(sel) document.getElementById('detail').scrollIntoView({block:'nearest',behavior:'smooth'});
+}
+
+document.getElementById('clear').addEventListener('click',function(){ sel=null; history.replaceState(null,'',location.pathname); render(); });
+Array.prototype.forEach.call(document.querySelectorAll('[data-pick]'),function(b){
+ b.addEventListener('click',function(){ var p=b.dataset.pick.split(':'); pick(p[0], p[0]==='stage'?+p[1]:p[1]); });
+});
+
+function fromHash(){
+ var m=/^#(stage|func|role|doc)-(.+)$/.exec(location.hash);
+ if(m){ sel={type:m[1],id:m[1]==='stage'?+m[2]:m[2]}; }
+ render();
+}
+window.addEventListener('hashchange',fromHash);
+fromHash();
+})();
+</script>
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script>
+<script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script>
+</body></html>

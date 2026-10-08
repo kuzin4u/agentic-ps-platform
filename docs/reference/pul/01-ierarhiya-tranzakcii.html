@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Иерархия агентной коммерции, привязанная к транзакции</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--acc:#1f7a5a;--warn:#a35c13;--free:#7a1f6a;--ref:#1a3a8f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:16px;line-height:1.55}
+.wrap{max-width:1160px;margin:0 auto;padding:0 18px 70px}
+nav.strip{display:flex;flex-wrap:wrap;gap:4px;padding:14px 0 0}
+nav.strip a{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 9px}
+nav.strip a.cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+header.top{border-bottom:2px solid var(--ink);padding:18px 0 14px;margin-bottom:22px}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--acc);margin:0 0 6px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:29px;margin:0 0 8px;font-weight:600;line-height:1.15}
+.tagline{color:var(--ink2);margin:0;max-width:74ch}
+h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:20px;margin:32px 0 8px;font-weight:600}
+p{max-width:78ch}
+a{color:var(--ref)}
+svg{width:100%;height:auto;display:block;background:var(--card);border:1px solid var(--line);margin-top:10px}
+.bar{cursor:pointer}
+.bar rect{stroke-width:1}
+.bar.dim{opacity:.22}
+.bar:hover rect{stroke-width:2}
+.stg:hover rect{fill:#eef1f4}
+.stg:focus-visible rect,.bar:focus-visible rect{stroke:#1a3a8f;stroke-width:2.5}
+.controls{display:flex;flex-wrap:wrap;gap:7px;margin:14px 0 6px;align-items:center}
+.controls button{font:500 12.5px 'IBM Plex Sans';background:#fff;border:1px solid var(--line);padding:6px 10px;cursor:pointer;color:var(--ink)}
+.controls button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.cnt{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2)}
+button:focus-visible,a:focus-visible{outline:2px solid var(--ref);outline-offset:2px}
+table{width:100%;border-collapse:collapse;background:var(--card);font-size:13.6px;margin-top:8px}
+th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+th{background:#ecece7;font-size:12px;font-weight:600}
+tr.hidden{display:none}
+td.st{font-weight:600;width:13%}
+td.code{font-family:'IBM Plex Mono',monospace;font-size:11.5px;width:44px}
+.chip{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1px solid currentColor;padding:1px 6px;margin:0 3px 3px 0;display:inline-block;text-decoration:none}
+.chip.doc{color:var(--acc)}.chip.obs{color:var(--warn)}.chip.inf{color:var(--free)}
+.chip.r{color:var(--ink)}
+.chip.d{color:var(--ref)}
+a.chip{text-decoration:none}
+a.chip:hover{background:currentColor}
+a.stlink{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--ink2)}
+a.stlink:hover{border-bottom-color:var(--ink)}
+a.gaplink{color:var(--free)}
+a.fnlink{color:inherit;border-bottom:1px dotted var(--ink2);text-decoration:none}
+.detail{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--ink);padding:12px 16px;margin-top:12px;min-height:96px}
+.detail h3{margin:0 0 4px;font-size:16px}
+.detail .m{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);margin-bottom:6px}
+.detail p{margin:0 0 6px;font-size:14.3px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);margin-top:8px}
+.legend i{display:inline-block;width:14px;height:10px;vertical-align:0;margin-right:5px;border:1px solid}
+.keybox{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--free);padding:12px 16px;margin:14px 0}
+.keybox ul{margin:6px 0 0;padding-left:20px;font-size:14.5px}
+.keybox li{margin:6px 0}
+.note{font-size:13px;color:var(--ink2)}
+.hint2{font-weight:400;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink2)}
+td.basis{font-size:12.6px}
+.bmark{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1px solid currentColor;padding:1px 6px;display:inline-block;cursor:help}
+.bmark.canon{color:#1f7a5a}.bmark.proto{color:#1a3a8f}.bmark.frame{color:#7a1f6a}
+.bdocs{display:block;margin-top:5px;font-family:'IBM Plex Mono',monospace;font-size:11px}
+.bdocs a{color:#1a3a8f;text-decoration:none;border-bottom:1px dotted currentColor;margin-right:4px}
+.bdocs a:hover{border-bottom-style:solid}
+footer{margin-top:44px;border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+@media(max-width:800px){h1{font-size:23px}table{font-size:12.8px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style>
+<link rel="icon" type="image/png" href="data:image/png;base64,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">
+<style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style>
+
+<style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style>
+</head><body><div class="wrap">
+
+<nav class="strip">
+  <a href="18-svyazka.html">Сквозная связка</a>
+  <a href="00-ukazatel-pula.html">Указатель пула</a>
+ <a href="02-funkcii-i-roli.html">Функции и роли</a>
+ <a href="04-ocenki-funkciy.html">Функции и параметры</a>
+ <a href="03-reestr-dokumentov.html">Реестр документов</a>
+ <a href="05-vybor-roli.html">Выбор роли</a>
+ <a href="#" class="cur" aria-current="page">Привязка к транзакции</a>
+</nav>
+
+<header class="top">
+ <p class="eyebrow">Единая иерархия · 15.09.2026</p>
+ <h1>Вся иерархия, привязанная к транзакции</h1>
+ <p class="tagline">Восемь стадий одной сделки, на них разложены двадцать семь функций, за каждой — роль оператора и документы, которыми она обеспечена. Видно, где транзакция идёт по стандарту, а где держится на реконструкции.</p>
+</header>
+
+<h2>Откуда взялись стадии</h2>
+<p>Стадии — не моя выдумка и не полный регламент. Костяк взят из жизненного цикла карточной операции, где последовательность аутентификация, авторизация, клиринг, расчёт и оспаривание описана в спецификациях и правилах платёжных систем. Две стадии добавлены агентной спецификой: допуск агента, которого в обычной сделке нет вовсе, и поручение, где человек делегирует полномочия. Основание для них прямое: отраслевая рамка построена вокруг намерения, которым нужно управлять во времени, и прямо говорит о регистрации, обращении и обновлении намерения до, во время и после операции — то есть сама вводит ось времени сделки.</p>
+<p>Отнесение конкретной функции к стадии — моё. Проверяемый признак один: функция стоит там, где её отсутствие останавливает сделку. Опознание агента без стадии допуска не даёт начать, подтверждение человеком без своей стадии превращается в формальность после факта, ответственность за ошибку возникает только после расчёта.</p>
+
+<h2>Транзакция целиком</h2>
+<div class="controls" id="ctl">
+ <button data-o="all" aria-pressed="true">Все функции</button>
+ <button data-o="doc" aria-pressed="false">Только из документов</button>
+ <button data-o="obs" aria-pressed="false">Только наблюдения</button>
+ <button data-o="inf" aria-pressed="false">Только выводы</button>
+ <span class="cnt" id="cnt"></span>
+</div>
+<svg id="chart" viewBox="0 0 1120 820" role="img" aria-label="Стадии транзакции и функции, распределённые по ним"></svg>
+<div class="legend">
+ <span><i style="background:#e2efe2;border-color:#1f7a5a"></i>перенесено из документа</span>
+ <span><i style="background:#f8e7d2;border-color:#a35c13"></i>снято с объявленного продукта</span>
+ <span><i style="background:#f3e5f1;border-color:#7a1f6a"></i>вывод, регламента нет</span>
+ <span>клик по полосе — карточка · ↗ в полосе — строка в карте функций · код роли — все её функции · стадия или её колонка — фильтр таблицы</span>
+</div>
+<div class="detail" id="detail"><h3>Выберите функцию на диаграмме</h3><p class="note">Карточка покажет стадии, роль оператора, владельца на рынке и документы.</p></div>
+
+<h2>Стадии: что на каждой происходит</h2>
+<table id="stbl"><tbody>
+<tr><th style="width:12%">Стадия</th><th style="width:13%">Основание<br><span class="hint2">откуда стадия</span></th><th>Что происходит</th><th style="width:18%">Функции</th><th style="width:14%">Роли оператора</th><th style="width:16%">Документы</th></tr>
+<tr data-stage="0" id="stage-0">
+ <td class="st"><a class="stlink" href="#stage-0" title="постоянная ссылка на стадию и фильтр таблицы">0. Допуск</a></td>
+ <td class="basis"><span class="bmark frame" title="Процедура допуска агента существует — выдача идентификатора агента и повестка опознания в черновике рамки, реестр ключей в вебе, — но стадией сделки её нигде не называют: формально это происходит до сделки и однократно.">авторская рамка</span><span class="bdocs"><a href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a> <a href="03-reestr-dokumentov.html#D7" target="_blank" rel="noopener">D7</a> <a href="03-reestr-dokumentov.html#D8" target="_blank" rel="noopener">D8</a> <a href="03-reestr-dokumentov.html#D16" target="_blank" rel="noopener">D16</a></span></td>
+ <td>Агент получает идентичность и право обращаться: ключи, идентификатор, запись в реестре. Происходит один раз, до всякой покупки.</td>
+ <td><a class="chip doc" href="02-funkcii-i-roli.html#F1" target="_blank" rel="noopener" title="Опознание агента">F1</a></td>
+ <td><a class="chip r" href="02-funkcii-i-roli.html#role=R1" target="_blank" rel="noopener" title="Удостоверяющий центр агентов">R1</a></td>
+ <td><a class="chip d" href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a><a class="chip d" href="03-reestr-dokumentov.html#D7" target="_blank" rel="noopener">D7</a><a class="chip d" href="03-reestr-dokumentov.html#D8" target="_blank" rel="noopener">D8</a><a class="chip d" href="03-reestr-dokumentov.html#D10" target="_blank" rel="noopener">D10</a></td>
+</tr><tr data-stage="1" id="stage-1">
+ <td class="st"><a class="stlink" href="#stage-1" title="постоянная ссылка на стадию и фильтр таблицы">1. Поручение</a></td>
+ <td class="basis"><span class="bmark proto" title="Мандаты намерения и корзины описаны в открытом протоколе платежей агентов, запись согласия — в протоколе сети, слой намерения — центральная часть черновика рамки. Содержание регламентировано, но как разделы протокола, а не как этап жизненного цикла.">протокол</span><span class="bdocs"><a href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a> <a href="03-reestr-dokumentov.html#D8" target="_blank" rel="noopener">D8</a> <a href="03-reestr-dokumentov.html#D13" target="_blank" rel="noopener">D13</a></span></td>
+ <td>Человек делегирует: границы, бюджет, срок, подпись. Здесь же выпускаются ограниченные учётные данные.</td>
+ <td><a class="chip doc" href="02-funkcii-i-roli.html#F1" target="_blank" rel="noopener" title="Опознание агента">F1</a><a class="chip doc" href="02-funkcii-i-roli.html#F3" target="_blank" rel="noopener" title="Идентичность человека">F3</a><a class="chip doc" href="02-funkcii-i-roli.html#F5" target="_blank" rel="noopener" title="Учётные данные с ограничением">F5</a><a class="chip obs" href="02-funkcii-i-roli.html#F6" target="_blank" rel="noopener" title="Ограничители пользователя">F6</a><a class="chip doc" href="02-funkcii-i-roli.html#F7" target="_blank" rel="noopener" title="Намерение и согласие">F7</a><a class="chip doc" href="02-funkcii-i-roli.html#F8" target="_blank" rel="noopener" title="Жизненный цикл намерения">F8</a></td>
+ <td><a class="chip r" href="02-funkcii-i-roli.html#role=R1" target="_blank" rel="noopener" title="Удостоверяющий центр агентов">R1</a><a class="chip r" href="02-funkcii-i-roli.html#role=R2" target="_blank" rel="noopener" title="Эмитент агентных учётных данных">R2</a><a class="chip r" href="02-funkcii-i-roli.html#role=R3" target="_blank" rel="noopener" title="Держатель намерения">R3</a></td>
+ <td><a class="chip d" href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a><a class="chip d" href="03-reestr-dokumentov.html#D2" target="_blank" rel="noopener">D2</a><a class="chip d" href="03-reestr-dokumentov.html#D3" target="_blank" rel="noopener">D3</a><a class="chip d" href="03-reestr-dokumentov.html#D5" target="_blank" rel="noopener">D5</a><a class="chip d" href="03-reestr-dokumentov.html#D6" target="_blank" rel="noopener">D6</a><a class="chip d" href="03-reestr-dokumentov.html#D7" target="_blank" rel="noopener">D7</a><a class="chip d" href="03-reestr-dokumentov.html#D8" target="_blank" rel="noopener">D8</a><a class="chip d" href="03-reestr-dokumentov.html#D9" target="_blank" rel="noopener">D9</a><a class="chip d" href="03-reestr-dokumentov.html#D10" target="_blank" rel="noopener">D10</a><a class="chip d" href="03-reestr-dokumentov.html#D13" target="_blank" rel="noopener">D13</a><a class="chip d" href="03-reestr-dokumentov.html#D25" target="_blank" rel="noopener">D25</a><a class="chip d" href="03-reestr-dokumentov.html#D26" target="_blank" rel="noopener">D26</a></td>
+</tr><tr data-stage="2" id="stage-2">
+ <td class="st"><a class="stlink" href="#stage-2" title="постоянная ссылка на стадию и фильтр таблицы">2. Поиск</a></td>
+ <td class="basis"><span class="bmark frame" title="В платёжных документах стадия отсутствует в принципе: поиск лежит в торговых протоколах и у площадок, а платёжный контур начинает считать сделку позже.">авторская рамка</span><span class="bdocs"><a href="03-reestr-dokumentov.html#D12" target="_blank" rel="noopener">D12</a> <a href="03-reestr-dokumentov.html#D14" target="_blank" rel="noopener">D14</a> <a href="03-reestr-dokumentov.html#D16" target="_blank" rel="noopener">D16</a></span></td>
+ <td>Агент обращается к площадкам и каталогам, площадка решает, пускать ли его, и что показать.<br><span class="note">без регламента здесь: <a class="gaplink" href="02-funkcii-i-roli.html#F12" target="_blank" rel="noopener">подбор товара</a></span></td>
+ <td><a class="chip doc" href="02-funkcii-i-roli.html#F1" target="_blank" rel="noopener" title="Опознание агента">F1</a><a class="chip doc" href="02-funkcii-i-roli.html#F2" target="_blank" rel="noopener" title="Подпись запроса агента">F2</a><a class="chip doc" href="02-funkcii-i-roli.html#F3" target="_blank" rel="noopener" title="Идентичность человека">F3</a><a class="chip doc" href="02-funkcii-i-roli.html#F5" target="_blank" rel="noopener" title="Учётные данные с ограничением">F5</a><a class="chip obs" href="02-funkcii-i-roli.html#F6" target="_blank" rel="noopener" title="Ограничители пользователя">F6</a><a class="chip doc" href="02-funkcii-i-roli.html#F8" target="_blank" rel="noopener" title="Жизненный цикл намерения">F8</a><a class="chip doc" href="02-funkcii-i-roli.html#F10" target="_blank" rel="noopener" title="Передача каталога агенту">F10</a><a class="chip inf" href="02-funkcii-i-roli.html#F12" target="_blank" rel="noopener" title="Подбор товара">F12</a><a class="chip doc" href="02-funkcii-i-roli.html#F13" target="_blank" rel="noopener" title="Допуск агента на площадку">F13</a><a class="chip doc" href="02-funkcii-i-roli.html#F14" target="_blank" rel="noopener" title="Инструментальный слой агента">F14</a><a class="chip obs" href="02-funkcii-i-roli.html#F20" target="_blank" rel="noopener" title="Оценка готовности продавца">F20</a></td>
+ <td><a class="chip r" href="02-funkcii-i-roli.html#role=R1" target="_blank" rel="noopener" title="Удостоверяющий центр агентов">R1</a><a class="chip r" href="02-funkcii-i-roli.html#role=R2" target="_blank" rel="noopener" title="Эмитент агентных учётных данных">R2</a><a class="chip r" href="02-funkcii-i-roli.html#role=R3" target="_blank" rel="noopener" title="Держатель намерения">R3</a><a class="chip r" href="02-funkcii-i-roli.html#role=R10" target="_blank" rel="noopener" title="Оценка готовности продавца и каталог">R10</a></td>
+ <td><a class="chip d" href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a><a class="chip d" href="03-reestr-dokumentov.html#D3" target="_blank" rel="noopener">D3</a><a class="chip d" href="03-reestr-dokumentov.html#D5" target="_blank" rel="noopener">D5</a><a class="chip d" href="03-reestr-dokumentov.html#D6" target="_blank" rel="noopener">D6</a><a class="chip d" href="03-reestr-dokumentov.html#D7" target="_blank" rel="noopener">D7</a><a class="chip d" href="03-reestr-dokumentov.html#D8" target="_blank" rel="noopener">D8</a><a class="chip d" href="03-reestr-dokumentov.html#D9" target="_blank" rel="noopener">D9</a><a class="chip d" href="03-reestr-dokumentov.html#D10" target="_blank" rel="noopener">D10</a><a class="chip d" href="03-reestr-dokumentov.html#D12" target="_blank" rel="noopener">D12</a><a class="chip d" href="03-reestr-dokumentov.html#D13" target="_blank" rel="noopener">D13</a><a class="chip d" href="03-reestr-dokumentov.html#D14" target="_blank" rel="noopener">D14</a><a class="chip d" href="03-reestr-dokumentov.html#D15" target="_blank" rel="noopener">D15</a><a class="chip d" href="03-reestr-dokumentov.html#D16" target="_blank" rel="noopener">D16</a><a class="chip d" href="03-reestr-dokumentov.html#D17" target="_blank" rel="noopener">D17</a><a class="chip d" href="03-reestr-dokumentov.html#D18" target="_blank" rel="noopener">D18</a><a class="chip d" href="03-reestr-dokumentov.html#D26" target="_blank" rel="noopener">D26</a></td>
+</tr><tr data-stage="3" id="stage-3">
+ <td class="st"><a class="stlink" href="#stage-3" title="постоянная ссылка на стадию и фильтр таблицы">3. Заказ</a></td>
+ <td class="basis"><span class="bmark proto" title="Корзина, оформление и передача права на списание прямо перечислены как разделы спецификации торгового протокола.">протокол</span><span class="bdocs"><a href="03-reestr-dokumentov.html#D12" target="_blank" rel="noopener">D12</a> <a href="03-reestr-dokumentov.html#D14" target="_blank" rel="noopener">D14</a> <a href="03-reestr-dokumentov.html#D3" target="_blank" rel="noopener">D3</a></span></td>
+ <td>Состав, цена и условия фиксируются: корзина, оформление, передача права на списание продавцу.</td>
+ <td><a class="chip doc" href="02-funkcii-i-roli.html#F1" target="_blank" rel="noopener" title="Опознание агента">F1</a><a class="chip doc" href="02-funkcii-i-roli.html#F2" target="_blank" rel="noopener" title="Подпись запроса агента">F2</a><a class="chip doc" href="02-funkcii-i-roli.html#F3" target="_blank" rel="noopener" title="Идентичность человека">F3</a><a class="chip doc" href="02-funkcii-i-roli.html#F5" target="_blank" rel="noopener" title="Учётные данные с ограничением">F5</a><a class="chip obs" href="02-funkcii-i-roli.html#F6" target="_blank" rel="noopener" title="Ограничители пользователя">F6</a><a class="chip doc" href="02-funkcii-i-roli.html#F8" target="_blank" rel="noopener" title="Жизненный цикл намерения">F8</a><a class="chip doc" href="02-funkcii-i-roli.html#F9" target="_blank" rel="noopener" title="Делегирование платежа продавцу">F9</a><a class="chip doc" href="02-funkcii-i-roli.html#F11" target="_blank" rel="noopener" title="Корзина и оформление">F11</a><a class="chip doc" href="02-funkcii-i-roli.html#F14" target="_blank" rel="noopener" title="Инструментальный слой агента">F14</a></td>
+ <td><a class="chip r" href="02-funkcii-i-roli.html#role=R1" target="_blank" rel="noopener" title="Удостоверяющий центр агентов">R1</a><a class="chip r" href="02-funkcii-i-roli.html#role=R2" target="_blank" rel="noopener" title="Эмитент агентных учётных данных">R2</a><a class="chip r" href="02-funkcii-i-roli.html#role=R3" target="_blank" rel="noopener" title="Держатель намерения">R3</a></td>
+ <td><a class="chip d" href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a><a class="chip d" href="03-reestr-dokumentov.html#D3" target="_blank" rel="noopener">D3</a><a class="chip d" href="03-reestr-dokumentov.html#D4" target="_blank" rel="noopener">D4</a><a class="chip d" href="03-reestr-dokumentov.html#D5" target="_blank" rel="noopener">D5</a><a class="chip d" href="03-reestr-dokumentov.html#D6" target="_blank" rel="noopener">D6</a><a class="chip d" href="03-reestr-dokumentov.html#D7" target="_blank" rel="noopener">D7</a><a class="chip d" href="03-reestr-dokumentov.html#D8" target="_blank" rel="noopener">D8</a><a class="chip d" href="03-reestr-dokumentov.html#D9" target="_blank" rel="noopener">D9</a><a class="chip d" href="03-reestr-dokumentov.html#D10" target="_blank" rel="noopener">D10</a><a class="chip d" href="03-reestr-dokumentov.html#D12" target="_blank" rel="noopener">D12</a><a class="chip d" href="03-reestr-dokumentov.html#D13" target="_blank" rel="noopener">D13</a><a class="chip d" href="03-reestr-dokumentov.html#D14" target="_blank" rel="noopener">D14</a><a class="chip d" href="03-reestr-dokumentov.html#D15" target="_blank" rel="noopener">D15</a><a class="chip d" href="03-reestr-dokumentov.html#D16" target="_blank" rel="noopener">D16</a><a class="chip d" href="03-reestr-dokumentov.html#D17" target="_blank" rel="noopener">D17</a><a class="chip d" href="03-reestr-dokumentov.html#D26" target="_blank" rel="noopener">D26</a></td>
+</tr><tr data-stage="4" id="stage-4">
+ <td class="st"><a class="stlink" href="#stage-4" title="постоянная ссылка на стадию и фильтр таблицы">4. Подтверждение</a></td>
+ <td class="basis"><span class="bmark canon" title="Аутентификация держателя — отдельная стадия в спецификации 3-D Secure и в российской реализации.">канон карточного цикла</span><span class="bdocs"><a href="03-reestr-dokumentov.html#D2" target="_blank" rel="noopener">D2</a> <a href="03-reestr-dokumentov.html#D25" target="_blank" rel="noopener">D25</a> <a href="03-reestr-dokumentov.html#D19" target="_blank" rel="noopener">D19</a></span></td>
+ <td>Проверяется, что за операцией стоит поручение человека, и операция помечается как агентная.<br><span class="note">без регламента здесь: <a class="gaplink" href="02-funkcii-i-roli.html#F26" target="_blank" rel="noopener">подтверждение на нейтральной поверхности</a></span></td>
+ <td><a class="chip doc" href="02-funkcii-i-roli.html#F1" target="_blank" rel="noopener" title="Опознание агента">F1</a><a class="chip doc" href="02-funkcii-i-roli.html#F3" target="_blank" rel="noopener" title="Идентичность человека">F3</a><a class="chip doc" href="02-funkcii-i-roli.html#F5" target="_blank" rel="noopener" title="Учётные данные с ограничением">F5</a><a class="chip obs" href="02-funkcii-i-roli.html#F6" target="_blank" rel="noopener" title="Ограничители пользователя">F6</a><a class="chip doc" href="02-funkcii-i-roli.html#F8" target="_blank" rel="noopener" title="Жизненный цикл намерения">F8</a><a class="chip doc" href="02-funkcii-i-roli.html#F9" target="_blank" rel="noopener" title="Делегирование платежа продавцу">F9</a><a class="chip obs" href="02-funkcii-i-roli.html#F18" target="_blank" rel="noopener" title="Фрод в агентных потоках">F18</a><a class="chip doc" href="02-funkcii-i-roli.html#F19" target="_blank" rel="noopener" title="Признак агентной операции">F19</a><a class="chip inf" href="02-funkcii-i-roli.html#F26" target="_blank" rel="noopener" title="Подтверждение на нейтральной поверхности">F26</a></td>
+ <td><a class="chip r" href="02-funkcii-i-roli.html#role=R1" target="_blank" rel="noopener" title="Удостоверяющий центр агентов">R1</a><a class="chip r" href="02-funkcii-i-roli.html#role=R2" target="_blank" rel="noopener" title="Эмитент агентных учётных данных">R2</a><a class="chip r" href="02-funkcii-i-roli.html#role=R3" target="_blank" rel="noopener" title="Держатель намерения">R3</a><a class="chip r" href="02-funkcii-i-roli.html#role=R4" target="_blank" rel="noopener" title="Скоринг агентных операций">R4</a><a class="chip r" href="02-funkcii-i-roli.html#role=R6" target="_blank" rel="noopener" title="Нейтральная поверхность подтверждения">R6</a></td>
+ <td><a class="chip d" href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a><a class="chip d" href="03-reestr-dokumentov.html#D2" target="_blank" rel="noopener">D2</a><a class="chip d" href="03-reestr-dokumentov.html#D3" target="_blank" rel="noopener">D3</a><a class="chip d" href="03-reestr-dokumentov.html#D4" target="_blank" rel="noopener">D4</a><a class="chip d" href="03-reestr-dokumentov.html#D5" target="_blank" rel="noopener">D5</a><a class="chip d" href="03-reestr-dokumentov.html#D6" target="_blank" rel="noopener">D6</a><a class="chip d" href="03-reestr-dokumentov.html#D7" target="_blank" rel="noopener">D7</a><a class="chip d" href="03-reestr-dokumentov.html#D8" target="_blank" rel="noopener">D8</a><a class="chip d" href="03-reestr-dokumentov.html#D9" target="_blank" rel="noopener">D9</a><a class="chip d" href="03-reestr-dokumentov.html#D10" target="_blank" rel="noopener">D10</a><a class="chip d" href="03-reestr-dokumentov.html#D12" target="_blank" rel="noopener">D12</a><a class="chip d" href="03-reestr-dokumentov.html#D13" target="_blank" rel="noopener">D13</a><a class="chip d" href="03-reestr-dokumentov.html#D19" target="_blank" rel="noopener">D19</a><a class="chip d" href="03-reestr-dokumentov.html#D20" target="_blank" rel="noopener">D20</a><a class="chip d" href="03-reestr-dokumentov.html#D21" target="_blank" rel="noopener">D21</a><a class="chip d" href="03-reestr-dokumentov.html#D25" target="_blank" rel="noopener">D25</a><a class="chip d" href="03-reestr-dokumentov.html#D26" target="_blank" rel="noopener">D26</a><a class="chip d" href="03-reestr-dokumentov.html#D27" target="_blank" rel="noopener">D27</a></td>
+</tr><tr data-stage="5" id="stage-5">
+ <td class="st"><a class="stlink" href="#stage-5" title="постоянная ссылка на стадию и фильтр таблицы">5. Авторизация</a></td>
+ <td class="basis"><span class="bmark canon" title="Авторизация — базовая стадия карточного цикла, закреплённая правилами платёжной системы и работой процессинга.">канон карточного цикла</span><span class="bdocs"><a href="03-reestr-dokumentov.html#D27" target="_blank" rel="noopener">D27</a> <a href="03-reestr-dokumentov.html#D28" target="_blank" rel="noopener">D28</a> <a href="03-reestr-dokumentov.html#D4" target="_blank" rel="noopener">D4</a></span></td>
+ <td>Скоринг, авторизация платежа, при условной схеме — удержание средств.</td>
+ <td><a class="chip doc" href="02-funkcii-i-roli.html#F1" target="_blank" rel="noopener" title="Опознание агента">F1</a><a class="chip doc" href="02-funkcii-i-roli.html#F5" target="_blank" rel="noopener" title="Учётные данные с ограничением">F5</a><a class="chip obs" href="02-funkcii-i-roli.html#F6" target="_blank" rel="noopener" title="Ограничители пользователя">F6</a><a class="chip doc" href="02-funkcii-i-roli.html#F8" target="_blank" rel="noopener" title="Жизненный цикл намерения">F8</a><a class="chip doc" href="02-funkcii-i-roli.html#F9" target="_blank" rel="noopener" title="Делегирование платежа продавцу">F9</a><a class="chip doc" href="02-funkcii-i-roli.html#F15" target="_blank" rel="noopener" title="Авторизация платежа">F15</a><a class="chip doc" href="02-funkcii-i-roli.html#F17" target="_blank" rel="noopener" title="Условное исполнение">F17</a><a class="chip obs" href="02-funkcii-i-roli.html#F18" target="_blank" rel="noopener" title="Фрод в агентных потоках">F18</a><a class="chip doc" href="02-funkcii-i-roli.html#F19" target="_blank" rel="noopener" title="Признак агентной операции">F19</a></td>
+ <td><a class="chip r" href="02-funkcii-i-roli.html#role=R1" target="_blank" rel="noopener" title="Удостоверяющий центр агентов">R1</a><a class="chip r" href="02-funkcii-i-roli.html#role=R2" target="_blank" rel="noopener" title="Эмитент агентных учётных данных">R2</a><a class="chip r" href="02-funkcii-i-roli.html#role=R3" target="_blank" rel="noopener" title="Держатель намерения">R3</a><a class="chip r" href="02-funkcii-i-roli.html#role=R11" target="_blank" rel="noopener" title="Расчётный слой агентных операций">R11</a><a class="chip r" href="02-funkcii-i-roli.html#role=R8" target="_blank" rel="noopener" title="Условное исполнение">R8</a><a class="chip r" href="02-funkcii-i-roli.html#role=R4" target="_blank" rel="noopener" title="Скоринг агентных операций">R4</a></td>
+ <td><a class="chip d" href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a><a class="chip d" href="03-reestr-dokumentov.html#D2" target="_blank" rel="noopener">D2</a><a class="chip d" href="03-reestr-dokumentov.html#D3" target="_blank" rel="noopener">D3</a><a class="chip d" href="03-reestr-dokumentov.html#D4" target="_blank" rel="noopener">D4</a><a class="chip d" href="03-reestr-dokumentov.html#D5" target="_blank" rel="noopener">D5</a><a class="chip d" href="03-reestr-dokumentov.html#D7" target="_blank" rel="noopener">D7</a><a class="chip d" href="03-reestr-dokumentov.html#D8" target="_blank" rel="noopener">D8</a><a class="chip d" href="03-reestr-dokumentov.html#D9" target="_blank" rel="noopener">D9</a><a class="chip d" href="03-reestr-dokumentov.html#D10" target="_blank" rel="noopener">D10</a><a class="chip d" href="03-reestr-dokumentov.html#D12" target="_blank" rel="noopener">D12</a><a class="chip d" href="03-reestr-dokumentov.html#D13" target="_blank" rel="noopener">D13</a><a class="chip d" href="03-reestr-dokumentov.html#D19" target="_blank" rel="noopener">D19</a><a class="chip d" href="03-reestr-dokumentov.html#D23" target="_blank" rel="noopener">D23</a><a class="chip d" href="03-reestr-dokumentov.html#D24" target="_blank" rel="noopener">D24</a><a class="chip d" href="03-reestr-dokumentov.html#D25" target="_blank" rel="noopener">D25</a><a class="chip d" href="03-reestr-dokumentov.html#D26" target="_blank" rel="noopener">D26</a><a class="chip d" href="03-reestr-dokumentov.html#D27" target="_blank" rel="noopener">D27</a><a class="chip d" href="03-reestr-dokumentov.html#D28" target="_blank" rel="noopener">D28</a></td>
+</tr><tr data-stage="6" id="stage-6">
+ <td class="st"><a class="stlink" href="#stage-6" title="постоянная ссылка на стадию и фильтр таблицы">6. Расчёт</a></td>
+ <td class="basis"><span class="bmark canon" title="Клиринг и расчёт между банками — та же основа: правила системы и процессинг.">канон карточного цикла</span><span class="bdocs"><a href="03-reestr-dokumentov.html#D27" target="_blank" rel="noopener">D27</a> <a href="03-reestr-dokumentov.html#D28" target="_blank" rel="noopener">D28</a> <a href="03-reestr-dokumentov.html#D11" target="_blank" rel="noopener">D11</a></span></td>
+ <td>Списание, распределение сумм, перевод продавцу и участникам.</td>
+ <td><a class="chip doc" href="02-funkcii-i-roli.html#F5" target="_blank" rel="noopener" title="Учётные данные с ограничением">F5</a><a class="chip doc" href="02-funkcii-i-roli.html#F8" target="_blank" rel="noopener" title="Жизненный цикл намерения">F8</a><a class="chip obs" href="02-funkcii-i-roli.html#F16" target="_blank" rel="noopener" title="Расчёт, в том числе мульти-рельсовый">F16</a><a class="chip doc" href="02-funkcii-i-roli.html#F17" target="_blank" rel="noopener" title="Условное исполнение">F17</a><a class="chip doc" href="02-funkcii-i-roli.html#F19" target="_blank" rel="noopener" title="Признак агентной операции">F19</a></td>
+ <td><a class="chip r" href="02-funkcii-i-roli.html#role=R2" target="_blank" rel="noopener" title="Эмитент агентных учётных данных">R2</a><a class="chip r" href="02-funkcii-i-roli.html#role=R3" target="_blank" rel="noopener" title="Держатель намерения">R3</a><a class="chip r" href="02-funkcii-i-roli.html#role=R11" target="_blank" rel="noopener" title="Расчётный слой агентных операций">R11</a><a class="chip r" href="02-funkcii-i-roli.html#role=R8" target="_blank" rel="noopener" title="Условное исполнение">R8</a><a class="chip r" href="02-funkcii-i-roli.html#role=R4" target="_blank" rel="noopener" title="Скоринг агентных операций">R4</a></td>
+ <td><a class="chip d" href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a><a class="chip d" href="03-reestr-dokumentov.html#D3" target="_blank" rel="noopener">D3</a><a class="chip d" href="03-reestr-dokumentov.html#D5" target="_blank" rel="noopener">D5</a><a class="chip d" href="03-reestr-dokumentov.html#D9" target="_blank" rel="noopener">D9</a><a class="chip d" href="03-reestr-dokumentov.html#D10" target="_blank" rel="noopener">D10</a><a class="chip d" href="03-reestr-dokumentov.html#D11" target="_blank" rel="noopener">D11</a><a class="chip d" href="03-reestr-dokumentov.html#D13" target="_blank" rel="noopener">D13</a><a class="chip d" href="03-reestr-dokumentov.html#D23" target="_blank" rel="noopener">D23</a><a class="chip d" href="03-reestr-dokumentov.html#D24" target="_blank" rel="noopener">D24</a><a class="chip d" href="03-reestr-dokumentov.html#D26" target="_blank" rel="noopener">D26</a><a class="chip d" href="03-reestr-dokumentov.html#D28" target="_blank" rel="noopener">D28</a></td>
+</tr><tr data-stage="7" id="stage-7">
+ <td class="st"><a class="stlink" href="#stage-7" title="постоянная ссылка на стадию и фильтр таблицы">7. После сделки</a></td>
+ <td class="basis"><span class="bmark canon" title="Оспаривание и возвраты — описанный этап правил платёжной системы. Агентная специфика в нём пока не выделена.">канон карточного цикла</span><span class="bdocs"><a href="03-reestr-dokumentov.html#D27" target="_blank" rel="noopener">D27</a> <a href="03-reestr-dokumentov.html#D18" target="_blank" rel="noopener">D18</a> <a href="03-reestr-dokumentov.html#D22" target="_blank" rel="noopener">D22</a></span></td>
+ <td>Возвраты, спор, ответственность за ошибку, накопление репутации, надзорный след.<br><span class="note">без регламента здесь: <a class="gaplink" href="02-funkcii-i-roli.html#F21" target="_blank" rel="noopener">ответственность за ошибку агента</a>, <a class="gaplink" href="02-funkcii-i-roli.html#F22" target="_blank" rel="noopener">оспаривание агентной операции</a>, <a class="gaplink" href="02-funkcii-i-roli.html#F23" target="_blank" rel="noopener">постпродажное обслуживание</a></span></td>
+ <td><a class="chip obs" href="02-funkcii-i-roli.html#F4" target="_blank" rel="noopener" title="Репутация агента по исполнению">F4</a><a class="chip doc" href="02-funkcii-i-roli.html#F8" target="_blank" rel="noopener" title="Жизненный цикл намерения">F8</a><a class="chip doc" href="02-funkcii-i-roli.html#F17" target="_blank" rel="noopener" title="Условное исполнение">F17</a><a class="chip doc" href="02-funkcii-i-roli.html#F19" target="_blank" rel="noopener" title="Признак агентной операции">F19</a><a class="chip inf" href="02-funkcii-i-roli.html#F21" target="_blank" rel="noopener" title="Ответственность за ошибку агента">F21</a><a class="chip inf" href="02-funkcii-i-roli.html#F22" target="_blank" rel="noopener" title="Оспаривание агентной операции">F22</a><a class="chip inf" href="02-funkcii-i-roli.html#F23" target="_blank" rel="noopener" title="Постпродажное обслуживание">F23</a></td>
+ <td><a class="chip r" href="02-funkcii-i-roli.html#role=R1" target="_blank" rel="noopener" title="Удостоверяющий центр агентов">R1</a><a class="chip r" href="02-funkcii-i-roli.html#role=R3" target="_blank" rel="noopener" title="Держатель намерения">R3</a><a class="chip r" href="02-funkcii-i-roli.html#role=R8" target="_blank" rel="noopener" title="Условное исполнение">R8</a><a class="chip r" href="02-funkcii-i-roli.html#role=R4" target="_blank" rel="noopener" title="Скоринг агентных операций">R4</a><a class="chip r" href="02-funkcii-i-roli.html#role=R5" target="_blank" rel="noopener" title="Автор правил и порядка споров">R5</a></td>
+ <td><a class="chip d" href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a><a class="chip d" href="03-reestr-dokumentov.html#D7" target="_blank" rel="noopener">D7</a><a class="chip d" href="03-reestr-dokumentov.html#D13" target="_blank" rel="noopener">D13</a><a class="chip d" href="03-reestr-dokumentov.html#D23" target="_blank" rel="noopener">D23</a><a class="chip d" href="03-reestr-dokumentov.html#D24" target="_blank" rel="noopener">D24</a><a class="chip d" href="03-reestr-dokumentov.html#D27" target="_blank" rel="noopener">D27</a></td>
+</tr>
+</tbody></table>
+
+<p class="note"><b>Основание стадии.</b> Зелёным помечены стадии из канона карточного цикла — они существуют как термины, к которым привязаны сроки, ответственность и форматы сообщений. Синим — стадии, содержание которых описано в агентных и торговых протоколах, но стадией жизненного цикла там не называется. Фиолетовым — авторская рамка: процедура существует, но как этап сделки нигде не оформлена. Документа, описывающего жизненный цикл агентной сделки целиком, нет ни у кого: ближе всех черновик рамки, но его ось — до, во время и после операции, а не восемь стадий. При наведении на пометку видно обоснование, рядом — документы, на которые оно опирается.</p>
+<p class="note">В таблице кликается всё: название стадии даёт постоянную ссылку и фильтр, коды функций открывают их строки в карте функций, коды ролей — все функции роли, коды документов — карточки в реестре.</p>
+
+<h2>Сквозные функции</h2>
+<p>Три функции не привязываются к стадии, потому что относятся не к ходу сделки, а к условиям, в которых она вообще возможна.</p>
+<table><tbody>
+<tr><th style="width:44px">Код</th><th style="width:26%">Функция</th><th>Почему сквозная</th><th style="width:14%">Роль</th><th style="width:14%">Документы</th></tr>
+<tr><td class="code"><a href="02-funkcii-i-roli.html#F24" target="_blank" rel="noopener">F24</a></td><td><b><a class="fnlink" href="02-funkcii-i-roli.html#F24" target="_blank" rel="noopener">Дистрибуция через ИИ-платформы</a></b></td><td>не стадия сделки, а канал, по которому функция доходит до пользователя</td>
+<td><a class="chip r" href="02-funkcii-i-roli.html#role=R9" target="_blank" rel="noopener" title="Дистрибуция через ИИ-платформы">R9</a></td>
+<td><a class="chip d" href="03-reestr-dokumentov.html#D9" target="_blank" rel="noopener">D9</a></td></tr><tr><td class="code"><a href="02-funkcii-i-roli.html#F25" target="_blank" rel="noopener">F25</a></td><td><b><a class="fnlink" href="02-funkcii-i-roli.html#F25" target="_blank" rel="noopener">Стандартизация и совместимость</a></b></td><td>рамка, в которой описаны сами стадии</td>
+<td><a class="chip r" href="02-funkcii-i-roli.html#role=R7" target="_blank" rel="noopener" title="Профиль совместимости">R7</a></td>
+<td><a class="chip d" href="03-reestr-dokumentov.html#D1" target="_blank" rel="noopener">D1</a><a class="chip d" href="03-reestr-dokumentov.html#D7" target="_blank" rel="noopener">D7</a></td></tr><tr><td class="code"><a href="02-funkcii-i-roli.html#F27" target="_blank" rel="noopener">F27</a></td><td><b><a class="fnlink" href="02-funkcii-i-roli.html#F27" target="_blank" rel="noopener">Регуляторные требования и надзор</a></b></td><td>действует на всех стадиях, усиливается после расчёта</td>
+<td><span class="note">вне ролей</span></td>
+<td><a class="chip d" href="03-reestr-dokumentov.html#D18" target="_blank" rel="noopener">D18</a><a class="chip d" href="03-reestr-dokumentov.html#D22" target="_blank" rel="noopener">D22</a></td></tr>
+</tbody></table>
+
+<div class="keybox">
+<b>Что показывает привязка к транзакции</b>
+<ul>
+<li>Сделка регламентирована неравномерно по времени. Середина — поиск, заказ, авторизация, расчёт — закрыта документами почти целиком. Начало и конец держатся слабее: на стадии подтверждения нейтральная поверхность существует только как вывод, а вся стадия после сделки состоит из выводов на три четверти.</li>
+<li>Чем позже стадия, тем меньше у неё владельцев. К стадии после сделки доходят ответственность, спор, постпродажное обслуживание и репутация — и ни у одной из них нет ни стандарта, ни продукта. Рынок занял то, что приносит выручку в моменте, и оставил то, что стоит денег потом.</li>
+<li>Одна функция прошивает сделку насквозь по документу, а не по моему решению: жизненный цикл намерения описан в рамке как работающий до, во время и после операции. Это единственная сквозная функция, у которой есть источник.</li>
+<li>Признак агентной операции живёт с подтверждения до спора. Если его не проставить в начале, на стадии разбирательства нечем отличить сделку агента от обычной — и именно поэтому он важнее, чем кажется по его технической простоте.</li>
+<li>Репутация агента замыкает круг: она формируется после сделки и возвращается в стадию допуска следующей. Это единственная петля в схеме, и она пока никем не реализована.</li>
+</ul>
+</div>
+
+<footer>
+<p>Связанные материалы: <a href="02-funkcii-i-roli.html">функциональная и ролевая карты</a> · <a href="03-reestr-dokumentov.html">реестр документов</a> · <a href="04-ocenki-funkciy.html">оценки функций</a> · <a href="05-vybor-roli.html">выбор роли и комбинации</a></p>
+<p class="note">Стадии опираются на жизненный цикл карточной операции и на формулировки отраслевой рамки; распределение функций по стадиям — авторское. Происхождение каждой функции указано цветом: документ, наблюдение или вывод.</p>
+
+<div id="pool-logo">
+ <img src="data:image/png;base64,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" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a> · <a href="18-svyazka.html">сквозная связка</a></div>
+</div>
+</footer>
+
+</div>
+<script>
+"use strict";
+(function(){
+var STAGES=[{"i":0,"n":"Допуск"},{"i":1,"n":"Поручение"},{"i":2,"n":"Поиск"},{"i":3,"n":"Заказ"},{"i":4,"n":"Подтверждение"},{"i":5,"n":"Авторизация"},{"i":6,"n":"Расчёт"},{"i":7,"n":"После сделки"}];
+var F=[{"id":"F1","n":"Опознание агента","s":0,"e":5,"r":"R1","o":"doc","own":"сети","note":"выдаётся в стадии допуска, предъявляется на каждом последующем шаге"},{"id":"F2","n":"Подпись запроса агента","s":2,"e":3,"r":"R1","o":"doc","own":"инфраструктура веба","note":"ключи регистрируются заранее, проверка — в момент обращения к площадке"},{"id":"F3","n":"Идентичность человека","s":1,"e":4,"r":null,"o":"doc","own":"органы по идентичности","note":"подпись поручения и повторное подтверждение при операции"},{"id":"F4","n":"Репутация агента по исполнению","s":7,"e":7,"r":"R1","o":"obs","own":"никто","note":"формируется после сделки и возвращается в стадию допуска следующей"},{"id":"F5","n":"Учётные данные с ограничением","s":1,"e":6,"r":"R2","o":"doc","own":"сети","note":"выпускаются при поручении, живут до расчёта"},{"id":"F6","n":"Ограничители пользователя","s":1,"e":5,"r":"R2","o":"obs","own":"сети и ассистенты","note":"задаются при поручении, проверяются при авторизации"},{"id":"F7","n":"Намерение и согласие","s":1,"e":1,"r":"R3","o":"doc","own":"сети","note":"одноразовый артефакт: подписанная запись о делегировании"},{"id":"F8","n":"Жизненный цикл намерения","s":1,"e":7,"r":"R3","o":"doc","own":"отраслевая рамка","note":"единственная функция, которую документ прямо описывает как сквозную — до, во время и после операции"},{"id":"F9","n":"Делегирование платежа продавцу","s":3,"e":5,"r":"R2","o":"doc","own":"торговые протоколы","note":"узкий токен передаётся магазину, списывает он сам"},{"id":"F10","n":"Передача каталога агенту","s":2,"e":2,"r":null,"o":"doc","own":"площадки и протоколы","note":""},{"id":"F11","n":"Корзина и оформление","s":3,"e":3,"r":null,"o":"doc","own":"торговые протоколы","note":"вернулось от ассистентов к магазинам в марте 2026"},{"id":"F12","n":"Подбор товара","s":2,"e":2,"r":null,"o":"inf","own":"ИИ-платформы","note":""},{"id":"F13","n":"Допуск агента на площадку","s":2,"e":2,"r":null,"o":"doc","own":"площадки","note":""},{"id":"F14","n":"Инструментальный слой агента","s":2,"e":3,"r":null,"o":"doc","own":"открытые протоколы","note":""},{"id":"F15","n":"Авторизация платежа","s":5,"e":5,"r":"R11","o":"doc","own":"сети и эмитенты","note":""},{"id":"F16","n":"Расчёт, в том числе мульти-рельсовый","s":6,"e":6,"r":"R11","o":"obs","own":"сети","note":""},{"id":"F17","n":"Условное исполнение","s":5,"e":7,"r":"R8","o":"doc","own":"никто в карточном контуре","note":"удержание с авторизации до подтверждения исполнения"},{"id":"F18","n":"Фрод в агентных потоках","s":4,"e":5,"r":"R4","o":"obs","own":"сети и эмитенты","note":""},{"id":"F19","n":"Признак агентной операции","s":4,"e":7,"r":"R4","o":"doc","own":"отраслевая рамка","note":"проставляется при подтверждении и нужен вплоть до спора"},{"id":"F20","n":"Оценка готовности продавца","s":2,"e":2,"r":"R10","o":"obs","own":"сети","note":""},{"id":"F21","n":"Ответственность за ошибку агента","s":7,"e":7,"r":"R5","o":"inf","own":"никто","note":""},{"id":"F22","n":"Оспаривание агентной операции","s":7,"e":7,"r":"R5","o":"inf","own":"никто","note":""},{"id":"F23","n":"Постпродажное обслуживание","s":7,"e":7,"r":null,"o":"inf","own":"магазины и кошельки","note":""},{"id":"F26","n":"Подтверждение на нейтральной поверхности","s":4,"e":4,"r":"R6","o":"inf","own":"никто","note":"инфраструктура существует, агентный сценарий не описан"}];
+var CROSS=[{"id":"F24","n":"Дистрибуция через ИИ-платформы","r":"R9","o":"obs","own":"сети","note":"не стадия сделки, а канал, по которому функция доходит до пользователя"},{"id":"F25","n":"Стандартизация и совместимость","r":"R7","o":"doc","own":"отраслевые органы","note":"рамка, в которой описаны сами стадии"},{"id":"F27","n":"Регуляторные требования и надзор","r":null,"o":"doc","own":"регуляторы и суды","note":"действует на всех стадиях, усиливается после расчёта"}];
+var BYF={"F1":["D1","D7","D8","D10"],"F2":["D16","D17"],"F3":["D5","D6"],"F4":["D7"],"F5":["D3","D5","D9","D10","D26"],"F6":["D9","D10"],"F7":["D1","D2","D8","D10","D13","D25"],"F8":["D1","D13"],"F9":["D3","D4","D12","D26"],"F10":["D12","D14"],"F11":["D12","D14"],"F12":[],"F13":["D16","D17","D18"],"F14":["D15"],"F15":["D4","D19","D24","D27","D28"],"F16":["D11","D28"],"F17":["D23","D24"],"F18":["D2","D9","D25","D27"],"F19":["D1"],"F20":["D9"],"F21":["D1"],"F22":["D27"],"F23":[],"F24":["D9"],"F25":["D1","D7"],"F26":["D19","D20","D21"],"F27":["D18","D22"]};
+var ROLEN={"R1":"Удостоверяющий центр агентов","R2":"Эмитент агентных учётных данных","R3":"Держатель намерения","R4":"Скоринг агентных операций","R5":"Автор правил и порядка споров","R6":"Нейтральная поверхность подтверждения","R7":"Профиль совместимости","R8":"Условное исполнение","R9":"Дистрибуция через ИИ-платформы","R10":"Оценка готовности продавца и каталог","R11":"Расчётный слой агентных операций"};
+var ONAME={"doc":"документ","obs":"наблюдение","inf":"вывод"};
+var SCORED=['F1','F2','F4','F5','F6','F7','F8','F9','F15','F16','F17','F18','F19','F20','F21','F22','F24','F25','F26'];
+var COL={doc:['#e2efe2','#1f7a5a'],obs:['#f8e7d2','#a35c13'],inf:['#f3e5f1','#7a1f6a']};
+var NS='http://www.w3.org/2000/svg';
+var svg=document.getElementById('chart');
+var filt='all', selId=null, selStage=null;
+
+function el(t,a){var e=document.createElementNS(NS,t);for(var k in a)e.setAttribute(k,a[k]);return e;}
+
+function draw(){
+ while(svg.firstChild)svg.removeChild(svg.firstChild);
+ var x0=150,x1=1100,top=70,rowH=26,gap=4;
+ var colW=(x1-x0)/STAGES.length;
+ // заголовки стадий
+ STAGES.forEach(function(st,i){
+  var on=(selStage===i);
+  var g=el('g',{class:'stg'+(on?' on':''),style:'cursor:pointer',tabindex:'0',role:'button',
+    'aria-pressed':String(on),'aria-label':'стадия '+st.i+' '+st.n+', показать только её'});
+  var r=el('rect',{x:x0+i*colW,y:24,width:colW-2,height:34,fill:(on?'#16202a':'#fff'),stroke:(on?'#16202a':'#dcdcd4')});
+  var t=el('text',{x:x0+i*colW+colW/2,y:38,'text-anchor':'middle','font-size':11,fill:(on?'#cfd6dd':'#4a5a68'),'font-family':'IBM Plex Mono, monospace'});
+  t.textContent='стадия '+st.i;
+  var t2=el('text',{x:x0+i*colW+colW/2,y:52,'text-anchor':'middle','font-size':12.5,fill:(on?'#fff':'#16202a'),'font-weight':'600',
+    'text-decoration':(on?'none':'underline'),'text-decoration-style':'dotted'});
+  t2.textContent=st.n;
+  var ttl=document.createElementNS(NS,'title'); ttl.textContent='клик — оставить в таблице только стадию '+st.i;
+  g.appendChild(r);g.appendChild(t);g.appendChild(t2);g.appendChild(ttl);
+  function pick(){ selStage=(selStage===i)?null:i; applyStage(); draw(); }
+  g.addEventListener('click',pick);
+  g.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pick(); } });
+  svg.appendChild(g);
+  // кликабельная колонка на всю высоту
+  var col=el('rect',{x:x0+i*colW,y:62,width:colW-2,height:Math.max(40,(F.length+CROSS.length)*(rowH+gap)+40),
+    fill:(on?'#16202a':'#fff'),'fill-opacity':(on?'0.04':'0'),style:'cursor:pointer'});
+  col.addEventListener('click',pick);
+  svg.appendChild(col);
+  svg.appendChild(el('line',{x1:x0+i*colW,y1:62,x2:x0+i*colW,y2:top+F.length*(rowH+gap)+6,stroke:'#eceae4'}));
+ });
+ // полосы
+ var y=top;
+ F.forEach(function(f){
+  var show = (filt==='all'||f.o===filt);
+  var g=el('g',{class:'bar'+(show?'':' dim')});
+  var bx=x0+f.s*colW+2, bw=(f.e-f.s+1)*colW-6;
+  var c=COL[f.o];
+  var rect=el('rect',{x:bx,y:y,width:bw,height:rowH,fill:c[0],stroke:c[1],rx:2});
+  if(selId===f.id){rect.setAttribute('stroke-width','2.5');}
+  var lbl=el('text',{x:8,y:y+17,'font-size':11.5,fill:'#16202a'});
+  lbl.textContent=f.id+' · '+(f.n.length>26?f.n.slice(0,25)+'…':f.n);
+  var inner=el('text',{x:bx+7,y:y+17,'font-size':10.5,fill:c[1],'font-family':'IBM Plex Mono, monospace',
+    style:'cursor:pointer','text-decoration':'underline','text-decoration-style':'dotted'});
+  inner.textContent=(f.r||'—')+' · '+ONAME[f.o];
+  if(f.r) inner.addEventListener('click',function(e){ e.stopPropagation(); window.open('02-funkcii-i-roli.html#role='+f.r,'_blank'); });
+  var ttl=document.createElementNS(NS,'title');
+  ttl.textContent=f.n+' — стадии '+f.s+'–'+f.e+', роль '+(f.r||'вне ролей')+'. Клик по полосе — карточка, клик по коду роли — карта функций';
+  lbl.setAttribute('style','cursor:pointer');
+  var go=el('text',{x:bx+bw-12,y:y+17,'font-size':12,fill:c[1],style:'cursor:pointer','text-anchor':'middle'});
+  go.textContent='↗';
+  var gttl=document.createElementNS(NS,'title'); gttl.textContent='открыть строку функции в карте функций';
+  go.appendChild(gttl);
+  go.addEventListener('click',function(e){ e.stopPropagation(); window.open('02-funkcii-i-roli.html#'+f.id,'_blank'); });
+  g.appendChild(rect);g.appendChild(lbl);g.appendChild(inner);g.appendChild(go);g.appendChild(ttl);
+  g.setAttribute('tabindex','0'); g.setAttribute('role','button'); g.setAttribute('aria-label',f.n);
+  g.addEventListener('click',function(){ selId=f.id; detail(f); draw(); });
+  g.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); selId=f.id; detail(f); draw(); } });
+  svg.appendChild(g);
+  y+=rowH+gap;
+ });
+ // сквозные
+ y+=10;
+ var lab=el('text',{x:8,y:y+14,'font-size':11.5,fill:'#4a5a68','font-family':'IBM Plex Mono, monospace'});
+ lab.textContent='сквозные:'; svg.appendChild(lab);
+ y+=22;
+ CROSS.forEach(function(f){
+  var show=(filt==='all'||f.o===filt);
+  var g=el('g',{class:'bar'+(show?'':' dim')});
+  var c=COL[f.o];
+  var rect=el('rect',{x:x0+2,y:y,width:x1-x0-6,height:rowH,fill:c[0],stroke:c[1],'stroke-dasharray':'5 3',rx:2});
+  var lbl=el('text',{x:8,y:y+17,'font-size':11.5,fill:'#16202a'});
+  lbl.textContent=f.id+' · '+(f.n.length>26?f.n.slice(0,25)+'…':f.n);
+  var inner=el('text',{x:x0+9,y:y+17,'font-size':10.5,fill:c[1],'font-family':'IBM Plex Mono, monospace'});
+  inner.textContent=(f.r||'—')+' · '+ONAME[f.o]+' · действует на всех стадиях';
+  lbl.setAttribute('style','cursor:pointer');
+  if(f.r) inner.addEventListener('click',function(e){ e.stopPropagation(); window.open('02-funkcii-i-roli.html#role='+f.r,'_blank'); });
+  inner.setAttribute('style','cursor:pointer');
+  g.appendChild(rect);g.appendChild(lbl);g.appendChild(inner);
+  g.setAttribute('tabindex','0'); g.setAttribute('role','button'); g.setAttribute('aria-label',f.n);
+  g.addEventListener('click',function(){ selId=f.id; detail(f); draw(); });
+  g.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); selId=f.id; detail(f); draw(); } });
+  svg.appendChild(g);
+  y+=rowH+gap;
+ });
+ svg.setAttribute('viewBox','0 0 1120 '+(y+20));
+ var n=F.concat(CROSS).filter(function(f){return filt==='all'||f.o===filt;}).length;
+ document.getElementById('cnt').textContent='показано '+n+' из '+(F.length+CROSS.length)+' функций'+(selStage!==null?' · фильтр таблицы: стадия '+selStage:'');
+}
+
+function detail(f){
+ var d=document.getElementById('detail');
+ var docs=(BYF[f.id]||[]);
+ d.innerHTML='<h3>'+f.id+' · '+f.n+'</h3>'+
+  '<div class="m">'+(f.s!==undefined?('стадии '+f.s+'–'+f.e):'сквозная')+' · роль '+(f.r?f.r+' — '+ROLEN[f.r]:'вне ролей оператора')+' · на рынке: '+f.own+' · происхождение: '+ONAME[f.o]+'</div>'+
+  (f.note?'<p>'+f.note+'</p>':'')+
+  '<p>'+(docs.length?'документы: '+docs.map(function(x){return '<a class="chip d" href="03-reestr-dokumentov.html#'+x+'" target="_blank" rel="noopener">'+x+'</a>';}).join(''):'<span style="color:#7a1f6a">регламента нет — строка держится на реконструкции</span>')+'</p>'+
+  '<p class="note"><a href="02-funkcii-i-roli.html#'+f.id+'" target="_blank" rel="noopener">строка в карте функций</a>'+
+  (f.r?' · <a href="02-funkcii-i-roli.html#role='+f.r+'" target="_blank" rel="noopener">все функции роли '+f.r+'</a>':'')+
+  (SCORED.indexOf(f.id)>=0
+    ? ' · <a href="04-ocenki-funkciy.html#set='+f.id+'" target="_blank" rel="noopener">оценки по четырём шкалам</a>'
+    : ' · <span title="функция вне ролей оператора, поэтому по четырём шкалам не оценивалась">оценок нет: вне ролей оператора</span>')+'</p>';
+}
+
+function applyStage(){
+ Array.prototype.forEach.call(document.querySelectorAll('#stbl tr[data-stage]'),function(tr){
+  tr.classList.toggle('hidden', selStage!==null && +tr.dataset.stage!==selStage);
+ });
+}
+
+Array.prototype.forEach.call(document.querySelectorAll('#ctl button'),function(b){
+ b.addEventListener('click',function(){
+  filt=b.dataset.o;
+  Array.prototype.forEach.call(document.querySelectorAll('#ctl button'),function(x){x.setAttribute('aria-pressed',String(x===b));});
+  draw();
+ });
+});
+Array.prototype.forEach.call(document.querySelectorAll('#stbl tr[data-stage]'),function(tr){
+ tr.style.cursor='pointer';
+ tr.addEventListener('click',function(e){
+  if(e.target.tagName==='A' && !e.target.classList.contains('stlink')) return;
+  if(e.target.classList.contains('stlink')) e.preventDefault();
+  selStage=(selStage===+tr.dataset.stage)?null:+tr.dataset.stage;
+  if(selStage!==null) history.replaceState(null,'','#stage-'+selStage);
+  applyStage(); draw();
+ });
+});
+function fromHash(){
+ var m=/^#stage-(d)$/.exec(location.hash);
+ if(m){ selStage=+m[1]; applyStage(); draw(); }
+}
+window.addEventListener('hashchange',fromHash);
+draw(); fromHash();
+})();
+</script>
+
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script>
+
+<script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script>
+</body></html>

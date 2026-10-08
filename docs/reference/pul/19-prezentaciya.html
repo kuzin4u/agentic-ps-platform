@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Презентация: модель агентной коммерции и результаты</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--acc:#1f7a5a;--warn:#a35c13;--free:#7a1f6a;--ref:#1a3a8f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:16px;line-height:1.55}
+.deck{max-width:1060px;margin:0 auto;padding:0 20px 90px}
+.topbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 0 10px;border-bottom:1px solid var(--line)}
+.topbar a,.topbar button{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 10px;cursor:pointer}
+.topbar a:hover,.topbar button:hover{border-color:var(--ink);color:var(--ink)}
+.topbar .sp{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2)}
+.slide{display:none;padding:30px 0 10px;min-height:66vh}
+.slide.on{display:block}
+.over{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--acc);margin:0 0 8px;text-transform:lowercase}
+.slide h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:34px;line-height:1.14;margin:0 0 10px;font-weight:600;max-width:24ch}
+.slide.title h2{font-size:40px;max-width:20ch}
+.lead{font-size:18px;color:var(--ink2);margin:0 0 18px;max-width:80ch}
+.big{font-size:17px;max-width:82ch}
+ul.pts{margin:0 0 10px;padding-left:20px;max-width:88ch}
+ul.pts li{margin:9px 0;font-size:15.6px}
+ul.pts.big li{font-size:17px;margin:12px 0}
+ol.path{margin:0;padding-left:22px;max-width:88ch}
+ol.path li{margin:9px 0;font-size:15.6px}
+ol.path li[data-goto]{cursor:pointer}
+ol.path li[data-goto] b{border-bottom:1px dotted var(--ink2)}
+ol.path li[data-goto]:hover b{border-bottom-color:var(--ink);border-bottom-style:solid}
+ol.path li[data-goto] .jump{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ref);margin-left:6px;white-space:nowrap}
+ol.path.short li{margin:7px 0}
+.note{font-size:13.6px;color:var(--ink2);max-width:86ch}
+.mile .over{color:var(--free)}
+.mile h2{border-left:5px solid var(--free);padding-left:14px;margin-left:-19px}
+.links{margin-top:22px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.links .lbl{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2)}
+.links a{font:500 13px 'IBM Plex Sans';text-decoration:none;color:var(--ref);border:1px solid var(--line);background:#fff;padding:6px 11px}
+.links a:hover{border-color:var(--ref);background:#eef2f9}
+.nav{position:fixed;left:0;right:0;bottom:0;background:rgba(246,246,243,.95);border-top:1px solid var(--line);padding:9px 20px;display:flex;gap:10px;align-items:center;z-index:40}
+.nav button{font:500 13px 'IBM Plex Sans';background:#fff;border:1px solid var(--line);padding:7px 14px;cursor:pointer;color:var(--ink)}
+.nav button[disabled]{opacity:.4;cursor:default}
+.nav .pos{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2);margin-left:auto}
+.bar{height:3px;background:#e4e2db;margin-top:10px}
+.bar i{display:block;height:3px;background:var(--ink)}
+.grid{display:none;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;padding:18px 0 10px}
+.grid.on{display:grid}
+.gcard{background:var(--card);border:1px solid var(--line);padding:11px 13px;cursor:pointer;text-align:left}
+.gcard:hover{border-color:var(--ink)}
+.gcard .n{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink2)}
+.gcard .t{font-weight:600;font-size:14px;margin-top:3px;line-height:1.3}
+.gcard.mile{border-left:3px solid var(--free)}
+button:focus-visible,a:focus-visible{outline:2px solid var(--ref);outline-offset:2px}
+@media print{.nav,.topbar{display:none}.slide{display:block!important;page-break-after:always;min-height:0}}
+@media(max-width:700px){.slide h2{font-size:26px}.slide.title h2{font-size:30px}.lead{font-size:16px}}
+</style><link rel="icon" type="image/png" href="data:image/png;base64,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"><style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style><style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style><style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style></head><body><div class="wrap deck">
+
+<div class="topbar">
+ <a href="00-ukazatel-pula.html?back=19-prezentaciya.html">Указатель пула</a>
+ <a href="01-ierarhiya-tranzakcii.html?back=19-prezentaciya.html">Иерархия транзакции</a>
+ <a href="18-svyazka.html?back=19-prezentaciya.html">Сквозная связка</a>
+ <a href="03-reestr-dokumentov.html?back=19-prezentaciya.html#order-h">Порядок разработки</a>
+ <a href="20-plany-dokumentov.html?back=19-prezentaciya.html">Планы</a>
+<a href="21-drafty-dokumentov.html?back=19-prezentaciya.html">Драфты</a>
+<a href="22-tz-agent-platforma.html?back=19-prezentaciya.html">Платформа и ТЗ</a>
+<a href="23-specifikaciya-interfejsov.html?back=19-prezentaciya.html">Интерфейсы</a>
+<a href="24-scenariy-operacii.html?back=19-prezentaciya.html">Сквозной пример</a>
+<a href="25-glossariy.html?back=19-prezentaciya.html">Глоссарий</a>
+<a href="26-programma-rabot.html?back=19-prezentaciya.html">Программа работ</a>
+ <button id="toggle">Все слайды</button>
+ <span class="sp">26 слайдов · стрелки ← → листают</span>
+</div>
+
+<div class="grid" id="grid"><button class="gcard " data-go="0"><span class="n">1 · 16.09.2026 · пул из 27 документов</span><span class="t">Агентная коммерция: модель, роль оператора и план документов</span></button><button class="gcard " data-go="1"><span class="n">2 · маршрут</span><span class="t">Как шёл анализ</span></button><button class="gcard " data-go="2"><span class="n">3 · шаг 1</span><span class="t">С чего начали: разрывы, а не технологии</span></button><button class="gcard " data-go="3"><span class="n">4 · шаг 2</span><span class="t">Первая модель рынка и её ограничение</span></button><button class="gcard " data-go="4"><span class="n">5 · шаг 3</span><span class="t">Смена оптики: как это выглядит со стороны оператора</span></button><button class="gcard " data-go="5"><span class="n">6 · шаг 4</span><span class="t">Что сделали Visa и Mastercard</span></button><button class="gcard " data-go="6"><span class="n">7 · шаг 5</span><span class="t">Функция и роль — разные вещи</span></button><button class="gcard mile" data-go="7"><span class="n">8 · веха</span><span class="t">Стадии транзакции: ось, на которой всё сошлось</span></button><button class="gcard mile" data-go="8"><span class="n">9 · веха</span><span class="t">Три привязки, из которых выводится всё остальное</span></button><button class="gcard " data-go="9"><span class="n">10 · результат 1</span><span class="t">Что показала привязка к транзакции</span></button><button class="gcard " data-go="10"><span class="n">11 · результат 2</span><span class="t">Три роли, которые не занял никто</span></button><button class="gcard " data-go="11"><span class="n">12 · результат 3</span><span class="t">Как оценивались роли</span></button><button class="gcard " data-go="12"><span class="n">13 · рекомендация</span><span class="t">Наиболее реалистичная комбинация ролей</span></button><button class="gcard " data-go="13"><span class="n">14 · результат 4</span><span class="t">Чем обеспечены функции: реестр документов</span></button><button class="gcard " data-go="14"><span class="n">15 · план</span><span class="t">Порядок разработки: базовый</span></button><button class="gcard " data-go="15"><span class="n">16 · план</span><span class="t">Порядок в условиях санкций</span></button><button class="gcard " data-go="16"><span class="n">17 · план</span><span class="t">Переход после снятия санкций</span></button><button class="gcard mile" data-go="17"><span class="n">18 · результат 5</span><span class="t">От плана к тексту: документы написаны</span></button><button class="gcard " data-go="18"><span class="n">19 · состав</span><span class="t">Девять документов и что каждый устанавливает</span></button><button class="gcard " data-go="19"><span class="n">20 · существо</span><span class="t">Пять решений, принятых при разработке</span></button><button class="gcard " data-go="20"><span class="n">21 · незакрытое</span><span class="t">Что осталось к определению</span></button><button class="gcard " data-go="21"><span class="n">22 · исполнение</span><span class="t">Контур испытаний: как проверить нормы на практике</span></button><button class="gcard " data-go="22"><span class="n">23 · исполнение</span><span class="t">Программа работ: кто и когда</span></button><button class="gcard " data-go="23"><span class="n">24 · как пользоваться</span><span class="t">Состав пула и как в нём ориентироваться</span></button><button class="gcard " data-go="24"><span class="n">25 · качество материала</span><span class="t">Что можно предъявлять вовне</span></button><button class="gcard " data-go="25"><span class="n">26 · итог</span><span class="t">Коротко</span></button></div>
+
+<section class="slide title on" data-i="0" id="s1">
+ <p class="over">16.09.2026 · пул из 27 документов</p>
+ <h2>Агентная коммерция: модель, роль оператора и план документов</h2>
+ <p class="lead">Как выглядит агентная сделка, кто её части уже занял, где место национального оператора и какие документы ему предстоит написать.</p>
+ <p class="big">Презентация показывает ход анализа: от первой реакции на тему до модели, привязанной к стадиям транзакции, и до плана из десяти документов в трёх режимах.</p>
+ <p class="note">Каждый слайд ссылается на страницу модели, где утверждение можно проверить и развернуть.</p>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="00-ukazatel-pula.html?back=19-prezentaciya.html%23s1">Указатель пула</a><a href="18-svyazka.html?back=19-prezentaciya.html%23s1">Сквозная связка</a></div>
+</section>
+<section class="slide map " data-i="1" id="s2">
+ <p class="over">маршрут</p>
+ <h2>Как шёл анализ</h2>
+ <p class="lead">Восемь шагов, каждый менял постановку задачи, а не только добавлял материал.</p>
+ <ol class="path" id="pathlist">
+ <li data-goto="С чего начали: разрывы, а не технологии"><b>Разбор темы и разрывы.</b> Что в агентной коммерции не закрыто нормой — шесть разрывов.</li>
+ <li data-goto="Первая модель рынка и её ограничение"><b>Модель рынка.</b> Участники и типы сделок, но оптика изнутри собственной платформы.</li>
+ <li data-goto="Смена оптики: как это выглядит со стороны оператора"><b>Смена оптики.</b> Взгляд со стороны оператора: семь его действующих ролей.</li>
+ <li data-goto="Что сделали Visa и Mastercard"><b>Доказательная база.</b> Что за полтора года сделали Visa и Mastercard.</li>
+ <li data-goto="Функция и роль — разные вещи"><b>Функции и роли.</b> Разделение работы и позиции: 27 функций, 11 ролей.</li>
+ <li data-goto="Стадии транзакции: ось, на которой всё сошлось"><b>Веха: стадии транзакции.</b> Всё уложено на ось времени сделки.</li>
+ <li data-goto="Чем обеспечены функции: реестр документов"><b>Документы и порядок.</b> Реестр из 28 позиций и план на десять недостающих.</li>
+ <li data-goto="Контур испытаний: как проверить нормы на практике"><b>Исполнение.</b> Планы и драфты, контур испытаний, задание на агента и программа работ.</li>
+ </ol>
+ <p class="note">Пункт списка ведёт на соответствующий слайд.</p>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="00-ukazatel-pula.html?back=19-prezentaciya.html%23s2">Указатель пула</a></div>
+</section>
+<section class="slide plain " data-i="2" id="s3">
+ <p class="over">шаг 1</p>
+ <h2>С чего начали: разрывы, а не технологии</h2>
+ <p class="lead">Первый разбор показал, что дефицит не в технике, а в нормах и ответственности.</p>
+ <ul class="pts">
+ <li>Мандатный слой у нас совпал с мировым независимо — переписывать нечего.</li>
+ <li>Главный разрыв — ответственность за ошибку агента: карточный мир переносит её на владельца агента, другого ответа нет ни у кого.</li>
+ <li>Второй разрыв — подделка предложения: агент уводится идеальной ценой и сроком.</li>
+ <li>Третий — поверхность, на которой человек подтверждает: у платформ её нет.</li>
+ </ul>
+ <p class="note">Этот разбор дал словарь, которым пользовались дальше: разрывы Р-А…Р-Е.</p>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="15-vzglyad-nspk-rannyaya.html?back=19-prezentaciya.html%23s3">Ранний разбор и разрывы</a></div>
+</section>
+<section class="slide plain " data-i="3" id="s4">
+ <p class="over">шаг 2</p>
+ <h2>Первая модель рынка и её ограничение</h2>
+ <p class="lead">25 участников в четырёх контурах, 14 типов транзакций с проигрывателем шагов.</p>
+ <ul class="pts">
+ <li>Модель показала, где деньги удерживаются, а где уходят мимо контура.</li>
+ <li>Разделила канал продажи и способ расчёта — две независимые оси.</li>
+ <li><b>Ограничение:</b> всё строилось из центра собственной платформы, поэтому оператор выглядел контрагентом, а не средой.</li>
+ </ul>
+ <p class="note">Именно это ограничение и заставило сменить оптику на следующем шаге.</p>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="16-model-rynka.html?back=19-prezentaciya.html%23s4">Операционная модель рынка</a></div>
+</section>
+<section class="slide plain " data-i="4" id="s5">
+ <p class="over">шаг 3</p>
+ <h2>Смена оптики: как это выглядит со стороны оператора</h2>
+ <p class="lead">Семь действующих ролей — платёжная система, процессинг, быстрые платежи, единый код, антифрод, цифровой рубль, данные и надзор.</p>
+ <ul class="pts">
+ <li>Оператор не работает с конечными клиентами напрямую: между ним и площадкой всегда банк-участник.</li>
+ <li>Специфика площадки — удержание, распределение сумм, мандаты — для рельсов невидима.</li>
+ <li>Единственная роль, где можно стать видимым напрямую, — платформа условного исполнения.</li>
+ </ul>
+ <p class="note">Вывод изменил адресата всех предложений: разговор ведётся с банком, а не с оператором.</p>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="07-karta-roley-nspk.html?back=19-prezentaciya.html%23s5">Карта ролей оператора</a><a href="10-rol-sbp.html?back=19-prezentaciya.html%23s5">Быстрые платежи</a><a href="11-rol-edinyy-qr.html?back=19-prezentaciya.html%23s5">Единый код</a></div>
+</section>
+<section class="slide plain " data-i="5" id="s6">
+ <p class="over">шаг 4</p>
+ <h2>Что сделали Visa и Mastercard</h2>
+ <p class="lead">Апрель 2025 — сентябрь 2026: восемь функций, взятых на себя, и четыре, от которых отказались.</p>
+ <ul class="pts">
+ <li>Каждая их функция встала на существующий актив: агентный токен — надстройка над токенизацией, согласие — над аутентификацией, фрод — ещё одна модель в мониторинге.</li>
+ <li>Скорость важнее полноты: обе программы объявлены с разницей в один день, задолго до работающих сценариев.</li>
+ <li>Свой протокол не строили — вошли в открытый, а принципы опознания агентов согласуют даже с конкурентом.</li>
+ <li>Не взяли: витрину, роль агента, арбитраж качества, единоличную стандартизацию.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="06-opyt-visa-mc.html?back=19-prezentaciya.html%23s6">Хроника и восемь функций</a></div>
+</section>
+<section class="slide plain " data-i="6" id="s7">
+ <p class="over">шаг 5</p>
+ <h2>Функция и роль — разные вещи</h2>
+ <p class="lead">Функция — единица работы. Роль — позиция, из которой работа делается и которая остаётся, когда технология сменится.</p>
+ <ul class="pts">
+ <li>27 функций рынка с указанием владельца и происхождения: 16 перенесены из документов, 6 сняты с продуктов, 5 — реконструкция.</li>
+ <li>11 ролей оператора; восемь из них сети уже заняли.</li>
+ <li>Функцию можно потерять, не потеряв роль: оформление внутри ассистента ушло к платформам и вернулось магазинам за полгода.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="02-funkcii-i-roli.html?back=19-prezentaciya.html%23s7">Функции и роли</a></div>
+</section>
+<section class="slide mile " data-i="7" id="s8">
+ <p class="over">веха</p>
+ <h2>Стадии транзакции: ось, на которой всё сошлось</h2>
+ <p class="lead">Восемь стадий одной сделки — допуск, поручение, поиск, заказ, подтверждение, авторизация, расчёт, после сделки.</p>
+ <p class="big">Это поворотный момент анализа. До него функции, роли и документы были тремя разными списками. После — одной моделью, где у каждого элемента есть место во времени сделки.</p>
+ <ul class="pts">
+ <li><b>Проверяемый признак:</b> функция стоит на той стадии, где её отсутствие останавливает сделку.</li>
+ <li>Четыре стадии взяты из канона карточного цикла, две опираются на протоколы, две — авторская рамка. Граница показана в модели колонкой «основание».</li>
+ <li>Документа, описывающего жизненный цикл агентной сделки целиком, нет ни у кого: ближе всех черновик отраслевой рамки, но его ось — до, во время и после операции.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="01-ierarhiya-tranzakcii.html?back=19-prezentaciya.html%23s8">Иерархия на оси сделки</a><a href="01-ierarhiya-tranzakcii.html?back=19-prezentaciya.html%23s8#stage-0">Основание стадий</a></div>
+</section>
+<section class="slide mile " data-i="8" id="s9">
+ <p class="over">веха</p>
+ <h2>Три привязки, из которых выводится всё остальное</h2>
+ <p class="lead">Функция → стадии. Функция → роль оператора. Функция → документы.</p>
+ <p class="big">Больше ничего задавать не требуется: покрытие роли по стадиям, обеспеченность стадии документами, пробелы — всё это производные от трёх связей.</p>
+ <ul class="pts">
+ <li>Роль покрывает те стадии, на которых стоят её функции.</li>
+ <li>Документ обслуживает те стадии, где работают регламентируемые им функции.</li>
+ <li>Отсюда честные пустоты: у документа может не быть роли, у стадии — документов. Это состояние рынка, а не дефект данных.</li>
+ </ul>
+ <p class="note">В сквозной связке клик по любой позиции собирает все остальные — это и есть модель в действии.</p>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="18-svyazka.html?back=19-prezentaciya.html%23s9">Сквозная связка</a><a href="01-ierarhiya-tranzakcii.html?back=19-prezentaciya.html%23s9">Иерархия транзакции</a></div>
+</section>
+<section class="slide plain " data-i="9" id="s10">
+ <p class="over">результат 1</p>
+ <h2>Что показала привязка к транзакции</h2>
+ <p class="lead">Регламент распределён по времени сделки крайне неравномерно.</p>
+ <ul class="pts">
+ <li>Середина сделки — поиск, заказ, подтверждение, авторизация — обеспечена шестнадцатью-восемнадцатью документами на стадию.</li>
+ <li>Стадия после сделки — шестью, и три её функции из семи держатся на реконструкции.</li>
+ <li>Рынок занял то, что приносит выручку в моменте, и оставил то, что стоит денег потом.</li>
+ <li>Единственная петля в схеме: репутация агента формируется после сделки и возвращается в стадию допуска следующей. Никем не реализована.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="01-ierarhiya-tranzakcii.html?back=19-prezentaciya.html%23s10">Стадии и их обеспеченность</a></div>
+</section>
+<section class="slide plain " data-i="10" id="s11">
+ <p class="over">результат 2</p>
+ <h2>Три роли, которые не занял никто</h2>
+ <p class="lead">Правила и ответственность. Подтверждение на нейтральной поверхности. Условное исполнение.</p>
+ <ul class="pts">
+ <li><b>Правила:</b> у сети они обязательны только для её участников, агент ей не подчиняется вовсе.</li>
+ <li><b>Поверхность:</b> сетевые интерфейсы оплаты существуют, но добровольны; обязательной потребительской точки подтверждения у сетей нет и быть не может.</li>
+ <li><b>Условное исполнение:</b> примитивы удержания есть, но раскрытие по решению третьей стороны тянет за собой ответственность за качество товара — другой бизнес.</li>
+ </ul>
+ <p class="note">Для национального оператора все три доступны: нормотворчество, обязательный единый код и государственная платформа условных расчётов рядом.</p>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="02-funkcii-i-roli.html?back=19-prezentaciya.html%23s11">Ролевая карта</a><a href="05-vybor-roli.html?back=19-prezentaciya.html%23s11">Оценка ролей</a></div>
+</section>
+<section class="slide plain " data-i="11" id="s12">
+ <p class="over">результат 3</p>
+ <h2>Как оценивались роли</h2>
+ <p class="lead">Четыре шкалы: опора на действующий актив, скорость запуска, защищённость позиции, независимость от внешних игроков.</p>
+ <ul class="pts">
+ <li>Узкие места считаются по минимуму: набор не стартует быстрее самой медленной части.</li>
+ <li>Позиция — по максимуму: повторить набор можно, только повторив самую защищённую его часть.</li>
+ <li>Размена «быстро или защищённо» в поле нет: связь между шкалами близка к нулю. Он возникает лишь в свободной зоне, где средняя скорость 2,0 при защищённости 4,8.</li>
+ <li>Свободно ровно то, что медленно запускается: требует не техники, а согласований и накопленных данных.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="04-ocenki-funkciy.html?back=19-prezentaciya.html%23s12">Оценки функций</a><a href="05-vybor-roli.html?back=19-prezentaciya.html%23s12">Конструктор комбинаций</a></div>
+</section>
+<section class="slide plain " data-i="12" id="s13">
+ <p class="over">рекомендация</p>
+ <h2>Наиболее реалистичная комбинация ролей</h2>
+ <p class="lead">Признак и скоринг агентной операции, агентный токен, реестр агентов, правила, единый код как точка подтверждения, профиль совместимости.</p>
+ <ul class="pts">
+ <li>Четыре элемента стоят на том, что уже работает: мониторинг и аутентификация, токенизация, процедуры допуска, нормотворческая функция.</li>
+ <li>Пятый — актив, которого нет ни у одной международной сети: обязательная потребительская поверхность, где человек выбирает инструмент оплаты.</li>
+ <li>Собственный слой намерения и условное исполнение в стартовый набор не входят: первый проектируется отраслевым органом, второй лежит в чужих сроках.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="05-vybor-roli.html?back=19-prezentaciya.html%23s13">Пакеты и вердикт</a></div>
+</section>
+<section class="slide plain " data-i="13" id="s14">
+ <p class="over">результат 4</p>
+ <h2>Чем обеспечены функции: реестр документов</h2>
+ <p class="lead">28 позиций в шести группах, 48 ссылок на источники, указатель «функция → документы».</p>
+ <ul class="pts">
+ <li>Из 61 связи с документами больше половины приходится на международные спецификации, открытые протоколы, инфраструктуру веба и право.</li>
+ <li>У Visa и Mastercard вместе 18 связей, у оператора — 15, но его набор опирается на собственную инфраструктуру.</li>
+ <li>Обеспечено документами оператора 10 функций, без документа — 17, из них в его ролях 10.</li>
+ <li>Агентная операция как отдельный вид ни в одном российском документе пока не описана.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="03-reestr-dokumentov.html?back=19-prezentaciya.html%23s14">Реестр документов</a><a href="03-reestr-dokumentov.html?back=19-prezentaciya.html%23s14#idxtbl">Указатель функция → документы</a></div>
+</section>
+<section class="slide plain " data-i="14" id="s15">
+ <p class="over">план</p>
+ <h2>Порядок разработки: базовый</h2>
+ <p class="lead">Десять документов. Очерёдность задают внешние сроки, зависимости и опора на собственный актив.</p>
+ <ol class="path short">
+ <li>Позиция по международной рамке — внешний невозвратный срок.</li>
+ <li>Признак агентной операции — самое дешёвое и самое связывающее.</li>
+ <li>Реестр и опознание агентов — фундамент для токена, лимитов, репутации.</li>
+ <li>Ограничители пользователя. 5. Ответственность за ошибку агента. 6. Требования к готовности продавца.</li>
+ <li>Подпись запроса. 8. Жизненный цикл намерения. 9. Репутация агента. 10. Партнёрства с платформами.</li>
+ </ol>
+ <p class="note">Два места, где нарушение порядка даёт прямой ущерб: ответственность раньше признака операции — неприменимая норма; собственный слой намерения раньше рамки — гарантированное расхождение.</p>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="03-reestr-dokumentov.html?back=19-prezentaciya.html%23s15#order-base">Базовый порядок</a></div>
+</section>
+<section class="slide plain " data-i="15" id="s16">
+ <p class="over">план</p>
+ <h2>Порядок в условиях санкций</h2>
+ <p class="lead">Оператор в блокирующем списке; международные сети ушли в 2022 году, их российские карты обрабатываются внутри страны.</p>
+ <ul class="pts">
+ <li><b>Выпадает</b> первый шаг: подать замечания в отраслевой процесс невозможно, внешние часы никуда не ведут.</li>
+ <li><b>Первым</b> становится признак агентной операции — полностью суверенная работа.</li>
+ <li><b>Объединяются</b> реестр агентов и подпись запроса: чужой реестр ключей в российском контуре неприменим.</li>
+ <li><b>Поднимаются</b> партнёрства: контрагентами становятся национальные платформы, они есть и мотивированы.</li>
+ <li><b>Опускается</b> профиль совместимости и меняет адресата — взаимность возможна с дружественными системами.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="03-reestr-dokumentov.html?back=19-prezentaciya.html%23s16#order-sanc">Санкционный порядок</a></div>
+</section>
+<section class="slide plain " data-i="16" id="s17">
+ <p class="over">план</p>
+ <h2>Переход после снятия санкций</h2>
+ <p class="lead">Снятие — не одно событие, а четыре независимых замка: юридический, лицензионный, коммерческий, инфраструктурный.</p>
+ <ul class="pts">
+ <li><b>Шаг 0, заранее:</b> таблица соответствий и зарезервированные поля. Стоит почти ничего, экономит годы.</li>
+ <li>Юридический замок — заявление о соответствии, без правки норм.</li>
+ <li>Лицензионный — вторая редакция технических приложений, снятие долга по лицензии.</li>
+ <li>Коммерческий — взаимное признание реестров агентов.</li>
+ <li>Инфраструктурный — трансграничная сделка целиком, последним: здесь меняется распределение ответственности.</li>
+ <li><b>Не откатывать:</b> национальный реестр, свой признак операции, норму об ответственности, обязательную точку подтверждения.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="03-reestr-dokumentov.html?back=19-prezentaciya.html%23s17#order-after">Порядок после снятия</a></div>
+</section>
+<section class="slide mile " data-i="17" id="s18">
+ <p class="over">результат 5</p>
+ <h2>От плана к тексту: документы написаны</h2>
+ <p class="lead">Девять документов доведены от очерёдности до проектов содержания и до нормативных формулировок.</p>
+ <ul class="pts">
+ <li><b>Планы:</b> 76 разделов с содержанием — что устанавливается, какими параметрами и почему именно так.</li>
+ <li><b>Драфты:</b> 55 разделов и 148 пронумерованных пунктов нормативным языком, готовых к правке построчно.</li>
+ <li>У каждого документа указаны форма акта, международные аналоги со ссылками в реестр и опора на нормы российского права.</li>
+ <li>Статус обозначен прямо: проект для обсуждения, не нормативный текст; требуется юридическая экспертиза и сверка с действующими редакциями.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="20-plany-dokumentov.html?back=19-prezentaciya.html%23s18">Планы документов</a><a href="21-drafty-dokumentov.html?back=19-prezentaciya.html%23s18">Драфты</a></div>
+</section>
+<section class="slide plain " data-i="18" id="s19">
+ <p class="over">состав</p>
+ <h2>Девять документов и что каждый устанавливает</h2>
+ <p class="lead">Порядок соответствует санкционной очерёдности: от полностью суверенного к зависящему от внешних условий.</p>
+ <ol class="path short">
+ <li><b>Признак агентной операции</b> — состав признака, кто проставляет, как переносится до спора.</li>
+ <li><b>Реестр агентов и подпись обращений</b> — допуск, классы, коды, ключи, уровни, исключение.</li>
+ <li><b>Ограничения полномочий в платёжном инструменте</b> — состав лимитов, установка, проверка, отмена.</li>
+ <li><b>Ответственность при совершении операции агентом</b> — в пределах мандата и за ними, распределение убытков.</li>
+ <li><b>Требования к торгово-сервисным предприятиям</b> — раскрытие сведений, доступ агентов, чек, отметка соответствия.</li>
+ <li><b>Условия взаимодействия с агентными платформами</b> — доступ, запреты, данные, вознаграждение, споры.</li>
+ <li><b>Мандат агента</b> — виды, реквизиты, подписание, хранение, отзыв, проверка.</li>
+ <li><b>Методика оценки исполнения</b> — показатели, период, применение, оспаривание.</li>
+ <li><b>Профиль совместимости</b> — сопоставление понятий, признание внешних реестров, журнал расхождений.</li>
+ </ol>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="21-drafty-dokumentov.html?back=19-prezentaciya.html%23s19">Драфты по пунктам</a><a href="03-reestr-dokumentov.html?back=19-prezentaciya.html%23s19#order-sanc">Санкционный порядок</a></div>
+</section>
+<section class="slide plain " data-i="19" id="s20">
+ <p class="over">существо</p>
+ <h2>Пять решений, принятых при разработке</h2>
+ <p class="lead">Разворот планов в текст заставил выбрать конкретные конструкции, а не описывать намерения.</p>
+ <ul class="pts">
+ <li><b>Признак без кода агента недопустим.</b> Сообщение, помеченное агентским без опознанного агента, признаётся некорректным, а отказ по неизвестному коду получает собственный код ответа.</li>
+ <li><b>Действие вне мандата приравнивается к операции без согласия клиента.</b> Работает действующий порядок возврата, а не новый: проверка механическая — сопоставление параметров операции с записью мандата.</li>
+ <li><b>Ограничения живут в платёжном инструменте.</b> Агент не обойдёт лимит, переустановившись или сменив канал; сужение полномочий применяется без подтверждения, расширение — только с ним.</li>
+ <li><b>Мандат построен как доверенность.</b> Отсутствие обязательного реквизита влечёт недействительность, отзыв прекращает полномочия с момента получения сведений теми, кто на них полагался.</li>
+ <li><b>Оценка исполнения не влияет на выдачу.</b> Она определяет уровень допуска — иначе репутация превращается в товар.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="21-drafty-dokumentov.html?back=19-prezentaciya.html%23s20#A4">Ответственность: раздел драфта</a><a href="21-drafty-dokumentov.html?back=19-prezentaciya.html%23s20#A7">Мандат: раздел драфта</a></div>
+</section>
+<section class="slide plain " data-i="20" id="s21">
+ <p class="over">незакрытое</p>
+ <h2>Что осталось к определению</h2>
+ <p class="lead">Четырнадцать мест в драфтах помечены как требующие решения: их нельзя придумать, они считаются по данным.</p>
+ <ul class="pts">
+ <li><b>Сроки:</b> рассмотрение заявлений о допуске, действие ключа, очереди внедрения признака, включение временных агентов в реестр.</li>
+ <li><b>Пороги:</b> сумма, свыше которой обязательно подтверждение человеком; сумма и срок мандата, требующие усиленной подписи; оборот предприятий для первой очереди требований.</li>
+ <li><b>Обеспечение:</b> размер для операторов агентов, работающих без подтверждения клиентом.</li>
+ <li><b>Данные:</b> минимальный объём операций для присвоения оценки исполнения и срок оспаривания.</li>
+ <li>Плюс два вопроса уровня решения: кому выдаётся код — оператору агента или экземпляру; кто держит журнал согласий.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="20-plany-dokumentov.html?back=19-prezentaciya.html%23s21">Открытые вопросы в планах</a><a href="21-drafty-dokumentov.html?back=19-prezentaciya.html%23s21">Драфты</a></div>
+</section>
+<section class="slide plain " data-i="21" id="s22">
+ <p class="over">исполнение</p>
+ <h2>Контур испытаний: как проверить нормы на практике</h2>
+ <p class="lead">Нормы проверяются не чтением, а прогоном: платформа из восьми компонентов и эталонный агент покупателя.</p>
+ <ul class="pts">
+ <li>Компоненты: реестр агентов, журнал согласий, сервис ограничений, признак операции, платёжный шлюз испытаний, витрины-эмуляторы, разбор споров, журнал испытаний с оценкой.</li>
+ <li>Задание на агента — пятнадцать требований по стадиям и программа из двадцати четырёх сценариев, где отрицательные проверяют, что норму нельзя обойти.</li>
+ <li>Критерий: сценарий, пройденный за счёт обхода нормы, считается провалом прогона, даже если для человека результат выглядит успешным.</li>
+ <li>Технический уровень описан отдельно: семь объектов, четырнадцать методов, подпись обращения, шестнадцать кодов отказа с ожидаемым поведением агента.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="22-tz-agent-platforma.html?back=19-prezentaciya.html%23s22">Платформа и ТЗ на агента</a><a href="23-specifikaciya-interfejsov.html?back=19-prezentaciya.html%23s22">Интерфейсы контура</a></div>
+</section>
+<section class="slide plain " data-i="22" id="s23">
+ <p class="over">исполнение</p>
+ <h2>Программа работ: кто и когда</h2>
+ <p class="lead">Двадцать две работы в четырёх параллельных потоках, шесть вех и двенадцать рисков с ранними признаками.</p>
+ <ul class="pts">
+ <li>Потоки: нормотворческий, контур и разработка, испытания, внешние согласования. Сроки — в кварталах от старта, а не в датах.</li>
+ <li>Вехи заданы состояниями, а не датами: «операцию видно», «полномочия проверяемы», «ответственность определена», «рынок подключён», «данные вместо догадок», «готовность к внешнему признанию».</li>
+ <li>Три правила: нормы идут впереди техники, но не блокируют её; пороговые значения считаются по данным пилота; внешнее держится отдельным потоком.</li>
+ <li>У каждого риска указан ранний признак — то, по чему видно наступление до срыва сроков.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="26-programma-rabot.html?back=19-prezentaciya.html%23s23">Программа работ, вехи и риски</a><a href="03-reestr-dokumentov.html?back=19-prezentaciya.html%23s23#order-sanc">Порядок разработки</a></div>
+</section>
+<section class="slide plain " data-i="23" id="s24">
+ <p class="over">как пользоваться</p>
+ <h2>Состав пула и как в нём ориентироваться</h2>
+ <p class="lead">Двадцать семь связанных страниц в девяти группах классификатора, одна папка, относительные ссылки.</p>
+ <ul class="pts">
+ <li><b>Навигация:</b> указатель с деревом и классификатором, реестр документов, эта презентация, глоссарий на 96 терминов с поиском.</li>
+ <li><b>Модель:</b> стадии агентной транзакции, функции и роли участников, оценки, сквозная связка и сквозной пример одной операции по стадиям.</li>
+ <li><b>Решение и документы:</b> опыт сетей, выбор роли, планы, драфты и программа работ.</li>
+ <li><b>Реализация:</b> платформа испытаний, задание на агента, интерфейсы контура.</li>
+ <li>На каждой странице работают печать и выгрузка — HTML, таблицы в CSV и документ Word; на планах и драфтах выгружается подборка для выбранной специальности.</li>
+ </ul>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="00-ukazatel-pula.html?back=19-prezentaciya.html%23s24">Указатель пула</a><a href="24-scenariy-operacii.html?back=19-prezentaciya.html%23s24">Сквозной пример операции</a><a href="25-glossariy.html?back=19-prezentaciya.html%23s24">Глоссарий</a></div>
+</section>
+<section class="slide plain " data-i="24" id="s25">
+ <p class="over">качество материала</p>
+ <h2>Что можно предъявлять вовне</h2>
+ <p class="lead">В модели у каждой строки указано происхождение, у каждой стадии — основание.</p>
+ <ul class="pts">
+ <li><b>Документ</b> — перенесено из спецификации или нормативного акта: 16 функций. Годится для внешних материалов как есть.</li>
+ <li><b>Наблюдение</b> — снято с объявленного продукта, стандарта нет: 6 функций. Требует проверки актуальности.</li>
+ <li><b>Вывод</b> — реконструкция недостающего: 5 функций. Это гипотеза, а не факт.</li>
+ <li>То же по стадиям: канон карточного цикла, протокол, авторская рамка.</li>
+ </ul>
+ <p class="note">Разделение сделано, чтобы при цитировании не выдавать реконструкцию за норму.</p>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="02-funkcii-i-roli.html?back=19-prezentaciya.html%23s25">Происхождение функций</a><a href="01-ierarhiya-tranzakcii.html?back=19-prezentaciya.html%23s25">Основание стадий</a></div>
+</section>
+<section class="slide end " data-i="25" id="s26">
+ <p class="over">итог</p>
+ <h2>Коротко</h2>
+ <p class="lead">Модель собрана, границы обозначены, план написан.</p>
+ <ul class="pts big">
+ <li>Агентная сделка разложена на восемь стадий; функции, роли и документы привязаны к ним тремя связями.</li>
+ <li>Восемь функций агентной сделки взяли на себя международные сети; из одиннадцати ролей оператора три остаются свободными — и все три доступны национальному оператору.</li>
+ <li>Десять недостающих документов выстроены в порядок, пересчитанный под санкционные ограничения и с планом перехода после их снятия.</li>
+ <li>Девять из них доведены до проектов содержания и нормативных формулировок: 76 разделов планов и 148 пунктов драфтов, привязанных к статьям российских законов.</li>
+ <li>Под них собраны контур испытаний, задание на эталонного агента, спецификация интерфейсов и программа работ с вехами и рисками.</li>
+ <li>Каждое утверждение в модели помечено по происхождению и связано с источником.</li>
+ </ul>
+ <p class="note">Ближайший практический шаг прежний — признак агентной операции: он внутри действующей инфраструктуры, не требует ничьего согласия и открывает всё остальное. Всё, что нужно для его запуска, в пуле уже описано: норма, интерфейс, сценарии проверки и место в программе работ.</p>
+ <div class="links"><span class="lbl">смотреть в модели · со страницы можно вернуться сюда</span><a href="20-plany-dokumentov.html?back=19-prezentaciya.html%23s26">Планы документов</a><a href="21-drafty-dokumentov.html?back=19-prezentaciya.html%23s26">Драфты</a><a href="00-ukazatel-pula.html?back=19-prezentaciya.html%23s26">Указатель пула</a></div>
+</section>
+
+<div class="nav">
+ <button id="prev">← Назад</button>
+ <button id="next">Дальше →</button>
+ <button id="print">Печать</button>
+ <span class="pos" id="pos"></span>
+</div>
+<div id="pool-logo">
+ <img src="data:image/png;base64,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" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a> · <a href="18-svyazka.html">сквозная связка</a></div>
+</div><div class="bar"><i id="bar"></i></div>
+
+</div>
+<script>
+(function(){
+ var slides=[].slice.call(document.querySelectorAll('.slide'));
+ var grid=document.getElementById('grid'), tgl=document.getElementById('toggle');
+ var cur=0;
+ function show(i,push){
+  cur=Math.max(0,Math.min(slides.length-1,i));
+  slides.forEach(function(s,j){ s.classList.toggle('on',j===cur); });
+  document.getElementById('pos').textContent=(cur+1)+' / '+slides.length+' · '+slides[cur].querySelector('h2').textContent.slice(0,44);
+  document.getElementById('prev').disabled=cur===0;
+  document.getElementById('next').disabled=cur===slides.length-1;
+  document.getElementById('bar').style.width=((cur+1)/slides.length*100)+'%';
+  if(push!==false) history.replaceState(null,'','#s'+(cur+1));
+  window.scrollTo({top:0,behavior:'auto'});
+ }
+ document.getElementById('prev').addEventListener('click',function(){show(cur-1);});
+ document.getElementById('next').addEventListener('click',function(){show(cur+1);});
+ document.getElementById('print').addEventListener('click',function(){window.print();});
+ tgl.addEventListener('click',function(){
+  var on=grid.classList.toggle('on');
+  slides.forEach(function(s,j){ s.classList.toggle('on', !on && j===cur); });
+  tgl.textContent=on?'Вернуться к слайду':'Все слайды';
+ });
+ [].forEach.call(grid.querySelectorAll('[data-go]'),function(b){
+  b.addEventListener('click',function(){
+   grid.classList.remove('on'); tgl.textContent='Все слайды'; show(+b.dataset.go);
+  });
+ });
+ document.addEventListener('keydown',function(e){
+  if(e.target.tagName==='INPUT')return;
+  if(e.key==='ArrowRight'||e.key==='PageDown'){ show(cur+1); }
+  if(e.key==='ArrowLeft'||e.key==='PageUp'){ show(cur-1); }
+  if(e.key==='Home'){ show(0); }
+  if(e.key==='End'){ show(slides.length-1); }
+ });
+ // пункты маршрута ведут на слайды
+ var titles=slides.map(function(s){ return s.querySelector('h2').textContent.trim(); });
+ [].forEach.call(document.querySelectorAll('[data-goto]'),function(li){
+  var idx=titles.indexOf(li.dataset.goto);
+  if(idx<0) return;
+  var tag=document.createElement('span');
+  tag.className='jump'; tag.textContent='слайд '+(idx+1)+' →';
+  li.appendChild(tag);
+  li.addEventListener('click',function(){ show(idx); });
+  li.setAttribute('tabindex','0'); li.setAttribute('role','button');
+  li.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); show(idx); } });
+ });
+ window.addEventListener('hashchange',function(){
+  var h=/^#s(\d+)$/.exec(location.hash);
+  if(h) show(+h[1]-1,false);
+ });
+ var m=/^#s(\d+)$/.exec(location.hash);
+ show(m?(+m[1]-1):0,false);
+})();
+</script>
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script><script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script></body></html>

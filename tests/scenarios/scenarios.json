@@ -1,0 +1,390 @@
+{
+  "version": 1,
+  "bypass_rule": "сценарий, пройденный обходом нормы, — провал",
+  "scenarios": [
+    {
+      "id": "ПС01",
+      "type": "positive",
+      "stage": "0",
+      "components": "П1",
+      "title": "Допуск оператора агента и выдача ключа",
+      "setup": "Заявление оператора BuyerAgent",
+      "action": "Решение о допуске, код, класс BUYER, уровень 1, сертификат mTLS, ключ",
+      "expected": "Агент ACTIVE; GET /pao/v1/agent возвращает статус из реестра; значения класса в теле запросов игнорируются",
+      "codes": [],
+      "norms": "A2 п. 3–5",
+      "requirements": "ФП1"
+    },
+    {
+      "id": "ПС02",
+      "type": "negative",
+      "stage": "0",
+      "components": "П1/П4/П9",
+      "title": "Отзыв ключа и распространение",
+      "setup": "Ключ агента скомпрометирован",
+      "action": "Оператор агента отзывает ключ; агент обращается старым ключом; продавец проводит авторизацию с ранее выданной криптограммой",
+      "expected": "ПАО: 401 AGENT_KEY_REVOKED; время распространения в ADP ≤ revocation_propagation_max_ms измерено",
+      "codes": [
+        "AGENT_KEY_REVOKED"
+      ],
+      "norms": "A2 п. 5.4",
+      "requirements": "ФП2"
+    },
+    {
+      "id": "ПС03",
+      "type": "positive",
+      "stage": "1",
+      "components": "П2",
+      "title": "Мандат: запрос агентом, подпись принципалом в банке",
+      "setup": "Агент ACTIVE",
+      "action": "POST /pao/v1/mandates INTENT → эмулятор эмитента подписывает → событие",
+      "expected": "Мандат PENDING_SIGNATURE → ACTIVE; событие mandate.signed подписано Платформой; запись в журнале с хэш-цепочкой",
+      "codes": [],
+      "norms": "A7 п. 1–4",
+      "requirements": "ФП3"
+    },
+    {
+      "id": "ПС04",
+      "type": "negative",
+      "stage": "1",
+      "components": "П2",
+      "title": "Мандат без обязательного реквизита / выше порога без усиленной подписи",
+      "setup": "Нет merchant_scope; либо сумма > qualified_signature_above при простой подписи",
+      "action": "POST /pao/v1/mandates; подпись",
+      "expected": "400 при отсутствии реквизита; подпись простого вида отклонена, мандат не активируется",
+      "codes": [],
+      "norms": "A7 п. 2.2, 3.2",
+      "requirements": "ФП3"
+    },
+    {
+      "id": "ПС05",
+      "type": "positive",
+      "stage": "1",
+      "components": "П5",
+      "title": "Агентский токен и криптограмма на заказ",
+      "setup": "Мандат CART ACTIVE",
+      "action": "POST /pao/v1/credentials kind=CARD",
+      "expected": "Реквизит выдан; домен токена = agent_code + mandate + merchant_scope; номера карты нет нигде; повторная криптограмма на тот же order_ref — та же (идемпотентность)",
+      "codes": [],
+      "norms": "A3 п. 2; РП2",
+      "requirements": "ФП4"
+    },
+    {
+      "id": "ПС06",
+      "type": "positive",
+      "stage": "5",
+      "components": "П4/П3",
+      "title": "Авторизация в пределах мандата",
+      "setup": "Пакет передан продавцу SHOP-1042",
+      "action": "Эмулятор эквайрера → ОПКЦ → ADP decide",
+      "expected": "APPROVE за ≤ adp_p99_ms; резерв создан; эмитент одобрил; событие operation.authorized агенту",
+      "codes": [],
+      "norms": "A1; A3 п. 5",
+      "requirements": "ФП5"
+    },
+    {
+      "id": "ПС07",
+      "type": "negative",
+      "stage": "5",
+      "components": "П4",
+      "title": "Агентский токен без признака",
+      "setup": "Продавец не перенёс aoi",
+      "action": "Авторизация",
+      "expected": "DECLINE AOI_MISSING; код ответа «некорректное агентское сообщение»",
+      "codes": [
+        "AOI_MISSING"
+      ],
+      "norms": "A1 п. 3.2",
+      "requirements": "ФП5"
+    },
+    {
+      "id": "ПС08",
+      "type": "positive",
+      "stage": "5",
+      "components": "П4",
+      "title": "Неагентская операция не затрагивается",
+      "setup": "Обычная карта без aoi",
+      "action": "Поток 10 000 авторизаций",
+      "expected": "BYPASS; добавка задержки ≤ bypass_overhead_ms; при выключенной ADP неагентские операции проходят",
+      "codes": [],
+      "norms": "РП4",
+      "requirements": "ФП6"
+    },
+    {
+      "id": "ПС09",
+      "type": "negative",
+      "stage": "5",
+      "components": "П3/П4",
+      "title": "Бюджет исчерпан",
+      "setup": "Остаток мандата меньше суммы",
+      "action": "Авторизация",
+      "expected": "DECLINE LIMIT_EXCEEDED; уведомление эмитенту для клиента",
+      "codes": [
+        "LIMIT_EXCEEDED"
+      ],
+      "norms": "A3 п. 4–5",
+      "requirements": "ФП5, ФП7"
+    },
+    {
+      "id": "ПС10",
+      "type": "negative",
+      "stage": "5",
+      "components": "П3",
+      "title": "Конкурентные авторизации по одному мандату",
+      "setup": "Остаток 3 000 ₽",
+      "action": "20 одновременных авторизаций по 1 000 ₽",
+      "expected": "Одобрено ровно 3; перерасхода нет ни на копейку",
+      "codes": [
+        "LIMIT_EXCEEDED"
+      ],
+      "norms": "A3 п. 4.4",
+      "requirements": "ФП7"
+    },
+    {
+      "id": "ПС11",
+      "type": "positive",
+      "stage": "4",
+      "components": "П4/П6",
+      "title": "Сумма выше порога: подтверждение и повтор",
+      "setup": "Сумма 3 400 ₽ > порога",
+      "action": "Авторизация → CONFIRMATION_REQUIRED → подтверждение на странице УПК → повтор с confirmation_ref",
+      "expected": "Событие confirmation.required агенту; после подтверждения APPROVE; confirmation_ref однократный и привязан к итоговым значениям",
+      "codes": [
+        "CONFIRMATION_REQUIRED"
+      ],
+      "norms": "A5 п. 3; A7 п. 7",
+      "requirements": "ФП8"
+    },
+    {
+      "id": "ПС12",
+      "type": "negative",
+      "stage": "4",
+      "components": "П4",
+      "title": "Дробление под порог",
+      "setup": "Две авторизации по 1 700 ₽ по одному мандату в окне",
+      "action": "Авторизации",
+      "expected": "Вторая (и последующие) — CONFIRMATION_REQUIRED с split_detected; событие в телеметрии",
+      "codes": [
+        "CONFIRMATION_REQUIRED"
+      ],
+      "norms": "A3 п. 4; К10",
+      "requirements": "ФП5"
+    },
+    {
+      "id": "ПС13",
+      "type": "positive",
+      "stage": "5",
+      "components": "П3",
+      "title": "Реверсал освобождает резерв",
+      "setup": "Авторизация одобрена",
+      "action": "REVERSAL от ОПКЦ",
+      "expected": "Резерв освобождён; остаток восстановлен; повтор события не меняет состояние",
+      "codes": [],
+      "norms": "—",
+      "requirements": "ФП7"
+    },
+    {
+      "id": "ПС14",
+      "type": "positive",
+      "stage": "6",
+      "components": "П3/П8",
+      "title": "Клиринг закрепляет и формирует запись об исполнении",
+      "setup": "Авторизация одобрена",
+      "action": "PRESENTMENT, затем частичное PRESENTMENT во втором случае",
+      "expected": "Резерв закреплён; запись об исполнении сформирована Платформой; событие operation.settled с fulfilment_ref; при частичном — остаток резерва освобождён",
+      "codes": [],
+      "norms": "A1 п. 6",
+      "requirements": "ФП7, ФП11"
+    },
+    {
+      "id": "ПС15",
+      "type": "positive",
+      "stage": "7",
+      "components": "П3",
+      "title": "Возврат продавцом",
+      "setup": "Операция в клиринге",
+      "action": "REFUND",
+      "expected": "Возврат проведён; бюджет не восстановлен при restore_budget_on_refund=false; событие operation.refunded",
+      "codes": [],
+      "norms": "A4 п. 4.1; В8",
+      "requirements": "ФП7"
+    },
+    {
+      "id": "ПС16",
+      "type": "positive",
+      "stage": "7",
+      "components": "П2/П4",
+      "title": "Отзыв мандата между авторизацией и клирингом",
+      "setup": "Авторизация одобрена",
+      "action": "Клиент отзывает в приложении банка; затем PRESENTMENT и новая авторизация",
+      "expected": "Авторизованное исполняется; новая авторизация — MANDATE_REVOKED; событие mandate.revoked агенту",
+      "codes": [
+        "MANDATE_REVOKED"
+      ],
+      "norms": "A3 п. 6.3; A7 п. 6",
+      "requirements": "ФП9"
+    },
+    {
+      "id": "ПС17",
+      "type": "negative",
+      "stage": "5",
+      "components": "П4",
+      "title": "ADP недоступна",
+      "setup": "ADP не отвечает дольше adp_timeout_ms",
+      "action": "Агентская и неагентская авторизации",
+      "expected": "Агентская отклонена ADP_UNAVAILABLE; неагентская одобрена эмитентом",
+      "codes": [],
+      "norms": "РП4; A3 п. 4.5",
+      "requirements": "ФП5, ФП6"
+    },
+    {
+      "id": "ПС18",
+      "type": "positive",
+      "stage": "7",
+      "components": "П7",
+      "title": "Спор вне мандата",
+      "setup": "К3 эмулятора эмитента в режиме «сам» пропустил перерасход",
+      "action": "Эмитент запрашивает scope-check",
+      "expected": "in_scope=false; выписка с целостностью OK; возврат без разбирательства; инцидент агенту; регресс",
+      "codes": [],
+      "norms": "A4 п. 3–4",
+      "requirements": "ФП10, ФП16"
+    },
+    {
+      "id": "ПС19",
+      "type": "positive",
+      "stage": "7",
+      "components": "П7",
+      "title": "Спор о качестве",
+      "setup": "Операция в пределах",
+      "action": "Спор QUALITY через ПАО с principal_ack",
+      "expected": "in_scope=true; ORDINARY_PROCEDURE; автоматического возврата нет",
+      "codes": [],
+      "norms": "A4 п. 1.3",
+      "requirements": "ФП10"
+    },
+    {
+      "id": "ПС20",
+      "type": "positive",
+      "stage": "5",
+      "components": "П5/П4",
+      "title": "СБП: списание по привязке счёта",
+      "setup": "Привязка счёта — агентский инструмент с лимитами",
+      "action": "POST /pao/v1/credentials kind=SBP; продавец инициирует списание через эмулятор СБП",
+      "expected": "ADP вызвана по идентификатору привязки; APPROVE; возврат СБП освобождает или возвращает по правилам",
+      "codes": [],
+      "norms": "РП8; A3",
+      "requirements": "ФП12"
+    },
+    {
+      "id": "ПС21",
+      "type": "positive",
+      "stage": "4",
+      "components": "П6",
+      "title": "Выбор инструмента человеком на странице УПК",
+      "setup": "CONFIRMATION_REQUIRED",
+      "action": "Человек открывает страницу, выбирает СБП вместо карты",
+      "expected": "confirmation_ref выдан; повтор идёт по выбранному инструменту; агент инструмент не выбирал",
+      "codes": [],
+      "norms": "F26; A5 п. 3.2",
+      "requirements": "ФП8"
+    },
+    {
+      "id": "ПС22",
+      "type": "negative",
+      "stage": "5",
+      "components": "П4",
+      "title": "Код агента в признаке не совпадает с доменом токена",
+      "setup": "Чужой агент использует криптограмму",
+      "action": "Авторизация",
+      "expected": "DECLINE AOI_MISMATCH; инцидент обоим агентам; токен приостановлен",
+      "codes": [
+        "AOI_MISMATCH"
+      ],
+      "norms": "A1 п. 8.2",
+      "requirements": "ФП5"
+    },
+    {
+      "id": "ПС23",
+      "type": "positive",
+      "stage": "все",
+      "components": "П9",
+      "title": "Доставка событий агенту",
+      "setup": "Адрес подписки отвечает 500 первые 2 раза",
+      "action": "Событие operation.settled",
+      "expected": "Доставлено с третьей попытки; подпись Платформы валидна; повторная доставка того же event_id не дублирует обработку у агента-эмулятора",
+      "codes": [],
+      "norms": "ПАО §5",
+      "requirements": "ФП13"
+    },
+    {
+      "id": "ПС24",
+      "type": "positive",
+      "stage": "все",
+      "components": "П11",
+      "title": "Отчётность и антифрод",
+      "setup": "Набор операций за период",
+      "action": "Выгрузка сведений; поток признаков в эмулятор антифрода",
+      "expected": "Каждая агентская операция содержит признак, код агента и мандат; доля фрод-отказов агентских операций рассчитана",
+      "codes": [],
+      "norms": "A1 п. 7.3",
+      "requirements": "ФП14"
+    },
+    {
+      "id": "ПС25",
+      "type": "negative",
+      "stage": "0",
+      "components": "П1/П4",
+      "title": "Приостановление агента",
+      "setup": "Повторные выходы за мандат",
+      "action": "Оператор Системы приостанавливает агента",
+      "expected": "Все токены агента блокированы; авторизации — AGENT_SUSPENDED; событие agent.suspended; выдача реквизитов — 403",
+      "codes": [
+        "AGENT_SUSPENDED"
+      ],
+      "norms": "A2 п. 7; A4 п. 5.2",
+      "requirements": "ФП15"
+    },
+    {
+      "id": "ПС26",
+      "type": "positive",
+      "stage": "5",
+      "components": "П2/П4/П5/П10",
+      "title": "Условное исполнение: оплата на эскроу",
+      "setup": "ПУИ cx:nsvr допущен; сделка AWAITING_FUNDING",
+      "action": "Мандат CONDITIONAL с deal_ref → реквизит → авторизация → клиринг",
+      "expected": "Мандат проверен по GET /cx/v1/deals; получатель реквизита = счёт эскроу; deal_ref в признаке и операции; ПУИ получил operation.settled",
+      "codes": [],
+      "norms": "РП13",
+      "requirements": "ФП4, ФП5"
+    },
+    {
+      "id": "ПС27",
+      "type": "negative",
+      "stage": "5",
+      "components": "П4/П5",
+      "title": "Реквизит на другого получателя при условном мандате",
+      "setup": "Мандат CONDITIONAL",
+      "action": "Запрос реквизита на продавца, а не на счёт эскроу; авторизация у другого получателя",
+      "expected": "Реквизит не выдан; авторизация отклонена MANDATE_SCOPE",
+      "codes": [
+        "MANDATE_SCOPE"
+      ],
+      "norms": "РП13; A7",
+      "requirements": "ФП4, ФП5"
+    },
+    {
+      "id": "ПС28",
+      "type": "positive",
+      "stage": "7",
+      "components": "П7/П8/П9",
+      "title": "Итог сделки и маршрут спора",
+      "setup": "Операция по условному мандату в клиринге",
+      "action": "ПУИ сообщает RETURNED; клиент подаёт спор QUALITY по другой сделке",
+      "expected": "Итог приложен к записи об исполнении; агенту deal.returned; спор QUALITY помечен route=PROVIDER без оспаривания операции",
+      "codes": [],
+      "norms": "РП13; A4",
+      "requirements": "ФП10, ФП11"
+    }
+  ]
+}

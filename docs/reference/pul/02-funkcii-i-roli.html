@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Функции и роли в агентной коммерции: кто что занял</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--acc:#1f7a5a;--warn:#a35c13;--bad:#a32a2a;--ref:#1a3a8f;--free:#7a1f6a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:16px;line-height:1.55}
+.wrap{max-width:1120px;margin:0 auto;padding:0 18px 70px}
+nav.strip{display:flex;flex-wrap:wrap;gap:4px;padding:14px 0 0}
+nav.strip a{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 9px}
+nav.strip a.cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+header.top{border-bottom:2px solid var(--ink);padding:18px 0 14px;margin-bottom:22px}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--acc);margin:0 0 6px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:30px;margin:0 0 8px;font-weight:600;line-height:1.15}
+.tagline{color:var(--ink2);margin:0;max-width:74ch}
+h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:20px;margin:34px 0 8px;font-weight:600}
+p{max-width:78ch}
+a{color:var(--ref)}
+.controls{display:flex;flex-wrap:wrap;gap:7px;margin:14px 0 6px;align-items:center}
+.controls button{font:500 12.5px 'IBM Plex Sans';background:#fff;border:1px solid var(--line);padding:6px 10px;cursor:pointer;color:var(--ink)}
+.controls button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.controls .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+.cnt{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--ref);outline-offset:2px}
+table{width:100%;border-collapse:collapse;background:var(--card);font-size:13.7px;margin-top:8px}
+th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+th{background:#ecece7;font-size:12px;font-weight:600}
+tr.hidden{display:none}
+tr.grp td{background:#f1f1ec;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);font-weight:600}
+tr.sel td{background:#eef4f1}
+tr.hl td{background:#fff6e0}
+td.chk{width:34px;text-align:center}
+td.fid{font-family:'IBM Plex Mono',monospace;font-size:11.5px;width:42px;color:var(--ink2)}
+td.fn{font-weight:600;width:22%}
+.own{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1px solid currentColor;padding:1px 5px;white-space:nowrap}
+.own.net{color:var(--ref)} .own.proto{color:var(--acc)} .own.ai{color:var(--warn)}
+.own.market{color:var(--ink2)} .own.web{color:#3a6b8f} .own.reg{color:var(--bad)} .own.none{color:var(--free)}
+.star{color:var(--ref);font-weight:700}
+.rl{font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap}
+.rl.no{color:var(--ink2)}
+.out{display:grid;grid-template-columns:1fr 1.15fr;gap:16px;margin-top:14px;background:var(--card);border:1px solid var(--line);padding:14px 16px}
+.bars div.b{margin:7px 0}
+.bars .lbl{font-size:12.5px;color:var(--ink2);display:flex;justify-content:space-between}
+.bars .track{height:9px;background:#eceae4;margin-top:3px}
+.bars .fill{height:9px;background:var(--acc)}
+.bars .fill.warn{background:var(--warn)} .bars .fill.bad{background:var(--bad)}
+.verdict{border-left:3px solid var(--ink);padding:9px 13px;background:#f9f9f6;font-size:14.3px;margin-bottom:8px}
+.verdict b{display:block;margin-bottom:3px}
+.msg{font-size:13.4px;padding:6px 11px;border-left:3px solid var(--warn);background:#fffdf5;margin:6px 0}
+.msg.ok{border-left-color:var(--acc);background:#f3f8f5}
+.msg.free{border-left-color:var(--free);background:#faf4f9}
+.occ{font-family:'IBM Plex Mono',monospace;font-size:12.3px;color:var(--ink2);margin-top:8px}
+.rolepick{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.rolepick .pl{border:none;background:none;padding:3px 0;color:var(--ink2)}
+.rolepick span{font-family:'IBM Plex Mono',monospace;font-size:11.5px;border:1px solid var(--line);background:#fff;padding:3px 8px}
+.rolepick span.need{border-color:var(--ink);font-weight:600}
+td.docs{width:112px}
+#fmap thead th{position:sticky;top:0;z-index:2}
+button.subj{font:500 11.5px 'IBM Plex Mono',monospace;color:inherit;background:#fff;border:1px solid currentColor;
+ border-radius:2px;padding:1px 6px;margin:1px 3px 1px 0;cursor:pointer;line-height:1.5}
+button.subj:hover{background:currentColor}
+button.subj:hover span{color:#fff}
+button.subj[aria-pressed="true"]{background:currentColor}
+button.subj[aria-pressed="true"] span{color:#fff}
+td .own{border:none;padding:0;display:inline}
+button.rbtn{font:600 11.5px 'IBM Plex Mono',monospace;color:var(--ink);background:#fff;border:1px solid var(--line);
+ padding:2px 7px;cursor:pointer;line-height:1.5;white-space:nowrap}
+button.rbtn:hover{border-color:var(--ink);background:#eef1f4}
+button.rbtn[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.rname{display:block;font:400 10.5px 'IBM Plex Sans',sans-serif;color:var(--ink2);margin-top:3px;max-width:110px;line-height:1.25}
+.subjbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0 0;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2)}
+.subjbar button{font:500 11.5px 'IBM Plex Mono',monospace;background:var(--ink);color:#fff;border:1px solid var(--ink);padding:3px 8px;cursor:pointer}
+tr.dim td{opacity:.35}
+td.docs a{font-family:'IBM Plex Mono',monospace;font-size:11.5px;margin-right:4px;display:inline-block}
+.nodoc{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--free)}
+tr.flash td{animation:fl 1.2s ease-out}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);margin-top:8px}
+.note{font-size:13px;color:var(--ink2)}
+.keybox{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--free);padding:12px 16px;margin:14px 0}
+.keybox ul{margin:6px 0 0;padding-left:20px;font-size:14.5px}
+.keybox li{margin:6px 0}
+.obadge{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1px solid currentColor;padding:1px 6px;white-space:nowrap;cursor:help}
+.obadge.doc{color:#1f7a5a}.obadge.obs{color:#a35c13}.obadge.inf{color:#7a1f6a}
+a.fnlink{color:inherit;text-decoration:none;border-bottom:1px dotted var(--ink2)}
+a.fnlink:hover{border-bottom-color:var(--ink)}
+td.org{width:104px}
+a.rscore{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ref);text-decoration:none;border-bottom:1px dotted currentColor}
+a.rscore:hover{border-bottom-style:solid}
+a.rscore.small{font-size:10.5px}
+.hint{font-weight:400;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink2)}
+#rmap tr.rrow{cursor:pointer}
+button.rcode{font:600 11.5px 'IBM Plex Mono',monospace;color:var(--ink);background:#fff;border:1px solid var(--line);padding:2px 7px;cursor:pointer}
+button.rname2{font:600 13.7px 'IBM Plex Sans',sans-serif;color:var(--ink);background:none;border:none;border-bottom:1px dotted var(--ink2);padding:0;cursor:pointer;text-align:left}
+button.rcode:hover{border-color:var(--ink);background:#eef1f4}
+button.rname2:hover{border-bottom-style:solid}
+button.rcode[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+button.rname2[aria-pressed="true"]{border-bottom:2px solid var(--ink)}
+#rmap tr.rrow:hover td{background:#f4f4ef}
+#rmap tr.ron td{background:#fff6e0}
+#rmap tr.ron td.fn{box-shadow:inset 3px 0 0 var(--ink)}
+.linkish{border-bottom:1px dotted currentColor}
+.mini{font:500 11.5px 'IBM Plex Mono',monospace;background:#fff;border:1px solid var(--line);padding:3px 7px;cursor:pointer;color:var(--ink);white-space:nowrap}
+.mini:hover{border-color:var(--ink)}
+.fjump{all:unset;cursor:pointer;border-bottom:1px dotted currentColor;font-family:'IBM Plex Mono',monospace;font-size:11.5px}
+tr.flash td{animation:fl 1.2s ease-out}
+@keyframes fl{from{background:#ffe9b0}to{background:transparent}}
+@media (prefers-reduced-motion:reduce){tr.flash td{animation:none}}
+footer{margin-top:46px;border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+@media(max-width:860px){.out{grid-template-columns:1fr}h1{font-size:24px}table{font-size:13px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style>
+<link rel="icon" type="image/png" href="data:image/png;base64,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">
+<style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style>
+
+<style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style>
+</head>
+<body><div class="wrap">
+
+<nav class="strip">
+  <a href="18-svyazka.html">Сквозная связка</a>
+  <a href="00-ukazatel-pula.html">Указатель пула</a>
+  <a href="07-karta-roley-nspk.html">Карта ролей НСПК</a>
+  <a href="06-opyt-visa-mc.html">Опыт Visa и Mastercard</a>
+  <a href="05-vybor-roli.html">Выбор роли (первая редакция)</a>
+  <a href="#" class="cur" aria-current="page">Функции и роли</a>
+  <a href="03-reestr-dokumentov.html">Реестр документов</a>
+</nav>
+
+<header class="top">
+  <p class="eyebrow">Две модели в одном конструкторе · 15.09.2026</p>
+  <h1>Функции и роли в агентной коммерции: кто что занял</h1>
+  <p class="tagline">Двадцать шесть функций рынка с указанием, кто их уже взял. Восемь функций сетей стоят в конструкторе по умолчанию. Роль отличается от функции: функция — это работа, роль — позиция, из которой её делают. Здесь видно и то, и другое, и стыки между ними.</p>
+</header>
+
+<h2>Чем функция отличается от роли</h2>
+<p>Функция — единица работы: опознать агента, выдать ограниченные реквизиты, поймать мошенническую операцию. Роль — позиция, из которой работа делается, и то, что остаётся у игрока, когда конкретная технология сменится. Одна роль закрывает несколько функций: удостоверяющий центр агентов делает и опознание, и реестр ключей, и в перспективе репутацию по исполнению. И наоборот, одну функцию можно исполнять из разных позиций: подпись агента на входе делают и сеть через свой протокол, и инфраструктура веба через криптографическую подпись запроса.</p>
+<p>Практический смысл различия: функцию можно потерять, не потеряв роль, и можно занять роль, не сделав пока ни одной функции. Пример первого — оформление заказа внутри ассистента. Оно было взято ИИ-платформой в сентябре 2025 и отдано обратно рынку в марте 2026: конверсия внутри диалога оказалась хуже перехода в магазин, живыми оказались меньше двух десятков продавцов, а сама платформа осталась в роли слоя подбора. Функция ушла, роль сохранилась.</p>
+
+<h2>Функциональная карта и конструктор</h2>
+<p>Колонка «регламент» — документы, которыми функция обеспечена; название функции ведёт к первичному из них. Колонка «происхождение» показывает, откуда строка взялась: перенесена из документа, снята с объявленного продукта или выведена мной как недостающее звено — последние требуют проверки перед использованием во внешних материалах. По умолчанию отмечены восемь функций, которые взяли на себя платёжные сети. Меняйте набор — справа пересчитываются роли, которые нужны, чтобы его закрыть, узкие места и то, насколько поле занято.</p>
+
+<div class="controls" id="ctl">
+  <button data-p="net" aria-pressed="true">Восемь функций сетей</button>
+  <button data-p="free" aria-pressed="false">Только свободное</button>
+  <button data-p="nat" aria-pressed="false">Национальный пакет</button>
+  <button data-p="none" aria-pressed="false">Очистить</button>
+  <span class="sep"></span>
+  <button data-f="all" aria-pressed="true">Показать все</button>
+  <button data-f="net" aria-pressed="false">Сети</button>
+  <button data-f="proto" aria-pressed="false">Протоколы и стандарты</button>
+  <button data-f="ai" aria-pressed="false">ИИ-платформы</button>
+  <button data-f="market" aria-pressed="false">Площадки и мерчанты</button>
+  <button data-f="web" aria-pressed="false">Инфраструктура веба</button>
+  <button data-f="reg" aria-pressed="false">Регуляторы и суды</button>
+  <button data-f="none" aria-pressed="false">Никем не занято</button>
+  <span class="sep"></span>
+  <button data-o="doc" aria-pressed="false">Из документов</button>
+  <button data-o="obs" aria-pressed="false">Из наблюдений</button>
+  <button data-o="inf" aria-pressed="false">Выводы</button>
+  <span class="cnt" id="cnt"></span>
+</div>
+
+<table id="fmap">
+<thead><tr>
+ <th style="width:32px" title="выбрать функцию в конструктор">✓</th>
+ <th style="width:46px">Код</th>
+ <th style="width:20%">Функция</th>
+ <th>Что это значит</th>
+ <th style="width:17%">Кто взял<br><span class="hint">клик — только его функции</span></th>
+ <th style="width:112px">Регламент</th>
+ <th style="width:104px">Происхождение<br><span class="hint">откуда строка</span></th>
+ <th style="width:120px">Роль оператора<br><span class="hint">клик — функции роли</span></th>
+</tr></thead>
+<tbody></tbody></table>
+<div class="subjbar" id="subjbar"></div>
+<div class="legend">
+  <span>✦ — одна из восьми функций сетей</span>
+  <span>клик по строке — выбрать функцию</span>
+  <span>клик по коду роли — подсветить все её функции</span>
+  <span>роли в нижней таблице кликабельны</span>
+  <span>колонка «регламент» ведёт в реестр документов</span>
+  <span>клик по субъекту — только его функции</span>
+</div>
+
+<div class="out">
+  <div class="bars" id="bars"></div>
+  <div>
+    <div class="verdict" id="verdict"></div>
+    <div id="msgs"></div>
+    <div class="rolepick" id="rolepick"></div>
+    <div class="occ" id="occ"></div>
+  </div>
+</div>
+
+<h2>Ролевая карта: что из этого заняли сети</h2>
+<p>Восемь функций сетей ложатся на восемь ролей. Три роли остаются незанятыми — и все три недоступны сетям по устройству, а не по недосмотру.</p>
+<p class="note">Колонка «оценка роли» ведёт на строку этой роли в файле выбора, где она оценена по четырём шкалам и участвует в конструкторе комбинаций. Строка роли кликабельна: она подсвечивает все её функции в таблице выше и прокручивает к первой из них. Кнопка «отметить» добавляет функции роли в набор конструктора, коды функций ведут к нужной строке.</p>
+<table id="rmap"><tbody></tbody></table>
+
+<div class="keybox">
+<b>Стык двух моделей: что из этого следует</b>
+<ul>
+<li>Сети заняли восемь ролей из одиннадцати, причём каждую — на существующем активе. Ни одна из занятых ролей не была создана с нуля.</li>
+<li>Две роли, которых не было в первоначальном списке кандидатов, пришлось добавить именно из функциональной модели: дистрибуция через ИИ-платформы и оценка готовности мерчанта с каталогом проверенных. Обе у сетей есть и обе работают.</li>
+<li>Три роли не заняты никем: правила ответственности и оспаривания агентной операции, подтверждение человеком на нейтральной поверхности, условное исполнение. Сеть не может занять первую, потому что её правила обязательны только для её участников; вторую — потому что у неё нет обязательной потребительской поверхности; третью — потому что карточный расчёт не умеет удерживать деньги до исполнения.</li>
+<li>Функция может быть отвоёвана обратно. Оформление внутри ассистента ушло к платформам и вернулось к магазинам и платёжным рельсам за полгода. Значит, занятость функции сетями — не приговор, а текущее состояние; занятость роли устойчивее.</li>
+<li>Один фундамент оказался общим и ничейным одновременно: криптографическая подпись запроса агента. Её сделала инфраструктура веба, а сети встроили в свои протоколы. Это пример функции, которая закрепилась не за тем, кто громче анонсировал, а за тем, у кого была точка контроля на пути трафика.</li>
+</ul>
+</div>
+
+<footer>
+<p>Материалы рядом: <a href="06-opyt-visa-mc.html">хроника и восемь функций сетей</a> · <a href="05-vybor-roli.html">оценка ролей и комбинаций</a> · <a href="07-karta-roley-nspk.html">карта действующих ролей оператора</a></p>
+<p class="note">Владельцы функций указаны по публичным сообщениям компаний и отраслевых изданий за период с апреля 2025 по сентябрь 2026. «Никем не занято» означает отсутствие публично объявленного решения, а не отсутствие интереса.</p>
+
+<div id="pool-logo">
+ <img src="data:image/png;base64,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" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a> · <a href="18-svyazka.html">сквозная связка</a></div>
+</div>
+</footer>
+
+</div>
+<script>
+"use strict";
+(function(){
+
+var ORIG={"F1": "doc", "F2": "doc", "F3": "doc", "F4": "obs", "F5": "doc", "F6": "obs", "F7": "doc", "F8": "doc", "F9": "doc", "F10": "doc", "F11": "doc", "F12": "inf", "F13": "doc", "F14": "doc", "F15": "doc", "F16": "obs", "F17": "doc", "F18": "obs", "F19": "doc", "F20": "obs", "F21": "inf", "F22": "inf", "F23": "inf", "F24": "obs", "F25": "doc", "F26": "inf", "F27": "doc"};
+var OWHY={"F1": "названа в черновике рамки и реализована в опубликованном протоколе сети", "F2": "опубликованный формат подписи и реестр ключей", "F3": "предмет работы отраслевого органа по цифровой идентичности", "F4": "заявлена как направление в договорённости об опознании агентов; реализации нет", "F5": "действующая спецификация токенизации", "F6": "параметры продукта сети и ассистента, в стандарте не описаны", "F7": "мандат намерения в открытом протоколе и запись согласия у сети", "F8": "слой намерения — центральный предмет черновика рамки", "F9": "раздел спецификации торгового протокола", "F10": "товарный фид в спецификации торгового протокола", "F11": "чекаут и корзина в спецификации торгового протокола", "F12": "ни документа, ни отдельного продукта: реконструкция", "F13": "правила верификации ботов и судебное решение", "F14": "открытая спецификация доступа агента к инструментам", "F15": "действующие спецификации и правила платёжной системы", "F16": "объявленный продукт, стандарта нет", "F17": "описано в концепции цифрового рубля и платформе смарт-контрактов", "F18": "объявленные модели сетей и оператора, стандарта нет", "F19": "признак агентной операции рассматривается в черновике рамки", "F20": "продукт одной сети, стандарта нет", "F21": "вопрос вынесен в обсуждение, нормы нет: реконструкция", "F22": "адаптированного порядка оспаривания не существует: реконструкция", "F23": "в агентном сценарии не описано: реконструкция", "F24": "наблюдаемые интеграции сетей с ассистентами", "F25": "черновик рамки и открытые протоколы", "F26": "инфраструктура есть, агентный сценарий нигде не описан: реконструкция", "F27": "действующие акты и судебная практика"};
+var ONAME={"doc": "документ", "obs": "наблюдение", "inf": "вывод"};
+var DOCS={"F1": ["D1", "D7", "D8", "D10"], "F2": ["D16", "D17"], "F3": ["D5", "D6"], "F4": ["D7"], "F5": ["D3", "D5", "D9", "D10", "D26"], "F6": ["D9", "D10"], "F7": ["D1", "D2", "D8", "D10", "D13", "D25"], "F8": ["D1", "D13"], "F9": ["D3", "D4", "D12", "D26"], "F10": ["D12", "D14"], "F11": ["D12", "D14"], "F12": [], "F13": ["D16", "D17", "D18"], "F14": ["D15"], "F15": ["D4", "D19", "D24", "D27", "D28"], "F16": ["D11", "D28"], "F17": ["D23", "D24"], "F18": ["D2", "D9", "D25", "D27"], "F19": ["D1"], "F20": ["D9"], "F21": ["D1"], "F22": ["D27"], "F23": [], "F24": ["D9"], "F25": ["D1", "D7"], "F26": ["D19", "D20", "D21"], "F27": ["D18", "D22"]};
+
+var ROLES=[
+ {c:'R1', n:'Удостоверяющий центр агентов', s:[4,3,5,3], net:'Visa — идентификатор проверенного агента; совместная рамка опознания с Mastercard и Ant'},
+ {c:'R2', n:'Эмитент агентных учётных данных', s:[5,4,4,3], net:'Mastercard — агентные токены; Visa — токенизированные реквизиты'},
+ {c:'R3', n:'Держатель намерения', s:[2,2,3,2], net:'Запись согласия, подписанная эмитентом; подтверждаемое намерение Mastercard'},
+ {c:'R4', n:'Скоринг агентных операций', s:[5,5,4,5], net:'Отдельная модель фрода Visa для агентных потоков'},
+ {c:'R5', n:'Автор правил и порядка споров', s:[4,2,5,4], net:'Не занято: правила сетей обязательны только для их участников, ответственность за ошибку агента не урегулирована'},
+ {c:'R6', n:'Нейтральная поверхность подтверждения', s:[5,3,5,3], net:'Не занято: у сетей нет обязательной потребительской поверхности'},
+ {c:'R7', n:'Профиль совместимости', s:[3,4,2,2], net:'Вход обеих сетей в открытый протокол вместо собственного'},
+ {c:'R8', n:'Условное исполнение', s:[2,1,4,1], net:'Не занято: карточный расчёт не удерживает средства до исполнения'},
+ {c:'R9', n:'Дистрибуция через ИИ-платформы', s:[2,3,2,1], net:'Visa — интеграция в продукты OpenAI; Mastercard — партнёрства с Microsoft и IBM'},
+ {c:'R10',n:'Оценка готовности продавца и каталог', s:[3,3,3,2], net:'Visa — оценка агентной готовности продавца, каталог проверенных агентов и продавцов'},
+ {c:'R11',n:'Расчётный слой агентных операций', s:[5,4,5,4], net:'Mastercard — расчёт для агент-агентных и микроплатежей по нескольким рельсам'}
+];
+var byR={}; ROLES.forEach(function(r){byR[r.c]=r;});
+
+var FUNCS=[
+ {g:'Доверие и опознание'},
+ {id:'F1', n:'Опознание агента', net:true, own:'net', ow:'Visa, Mastercard, Ant', r:'R1',
+  d:'Кто этот агент, кем выдан его идентификатор, признан ли он сетью.'},
+ {id:'F2', n:'Подпись запроса агента на входе', net:false, own:'web', ow:'Cloudflare, AWS',
+  r:'R1', d:'Криптографическая подпись обращения к сайту и открытый реестр ключей агентов. Сделано инфраструктурой веба, встроено сетями в свои протоколы.'},
+ {id:'F3', n:'Идентичность человека и беспарольная подпись', net:false, own:'proto', ow:'FIDO, OpenID, кошельки', r:null,
+  d:'Кто стоит за агентом и чем он подтверждает делегирование.'},
+ {id:'F4', n:'Репутация агента по исполнению', net:false, own:'none', ow:'никто', r:'R1',
+  d:'Оценка агента по тому, как он на деле исполняет поручения. Заявлено как направление отраслевой работы, реализации нет.'},
+
+ {g:'Полномочия'},
+ {id:'F5', n:'Учётные данные с ограничением', net:true, own:'net', ow:'Mastercard, Visa', r:'R2',
+  d:'Токен, привязанный к агенту, области продавцов и политике согласия.'},
+ {id:'F6', n:'Ограничители пользователя', net:true, own:'net', ow:'Visa, Mastercard, ИИ-платформы', r:'R2',
+  d:'Потолок расходов, категории продавцов, обязательное подтверждение человеком.'},
+ {id:'F7', n:'Намерение и согласие', net:true, own:'net', ow:'Visa, Mastercard', r:'R3',
+  d:'Запись о том, что человек разрешил агенту действовать, как отдельный подписанный артефакт.'},
+ {id:'F8', n:'Жизненный цикл намерения', net:false, own:'proto', ow:'EMVCo — черновик', r:'R3',
+  d:'Общий слой, где намерение регистрируют, читают и обновляют: бюджет расходуется, подписка продлевается, после операции что-то меняется.'},
+ {id:'F9', n:'Делегирование платежа продавцу', net:false, own:'proto', ow:'торговый протокол, Stripe, PayPal', r:'R2',
+  d:'Узкий токен передаётся магазину, который остаётся продавцом по сделке и списывает сам.'},
+
+ {g:'Коммерческие операции'},
+ {id:'F10', n:'Передача каталога агенту', net:false, own:'market', ow:'площадки, торговые протоколы', r:null,
+  d:'Товарные данные, цены и наличие в машиночитаемом виде.'},
+ {id:'F11', n:'Корзина и оформление заказа', net:false, own:'proto', ow:'торговые протоколы; ушло от ИИ-платформ к магазинам', r:null,
+  d:'Была взята ассистентом и возвращена рынку: оформление вернулось на сайт продавца, в диалоге остался подбор.'},
+ {id:'F12', n:'Подбор товара и рекомендация', net:false, own:'ai', ow:'ИИ-платформы', r:null,
+  d:'Единственная функция, за которую сети не боролись вовсе.'},
+ {id:'F13', n:'Допуск агента на площадку', net:false, own:'market', ow:'сами площадки', r:null,
+  d:'Пускать или не пускать чужого агента. Спор дошёл до апелляционного суда, который в августе 2026 признал агента инструментом пользователя, а не самостоятельным лицом.'},
+ {id:'F14', n:'Инструментальный слой агента', net:false, own:'proto', ow:'открытые протоколы взаимодействия', r:null,
+  d:'Как агент вызывает внешние инструменты и общается с другими агентами.'},
+
+ {g:'Деньги'},
+ {id:'F15', n:'Авторизация и проведение платежа', net:false, own:'net', ow:'сети и эмитенты', r:'R11',
+  d:'Базовая функция, не изменившаяся с приходом агентов.'},
+ {id:'F16', n:'Расчёт, в том числе мульти-рельсовый', net:true, own:'net', ow:'Mastercard, Visa', r:'R11',
+  d:'Расчёт по картам, счетам и иным рельсам, включая агент-агентные и микроплатежи.'},
+ {id:'F17', n:'Условное исполнение', net:false, own:'none', ow:'никто', r:'R8',
+  d:'Удержание средств до наступления условия сделки. В карточном мире отсутствует как механизм.'},
+
+ {g:'Риск'},
+ {id:'F18', n:'Фрод в агентных потоках', net:true, own:'net', ow:'Visa, эмитенты', r:'R4',
+  d:'Отдельная модель под операции, инициированные агентом.'},
+ {id:'F19', n:'Признак агентной операции', net:false, own:'proto', ow:'EMVCo — рассматривается', r:'R4',
+  d:'Единый способ сообщить всем участникам, что платёж совершил агент от имени человека.'},
+ {id:'F20', n:'Оценка готовности продавца и каталог проверенных', net:true, own:'net', ow:'Visa', r:'R10',
+  d:'Насколько магазин пригоден для работы с агентами и кто из агентов и магазинов проверен.'},
+
+ {g:'Ответственность'},
+ {id:'F21', n:'Ответственность за ошибку агента', net:false, own:'none', ow:'никто', r:'R5',
+  d:'Кто платит, когда агент купил не то. Сети сдвигают ответственность к владельцу агента, отраслевой орган вынес вопрос в рамку обсуждения.'},
+ {id:'F22', n:'Оспаривание агентной операции', net:false, own:'none', ow:'никто', r:'R5',
+  d:'Существующий механизм оспаривания под агентные сценарии не адаптирован.'},
+ {id:'F23', n:'Постпродажное обслуживание', net:false, own:'market', ow:'магазины и кошельки', r:null,
+  d:'Возвраты, отслеживание, разбор претензий на стороне продавца или кошелька.'},
+
+ {g:'Рамка'},
+ {id:'F24', n:'Дистрибуция через ИИ-платформы', net:true, own:'net', ow:'Visa, Mastercard', r:'R9',
+  d:'Прямые интеграции с крупнейшими ассистентами — то, как функция доходит до пользователя.'},
+ {id:'F25', n:'Стандартизация и совместимость', net:false, own:'proto', ow:'EMVCo, открытые протоколы', r:'R7',
+  d:'Общая рамка, к которой участники приводят свои решения.'},
+ {id:'F26', n:'Подтверждение человеком на нейтральной поверхности', net:false, own:'none', ow:'никто', r:'R6',
+  d:'Место, не принадлежащее ни продавцу, ни агенту, где человек подтверждает покупку и выбирает инструмент оплаты.'},
+ {id:'F27', n:'Регуляторные требования и судебная квалификация', net:false, own:'reg', ow:'регуляторы и суды', r:null,
+  d:'Строгая аутентификация, требования к ИИ, статус действий агента в праве.'}
+];
+
+var OWN_NAME={net:'сети',proto:'протоколы и стандарты',ai:'ИИ-платформы',market:'площадки и мерчанты',web:'инфраструктура веба',reg:'регуляторы и суды',none:'никем не занято'};
+var DIM=['Опора на актив','Скорость запуска','Защищённость позиции','Независимость'];
+var PRESETS={
+ net: FUNCS.filter(function(f){return f.net;}).map(function(f){return f.id;}),
+ free: FUNCS.filter(function(f){return f.own==='none';}).map(function(f){return f.id;}),
+ nat: ['F1','F5','F6','F18','F19','F21','F22','F26','F25','F16','F4'],
+ none: []
+};
+
+var sel={}, filt='all', hlRole=null, subj=null, orig=null;
+function scrollTo(el){ if(el && typeof el.scrollIntoView==='function'){ try{ el.scrollIntoView({block:'center',behavior:'smooth'}); }catch(e){} } }
+
+function setSubject(name){
+ subj = (subj===name) ? null : name;
+ Array.prototype.forEach.call(document.querySelectorAll('button.subj'),function(b){
+  b.setAttribute('aria-pressed', String(b.dataset.subj===subj));
+ });
+ applyFilter();
+ var bar=document.getElementById('subjbar');
+ if(subj){
+  bar.innerHTML='фильтр по субъекту: <button id="subjoff">'+subj+' ✕</button> — показаны только функции, за которые он взялся';
+  document.getElementById('subjoff').addEventListener('click',function(){ setSubject(subj); });
+ } else bar.innerHTML='';
+}
+var tb=document.querySelector('#fmap tbody');
+var rowById={};
+
+FUNCS.forEach(function(f){
+ var tr=document.createElement('tr');
+ if(f.g){
+  tr.className='grp';
+  tr.innerHTML='<td colspan="8">'+f.g+'</td>';
+  tb.appendChild(tr); return;
+ }
+ tr.dataset.own=f.own; tr.dataset.id=f.id; tr.id=f.id;
+ var dl=(DOCS[f.id]||[]);
+ tr.innerHTML='<td class="chk"><input type="checkbox" aria-label="'+f.n+'"></td>'+
+  '<td class="fid">'+f.id+(f.net?' <span class="star">✦</span>':'')+'</td>'+
+  '<td class="fn">'+(dl.length
+     ? '<a class="fnlink" href="03-reestr-dokumentov.html#'+dl[0]+'" target="_blank" rel="noopener" title="первичный документ: '+dl[0]+'">'+f.n+'</a>'
+     : f.n)+'</td>'+
+  '<td>'+f.d+'</td>'+
+  '<td><span class="own '+f.own+'">'+f.ow.split(',').map(function(x){
+     var t=x.trim();
+     return '<button class="subj" data-subj="'+t.replace(/"/g,'')+'" aria-pressed="false" title="показать только функции, за которые взялся: '+t+'"><span>'+t+'</span></button>';
+   }).join('')+'</span></td>'+
+  '<td class="docs">'+(dl.length?dl.map(function(d){return '<a href="03-reestr-dokumentov.html#'+d+'" target="_blank" rel="noopener">'+d+'</a>';}).join(' '):'<span class="nodoc">регламента нет</span>')+'</td>'+
+  '<td class="org"><span class="obadge '+(ORIG[f.id]||'inf')+'" title="'+(OWHY[f.id]||'')+'">'+ONAME[ORIG[f.id]||'inf']+'</span></td>'+
+  '<td class="rl'+(f.r?'':' no')+'">'+(f.r
+   ? '<button class="rbtn" data-r="'+f.r+'" aria-pressed="false" title="подсветить все функции роли и перейти к её строке">'+f.r+'</button>'
+     +'<span class="rname">'+(byR[f.r]?byR[f.r].n:'')
+       +(/^R[1-8]$/.test(f.r)?' <a class="rscore small" href="05-vybor-roli.html#'+f.r+'" title="оценка роли по четырём шкалам">оценка</a>':'')+'</span>'
+   : 'вне ролей оператора')+'</td>';
+ var cb=tr.querySelector('input');
+ cb.addEventListener('change',function(){ sel[f.id]=cb.checked; tr.classList.toggle('sel',cb.checked); calc(); });
+ tr.addEventListener('click',function(e){
+  if(e.target.tagName==='INPUT'||e.target.classList.contains('rbtn'))return;
+  cb.checked=!cb.checked; cb.dispatchEvent(new Event('change'));
+ });
+ var rb=tr.querySelector('.rbtn');
+ if(rb) rb.addEventListener('click',function(e){ e.stopPropagation(); toggleRole(f.r,{scrollRole:true}); });
+ Array.prototype.forEach.call(tr.querySelectorAll('button.subj'),function(sb){
+  sb.addEventListener('click',function(e){ e.stopPropagation(); setSubject(sb.dataset.subj); });
+ });
+ tb.appendChild(tr);
+ rowById[f.id]=tr;
+});
+
+function toggleRole(r, opts){
+ opts=opts||{};
+ hlRole = (hlRole===r) ? null : r;
+ if(hlRole && filt!=='all'){
+  filt='all';
+  Array.prototype.forEach.call(ctl.querySelectorAll('button[data-f]'),function(x){
+   x.setAttribute('aria-pressed',String(x.dataset.f==='all'));
+  });
+  applyFilter();
+ }
+ Object.keys(rowById).forEach(function(id){
+  var f=FUNCS.filter(function(x){return x.id===id;})[0];
+  rowById[id].classList.toggle('hl', !!hlRole && f.r===hlRole);
+ });
+ Array.prototype.forEach.call(document.querySelectorAll('#rmap tr.rrow'),function(tr){
+  tr.classList.toggle('ron', tr.dataset.r===hlRole);
+ });
+ Array.prototype.forEach.call(document.querySelectorAll('button.rbtn, button.rcode, button.rname2'),function(b){
+  b.setAttribute('aria-pressed', String(b.dataset.r===hlRole));
+ });
+ if(hlRole && opts.scrollRole){
+  var rr=document.querySelector('#rmap tr[data-r="'+hlRole+'"]');
+  scrollTo(rr);
+ }
+ if(hlRole && opts.scroll){
+  var first=FUNCS.filter(function(f){return f.r===hlRole;})[0];
+  if(first) scrollTo(rowById[first.id]);
+ }
+ calc();
+}
+function addSel(ids){
+ ids.forEach(function(id){
+  if(!rowById[id])return;
+  sel[id]=true;
+  rowById[id].querySelector('input').checked=true;
+  rowById[id].classList.add('sel');
+ });
+ Array.prototype.forEach.call(ctl.querySelectorAll('button[data-p]'),function(x){x.setAttribute('aria-pressed','false');});
+ calc();
+}
+function jumpTo(id){
+ var tr=rowById[id]; if(!tr)return;
+ if(tr.classList.contains('hidden')){
+  filt='all';
+  Array.prototype.forEach.call(ctl.querySelectorAll('button[data-f]'),function(x){x.setAttribute('aria-pressed',String(x.dataset.f==='all'));});
+  applyFilter();
+ }
+ scrollTo(tr);
+ tr.classList.remove('flash'); void tr.offsetWidth; tr.classList.add('flash');
+}
+
+function applyFilter(){
+ var n=0;
+ Object.keys(rowById).forEach(function(id){
+  var tr=rowById[id];
+  var f=FUNCS.filter(function(x){return x.id===id;})[0];
+  var vis = (filt==='all' || tr.dataset.own===filt) && (!subj || (f.ow||'').indexOf(subj)>=0) && (!orig || ORIG[id]===orig);
+  tr.classList.toggle('hidden',!vis); if(vis)n++;
+ });
+ Array.prototype.forEach.call(tb.querySelectorAll('tr.grp'),function(g){
+  var next=g.nextElementSibling, any=false;
+  while(next && !next.classList.contains('grp')){ if(!next.classList.contains('hidden'))any=true; next=next.nextElementSibling; }
+  g.classList.toggle('hidden',!any);
+ });
+ document.getElementById('cnt').textContent='показано '+n+' из '+Object.keys(rowById).length+' функций';
+}
+
+function setSel(ids){
+ Object.keys(rowById).forEach(function(id){
+  var on=ids.indexOf(id)>=0;
+  sel[id]=on;
+  rowById[id].querySelector('input').checked=on;
+  rowById[id].classList.toggle('sel',on);
+ });
+ calc();
+}
+
+var ctl=document.getElementById('ctl');
+Array.prototype.forEach.call(ctl.querySelectorAll('button[data-p]'),function(b){
+ b.addEventListener('click',function(){
+  Array.prototype.forEach.call(ctl.querySelectorAll('button[data-p]'),function(x){x.setAttribute('aria-pressed',String(x===b));});
+  setSel(PRESETS[b.dataset.p]);
+ });
+});
+Array.prototype.forEach.call(ctl.querySelectorAll('button[data-f]'),function(b){
+ b.addEventListener('click',function(){
+  Array.prototype.forEach.call(ctl.querySelectorAll('button[data-f]'),function(x){x.setAttribute('aria-pressed',String(x===b));});
+  filt=b.dataset.f; applyFilter();
+ });
+});
+Array.prototype.forEach.call(ctl.querySelectorAll('button[data-o]'),function(b){
+ b.addEventListener('click',function(){
+  orig = (orig===b.dataset.o) ? null : b.dataset.o;
+  Array.prototype.forEach.call(ctl.querySelectorAll('button[data-o]'),function(x){x.setAttribute('aria-pressed',String(x.dataset.o===orig));});
+  applyFilter();
+ });
+});
+
+function bar(label,v,hint){
+ var pct=v*20, cls=v>=4?'':(v<=2?'bad':'warn');
+ return '<div class="b"><div class="lbl"><span>'+label+'</span><span>'+(v||'—')+(hint?' · '+hint:'')+'</span></div>'+
+        '<div class="track"><div class="fill '+cls+'" style="width:'+pct+'%"></div></div></div>';
+}
+
+function calc(){
+ var ids=FUNCS.filter(function(f){return f.id && sel[f.id];}).map(function(f){return f.id;});
+ var bars=document.getElementById('bars'), verdict=document.getElementById('verdict');
+ var msgs=document.getElementById('msgs'), pick=document.getElementById('rolepick'), occ=document.getElementById('occ');
+ msgs.innerHTML=''; bars.innerHTML='';
+ if(!ids.length){
+  DIM.forEach(function(d){ bars.innerHTML+=bar(d,0,''); });
+  verdict.innerHTML='<b>Ничего не выбрано</b>Отметьте функции или возьмите готовый набор.';
+  pick.innerHTML=''; occ.textContent='';
+  return;
+ }
+ var chosen=FUNCS.filter(function(f){return f.id && sel[f.id];});
+ var need=[]; var outside=0;
+ chosen.forEach(function(f){
+  if(f.r){ if(need.indexOf(f.r)<0)need.push(f.r); } else outside++;
+ });
+ var vals=[0,1].map(function(i){ return need.length?Math.min.apply(null,need.map(function(c){return byR[c].s[i];})):0; });
+ var vals2=[2,3].map(function(i){ return need.length?Math.max.apply(null,need.map(function(c){return byR[c].s[i];})):0; });
+ var all=[vals[0],vals[1],vals2[0],vals2[1]];
+ DIM.forEach(function(d,i){ bars.innerHTML+=bar(d,all[i], i<2?'узкое место':'по сильнейшему'); });
+
+ var byOwn={};
+ chosen.forEach(function(f){ byOwn[f.own]=(byOwn[f.own]||0)+1; });
+ var freeN=byOwn.none||0, netN=byOwn.net||0;
+
+ var isNet = ids.slice().sort().join(',')===PRESETS.net.slice().sort().join(',');
+ var isFree = ids.slice().sort().join(',')===PRESETS.free.slice().sort().join(',');
+ var isNat = ids.slice().sort().join(',')===PRESETS.nat.slice().sort().join(',');
+ var head, body;
+ if(isNet){ head='Набор: восемь функций сетей';
+  body='Ровно то, что взяли Visa и Mastercard. Закрывается восемью ролями, каждая из которых стоит на существующем активе. Повторяемо, но это чужая рамка: всё выбранное уже занято, и в трёх незанятых точках рынка не делается ничего.'; }
+ else if(isFree){ head='Набор: только незанятое';
+  body='Четыре функции, которых нет ни у кого: ответственность за ошибку агента, оспаривание такой операции, условное исполнение, подтверждение человеком на нейтральной поверхности, плюс репутация агента по исполнению. Конкуренции нет, но и готовых образцов тоже: всё придётся описывать первым.'; }
+ else if(isNat){ head='Набор: национальный пакет';
+  body='Смешанный: сильные функции сетей, которые опираются на действующую инфраструктуру, плюс незанятые точки, доступные оператору благодаря нормотворчеству и обязательной поверхности. Узкое место — скорость: правила нельзя запустить пилотом.'; }
+ else { head='Своя выборка: '+ids.length+' функций';
+  body=(all[1]<=2?'Набор ограничен самым медленным элементом. ':'')+(all[2]>=5?'Позиция защищена — повторить её без оператора нельзя. ':'')+(all[3]<=2?'Высокая зависимость от игроков, на которых оператор не влияет.':''); }
+ verdict.innerHTML='<b>'+head+'</b>'+body;
+
+ if(freeN) msgs.innerHTML+='<div class="msg free">В выборке '+freeN+' функц. из числа никем не занятых — здесь нет конкуренции, но нет и образца для копирования.</div>';
+ if(netN>=5) msgs.innerHTML+='<div class="msg">Более половины выбранного уже сделано сетями. Это снижает риск повторения чужих ошибок и одновременно лишает выигрыша во времени.</div>';
+ if(outside) msgs.innerHTML+='<div class="msg">'+outside+' выбранных функц. лежит вне ролей платёжного оператора — их выполняют площадки, ассистенты или инфраструктура веба. Взять их можно только сменив природу игрока.</div>';
+ if(sel.F26 && !sel.F21) msgs.innerHTML+='<div class="msg">Подтверждение на нейтральной поверхности без нормы об ответственности останется удобной функцией, а не обязанностью участников.</div>';
+ if(sel.F5 && !sel.F1) msgs.innerHTML+='<div class="msg">Учётные данные без опознания агента: непонятно, кому выдан токен и с кого спрос.</div>';
+ if(sel.F19 && sel.F18) msgs.innerHTML+='<div class="msg ok">Признак агентной операции вместе с её скорингом — единственная пара, которая работает целиком внутри действующей инфраструктуры.</div>';
+
+ pick.innerHTML = need.length ? ('<span class="pl">нужные роли</span>' + need.sort().map(function(c){
+   return '<span class="need" title="'+byR[c].n+'">'+c+' · '+byR[c].n+'</span>';
+ }).join(' ')) : '<span class="pl">ни одна роль оператора не требуется</span>';
+
+ occ.textContent = 'занятость выбранного: ' + Object.keys(byOwn).map(function(k){
+   return OWN_NAME[k]+' — '+byOwn[k];
+ }).join(' · ');
+}
+
+/* ролевая карта */
+(function(){
+ var t=document.querySelector('#rmap tbody');
+ t.innerHTML='<tr><th style="width:52px">Код<br><span class="hint">клик</span></th><th style="width:21%">Роль<br><span class="hint">клик — её функции выше</span></th><th>Кто занял и чем</th><th style="width:15%">Функции</th><th style="width:96px">В набор</th><th style="width:104px">Оценка роли<br><span class="hint">в файле выбора</span></th></tr>'+
+ ROLES.map(function(r){
+  var fs=FUNCS.filter(function(f){return f.r===r.c;}).map(function(f){return f.id;});
+  var free=/^Не занято/.test(r.net);
+  return '<tr class="rrow" data-r="'+r.c+'" tabindex="0" role="button" aria-label="Роль '+r.c+', '+r.n+'">'+
+   '<td class="fid"><button class="rcode" data-r="'+r.c+'" aria-pressed="false" title="подсветить функции роли '+r.c+' в таблице выше">'+r.c+'</button></td>'+
+   '<td class="fn"><button class="rname2" data-r="'+r.c+'" aria-pressed="false" title="подсветить функции роли и перейти к ним">'+r.n+'</button></td>'+
+   '<td'+(free?' style="color:#7a1f6a"':'')+'>'+r.net+'</td>'+
+   '<td class="rl">'+(fs.length?fs.map(function(id){
+     return '<button class="fjump" data-j="'+id+'">'+id+'</button>';
+   }).join(', '):'—')+'</td>'+
+   '<td>'+(fs.length?'<button class="mini" data-add="'+r.c+'">отметить</button>':'<span class="note">—</span>')+'</td>'+
+   '<td>'+(/^R([1-8])$/.test(r.c)
+     ? '<a class="rscore" href="05-vybor-roli.html#'+r.c+'" title="оценка роли '+r.c+' по четырём шкалам и её место в комбинациях">оценка '+r.c+' →</a>'
+     : '<span class="note">не кандидат</span>')+'</td></tr>';
+ }).join('');
+
+ Array.prototype.forEach.call(t.querySelectorAll('tr.rrow'),function(tr){
+  function open(){ toggleRole(tr.dataset.r,{scroll:true}); }
+  tr.addEventListener('click',function(e){
+   if(e.target.classList.contains('mini')||e.target.classList.contains('fjump'))return;
+   if(e.target.classList.contains('rcode')||e.target.classList.contains('rname2'))return;
+   open();
+  });
+  Array.prototype.forEach.call(tr.querySelectorAll('button.rcode, button.rname2'),function(b){
+   b.addEventListener('click',function(e){ e.stopPropagation(); toggleRole(b.dataset.r,{scroll:true}); });
+  });
+  tr.addEventListener('keydown',function(e){
+   if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); }
+  });
+ });
+ Array.prototype.forEach.call(t.querySelectorAll('button[data-add]'),function(b){
+  b.addEventListener('click',function(e){
+   e.stopPropagation();
+   var r=b.dataset.add;
+   addSel(FUNCS.filter(function(f){return f.r===r;}).map(function(f){return f.id;}));
+   toggleRole(r,{scroll:false});
+   if(hlRole!==r) toggleRole(r,{scroll:false});
+   scrollTo(document.querySelector('.out'));
+  });
+ });
+ Array.prototype.forEach.call(t.querySelectorAll('button[data-j]'),function(b){
+  b.addEventListener('click',function(e){ e.stopPropagation(); jumpTo(b.dataset.j); });
+ });
+})();
+
+function hashJump(){
+ var h=decodeURIComponent(location.hash.replace('#',''));
+ if(/^role=/.test(h)){
+  var r=h.slice(5);
+  if(byR[r]){ hlRole=null; toggleRole(r,{scroll:true}); }
+  return;
+ }
+ if(!rowById[h])return;
+ if(rowById[h].classList.contains('hidden')){
+  filt='all';
+  Array.prototype.forEach.call(ctl.querySelectorAll('button[data-f]'),function(x){x.setAttribute('aria-pressed',String(x.dataset.f==='all'));});
+  applyFilter();
+ }
+ scrollTo(rowById[h]);
+ rowById[h].classList.remove('flash'); void rowById[h].offsetWidth; rowById[h].classList.add('flash');
+}
+window.addEventListener('hashchange',hashJump);
+
+applyFilter();
+setSel(PRESETS.net);
+hashJump();
+})();
+</script>
+
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script>
+
+<script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script>
+</body>
+</html>

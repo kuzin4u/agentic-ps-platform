@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Операционная модель транзакций агентной коммерции</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;
+  --sig:#5b6b7a;--money:#1f7a5a;--oblig:#2c4cc0;--warn:#a35c13;--bad:#a32a2a;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:16px;line-height:1.5}
+.wrap{max-width:1140px;margin:0 auto;padding:0 18px 70px}
+header.top{border-bottom:2px solid var(--ink);padding:32px 0 16px;margin-bottom:22px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:31px;margin:0 0 6px;font-weight:600;line-height:1.15}
+.sub{color:var(--ink2);max-width:74ch;margin:0}
+.meta{margin-top:12px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2)}
+h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:21px;margin:36px 0 8px;font-weight:600}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:18px 0 14px;border-bottom:1px solid var(--line)}
+.tabs button{font:500 14px 'IBM Plex Sans';background:none;border:none;border-bottom:3px solid transparent;padding:9px 12px;cursor:pointer;color:var(--ink2)}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
+.tabs button:focus-visible,.chip:focus-visible,.nav button:focus-visible{outline:2px solid var(--oblig);outline-offset:2px}
+.pane[hidden]{display:none}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px}
+.chip{font:500 13px 'IBM Plex Sans';background:var(--card);border:1px solid var(--line);padding:7px 11px;cursor:pointer;color:var(--ink);text-align:left}
+.chip[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.chip .n{font-family:'IBM Plex Mono',monospace;font-size:11px;opacity:.7;margin-right:6px}
+.grid{display:grid;grid-template-columns:1.35fr 1fr;gap:16px;align-items:start}
+.panel{background:var(--card);border:1px solid var(--line);padding:14px 16px}
+svg{width:100%;height:auto;display:block}
+.node rect{fill:#fff;stroke:var(--line)}
+.node.on rect{stroke:var(--ink);stroke-width:2;fill:#eef1f4}
+.node.off{opacity:.32}
+.node text{font-family:'IBM Plex Sans';font-size:12.5px;fill:var(--ink)}
+.node text.role{font-size:10.5px;fill:var(--ink2);font-family:'IBM Plex Mono',monospace}
+.stepnum{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2)}
+.steptitle{font-size:17px;font-weight:600;margin:4px 0 6px}
+.stepbody{margin:0 0 10px;font-size:14.6px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:13px;margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.kv dt{font-family:'IBM Plex Mono',monospace;color:var(--ink2);font-size:11.5px;padding-top:2px}
+.kv dd{margin:0}
+.nav{display:flex;gap:8px;align-items:center;margin-top:14px}
+.nav button{font:500 13px 'IBM Plex Sans';background:var(--card);border:1px solid var(--line);padding:8px 14px;cursor:pointer}
+.nav button[disabled]{opacity:.4;cursor:default}
+.nav .pos{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2);margin-left:auto}
+.states{display:flex;flex-wrap:wrap;gap:0;border:1px solid var(--line);background:var(--card);margin-top:14px}
+.states div{flex:1 1 150px;padding:9px 12px;border-right:1px solid var(--line)}
+.states div:last-child{border-right:none}
+.states .lbl{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink2)}
+.states .val{font-weight:600;font-size:14px}
+.val.hold{color:var(--money)} .val.none{color:var(--ink2)} .val.risk{color:var(--bad)}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.b{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1px solid var(--line);padding:2px 7px;background:#fff}
+.b.green{border-color:var(--money);color:var(--money)}
+.b.blue{border-color:var(--oblig);color:var(--oblig)}
+.b.warn{border-color:var(--warn);color:var(--warn)}
+.calc{margin-top:16px}
+.calc .row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.calc label{font-size:12.5px;color:var(--ink2);display:block}
+.calc input,.calc select{font:400 14px 'IBM Plex Sans';padding:6px 8px;border:1px solid var(--line);background:#fff;width:130px}
+.calc input[type=checkbox]{width:auto}
+table{width:100%;border-collapse:collapse;background:var(--card);font-size:13.6px;margin-top:10px}
+th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+th{background:#ecece7;font-size:12px;font-weight:600}
+td.num{font-family:'IBM Plex Mono',monospace;text-align:right;white-space:nowrap}
+tr.total td{font-weight:600;background:#f3f5f3}
+.note{font-size:13px;color:var(--ink2);margin-top:8px}
+.matrix td:first-child{font-weight:600}
+.matrix td{font-size:12.6px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--ink2);margin-top:8px;font-family:'IBM Plex Mono',monospace}
+.legend i{display:inline-block;width:18px;height:3px;vertical-align:3px;margin-right:5px}
+.warnbox{border-left:3px solid var(--warn);padding:8px 12px;background:#fffdf5;font-size:13.5px;margin-top:10px}
+footer{margin-top:50px;border-top:1px solid var(--line);padding-top:16px;font-size:13px;color:var(--ink2)}
+@media (max-width:860px){.grid{grid-template-columns:1fr}h1{font-size:25px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style>
+<link rel="icon" type="image/png" href="data:image/png;base64,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">
+<style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style>
+
+<style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <h1>Операционная модель транзакций агентной коммерции</h1>
+  <p class="sub">Девять типов сделок, восемь участников, один расчётный контур. Выберите тип транзакции и пройдите её по шагам: кто действует, что подписывается, где лежат деньги, что попадает в клиринг и какая норма это держит.</p>
+  <p class="meta">15.09.2026 · документ-кандидат в пул · роли по ст.14–21 Правил ред.3, расчёт по ст.20, ранжирование ст.11/19</p>
+</header>
+
+<div class="tabs" role="tablist">
+  <button role="tab" id="t-flow" aria-controls="p-flow" aria-selected="true">Проигрыватель сделки</button>
+  <button role="tab" id="t-matrix" aria-controls="p-matrix" aria-selected="false">Участник × тип транзакции</button>
+  <button role="tab" id="t-types" aria-controls="p-types" aria-selected="false">Типы и их признаки</button>
+</div>
+
+<!-- ================= FLOW ================= -->
+<section class="pane" id="p-flow" role="tabpanel" aria-labelledby="t-flow">
+  <div class="chips" id="chips" role="group" aria-label="Тип транзакции"></div>
+
+  <div class="grid">
+    <div class="panel">
+      <svg id="map" viewBox="0 0 900 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Схема участников и текущего действия">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/>
+          </marker>
+        </defs>
+        <g id="nodes"></g>
+        <g id="arrows"></g>
+      </svg>
+      <div class="legend">
+        <span><i style="background:#5b6b7a"></i>сигнал и данные</span>
+        <span><i style="background:#2c4cc0"></i>обязательство, мандат</span>
+        <span><i style="background:#1f7a5a"></i>деньги</span>
+        <span><i style="background:#a32a2a"></i>возврат, спор</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="badges" id="badges"></div>
+      <p class="stepnum" id="stepnum">шаг 1</p>
+      <p class="steptitle" id="steptitle"></p>
+      <p class="stepbody" id="stepbody"></p>
+      <dl class="kv">
+        <dt>норма</dt><dd id="k-art"></dd>
+        <dt>контракт</dt><dd id="k-api"></dd>
+        <dt>кто платит</dt><dd id="k-pay"></dd>
+      </dl>
+      <div class="nav">
+        <button id="prev">Назад</button>
+        <button id="next">Дальше</button>
+        <button id="play">Проиграть</button>
+        <span class="pos" id="pos"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="states">
+    <div><div class="lbl">заказ</div><div class="val" id="s-order">—</div></div>
+    <div><div class="lbl">платёж</div><div class="val" id="s-pay">—</div></div>
+    <div><div class="lbl">у кого деньги</div><div class="val" id="s-hold">у покупателя</div></div>
+    <div><div class="lbl">действующий мандат</div><div class="val" id="s-mand">—</div></div>
+    <div><div class="lbl">предмет клиринга</div><div class="val" id="s-subj">—</div></div>
+  </div>
+  <div id="risk"></div>
+
+  <div class="panel calc">
+    <h2 style="margin-top:0">Что уходит в клиринг</h2>
+    <div class="row">
+      <div><label for="c-goods">товары, ₽</label><input id="c-goods" type="number" min="0" step="10" value="1800"></div>
+      <div><label for="c-qty">позиций, шт</label><input id="c-qty" type="number" min="1" step="1" value="4"></div>
+      <div><label for="c-zone">доставка</label>
+        <select id="c-zone"><option value="0">самовывоз — 0 ₽</option><option value="250" selected>город — 250 ₽</option><option value="450">регион — 450 ₽</option></select></div>
+      <div><label for="c-ff">сборка Системы, ₽/шт</label><input id="c-ff" type="number" min="0" step="5" value="40"></div>
+      <div><label for="c-org">тариф Организатора, %</label><input id="c-org" type="number" min="0" step="0.1" value="0.2"></div>
+      <div><label for="c-fix">фикс. комиссия, ₽</label><input id="c-fix" type="number" min="0" step="10" value="150"></div>
+    </div>
+    <table id="split"><tbody></tbody></table>
+    <p class="note" id="splitnote"></p>
+  </div>
+</section>
+
+<!-- ================= MATRIX ================= -->
+<section class="pane" id="p-matrix" role="tabpanel" aria-labelledby="t-matrix" hidden>
+  <h2 style="margin-top:8px">Что делает каждый участник в каждом типе</h2>
+  <p class="note">Прочерк означает, что участник в этом типе не задействован — и это сильный сигнал: там, где нет Расчётного банка, нет и защиты покупателя.</p>
+  <div style="overflow-x:auto"><table class="matrix" id="mtx"></table></div>
+</section>
+
+<!-- ================= TYPES ================= -->
+<section class="pane" id="p-types" role="tabpanel" aria-labelledby="t-types" hidden>
+  <h2 style="margin-top:8px">Признаки, которыми различаются транзакции</h2>
+  <p>Тип сделки в нашей модели складывается из четырёх независимых признаков. Путать их — обычная ошибка: канал продажи не определяет способ расчёта, а наличие агента не определяет наличие эскроу.</p>
+  <table><tbody>
+    <tr><th style="width:22%">Признак</th><th>Значения</th><th>Что решает</th></tr>
+    <tr><td>Источник сделки<br><span class="stepnum">source_type</span></td><td>MIGRATED — клиент пришёл со своей витрины селлера<br>NETWORK — клиент Системы (каталог, витрина Системы, referral)<br>AGENT — сделку привёл агент</td><td>Кому принадлежит клиент и как делится клиентская база (ст.10, первое касание ст.18)</td></tr>
+    <tr><td>Способ расчёта<br><span class="stepnum">settlement</span></td><td>SYSTEM — через эскроу и клиринг<br>OWN — селлер принимает деньги сам<br>PER_ORDER — выбор на чекауте</td><td>Есть ли защита покупателя и проходит ли сумма через контур (ст.20)</td></tr>
+    <tr><td>Предмет клиринга</td><td>СДЕЛКА — расчёт по товару<br>УСЛУГА — оплата fulfilment<br>КОМИССИЯ — плата за трафик и место</td><td>Что именно считает клиринг и по какому тарифу. Тариф всегда FIXED, TIERED или PER_UNIT — процент с оборота невозможен на уровне базы (ст.20)</td></tr>
+    <tr><td>Зона каталога</td><td>🟢 каталог Системы — участники, эскроу, гарантии<br>⚪ каталог рынка — парсинг, без гарантий</td><td>Действует ли мандат Payment. В белой зоне агент доводит до карточки, но деньгами не распоряжается</td></tr>
+  </tbody></table>
+  <div class="warnbox">Комбинации не свободны. Эскроу без участника Системы невозможен: удерживать деньги в пользу продавца, которого не допускали, не на основании чего. Поэтому ⚪ зона всегда даёт либо комиссию, либо ничего — и это ограничение защищает нас от подделанных предложений, а не сужает выбор покупателя.</div>
+</section>
+
+<footer>
+<p>Связи при врезке в пул: agentic-commerce-architecture.html (роли и слои), pravila-agentic-articles-14-21.html (ст.14–21), payment-platform-agentic-commerce.html (жизнь платежа), service-tiers.html и massamadre-settlement-mechanisms.html (типы 3 и 4 — это уровни вовлечения), full-cycle-seller-to-buyer-red2.html (полный цикл), 15-vzglyad-nspk-rannyaya.html (разрывы Р-Б и Р-Г видны в типах 5 и 8).</p>
+
+<div id="pool-logo">
+ <img src="data:image/png;base64,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" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a> · <a href="18-svyazka.html">сквозная связка</a></div>
+</div>
+</footer>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+var NODES = [
+  {id:'buyer',   t:'Покупатель',      r:'человек',            x:30,  y:26},
+  {id:'agentB',  t:'Агент покупателя',r:'принципал: человек', x:250, y:26},
+  {id:'agentS',  t:'Агент Системы',   r:'нейтральный',        x:470, y:26},
+  {id:'surface', t:'Витрина и каталог',r:'поверхность',       x:690, y:26},
+  {id:'org',     t:'Организатор',     r:'ПТК, клиринг',       x:250, y:160},
+  {id:'agentSl', t:'Агент селлера',   r:'принципал: селлер',  x:470, y:160},
+  {id:'seller',  t:'Селлер',          r:'участник',           x:690, y:160},
+  {id:'bank',    t:'Расчётный банк',  r:'эскроу',             x:250, y:296},
+  {id:'ff',      t:'Fulfilment',      r:'сборка, доставка',   x:470, y:296}
+];
+var W=180,H=62;
+var byId={}; NODES.forEach(function(n){ byId[n.id]=n; });
+
+function S(order,pay,hold,mand){ return {order:order,pay:pay,hold:hold,mand:mand}; }
+
+var SC = [
+  {
+    id:'s1', name:'Агентная сделка в зелёной зоне', short:'AGENT · эскроу · СДЕЛКА',
+    badges:[['AGENT','blue'],['эскроу','green'],['СДЕЛКА','green'],['🟢 зона','green']],
+    subject:'СДЕЛКА', calc:'deal',
+    steps:[
+      {f:'buyer',t:'agentB',k:'oblig',ttl:'Человек ставит задачу и границы',
+       b:'Покупатель формулирует потребность и рамки: что нужно, до какой суммы, к какому сроку. Это подписывается один раз через ЕСИА или КЭП и становится мандатом Intent — дальше агент действует внутри него и не может выйти за границы.',
+       art:'ст.15 мандаты, журнал согласий с хэш-цепочкой', api:'POST /agent/mandate', pay:'—', st:S('—','—','у покупателя','Intent')},
+      {f:'agentB',t:'agentS',k:'sig',ttl:'Агент покупателя обращается к агенту Системы',
+       b:'Запрос идёт с подписанной карточкой агента. Уровень агента и его права Система берёт из реестра по коду в заголовке, а не из тела запроса — подменить уровень нельзя.',
+       art:'ст.16 реестр, ст.18 идентичность', api:'GET /api/v1/agent/search, X-Agent-Code', pay:'—', st:S('—','—','у покупателя','Intent')},
+      {f:'agentS',t:'surface',k:'sig',ttl:'Подбор по обеим зонам каталога',
+       b:'Агент Системы ищет в зелёном каталоге участников и в белом каталоге рынка. Выдача строится по формуле, где вес исполнения не ниже веса цены, а место в ней не продаётся — платного размещения нет даже как поля в базе.',
+       art:'ст.11 ранжирование, ст.19 выдача', api:'GET /catalog?visible_catalog=true', pay:'—', st:S('—','—','у покупателя','Intent')},
+      {f:'agentS',t:'agentB',k:'sig',ttl:'Кандидаты с маркировкой зон',
+       b:'Возвращается список, где предложения участников Системы помечены зелёным, а найденные на рынке — белым и с прямым указанием, что гарантий по ним нет. В этот момент фиксируется первое касание: источник сделки становится AGENT.',
+       art:'ст.18 первое касание, ст.10 клиентская база', api:'source_type=AGENT', pay:'—', st:S('—','—','у покупателя','Intent')},
+      {f:'agentB',t:'buyer',k:'oblig',ttl:'Подтверждение корзины человеком',
+       b:'Агент показывает конкретный состав, сумму и срок. Человек подтверждает — появляется мандат Cart. Именно он, а не общий Intent, разрешает создать заказ на эти условия.',
+       art:'ст.15', api:'POST /agent/mandate (CART)', pay:'—', st:S('—','—','у покупателя','Cart')},
+      {f:'agentB',t:'org',k:'sig',ttl:'Заказ создан',
+       b:'Агент создаёт заказ. Сумму считает сервер, а не агент — это защита от расхождения между тем, что человек подтвердил, и тем, что уйдёт в оплату. Проверяется лимит мандата Payment.',
+       art:'ст.15 лимиты, ст.20', api:'POST /orders entry_point=AGENT → PENDING', pay:'—', st:S('PENDING','создан','у покупателя','Payment')},
+      {f:'buyer',t:'bank',k:'money',ttl:'Деньги уходят в эскроу',
+       b:'Покупатель платит через СБП или эквайринг. Сумма не уходит продавцу — она удерживается до подтверждения получения. Платёжные реквизиты в контекст модели не попадают: агент оперирует идентификаторами заказа и мандата.',
+       art:'п.20.6 средства платежа', api:'BankAdapter.hold()', pay:'покупатель', st:S('PENDING','удержание','в эскроу','Payment')},
+      {f:'seller',t:'ff',k:'sig',ttl:'Селлер собирает, fulfilment везёт',
+       b:'Заказ уходит в работу. Если сборка и доставка включены в профиле магазина как сервисы Системы, их стоимость станет отдельной строкой клиринга — селлер не платит за них отдельным счётом.',
+       art:'реестр сервисов, профиль магазина', api:'PATCH /orders/:id status', pay:'—', st:S('в сборке','удержание','в эскроу','Payment')},
+      {f:'ff',t:'buyer',k:'sig',ttl:'Выдача и подтверждение',
+       b:'Покупатель получает заказ и подтверждает это. До подтверждения деньги обратимы — в этом и состоит разница с карточной моделью, где ошибка агента разбирается уже после списания.',
+       art:'ст.20, ст.21', api:'POST /orders/:id/confirm', pay:'—', st:S('выдан','удержание','в эскроу','исполнен')},
+      {f:'bank',t:'org',k:'money',ttl:'Раскрытие и сплит',
+       b:'Эскроу раскрывается, клиринг делит сумму на доли: сборка, логистика, тариф Организатора, остаток селлеру. Сумма долей всегда равна сумме заказа — это проверяется, а не предполагается.',
+       art:'ст.20 расчёты', api:'clearing.split()', pay:'—', st:S('закрыт','раскрыт','в клиринге','—')},
+      {f:'org',t:'seller',k:'money',ttl:'Выплата и закрывающие',
+       b:'Селлер получает свою долю, покупатель и селлер — закрывающие документы. Сделка попадает в статистику агента: качество его сделок влияет на уровень в реестре.',
+       art:'ст.16, ст.20', api:'BankAdapter.payout()', pay:'—', st:S('закрыт','выплачен','у селлера','—')}
+    ]
+  },
+  {
+    id:'s2', name:'Покупка в каталоге или на витрине Системы', short:'NETWORK · эскроу · СДЕЛКА',
+    badges:[['NETWORK','blue'],['эскроу','green'],['СДЕЛКА','green'],['без агента','']],
+    subject:'СДЕЛКА', calc:'deal',
+    steps:[
+      {f:'buyer',t:'surface',k:'sig',ttl:'Покупатель приходит сам',
+       b:'Человек открывает каталог или витрину магазина внутри Системы. Агента в сделке нет — это базовый тип, относительно которого имеет смысл сравнивать все остальные.',
+       art:'ст.9 витрина и каналы', api:'GET /shop/:slug/products', pay:'—', st:S('—','—','у покупателя','—')},
+      {f:'surface',t:'org',k:'sig',ttl:'Резерв остатка в корзине',
+       b:'Товар резервируется при добавлении в корзину, а не при оплате. Если остатка нет, отказ приходит сразу — покупатель не платит за то, чего уже нет.',
+       art:'ст.9.4 SKU как атом', api:'POST /cart/add → 409 NOT_ENOUGH_STOCK', pay:'—', st:S('—','—','у покупателя','—')},
+      {f:'buyer',t:'org',k:'sig',ttl:'Заказ',
+       b:'Покупатель оформляет заказ. Источник сделки становится NETWORK: клиент пришёл через каналы Системы, и это фиксируется в клиентской базе.',
+       art:'ст.10.4', api:'POST /orders entry_point=CATALOG', pay:'—', st:S('PENDING','создан','у покупателя','—')},
+      {f:'buyer',t:'bank',k:'money',ttl:'Эскроу',
+       b:'Оплата уходит на удержание. С этого момента сделка защищена для обеих сторон: покупатель не остался без денег и без товара, селлер видит, что деньги реально есть.',
+       art:'п.20.6', api:'BankAdapter.hold()', pay:'покупатель', st:S('PENDING','удержание','в эскроу','—')},
+      {f:'seller',t:'ff',k:'sig',ttl:'Сборка и доставка',
+       b:'Дальше поток не отличается от агентного: тип входа влияет на клиентскую базу и тариф канала, но не на механику исполнения.',
+       art:'профиль магазина', api:'PATCH /orders/:id', pay:'—', st:S('в сборке','удержание','в эскроу','—')},
+      {f:'ff',t:'buyer',k:'sig',ttl:'Выдача и подтверждение',
+       b:'Покупатель подтверждает получение.', art:'ст.20', api:'POST /orders/:id/confirm', pay:'—', st:S('выдан','удержание','в эскроу','—')},
+      {f:'bank',t:'org',k:'money',ttl:'Раскрытие и сплит',
+       b:'Клиринг считает доли и раскрывает удержание.', art:'ст.20', api:'clearing.split()', pay:'—', st:S('закрыт','раскрыт','в клиринге','—')},
+      {f:'org',t:'seller',k:'money',ttl:'Выплата',
+       b:'Селлер получает остаток за вычетом долей.', art:'ст.20', api:'BankAdapter.payout()', pay:'—', st:S('закрыт','выплачен','у селлера','—')}
+    ]
+  },
+  {
+    id:'s3', name:'Своя витрина селлера, расчёт через Систему', short:'MIGRATED · settlement=SYSTEM · СДЕЛКА',
+    badges:[['MIGRATED','blue'],['эскроу','green'],['СДЕЛКА','green'],['внешний сайт','']],
+    subject:'СДЕЛКА', calc:'deal',
+    steps:[
+      {f:'buyer',t:'surface',k:'sig',ttl:'Покупка на сайте селлера',
+       b:'Покупатель вообще не знает о Системе: он на сайте пекарни. Каталог здесь федеративный — товар живёт у селлера, в базе Системы лежит зеркало с признаком внешнего источника.',
+       art:'ст.9, модель внешнего магазина', api:'source=EXTERNAL, коннектор', pay:'—', st:S('—','—','у покупателя','—')},
+      {f:'surface',t:'org',k:'sig',ttl:'Заказ приходит в контур',
+       b:'Виджет или коннектор создаёт заказ в Системе. Источник — MIGRATED: клиент принадлежит селлеру, Система на него не претендует. Но способ расчёта выбран системный.',
+       art:'ст.10.4, settlement=SYSTEM', api:'POST /orders entry_point=SHOP', pay:'—', st:S('PENDING','создан','у покупателя','—')},
+      {f:'buyer',t:'bank',k:'money',ttl:'Эскроу даже на своей витрине',
+       b:'Ключевая мысль типа: канал продажи и способ расчёта — две независимые оси. Свой сайт не означает свои деньги. Селлер платит тариф не за трафик, которого Система не давала, а за расчёт и гарантию.',
+       art:'п.20.6, механизм «всегда через Систему»', api:'BankAdapter.hold()', pay:'покупатель', st:S('PENDING','удержание','в эскроу','—')},
+      {f:'seller',t:'ff',k:'sig',ttl:'Исполнение силами селлера или Системы',
+       b:'Fulfilment подключается по профилю: пекарь может печь и возить сам, а может отдать сборку и доставку Системе — это отдельные сервисы с отдельными тарифами.',
+       art:'реестр сервисов', api:'effective_fulfilment()', pay:'—', st:S('в сборке','удержание','в эскроу','—')},
+      {f:'ff',t:'buyer',k:'sig',ttl:'Выдача и подтверждение',
+       b:'Покупатель подтверждает получение на странице заказа.', art:'ст.20', api:'POST /orders/:id/confirm', pay:'—', st:S('выдан','удержание','в эскроу','—')},
+      {f:'bank',t:'org',k:'money',ttl:'Раскрытие и сплит',
+       b:'Тариф канала «своя витрина» ниже, чем у каталога и агента: Система не приводила покупателя. Разные каналы — разные ставки в одной и той же сделке.',
+       art:'ст.20, конфигуратор каналов', api:'clearing.split()', pay:'—', st:S('закрыт','раскрыт','в клиринге','—')},
+      {f:'org',t:'seller',k:'money',ttl:'Выплата',
+       b:'Селлер получает выплату и закрывающие документы по всем продажам, включая свои прямые.', art:'ст.20', api:'BankAdapter.payout()', pay:'—', st:S('закрыт','выплачен','у селлера','—')}
+    ]
+  },
+  {
+    id:'s4', name:'Свои деньги, fulfilment Системы', short:'MIGRATED · settlement=OWN · УСЛУГА',
+    badges:[['MIGRATED','blue'],['без эскроу','warn'],['УСЛУГА','blue'],['уровень 3','']],
+    subject:'УСЛУГА', calc:'service',
+    risk:'Покупатель здесь не защищён Системой: деньги шли мимо контура, и раскрывать нечего. Спор решается между покупателем и селлером напрямую. В интерфейсе это должно быть видно покупателю до оплаты, иначе гарантия Системы становится размытой.',
+    steps:[
+      {f:'buyer',t:'seller',k:'money',ttl:'Оплата напрямую селлеру',
+       b:'Покупатель платит на эквайринг селлера. Система в расчёте по товару не участвует вовсе — она не видела этих денег и не может их удержать.',
+       art:'settlement=OWN', api:'внешний платёжный сервис селлера', pay:'покупатель', st:S('вне Системы','вне Системы','у селлера','—')},
+      {f:'seller',t:'org',k:'sig',ttl:'Заявка на исполнение',
+       b:'В Систему уходит не сделка, а задача: собрать, упаковать, отвезти. Это отдельный контур, а не заказ покупателя.',
+       art:'реестр сервисов, форма сервиса', api:'POST /fulfilment/tasks', pay:'—', st:S('задача','—','у селлера','—')},
+      {f:'org',t:'ff',k:'sig',ttl:'Сборка и доставка',
+       b:'Fulfilment разбит на звенья — хранение, приёмка, упаковка, доставка, пункт выдачи, возвраты. Каждое включается и тарифицируется отдельно.',
+       art:'профиль fulfilment', api:'effective_fulfilment()', pay:'—', st:S('в работе','—','у селлера','—')},
+      {f:'ff',t:'buyer',k:'sig',ttl:'Покупатель получает заказ',
+       b:'Для покупателя внешне всё то же самое. Разница невидима ему и критична для него: защиты нет.',
+       art:'—', api:'—', pay:'—', st:S('выдан','—','у селлера','—')},
+      {f:'org',t:'seller',k:'money',ttl:'Счёт за услугу',
+       b:'Клиринг считает не сделку, а услугу: сборка по числу позиций плюс логистика по зоне. Тариф фиксированный или за единицу — процента с оборота здесь нет и быть не может.',
+       art:'ст.20, предмет клиринга УСЛУГА', api:'clearing.service_invoice()', pay:'селлер', st:S('закрыт','счёт','у селлера','—')}
+    ]
+  },
+  {
+    id:'s5', name:'Белая зона: агент нашёл предложение вне Системы', short:'AGENT · ⚪ зона · КОМИССИЯ или ничего',
+    badges:[['AGENT','blue'],['⚪ зона','warn'],['без эскроу','warn'],['Р-Б','warn']],
+    subject:'КОМИССИЯ', calc:'fee',
+    risk:'Главный новый риск отрасли виден именно здесь: подделывают не карту, а предложение. Магазин, вылизанный под агента — идеальная цена, идеальный срок — выигрывает выбор. Поэтому предлагается норма: мандат Payment действует только в зелёной зоне, а в белой агент доводит до карточки и передаёт решение человеку.',
+    steps:[
+      {f:'buyer',t:'agentB',k:'oblig',ttl:'Тот же мандат Intent',
+       b:'Человек не делит мир на зоны — он просто просит найти лучшее. Обещание «выбираем лучшее для покупателя, даже если продавец вне Системы» мы держим.',
+       art:'ст.15', api:'POST /agent/mandate', pay:'—', st:S('—','—','у покупателя','Intent')},
+      {f:'agentS',t:'surface',k:'sig',ttl:'Находка в каталоге рынка',
+       b:'Лучшее предложение оказалось у продавца, которого Система не допускала. Данные получены парсингом: цена может устареть, наличие не гарантировано, продавец не проверен.',
+       art:'каталог рынка, ст.11', api:'GET /catalog/market', pay:'—', st:S('—','—','у покупателя','Intent')},
+      {f:'agentS',t:'buyer',k:'sig',ttl:'Показ с честной маркировкой',
+       b:'Карточка помечена белым: без гарантий, без эскроу, без спора через Систему. Агент показывает и объясняет разницу, но дальше решение принимает человек.',
+       art:'ст.19 выдача, предложение Р-Б', api:'zone=MARKET', pay:'—', st:S('—','—','у покупателя','Intent')},
+      {f:'buyer',t:'surface',k:'sig',ttl:'Покупка происходит вне контура',
+       b:'Человек уходит покупать сам. Система не держит деньги, не свидетельствует условия и не участвует в споре — и прямо говорит об этом заранее.',
+       art:'—', api:'—', pay:'покупатель', st:S('вне Системы','вне Системы','у внешнего продавца','—')},
+      {f:'surface',t:'org',k:'money',ttl:'Если есть партнёрство — комиссия',
+       b:'Когда внешний продавец партнёр, Система получает плату за приведённого покупателя. Только фиксированная, ступенчатая или за единицу — процент с оборота технически невозможен.',
+       art:'ст.20 тарифы, referral', api:'clearing.commission()', pay:'внешний продавец', st:S('—','—','—','—')},
+      {f:'org',t:'agentS',k:'sig',ttl:'Касание всё равно записано',
+       b:'Даже без сделки факт показа фиксируется: это материал для реестра агентов и для будущего разговора с продавцом о вступлении в Систему.',
+       art:'ст.18, ст.16', api:'touch log', pay:'—', st:S('—','—','—','—')}
+    ]
+  },
+  {
+    id:'s6', name:'Сделка без эскроу внутри Системы', short:'NETWORK · settlement=OWN · КОМИССИЯ',
+    badges:[['NETWORK','blue'],['без эскроу','warn'],['КОМИССИЯ','blue'],['тумблер','']],
+    subject:'КОМИССИЯ', calc:'fee',
+    risk:'Этот тип существует, чтобы показать цену отказа от эскроу. Система здесь — витрина и каталог, а не гарант: спор идёт мимо нас, и покупатель это должен знать до оплаты.',
+    steps:[
+      {f:'buyer',t:'surface',k:'sig',ttl:'Выбор в каталоге Системы',
+       b:'Товар найден внутри Системы, продавец допущен, данные достоверны. Отличие только в расчёте.',
+       art:'ст.9, ст.11', api:'GET /catalog', pay:'—', st:S('—','—','у покупателя','—')},
+      {f:'buyer',t:'surface',k:'oblig',ttl:'Выбор способа расчёта на чекауте',
+       b:'Покупателю показывают два варианта: гарантия Системы с удержанием или прямая оплата продавцу. Разница описана словами, а не мелким шрифтом.',
+       art:'settlement=PER_ORDER', api:'POST /orders settlement=OWN', pay:'—', st:S('PENDING','создан','у покупателя','—')},
+      {f:'buyer',t:'seller',k:'money',ttl:'Прямая оплата',
+       b:'Деньги идут продавцу сразу. Удерживать нечего, откатить нечем.',
+       art:'—', api:'эквайринг селлера', pay:'покупатель', st:S('оплачен','вне контура','у селлера','—')},
+      {f:'seller',t:'buyer',k:'sig',ttl:'Исполнение',
+       b:'Товар передаётся покупателю. Подтверждение получения роли не играет — деньги уже у продавца.',
+       art:'—', api:'PATCH /orders/:id', pay:'—', st:S('выдан','вне контура','у селлера','—')},
+      {f:'org',t:'seller',k:'money',ttl:'Комиссия за место и трафик',
+       b:'Система выставляет плату за канал: фиксированную или ступенчатую. Это и есть экономика типа — дешевле для селлера, слабее для покупателя.',
+       art:'ст.20', api:'clearing.commission()', pay:'селлер', st:S('закрыт','—','у селлера','—')}
+    ]
+  },
+  {
+    id:'s7', name:'Корзина из нескольких магазинов', short:'NETWORK · один платёж · несколько сплитов',
+    badges:[['NETWORK','blue'],['эскроу','green'],['СДЕЛКА','green'],['мульти-селлер','']],
+    subject:'СДЕЛКА', calc:'deal',
+    steps:[
+      {f:'buyer',t:'surface',k:'sig',ttl:'Товары от разных селлеров в одной корзине',
+       b:'Для покупателя это одна покупка, для контура — несколько независимых обязательств. Разделение происходит внутри, наружу не протекает.',
+       art:'ст.9 мульти-селлер корзина', api:'POST /cart/add ×N', pay:'—', st:S('—','—','у покупателя','—')},
+      {f:'buyer',t:'org',k:'sig',ttl:'Один заказ, несколько отгрузок',
+       b:'Сумму считает сервер по всем позициям сразу, включая доставку по каждому отправлению.',
+       art:'ст.9.4', api:'POST /orders items[]', pay:'—', st:S('PENDING','создан','у покупателя','—')},
+      {f:'buyer',t:'bank',k:'money',ttl:'Одно удержание на всю сумму',
+       b:'Покупатель платит один раз. В эскроу лежит общая сумма, но внутри она уже размечена по обязательствам.',
+       art:'п.20.6', api:'BankAdapter.hold()', pay:'покупатель', st:S('PENDING','удержание','в эскроу','—')},
+      {f:'seller',t:'ff',k:'sig',ttl:'Каждый селлер исполняет своё',
+       b:'Отгрузки идут независимо и в разные сроки. Один опоздавший селлер не блокирует деньги остальных.',
+       art:'—', api:'PATCH /orders/:id/items/:n', pay:'—', st:S('частично собран','удержание','в эскроу','—')},
+      {f:'ff',t:'buyer',k:'sig',ttl:'Частичное подтверждение',
+       b:'Покупатель подтверждает то, что получил. Раскрытие идёт по частям — это принципиально: удерживать деньги за доставленный товар нельзя.',
+       art:'ст.20', api:'POST /orders/:id/confirm?item=', pay:'—', st:S('частично выдан','частичное раскрытие','делится','—')},
+      {f:'bank',t:'org',k:'money',ttl:'Сплит по каждому селлеру',
+       b:'Клиринг строит отдельный расчёт на каждое обязательство: свой тариф канала, своя логистика, своя доля Организатора.',
+       art:'ст.20', api:'clearing.split() ×N', pay:'—', st:S('закрыт','раскрыт','в клиринге','—')},
+      {f:'org',t:'seller',k:'money',ttl:'Несколько выплат',
+       b:'Каждый селлер получает свою выплату и свои закрывающие документы.',
+       art:'ст.20', api:'BankAdapter.payout() ×N', pay:'—', st:S('закрыт','выплачен','у селлеров','—')}
+    ]
+  },
+  {
+    id:'s8', name:'Агент с агентом: заказ на производство', short:'AGENT ↔ AGENT · эскроу этапами',
+    badges:[['AGENT','blue'],['A2A','blue'],['эскроу','green'],['СДЕЛКА','green']],
+    subject:'СДЕЛКА', calc:'deal',
+    steps:[
+      {f:'buyer',t:'agentB',k:'oblig',ttl:'Задача без готового товара',
+       b:'Покупателю нужен не артикул с полки, а результат: торт на двенадцать человек к субботе. В каталоге такого SKU нет — есть производитель, который может это сделать.',
+       art:'ст.15', api:'POST /agent/mandate', pay:'—', st:S('—','—','у покупателя','Intent')},
+      {f:'agentB',t:'agentSl',k:'sig',ttl:'Агенты договариваются',
+       b:'Два агента обмениваются подписанными карточками и согласуют параметры: состав, срок, цена, возможность. Это переговоры машин, но с человеческими границами по обе стороны.',
+       art:'ст.16, ст.18', api:'A2A, Agent Card', pay:'—', st:S('переговоры','—','у покупателя','Intent')},
+      {f:'agentSl',t:'seller',k:'sig',ttl:'Человек на стороне селлера подтверждает',
+       b:'Автономия агента селлера ограничена: взять заказ на производство он может только в рамках, которые пекарь задал заранее, а нестандартное подтверждает человек.',
+       art:'реестр: уровень автономии', api:'—', pay:'—', st:S('согласовано','—','у покупателя','Intent')},
+      {f:'agentB',t:'buyer',k:'oblig',ttl:'Человек подписывает согласованные условия',
+       b:'Мандат Cart фиксирует ровно то, о чём договорились агенты. Весь диалог остаётся в журнале согласий — это доказательство и в споре, и перед финансовым мониторингом.',
+       art:'ст.15 журнал согласий', api:'POST /agent/mandate (CART)', pay:'—', st:S('PENDING','создан','у покупателя','Cart')},
+      {f:'buyer',t:'bank',k:'money',ttl:'Удержание с этапами',
+       b:'Производство требует затрат до выдачи. Эскроу раскрывается частями: аванс на сырьё после подтверждения заказа, остаток после выдачи. Аванс раскрывается только под зафиксированное обязательство.',
+       art:'п.20.6, режимы эскроу', api:'BankAdapter.hold(stages)', pay:'покупатель', st:S('в производстве','удержание','в эскроу','Payment')},
+      {f:'ff',t:'buyer',k:'sig',ttl:'Выдача к сроку',
+       b:'Срок был частью мандата, поэтому опоздание — не разочарование, а измеримое нарушение условий.',
+       art:'ст.20, ст.21', api:'POST /orders/:id/confirm', pay:'—', st:S('выдан','частично раскрыт','делится','исполнен')},
+      {f:'bank',t:'org',k:'money',ttl:'Раскрытие остатка и сплит',
+       b:'Клиринг закрывает сделку, статистика исполнения уходит в реестр обоих агентов.',
+       art:'ст.16, ст.20', api:'clearing.split()', pay:'—', st:S('закрыт','раскрыт','в клиринге','—')}
+    ]
+  },
+  {
+    id:'s9', name:'Спор и возврат', short:'любой тип с эскроу · REFUND',
+    badges:[['эскроу','green'],['ст.21','blue'],['Р-А','warn']],
+    subject:'СДЕЛКА', calc:'deal',
+    risk:'Здесь решается, ради чего вообще нужен эскроу. В карточной модели ошибку агента разбирают после списания и чаще всего относят на держателя карты. У нас деньги ещё не ушли — значит, спор идёт не о возврате, а о раскрытии.',
+    steps:[
+      {f:'buyer',t:'org',k:'bad',ttl:'Проблема заявлена до подтверждения',
+       b:'Покупатель говорит: не то, не так, не пришло. Ключевое обстоятельство — удержание ещё не раскрыто.',
+       art:'ст.21 споры', api:'POST /orders/:id/dispute', pay:'—', st:S('спор','удержание','в эскроу','—')},
+      {f:'org',t:'agentB',k:'sig',ttl:'Проверка по журналу согласий',
+       b:'Сначала механическая проверка: было ли действие агента внутри мандата. Журнал неизменяем и связан хэш-цепочкой, поэтому это вопрос факта, а не показаний сторон.',
+       art:'ст.15, предложение Р-А', api:'GET /agent/consents/:order', pay:'—', st:S('спор','удержание','в эскроу','—')},
+      {f:'org',t:'bank',k:'money',ttl:'Вне мандата — возврат без разбирательства',
+       b:'Если агент вышел за границы поручения, сделка не имеет силы: удержание возвращается покупателю, спор не начинается. Селлер не страдает — он получает уведомление до отгрузки.',
+       art:'предложение Р-А, ст.15', api:'BankAdapter.refund()', pay:'—', st:S('отменён','возврат','у покупателя','—')},
+      {f:'org',t:'seller',k:'sig',ttl:'Внутри мандата — обычный спор',
+       b:'Если поручение исполнено верно, а претензия к товару или срокам, работает ст.21: стороны, сроки, решение. Возможны три исхода — полный возврат, частичное раскрытие, раскрытие в пользу селлера.',
+       art:'ст.21', api:'PATCH /disputes/:id', pay:'—', st:S('спор','удержание','в эскроу','—')},
+      {f:'bank',t:'buyer',k:'bad',ttl:'Исполнение решения',
+       b:'Деньги движутся по решению, а не по умолчанию. Это и есть разница между удержанием и списанием.',
+       art:'ст.20, ст.21', api:'refund / partial release', pay:'—', st:S('закрыт','исполнено решение','по решению','—')},
+      {f:'org',t:'agentS',k:'sig',ttl:'Последствия для агента',
+       b:'Спор попадает в статистику агента. Систематические выходы за мандат — основание для понижения уровня или исключения из реестра.',
+       art:'ст.16 допуск', api:'agent registry update', pay:'—', st:S('закрыт','—','—','—')}
+    ]
+  }
+];
+
+/* ---------- render nodes ---------- */
+var gN=document.getElementById('nodes'), gA=document.getElementById('arrows');
+var NS='http://www.w3.org/2000/svg';
+NODES.forEach(function(n){
+  var g=document.createElementNS(NS,'g'); g.setAttribute('class','node'); g.dataset.id=n.id;
+  var r=document.createElementNS(NS,'rect');
+  r.setAttribute('x',n.x); r.setAttribute('y',n.y); r.setAttribute('width',W); r.setAttribute('height',H);
+  g.appendChild(r);
+  var t1=document.createElementNS(NS,'text');
+  t1.setAttribute('x',n.x+12); t1.setAttribute('y',n.y+26); t1.textContent=n.t;
+  var t2=document.createElementNS(NS,'text');
+  t2.setAttribute('class','role'); t2.setAttribute('x',n.x+12); t2.setAttribute('y',n.y+45); t2.textContent=n.r;
+  g.appendChild(t1); g.appendChild(t2); gN.appendChild(g);
+});
+var nodeEls={}; Array.prototype.forEach.call(gN.children,function(g){ nodeEls[g.dataset.id]=g; });
+
+var COLORS={sig:'#5b6b7a',money:'#1f7a5a',oblig:'#2c4cc0',bad:'#a32a2a'};
+
+function center(id){ var n=byId[id]; return {x:n.x+W/2,y:n.y+H/2}; }
+
+function drawArrow(from,to,kind){
+  while(gA.firstChild) gA.removeChild(gA.firstChild);
+  if(!from||!to||from===to) return;
+  var a=center(from), b=center(to);
+  var dx=b.x-a.x, dy=b.y-a.y, len=Math.sqrt(dx*dx+dy*dy)||1;
+  var pad=Math.min(len/2-4, 96);
+  var ux=dx/len, uy=dy/len;
+  var x1=a.x+ux*pad, y1=a.y+uy*pad, x2=b.x-ux*pad, y2=b.y-uy*pad;
+  var mx=(x1+x2)/2 - uy*26, my=(y1+y2)/2 + ux*26;
+  var p=document.createElementNS(NS,'path');
+  p.setAttribute('d','M'+x1+','+y1+' Q'+mx+','+my+' '+x2+','+y2);
+  p.setAttribute('fill','none');
+  p.setAttribute('stroke',COLORS[kind]||COLORS.sig);
+  p.setAttribute('stroke-width', kind==='money'?3.2:2.2);
+  if(kind==='money') p.setAttribute('stroke-linecap','round');
+  p.setAttribute('marker-end','url(#ar)');
+  gA.appendChild(p);
+}
+
+/* ---------- chips ---------- */
+var chips=document.getElementById('chips');
+SC.forEach(function(s,i){
+  var b=document.createElement('button');
+  b.className='chip'; b.type='button'; b.setAttribute('aria-pressed', i===0?'true':'false');
+  b.innerHTML='<span class="n">'+(i+1)+'</span>'+s.name;
+  b.addEventListener('click',function(){ select(i); });
+  chips.appendChild(b);
+});
+
+var cur=0, step=0, timer=null;
+
+function select(i){
+  cur=i; step=0;
+  Array.prototype.forEach.call(chips.children,function(c,j){ c.setAttribute('aria-pressed', String(j===i)); });
+  var badges=document.getElementById('badges'); badges.innerHTML='';
+  SC[i].badges.forEach(function(b){
+    var s=document.createElement('span'); s.className='b '+(b[1]||''); s.textContent=b[0]; badges.appendChild(s);
+  });
+  var risk=document.getElementById('risk'); risk.innerHTML='';
+  if(SC[i].risk){ var d=document.createElement('div'); d.className='warnbox'; d.textContent=SC[i].risk; risk.appendChild(d); }
+  render();
+  calc();
+}
+
+function render(){
+  var sc=SC[cur], st=sc.steps[step];
+  document.getElementById('stepnum').textContent='шаг '+(step+1)+' · '+sc.short;
+  document.getElementById('steptitle').textContent=st.ttl;
+  document.getElementById('stepbody').textContent=st.b;
+  document.getElementById('k-art').textContent=st.art;
+  document.getElementById('k-api').textContent=st.api;
+  document.getElementById('k-pay').textContent=st.pay;
+  document.getElementById('pos').textContent=(step+1)+' / '+sc.steps.length;
+  document.getElementById('prev').disabled = step===0;
+  document.getElementById('next').disabled = step===sc.steps.length-1;
+
+  Object.keys(nodeEls).forEach(function(k){
+    var on = (k===st.f||k===st.t);
+    nodeEls[k].classList.toggle('on',on);
+    nodeEls[k].classList.toggle('off',!on);
+  });
+  drawArrow(st.f,st.t,st.k);
+
+  document.getElementById('s-order').textContent=st.st.order;
+  document.getElementById('s-pay').textContent=st.st.pay;
+  var hold=document.getElementById('s-hold'); hold.textContent=st.st.hold;
+  hold.className='val '+(/эскроу|клиринге/.test(st.st.hold)?'hold':(/внешн|у селлера/.test(st.st.hold)&&!/выплач/.test(st.st.pay)?'risk':'none'));
+  document.getElementById('s-mand').textContent=st.st.mand;
+  document.getElementById('s-subj').textContent=sc.subject;
+}
+
+document.getElementById('prev').addEventListener('click',function(){ stop(); if(step>0){step--;render();} });
+document.getElementById('next').addEventListener('click',function(){ stop(); if(step<SC[cur].steps.length-1){step++;render();} });
+var playBtn=document.getElementById('play');
+function stop(){ if(timer){ clearInterval(timer); timer=null; playBtn.textContent='Проиграть'; } }
+playBtn.addEventListener('click',function(){
+  if(timer){ stop(); return; }
+  playBtn.textContent='Стоп';
+  if(step===SC[cur].steps.length-1) step=0;
+  render();
+  timer=setInterval(function(){
+    if(step<SC[cur].steps.length-1){ step++; render(); } else { stop(); }
+  },2600);
+});
+document.addEventListener('keydown',function(e){
+  if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
+  if(e.key==='ArrowRight'){ stop(); if(step<SC[cur].steps.length-1){step++;render();} }
+  if(e.key==='ArrowLeft'){ stop(); if(step>0){step--;render();} }
+});
+
+/* ---------- clearing calculator ---------- */
+var f=function(id){ return parseFloat(document.getElementById(id).value)||0; };
+function money(v){ return v.toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽'; }
+function calc(){
+  var goods=f('c-goods'), qty=Math.max(1,f('c-qty')), zone=parseFloat(document.getElementById('c-zone').value)||0;
+  var ffRate=f('c-ff'), orgPct=f('c-org'), fix=f('c-fix');
+  var mode=SC[cur].calc, rows=[], note='';
+  if(mode==='deal'){
+    var ffSum=ffRate*qty, org=goods*orgPct/100, total=goods+zone;
+    var seller=total-ffSum-zone-org;
+    rows=[
+      ['Платит покупатель', total, 'товары плюс доставка; сумму считает сервер'],
+      ['Сборка Системы', ffSum, 'тариф за позицию × '+qty],
+      ['Логистика', zone, 'по зоне доставки'],
+      ['Тариф Организатора', org, orgPct+' % от стоимости товаров'],
+      ['Остаток селлеру', seller, 'выплата после раскрытия эскроу']
+    ];
+    note='Сумма долей равна сумме заказа: '+money(ffSum+zone+org+seller)+' против '+money(total)+'. Расхождение здесь означало бы ошибку клиринга, а не округление.';
+    if(seller<0) note='Доли превысили сумму заказа — при таких тарифах сделка убыточна для селлера. Конфигуратор должен такую комбинацию отклонять.';
+  } else if(mode==='service'){
+    var ffSum2=ffRate*qty;
+    rows=[
+      ['Платит покупатель', goods+zone, 'напрямую селлеру, мимо контура Системы'],
+      ['Через Систему прошло', 0, 'по товару — ничего'],
+      ['Сборка', ffSum2, 'тариф за позицию × '+qty],
+      ['Логистика', zone, 'по зоне доставки'],
+      ['Счёт селлеру за услугу', ffSum2+zone, 'предмет клиринга — услуга, не сделка']
+    ];
+    note='Тариф Организатора не применяется: процент берут со сделки, а сделки в контуре не было. Отсюда и отсутствие защиты покупателя.';
+  } else {
+    rows=[
+      ['Платит покупатель', goods+zone, 'вне контура Системы'],
+      ['Комиссия Системы', fix, 'фиксированная — ст.20 запрещает процент с оборота'],
+      ['Кто платит комиссию', null, 'селлер или внешний партнёр, не покупатель']
+    ];
+    note='Ступенчатый тариф считается так же: фиксированная величина на диапазон оборота, а не доля от него. Это ограничение вшито в базу как проверка допустимых оснований тарифа.';
+  }
+  var tb=document.querySelector('#split tbody'); tb.innerHTML='';
+  rows.forEach(function(r,i){
+    var tr=document.createElement('tr');
+    if(i===0) tr.className='total';
+    tr.innerHTML='<td>'+r[0]+'</td><td class="num">'+(r[1]===null?'—':money(r[1]))+'</td><td>'+r[2]+'</td>';
+    tb.appendChild(tr);
+  });
+  document.getElementById('splitnote').textContent=note;
+}
+['c-goods','c-qty','c-zone','c-ff','c-org','c-fix'].forEach(function(id){
+  document.getElementById(id).addEventListener('input',calc);
+  document.getElementById(id).addEventListener('change',calc);
+});
+
+/* ---------- matrix ---------- */
+var MTX={
+  buyer:['ставит задачу и границы, платит, подтверждает','выбирает и платит','покупает на сайте селлера','платит селлеру напрямую','решает сам вне Системы','выбирает способ расчёта','платит один раз за всё','согласует результат, не артикул','заявляет претензию'],
+  agentB:['ведёт весь путь в рамках мандата','—','—','—','ищет, показывает, не платит','—','—','договаривается с агентом селлера','проверяется по журналу'],
+  agentS:['подбор по обеим зонам, нейтральная выдача','—','—','—','маркирует белую зону','—','—','сводит агентов','получает отметку о споре'],
+  surface:['источник данных для агента','точка входа покупателя','витрина селлера, зеркало каталога','—','каталог рынка','витрина Системы','корзина нескольких магазинов','—','—'],
+  org:['заказ, клиринг, сплит','заказ, клиринг, сплит','приём заказа с внешнего сайта','тарификация услуги','комиссия за приведённого покупателя','комиссия за канал','сплит по каждому селлеру','фиксация условий','ведёт спор, решает'],
+  agentSl:['—','—','—','—','—','—','—','ведёт переговоры в рамках селлера','—'],
+  seller:['исполняет, получает выплату','исполняет, получает выплату','продаёт у себя, рассчитывается через нас','берёт деньги сам, покупает услугу','—','берёт деньги сам','каждый исполняет своё','подтверждает возможность','сторона спора'],
+  bank:['удержание и раскрытие','удержание и раскрытие','удержание и раскрытие','—','—','—','одно удержание, много раскрытий','этапное раскрытие','возврат или раскрытие по решению'],
+  ff:['сборка и доставка по профилю','сборка и доставка по профилю','по выбору селлера','весь смысл этого типа','—','—','несколько отправлений','производство и выдача к сроку','—']
+};
+(function(){
+  var t=document.getElementById('mtx');
+  var head='<tr><th style="min-width:150px">Участник</th>'+SC.map(function(s,i){ return '<th>'+(i+1)+'. '+s.name+'</th>'; }).join('')+'</tr>';
+  var body=NODES.map(function(n){
+    return '<tr><td>'+n.t+'</td>'+MTX[n.id].map(function(c){ return '<td>'+c+'</td>'; }).join('')+'</tr>';
+  }).join('');
+  t.innerHTML='<tbody>'+head+body+'</tbody>';
+})();
+
+/* ---------- tabs ---------- */
+var tabs=[['t-flow','p-flow'],['t-matrix','p-matrix'],['t-types','p-types']];
+tabs.forEach(function(pair){
+  document.getElementById(pair[0]).addEventListener('click',function(){
+    stop();
+    tabs.forEach(function(p){
+      var sel=p[0]===pair[0];
+      document.getElementById(p[0]).setAttribute('aria-selected',String(sel));
+      document.getElementById(p[1]).hidden=!sel;
+    });
+  });
+});
+
+select(0);
+})();
+</script>
+
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script>
+
+<script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script>
+</body>
+</html>

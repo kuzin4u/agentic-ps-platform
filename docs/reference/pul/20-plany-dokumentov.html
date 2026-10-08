@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Проекты содержания девяти документов оператора</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--acc:#1f7a5a;--warn:#a35c13;--free:#7a1f6a;--ref:#1a3a8f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:16px;line-height:1.55}
+.wrap{max-width:1040px;margin:0 auto;padding:0 18px 70px}
+nav.strip{display:flex;flex-wrap:wrap;gap:4px;padding:14px 0 0}
+nav.strip a,nav.strip .cur{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 9px}
+nav.strip .cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+header.top{border-bottom:2px solid var(--ink);padding:18px 0 14px;margin-bottom:18px}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--acc);margin:0 0 6px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:29px;margin:0 0 8px;font-weight:600;line-height:1.15}
+.tagline{color:var(--ink2);margin:0;max-width:80ch}
+h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:20px;margin:30px 0 8px;font-weight:600}
+p{max-width:82ch}
+a{color:var(--ref)}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 4px}
+.bar button{font:500 12.5px 'IBM Plex Sans';background:#fff;border:1px solid var(--line);padding:6px 11px;cursor:pointer;color:var(--ink)}
+.bar button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.bar .cnt{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2)}
+button:focus-visible,a:focus-visible{outline:2px solid var(--ref);outline-offset:2px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin:10px 0 6px}
+.toc a{display:block;background:var(--card);border:1px solid var(--line);padding:9px 11px;text-decoration:none;color:var(--ink);font-size:13.6px}
+.toc a:hover{border-color:var(--ink)}
+.toc .n{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink2);display:block}
+.doc{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--acc);padding:16px 18px;margin:16px 0;scroll-margin-top:64px}
+.doc h3{margin:0 0 4px;font-size:19px}
+.doc h3 .n{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink2);margin-right:8px}
+.meta{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);margin-bottom:10px;display:flex;flex-wrap:wrap;gap:12px}
+.row{margin:8px 0;font-size:14.4px}
+.row b.lbl{display:block;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink2);font-weight:500;margin-bottom:3px}
+ul.law{margin:4px 0 0;padding-left:20px}
+ul.law li{margin:3px 0;font-size:14px}
+ol.sect{margin:8px 0 0;padding-left:0;list-style:none;counter-reset:sc}
+ol.sect > li{counter-increment:sc;margin:12px 0;padding-left:34px;position:relative}
+ol.sect > li:before{content:counter(sc);position:absolute;left:0;top:1px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink2);border:1px solid var(--line);width:24px;height:22px;display:flex;align-items:center;justify-content:center}
+ol.sect .st{font-weight:600;font-size:15px;display:block;margin-bottom:3px}
+ol.sect .sd{font-size:14.3px;margin:0}
+ol.sect .sp{font-size:13.4px;color:var(--ink2);border-left:2px solid var(--line);padding-left:9px;margin-top:6px}
+body.short ol.sect .sd, body.short ol.sect .sp{display:none}
+body.short ol.sect > li{margin:6px 0}
+.open{border-left:3px solid var(--warn);background:#fffdf5;padding:7px 11px;font-size:13.8px;margin-top:10px}
+
+table.terms{width:100%;border-collapse:collapse;background:var(--card);font-size:13.6px;margin-top:8px}
+table.terms th,table.terms td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+table.terms th{background:#ecece7;font-size:12px;font-weight:600}
+.note{font-size:13px;color:var(--ink2)}
+.keybox{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--free);padding:12px 16px;margin:16px 0}
+.keybox ul{margin:6px 0 0;padding-left:20px;font-size:14.5px}
+.keybox li{margin:6px 0}
+footer{margin-top:44px;border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+@media print{.bar,nav.strip{display:none}}
+@media(max-width:700px){h1{font-size:23px}}
+</style><link rel="icon" type="image/png" href="data:image/png;base64,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"><style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style><style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style><style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style>
+<style id="aud-css">
+#audbar{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin:14px 0 6px}
+#audbar button{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:6px 11px;cursor:pointer}
+#audbar button[aria-pressed="true"]{background:#16202a;color:#fff;border-color:#16202a}
+#audbar .cnt{font-family:'IBM Plex Mono',monospace;font-size:12px;color:#4a5a68}
+.audchips{display:inline-flex;gap:4px;margin-left:10px;vertical-align:1px}
+.audchips:before{content:"";display:inline-block;width:2px}
+.audchip{font-family:'IBM Plex Mono',monospace;font-size:10px;border:1px solid currentColor;padding:0 5px;white-space:nowrap}
+.audchip.law{color:#7a1f6a}.audchip.fin{color:#1f7a5a}.audchip.mer{color:#a35c13}.audchip.it{color:#1a3a8f}
+.audhide{display:none!important}
+.audsel{border-left-color:#1a3a8f!important;box-shadow:-2px 0 0 #1a3a8f}
+.audbadge{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#1a3a8f;border:1px solid currentColor;padding:1px 6px;margin-left:10px;white-space:nowrap;vertical-align:2px}
+@media print{.audhide{display:none!important}#audbar,#audnote{display:none}.audsel{border-left-width:4px}}
+</style>
+</head><body><div class="wrap">
+
+<nav class="strip">
+ <a href="00-ukazatel-pula.html">Указатель пула</a>
+ <a href="03-reestr-dokumentov.html#order-sanc">Санкционный порядок</a>
+ <a href="03-reestr-dokumentov.html">Реестр документов</a>
+ <a href="02-funkcii-i-roli.html">Функции и роли</a>
+ <a href="19-prezentaciya.html">Презентация</a>
+ <span class="cur" aria-current="page">Планы документов</span>
+</nav>
+
+<header class="top">
+ <p class="eyebrow">Проекты содержания · девять документов · санкционный порядок</p>
+ <h1>Что именно писать в каждом из девяти документов</h1>
+ <p class="tagline">Для каждого документа: форма акта, международные аналоги, опора на нормы российского права и развёрнутое содержание разделов — что устанавливается, какими параметрами и почему именно так. Это постановка задачи для разработки, а не готовый нормативный текст.</p>
+</header>
+
+<div class="bar">
+ <button id="full" aria-pressed="true">Развёрнуто</button>
+ <button id="brief" aria-pressed="false">Только план</button>
+ <span class="cnt">9 документов · 77 разделов</span>
+</div>
+
+
+<h2 id="terms">Термины и их соответствие международной рамке</h2>
+<p>Ниже — значения, в которых термины употребляются в планах и драфтах, и то, как они соотносятся с понятиями черновика отраслевой рамки. Соответствие важно при внешних обсуждениях: одно и то же явление в двух текстах называется по-разному.</p>
+<table class="terms"><tbody>
+<tr><th style="width:19%">У нас</th><th style="width:19%">В рамке</th><th>Значение</th></tr>
+<tr><td><b>Мандат намерения</b></td><td>Intent, open mandate</td><td>Подписанное клиентом поручение с пределами: предмет, предельная сумма, срок, допустимые получатели. Содержит границы, а не итоговые значения.</td></tr>
+<tr><td><b>Мандат корзины</b></td><td>Checkout mandate, closed mandate</td><td>Согласованный с клиентом состав и стоимость покупки со ссылкой на мандат намерения.</td></tr>
+<tr><td><b>Мандат платежа</b></td><td>Payment mandate</td><td>Разрешение на списание в установленных пределах; выдаётся при действующем мандате корзины.</td></tr>
+<tr><td><b>Пределы мандата</b></td><td>Constraints</td><td>Условия, в которых агент вправе действовать. Делятся на ограничения без состояния и с состоянием.</td></tr>
+<tr><td><b>Ограничения без состояния</b></td><td>Stateless constraints</td><td>Проверяются по данным одной операции: сумма, получатель, категория, срок. Их может оценить любой участник, у которого есть нужные сведения.</td></tr>
+<tr><td><b>Ограничения с состоянием</b></td><td>Stateful constraints</td><td>Требуют памяти о предыдущих операциях: бюджет за период, число и частота операций, одноразовость. Оценивает только сторона, ведущая состояние.</td></tr>
+<tr><td><b>Журнал согласий</b></td><td>Intent Service</td><td>Неизменяемое хранилище мандатов и их состояния с устойчивой ссылкой. Отдаёт сведения, но не оценивает исполнение и не принимает решений.</td></tr>
+<tr><td><b>Запись об исполнении</b></td><td>Fulfilment, fulfilment artefact</td><td>Итог операции: конечные значения, результат сопоставления с пределами, израсходованная позиция состояния, время и ссылка на заказ.</td></tr>
+<tr><td><b>Заказ</b></td><td>Order (unit of fulfilment)</td><td>Единица исполнения, не тождественная платёжной операции: может включать несколько платёжных событий, а одно поручение — несколько заказов.</td></tr>
+<tr><td><b>Признак агентной операции</b></td><td>Agentic Transaction Indicator</td><td>Указание на агентский характер операции вместе с кодом агента и идентификатором мандата; переносится до стадии спора.</td></tr>
+<tr><td><b>Привязка</b></td><td>Binding</td><td>Связь платёжного мандата с тем оформлением, которое одобрил клиент. Устанавливается при делегировании и повторно при исполнении.</td></tr>
+<tr><td><b>Немедленный и автономный режимы</b></td><td>Immediate / Autonomous mode</td><td>Различаются участием клиента в момент операции. Автономный переходит в немедленный, если требуется подтверждение; заказ при этом удерживается.</td></tr>
+<tr><td><b>Реестр агентов</b></td><td>Know Your Agent</td><td>Опознание агента и связанные с ним сведения. Опознание не устанавливает, что конкретная операция укладывается в поручение.</td></tr>
+<tr><td><b>Оператор агента</b></td><td>Agent operator / provider</td><td>Лицо, отвечающее за агента перед Системой. В реестр включается оно, а не программа.</td></tr>
+<tr><td><b>Принципал</b></td><td>Consumer / Cardholder</td><td>Клиент, выдавший мандат. В праве — представляемый: агент действует как его представитель.</td></tr>
+</tbody></table>
+<p class="note">Полный словарь пула — на странице <a href="25-glossariy.html">глоссария</a>; разбор самой рамки — в <a href="27-konspekt-ramki-d1.html">конспекте</a>, сверка позиций и замечания — на странице <a href="28-tezisy-i-otzyv.html">тезисов и отзыва</a>.</p>
+
+<div class="toc">
+<a href="#P1"><span class="n">шаг 1 · 9 разделов</span>Признак агентной операции</a><a href="#P2"><span class="n">шаг 2 · 10 разделов</span>Реестр агентов и подпись запроса</a><a href="#P3"><span class="n">шаг 3 · 8 разделов</span>Ограничители пользователя</a><a href="#P4"><span class="n">шаг 4 · 9 разделов</span>Ответственность за ошибку агента</a><a href="#P5"><span class="n">шаг 5 · 8 разделов</span>Требования к готовности продавца</a><a href="#P6"><span class="n">шаг 6 · 8 разделов</span>Правила партнёрства с агентными платформами</a><a href="#P7"><span class="n">шаг 7 · 10 разделов</span>Жизненный цикл намерения</a><a href="#P8"><span class="n">шаг 8 · 8 разделов</span>Репутация агента по исполнению</a><a href="#P9"><span class="n">шаг 9 · 7 разделов</span>Профиль совместимости</a>
+</div>
+
+
+<article class="doc" id="P1">
+ <h3><span class="n">шаг 1</span>Признак агентной операции</h3>
+ <div class="meta"><span>функции: <a href="02-funkcii-i-roli.html#F19">F19</a></span><span>аналоги: <a href="03-reestr-dokumentov.html#D1">D1</a></span></div>
+ <div class="row"><b class="lbl">форма акта</b>Изменения в правила платёжной системы и в альбом форматов сообщений; параллельно — аналогичный признак в быстрых платежах и в едином коде.</div>
+ <div class="row"><b class="lbl">вид и порядок принятия</b>Изменения в Правила платёжной системы «Мир» и в альбом форматов сообщений; параллельно — соответствующие изменения в документы СБП и в порядок оказания услуг по предоставлению универсального платёжного кода. Утверждаются оператором платёжной системы, направляются в Банк России в порядке, предусмотренном для изменений правил.</div>
+ <div class="row"><b class="lbl">правовая опора</b><ul class="law"><li>часть 1 статьи 20 Федерального закона от 27.06.2011 № 161-ФЗ «О национальной платёжной системе»: правила платёжной системы определяют порядок осуществления перевода и обязанности участников</li><li>статья 27 закона № 161-ФЗ и Положение Банка России от 04.06.2020 № 719-П: требования к защите информации и состав сведений об операции</li><li>приказ Банка России от 05.11.2025 № ОД-2506, действующий с 1 января 2026 года: признаки перевода без добровольного согласия клиента, включая переводы цифровых рублей, — работающий образец маркировки операции</li><li>статья 7 Федерального закона от 07.08.2001 № 115-ФЗ: состав сведений, направляемых в уполномоченный орган</li><li>Положение Банка России от 29.06.2021 № 762-П: реквизиты распоряжений о переводе денежных средств</li></ul></div>
+ <div class="row"><b class="lbl">содержание по разделам</b><ol class="sect"><li><span class="st">Термины</span><p class="sd">Вводятся четыре понятия, которые дальше не переопределяются нигде. Агент — программа, совершающая действия от имени человека в пределах выданного поручения. Оператор агента — лицо, отвечающее за агента перед Системой и включённое в реестр. Принципал — человек, выдавший поручение. Агентская операция — операция, инициированная агентом по поручению принципала.</p><p class="sp">Отдельно фиксируется, что автоматический платёж по расписанию, инициированный самим человеком заранее, агентской операцией не является: признак отличает не автоматизм, а наличие посредника, принимающего решение.</p></li><li><span class="st">Состав признака</span><p class="sd">Признак состоит из трёх элементов: булев флаг агентности, код агента из реестра и идентификатор мандата, в пределах которого совершено действие. Флаг без кода не допускается: операция, помеченная как агентская без указания опознанного агента, отклоняется как некорректная.</p><p class="sp">Параметры: флаг — 1 бит; код агента — строка фиксированной длины с пространством имён выдавшей стороны; идентификатор мандата — уникальная ссылка на запись в журнале согласий.</p></li><li><span class="st">Кто проставляет признак</span><p class="sd">Первичный источник — сторона, принимающая обращение агента: торговая точка или её эквайрер при оплате картой, банк плательщика при платеже через быстрые платежи. Эмитент вправе проставить признак самостоятельно, если распознал агентскую сессию по параметрам обращения, но обязан сохранить сведения об источнике пометки.</p></li><li><span class="st">Перенос по стадиям</span><p class="sd">Признак сопровождает операцию от авторизации до закрытия спора и не может быть удалён на промежуточных этапах. В клиринговом сообщении он передаётся без изменений, в сообщении об оспаривании — обязателен: именно он определяет, какая процедура разбора применяется.</p></li><li><span class="st">Три представления</span><p class="sd">Состав признака единый, представлений три. В карточном сообщении — дополнительное поле в структуре авторизации. В быстрых платежах — атрибут платёжного запроса. В едином коде — параметр сценария оплаты, передаваемый банку-получателю. Соответствие полей задаётся приложением к правилам, чтобы обновлять его без изменения норм.</p></li><li><span class="st">Проверка достоверности</span><p class="sd">Оператор Системы сверяет код агента с реестром на этапе авторизации. Неизвестный, приостановленный или исключённый код означает отказ с отдельным кодом ответа, отличным от отказа по лимиту или по фроду, — чтобы участники могли различать причины и не блокировать добросовестных агентов вслепую.</p></li><li><span class="st">Хранение и отчётность</span><p class="sd">Признак включается в состав сведений об операции, хранимых участником, и в выгрузки для финансового мониторинга. Срок хранения приравнивается к сроку хранения сведений об операции. Для агентских операций дополнительно хранится ссылка на запись мандата, чтобы по запросу можно было показать, кто и в каких границах поручил действие.</p></li><li><span class="st">Ответственность</span><p class="sd">Непроставление признака при известной агентской природе операции квалифицируется как нарушение правил Системы с последствиями от предупреждения до приостановки обслуживания. Искажение кода агента приравнивается к передаче недостоверных сведений об операции.</p></li><li><span class="st">Переходный период</span><p class="sd">Три очереди. Первая — участники обязаны принимать и передавать признак без обязанности его проставлять. Вторая — обязательность проставления для операций, инициированных агентами из реестра. Третья — ответственность за непроставление и обязательный отказ при неопознанном коде.</p><p class="sp">Ориентировочно по два квартала на очередь; конкретные сроки определяются возможностями участников, а не желаемой скоростью.</p></li></ol></div>
+ <div class="row"><b class="lbl">что берётся из аналога</b>Из рамки берётся сама идея отдельного индикатора агентной операции и его сквозной перенос по жизненному циклу сделки.</div>
+ <div class="row"><b class="lbl">чем отличается</b>Аналог описывает признак как атрибут карточной операции. У нас он нужен и в быстрых платежах, и в едином коде, где другая структура сообщения, поэтому состав признака задаётся один, а представление — три.</div>
+ <div class="open"><b>открытые вопросы:</b> Обязательность с даты или после накопления доли операций; наказывать ли за непроставление сразу.</div>
+</article>
+<article class="doc" id="P2">
+ <h3><span class="n">шаг 2</span>Реестр агентов и подпись запроса</h3>
+ <div class="meta"><span>функции: <a href="02-funkcii-i-roli.html#F1">F1</a> <a href="02-funkcii-i-roli.html#F2">F2</a></span><span>аналоги: <a href="03-reestr-dokumentov.html#D1">D1</a> <a href="03-reestr-dokumentov.html#D7">D7</a> <a href="03-reestr-dokumentov.html#D8">D8</a> <a href="03-reestr-dokumentov.html#D10">D10</a> <a href="03-reestr-dokumentov.html#D16">D16</a> <a href="03-reestr-dokumentov.html#D17">D17</a></span></div>
+ <div class="row"><b class="lbl">форма акта</b>Положение оператора о реестре агентов и порядке допуска плюс технический регламент подписи обращений.</div>
+ <div class="row"><b class="lbl">вид и порядок принятия</b>Положение оператора платёжной системы о реестре агентов и порядке допуска с приложением-регламентом подписи обращений. Утверждается приказом оператора, публикуется, становится обязательным через отсылку в правилах платёжной системы.</div>
+ <div class="row"><b class="lbl">правовая опора</b><ul class="law"><li>статья 20 закона № 161-ФЗ: критерии участия, порядок допуска и приостановления участия</li><li>статьи 5 и 6 Федерального закона от 06.04.2011 № 63-ФЗ: вид электронной подписи оператора агента и условия её признания</li><li>статьи 6 и 9 Федерального закона от 27.07.2006 № 152-ФЗ: основания обработки персональных данных в реестре</li><li>Положение № 719-П и ГОСТ Р 57580.1-2017: управление ключами и защита информации</li><li>Федеральный закон от 27.07.2006 № 149-ФЗ: статус реестра как информационной системы и порядок предоставления сведений</li></ul></div>
+ <div class="row"><b class="lbl">содержание по разделам</b><ol class="sect"><li><span class="st">Субъекты и распределение обязанностей</span><p class="sd">В реестр включается оператор агента — юридическое лицо, а не программа. Оператор отвечает за все экземпляры своих агентов, за сохранность ключей, за соответствие поведения заявленному назначению и за уведомление об инцидентах. Принципал в реестре не фигурирует: его связь с агентом устанавливается мандатом, а не записью в реестре.</p></li><li><span class="st">Классификация агентов</span><p class="sd">Четыре класса по назначению: агент покупателя, агент продавца, агент поверхности и служебный агент участника. Класс определяет доступные действия: агент покупателя вправе инициировать платёж в пределах мандата, агент поверхности — только получать выдачу и передавать её пользователю, служебный агент работает внутри контура участника и наружу не выходит.</p></li><li><span class="st">Порядок допуска</span><p class="sd">Заявление оператора с описанием назначения агента, модели работы, состава собираемых данных и порядка обращения с ключами. Проверка сведений, тестовый контур, присвоение кода и уровня. Отказ допускается только по основаниям из закрытого перечня, решение мотивируется. Срок рассмотрения фиксируется в положении, чтобы допуск не превращался в инструмент отбора.</p><p class="sp">Ключевой принцип: допуск не влияет на место в выдаче и не может быть условием коммерческих договорённостей.</p></li><li><span class="st">Идентификатор агента</span><p class="sd">Код выдаётся в формате «пространство имён — идентификатор — версия». Пространство имён указывает выдавшую сторону, что позже позволит признавать чужие реестры без перестройки модели. Код неизменен на всё время существования агента; смена версии отражает существенное изменение поведения и требует уведомления.</p></li><li><span class="st">Ключи и подпись обращения</span><p class="sd">Каждое обращение агента к участнику Системы подписывается ключом, зарегистрированным в реестре. Проверка подписи — на стороне принимающего участника, справочник открытых ключей публикуется Системой и обновляется в реальном времени. Предусматриваются плановая ротация, внеплановый отзыв при компрометации и период параллельного действия двух ключей.</p><p class="sp">Параметры: срок действия ключа — не более года; время распространения отзыва — минуты, а не сутки.</p></li><li><span class="st">Машинный интерфейс реестра</span><p class="sd">Реестр доступен участникам как сервис проверки: по коду агента возвращаются статус, класс, уровень, действующие ключи. Ответ кэшируется на короткий срок, при недоступности сервиса действует последнее известное состояние с ограничением по времени. Массовая выгрузка предоставляется для офлайн-проверки.</p></li><li><span class="st">Уровни допуска</span><p class="sd">Уровень определяет объём прав: чтение каталога, инициирование заказа, инициирование платежа, работа без подтверждения человеком в пределах лимита. Повышение уровня — по накопленной статистике и проверке, понижение — по инцидентам. Переход между уровнями оформляется решением с указанием оснований.</p></li><li><span class="st">Приостановка и исключение</span><p class="sd">Основания: компрометация ключей, систематический выход за границы мандатов, недостоверные сведения при допуске, отказ от взаимодействия при разборе инцидента. Приостановка действует немедленно, исключение — после процедуры с правом объяснений. Сведения о приостановке распространяются тем же каналом, что и отзыв ключа.</p></li><li><span class="st">Публикация сведений</span><p class="sd">Открыто публикуются код, класс, оператор, статус и дата допуска — этого достаточно, чтобы человек и торговая точка могли проверить агента. Технические и коммерческие сведения остаются закрытыми. Персональные данные в открытой части не публикуются.</p></li><li><span class="st">Переходные положения</span><p class="sd">До запуска реестра признаётся временный режим: агент допускается по договору участника с оператором агента с уведомлением Системы. Такие допуски перерегистрируются в течение установленного срока, после чего временный режим прекращается.</p></li></ol></div>
+ <div class="row"><b class="lbl">что берётся из аналога</b>Из протоколов сетей — идея проверяемого идентификатора агента, выдаваемого центральной стороной; из веб-практики — открытый реестр ключей и подпись каждого обращения.</div>
+ <div class="row"><b class="lbl">чем отличается</b>Иностранный реестр ключей ведёт частная инфраструктура доставки трафика, в российском контуре опираться на неё нельзя. Поэтому реестр ключей строится внутри того же положения, что и реестр агентов: одна процедура допуска, один источник истины.</div>
+ <div class="open"><b>открытые вопросы:</b> Кому выдаётся идентификатор — оператору агента или каждому экземпляру агента; нужен ли отдельный класс для служебных агентов внутри банков.</div>
+</article>
+<article class="doc" id="P3">
+ <h3><span class="n">шаг 3</span>Ограничители пользователя</h3>
+ <div class="meta"><span>функции: <a href="02-funkcii-i-roli.html#F6">F6</a></span><span>аналоги: <a href="03-reestr-dokumentov.html#D3">D3</a> <a href="03-reestr-dokumentov.html#D9">D9</a> <a href="03-reestr-dokumentov.html#D10">D10</a> <a href="03-reestr-dokumentov.html#D26">D26</a></span></div>
+ <div class="row"><b class="lbl">форма акта</b>Технические условия токенизации карт и требования к привязке счёта в быстрых платежах, плюс типовые условия для банков.</div>
+ <div class="row"><b class="lbl">вид и порядок принятия</b>Технические условия токенизации и требования к привязке счёта, а также типовые условия договора комплексного банковского обслуживания в части полномочий агента. Доводятся до клиентов банками-участниками.</div>
+ <div class="row"><b class="lbl">правовая опора</b><ul class="law"><li>статья 9 закона № 161-ФЗ: порядок использования электронного средства платежа, информирование клиента и приостановление использования</li><li>статья 5 закона № 63-ФЗ: подтверждение согласия клиента на условия ограничения</li><li>статья 10 Закона Российской Федерации от 07.02.1992 № 2300-1: доведение условий до потребителя в доступной форме</li><li>Положение № 762-П: контроль распоряжения при приёме к исполнению</li></ul></div>
+ <div class="row"><b class="lbl">содержание по разделам</b><ol class="sect"><li><span class="st">Состав ограничений</span><p class="sd">Обязательный минимум: разовая сумма, сумма за период, срок действия полномочий, перечень допустимых категорий продавцов. Дополнительно: география, конкретные продавцы, требование подтверждения человеком свыше порога. Банк обязан поддерживать обязательный минимум и вправе предложить дополнительные.</p></li><li><span class="st">Где хранится ограничение</span><p class="sd">Ограничение привязано к платёжному инструменту, а не к приложению агента: параметры живут в токене карты или в записи привязки счёта и проверяются на стороне банка. Это принципиально: агент не может обойти лимит, переустановившись или сменив канал.</p></li><li><span class="st">Установка и изменение</span><p class="sd">Ограничения задаются человеком в приложении банка или на платёжной странице при выдаче полномочий, подтверждаются тем же способом, что и распоряжение средствами. Любое изменение в сторону расширения требует подтверждения, сужение действует немедленно и без подтверждения.</p></li><li><span class="st">Проверка при авторизации</span><p class="sd">Банк проверяет лимит до списания и отказывает отдельным кодом при превышении. Код отказа по лимиту агента отличается от отказа по недостатку средств и от отказа по подозрению в мошенничестве, чтобы агент мог корректно объяснить человеку причину и не повторял попытку вслепую.</p></li><li><span class="st">Информирование</span><p class="sd">Человек уведомляется при первом использовании полномочий, при исчерпании лимита периода и при каждом отказе по лимиту. Уведомление содержит код агента и остаток лимита. Частота уведомлений настраивается, но полное их отключение не допускается.</p></li><li><span class="st">Немедленная отмена</span><p class="sd">В приложении банка предусматривается отмена полномочий агента одним действием. Отмена прекращает действие токена или привязки, отражается в реестре мандатов и распространяется до участников тем же каналом, что и отзыв ключа. Незавершённые операции, уже прошедшие авторизацию, исполняются, начатые, но не авторизованные — отклоняются.</p></li><li><span class="st">Хранение доказательств</span><p class="sd">Банк хранит состав ограничений на момент каждой операции, а не только текущий. Это необходимо для разбора спора: вопрос всегда в том, какие полномочия действовали в момент действия агента, а не сегодня.</p></li><li><span class="st">Связь с мандатом и признаком</span><p class="sd">Ограничения в платёжном инструменте и лимиты в мандате не дублируются, а соотносятся: мандат описывает намерение человека, инструмент физически не позволяет выйти за рамки. При расхождении действует меньшее из двух значений.</p></li></ol></div>
+ <div class="row"><b class="lbl">что берётся из аналога</b>Из программ сетей — сама конструкция: ограничения зашиты в платёжный инструмент, а не в приложение, и проверяются на авторизации.</div>
+ <div class="row"><b class="lbl">чем отличается</b>Опереться на агентные токены международных сетей нельзя. Механика строится на токенизации «Мира» и на привязке счёта в быстрых платежах, где лимиты и реквизиты живут в разных сущностях — значит нужен общий формат ограничения для обеих.</div>
+ <div class="open"><b>открытые вопросы:</b> Минимальный набор ограничений, обязательный к поддержке банками; допускать ли категории продавца в первой редакции.</div>
+</article>
+<article class="doc" id="P4">
+ <h3><span class="n">шаг 4</span>Ответственность за ошибку агента</h3>
+ <div class="meta"><span>функции: <a href="02-funkcii-i-roli.html#F21">F21</a></span><span>аналоги: <a href="03-reestr-dokumentov.html#D1">D1</a> <a href="03-reestr-dokumentov.html#D27">D27</a></span></div>
+ <div class="row"><b class="lbl">форма акта</b>Изменения в правила платёжной системы и модельные условия договоров банка с клиентом и с торговой точкой; при необходимости — предложения о поправках в законодательство.</div>
+ <div class="row"><b class="lbl">вид и порядок принятия</b>Изменения в правила платёжной системы и модельные условия договоров; при недостаточности договорного уровня — предложения о внесении изменений в 161-ФЗ в части квалификации операций, совершённых агентом.</div>
+ <div class="row"><b class="lbl">правовая опора</b><ul class="law"><li>статьи 182, 185, 188 и 189 Гражданского кодекса: представительство, доверенность, её прекращение и последствия для третьих лиц</li><li>статья 1005 Гражданского кодекса: агентский договор как модель отношений принципала и оператора агента</li><li>части 11–15 статьи 9 закона № 161-ФЗ: порядок возврата при операции без согласия клиента и сроки заявления требования</li><li>Федеральный закон от 24.07.2023 № 369-ФЗ: приостановление перевода и использование сведений о случаях без согласия клиента</li><li>статья 16 Закона № 2300-1, статьи 401 и 1081 Гражданского кодекса: недопустимые условия, вина и регресс</li></ul></div>
+ <div class="row"><b class="lbl">содержание по разделам</b><ol class="sect"><li><span class="st">Квалификация действия агента</span><p class="sd">Агент действует как представитель принципала в пределах полномочий, выраженных мандатом. Операция, совершённая в этих пределах, считается совершённой с добровольного согласия клиента со всеми обычными последствиями. Это отправная точка всей конструкции: спор о качестве товара отделяется от спора о полномочиях.</p></li><li><span class="st">Границы мандата и доказывание</span><p class="sd">Границы определяются мандатом на момент операции: предмет, сумма, срок, условия. Доказательствами служат запись мандата в журнале согласий и признак агентной операции с идентификатором мандата. Бремя подтверждения того, что действие было в границах, лежит на стороне, ссылающейся на мандат, — оператор агента или участник, принявший операцию.</p></li><li><span class="st">Действие в пределах мандата</span><p class="sd">Риск неудачного выбора несёт принципал: агент исполнил поручение. Претензии по товару разбираются обычным порядком, как при покупке человеком. Оператор агента отвечает лишь за качество исполнения поручения, а не за потребительские свойства товара.</p></li><li><span class="st">Действие за пределами мандата</span><p class="sd">Операция приравнивается к переводу без добровольного согласия клиента со всеми последствиями действующего порядка: заявление клиента, установленные сроки рассмотрения и возврата, участие банка плательщика. Механизм не изобретается заново — используется существующий, поскольку по существу ситуация та же: распоряжение средствами без воли владельца.</p><p class="sp">Проверка механическая: сопоставление параметров операции с записью мандата. При расхождении сумма подлежит возврату независимо от добросовестности продавца.</p></li><li><span class="st">Распределение убытков</span><p class="sd">Последовательность такая: сначала восстановление положения клиента, затем распределение между оператором агента, участником и торговой точкой по основаниям, указанным в правилах. Убыток относится на того, чьё нарушение сделало операцию возможной: непроставленный признак, неотозванный ключ, принятие операции от неопознанного агента.</p></li><li><span class="st">Сроки</span><p class="sd">Срок заявления клиента исчисляется с момента, когда он узнал или должен был узнать об операции, но не позднее общего срока, установленного для операций без согласия. Внутренние сроки разбора между участниками устанавливаются короче клиентских, чтобы возврат не откладывался на время выяснения отношений.</p></li><li><span class="st">Регресс и последствия для агента</span><p class="sd">Участник, возместивший клиенту, получает право требования к оператору агента. Систематические случаи выхода за границы мандата — самостоятельное основание для понижения уровня допуска или исключения из реестра, независимо от возмещения убытков.</p></li><li><span class="st">Страхование</span><p class="sd">Для операторов агентов, работающих без обязательного подтверждения человеком, вводится требование обеспечения: страхование ответственности или иное обеспечение, покрывающее типовой объём операций за период. Порог и размер определяются отдельно и пересматриваются по накопленной статистике.</p></li><li><span class="st">Исключения</span><p class="sd">Правило о возврате не применяется при сговоре принципала с продавцом, при умышленной передаче полномочий третьему лицу и при действиях самого принципала под видом агента. В этих случаях спор разбирается общим порядком.</p></li></ol></div>
+ <div class="row"><b class="lbl">что берётся из аналога</b>Из рамки — сама постановка вопроса об ответственности как неурегулированной; из практики сетей — перенос риска на владельца агента, но только как одна из трёх ситуаций, а не как общее правило.</div>
+ <div class="row"><b class="lbl">чем отличается</b>Ключевое отличие от карточной практики: у нас есть готовый национальный механизм для операции без добровольного согласия клиента. Действие агента вне мандата логично подводить под него, тогда возврат идёт по действующей процедуре, а не по новой.</div>
+ <div class="open"><b>открытые вопросы:</b> Нужна ли поправка в закон или достаточно правил и договоров; порог, с которого требуется страхование.</div>
+</article>
+<article class="doc" id="P5">
+ <h3><span class="n">шаг 5</span>Требования к готовности продавца</h3>
+ <div class="meta"><span>функции: <a href="02-funkcii-i-roli.html#F20">F20</a></span><span>аналоги: <a href="03-reestr-dokumentov.html#D9">D9</a></span></div>
+ <div class="row"><b class="lbl">форма акта</b>Требования оператора к торговым точкам, доводимые через эквайреров, и рекомендации для площадок.</div>
+ <div class="row"><b class="lbl">вид и порядок принятия</b>Требования оператора к торгово-сервисным предприятиям, доводимые через договоры эквайринга, и рекомендации для цифровых платформ, учитывающие вступление в силу 289-ФЗ с 01.10.2026.</div>
+ <div class="row"><b class="lbl">правовая опора</b><ul class="law"><li>статьи 8–10 и 26.1 Закона № 2300-1: обязательная информация и особенности дистанционного способа продажи</li><li>статьи 1.2 и 4.7 Федерального закона от 22.05.2003 № 54-ФЗ: применение контрольно-кассовой техники и реквизиты кассового чека</li><li>Федеральный закон от 31.07.2025 № 289-ФЗ «О платформенной экономике», вступающий в силу 1 октября 2026 года; на финансовые организации не распространяется, поэтому требования доводятся договором</li><li>статья 20 закона № 161-ФЗ: доведение требований через договор эквайринга; Федеральный закон от 23.07.2025 № 248-ФЗ: понятие универсального платёжного кода и статус оператора услуг по его предоставлению</li></ul></div>
+ <div class="row"><b class="lbl">содержание по разделам</b><ol class="sect"><li><span class="st">Машиночитаемое описание</span><p class="sd">Продавец публикует состав товара, цену с учётом всех обязательных платежей, наличие, срок передачи и условия возврата в структурированном виде, доступном без разбора визуальной страницы. Требование сформулировано к содержанию, а не к формату: конкретная схема выносится в приложение и обновляется отдельно.</p></li><li><span class="st">Равенство раскрытия</span><p class="sd">Агенту раскрывается тот же объём сведений, что и человеку, в том числе ограничения, доплаты и условия возврата. Расхождение между тем, что видит человек, и тем, что получает агент, рассматривается как введение в заблуждение.</p></li><li><span class="st">Доступ неопознанного агента</span><p class="sd">Продавец вправе ограничивать автоматические обращения, но обязан предусмотреть путь опознания: агент с действующим кодом и подписью пропускается на общих условиях. Блокировка всех автоматических обращений без возможности опознания несовместима со знаком готовности.</p></li><li><span class="st">Подтверждение человеком</span><p class="sd">Для операций свыше порога и для операций с отложенным исполнением продавец обеспечивает явное подтверждение человеком. Порог единый для рынка, чтобы продавцы не конкурировали снижением требований безопасности.</p></li><li><span class="st">Чек и закрывающие документы</span><p class="sd">Фискальный чек формирует продавец, момент расчёта определяется общим порядком. Для корзины из нескольких продавцов формируется несколько чеков, покупателю обеспечивается их совместный просмотр. Порядок фискализации вознаграждения посредников выносится отдельным пунктом и согласуется с налоговыми требованиями.</p></li><li><span class="st">Знак готовности</span><p class="sd">Соответствие требованиям подтверждается знаком, который виден в каталоге и в выдаче агента. Знак получают по заявлению через эквайрера после проверки. Наличие знака не влияет на порядок выдачи — это отметка о соответствии, а не преимущество.</p></li><li><span class="st">Проверка и приостановка</span><p class="sd">Проверка проводится при выдаче знака и выборочно после. Основания приостановки: расхождение сведений, отказ в доступе опознанным агентам, систематические отмены заказов. Приостановка снимается после устранения.</p></li><li><span class="st">Сроки по категориям</span><p class="sd">Первыми требования распространяются на торговые точки с электронной торговлей и высоким оборотом, затем на остальных. Для малых продавцов предусматривается упрощённый порядок: описание через площадку или через сервис Системы.</p></li></ol></div>
+ <div class="row"><b class="lbl">что берётся из аналога</b>Из практики сети — оценка готовности продавца и каталог проверенных участников.</div>
+ <div class="row"><b class="lbl">чем отличается</b>У сети это продукт, у нас — требование, доводимое через эквайрера. Плюс российская специфика: чек и закрывающие документы, которых в аналоге нет вовсе.</div>
+ <div class="open"><b>открытые вопросы:</b> Кто фискализирует агентскую комиссию и чей чек видит покупатель в корзине из нескольких продавцов.</div>
+</article>
+<article class="doc" id="P6">
+ <h3><span class="n">шаг 6</span>Правила партнёрства с агентными платформами</h3>
+ <div class="meta"><span>функции: <a href="02-funkcii-i-roli.html#F24">F24</a></span><span>аналоги: <a href="03-reestr-dokumentov.html#D9">D9</a> <a href="03-reestr-dokumentov.html#D10">D10</a></span></div>
+ <div class="row"><b class="lbl">форма акта</b>Типовой договор с оператором агентной платформы и правила его допуска.</div>
+ <div class="row"><b class="lbl">вид и порядок принятия</b>Правила допуска операторов агентных платформ и типовой договор присоединения. Публикуются, изменяются с предварительным уведомлением.</div>
+ <div class="row"><b class="lbl">правовая опора</b><ul class="law"><li>закон № 289-ФЗ: правила платформы, порядок их изменения, досудебное урегулирование и раскрытие условий</li><li>статья 10 Федерального закона от 26.07.2006 № 135-ФЗ: запрет навязывания и создания дискриминационных условий</li><li>законы № 152-ФЗ и № 149-ФЗ: состав передаваемых сведений, цели обработки и сроки хранения</li><li>Федеральный закон от 13.03.2006 № 38-ФЗ: требования к продвижению, если платформа его осуществляет</li></ul></div>
+ <div class="row"><b class="lbl">содержание по разделам</b><ol class="sect"><li><span class="st">Статус платформы</span><p class="sd">Агентная платформа — оператор агента, а не участник платёжной системы. Она не получает доступа к платёжной инфраструктуре и не становится стороной расчётов; её отношения с Системой ограничены допуском агентов, получением выдачи и обязанностями по раскрытию.</p></li><li><span class="st">Условия доступа</span><p class="sd">Условия публичны и едины для всех платформ одного класса. Отказ возможен только по основаниям из перечня, индивидуальные условия не допускаются. Это защищает и от упрёка в избирательности, и от попыток обменять допуск на коммерческие уступки.</p></li><li><span class="st">Запрет платного влияния</span><p class="sd">Платформа не может приобрести влияние на порядок выдачи, на решения о допуске других агентов и на показатели репутации. Плата взимается за доступ и за приведённые сделки, но не за место. Нарушение — основание немедленной приостановки.</p></li><li><span class="st">Раскрытие перед пользователем</span><p class="sd">Платформа обязана показывать человеку, действует ли предложение в периметре гарантий Системы, кто отвечает за исполнение и какова её собственная роль. Отдельно раскрывается, получает ли платформа вознаграждение от продавца.</p></li><li><span class="st">Данные</span><p class="sd">Определяется закрытый состав сведений, передаваемых платформе, запрет вторичного использования и сроки хранения. Сведения об операциях передаются в объёме, необходимом для исполнения, обезличенно там, где это возможно.</p></li><li><span class="st">Тарификация</span><p class="sd">Плата фиксированная, ступенчатая или за единицу. Доля с оборота не применяется — это сохраняет нейтральность: у Системы не возникает интереса к росту чека конкретной сделки. Изменение тарифа возможно с предварительным уведомлением и не задним числом.</p></li><li><span class="st">Ответственность</span><p class="sd">Платформа отвечает за действия своих агентов перед Системой, участвует в разборе инцидентов и обеспечивает техническую возможность приостановить своего агента. Ответственность перед потребителем определяется общим порядком и договором не сужается.</p></li><li><span class="st">Спор и приостановка</span><p class="sd">Досудебный порядок с фиксированным сроком ответа, основания и процедура приостановки, право платформы на объяснения. Приостановка агента не влечёт автоматического прекращения договора.</p></li></ol></div>
+ <div class="row"><b class="lbl">что берётся из аналога</b>Из практики сетей — прямые соглашения с ассистентами как способ довести функцию до пользователя.</div>
+ <div class="row"><b class="lbl">чем отличается</b>Контрагентами становятся национальные платформы, а рамка отношений берётся не из карточных правил, а из логики регулирования цифровых платформ: публичность условий, запрет одностороннего изменения тарифа, досудебный порядок.</div>
+ <div class="open"><b>открытые вопросы:</b> Считать ли платформу оператором поверхности с отдельным статусом или достаточно категории оператора агента.</div>
+</article>
+<article class="doc" id="P7">
+ <h3><span class="n">шаг 7</span>Жизненный цикл намерения</h3>
+ <div class="meta"><span>функции: <a href="02-funkcii-i-roli.html#F8">F8</a></span><span>аналоги: <a href="03-reestr-dokumentov.html#D1">D1</a> <a href="03-reestr-dokumentov.html#D13">D13</a></span></div>
+ <div class="row"><b class="lbl">форма акта</b>Национальный профиль поверх утверждённой отраслевой рамки и требования к хранению мандатов.</div>
+ <div class="row"><b class="lbl">вид и порядок принятия</b>Национальный профиль мандата (стандарт оператора) и требования к хранению журнала согласий; приложение к правилам платёжной системы в части проверки полномочий.</div>
+ <div class="row"><b class="lbl">правовая опора</b><ul class="law"><li>статьи 185–189 Гражданского кодекса: доверенность, срок, объём полномочий, отмена и её последствия</li><li>статьи 5 и 6 закона № 63-ФЗ; постановление Правительства от 28.11.2011 № 977 о единой системе идентификации и аутентификации; Федеральный закон от 29.12.2022 № 572-ФЗ о единой биометрической системе</li><li>статьи 9 и 18.1 закона № 152-ФЗ: согласие субъекта и меры по обеспечению безопасности</li><li>статья 7 закона № 115-ФЗ: подтверждение сведений об операции по запросу</li></ul></div>
+ <div class="row"><b class="lbl">содержание по разделам</b><ol class="sect"><li><span class="st">Три типа мандата</span><p class="sd">Намерение описывает задачу и границы: что искать, до какой суммы, к какому сроку. Корзина фиксирует конкретный состав и цену, согласованные с человеком. Платёж разрешает списание в указанных пределах. Платёж без действующей корзины не допускается, корзина без намерения — допускается только при прямом действии человека.</p></li><li><span class="st">Обязательные реквизиты</span><p class="sd">Предмет, предельная сумма, срок действия, допустимые продавцы или категории, условия исполнения, порядок отзыва, идентификатор агента и принципала. Отсутствие любого из реквизитов делает мандат недействительным: это прямая аналогия требований к доверенности.</p></li><li><span class="st">Вид подписи</span><p class="sd">Для бытовых сумм достаточно подтверждения через государственную систему идентификации или подписи, приравненной к ней договором с банком. Для крупных сумм и для длительных полномочий предусматривается усиленная подпись. Порог устанавливается единообразно, чтобы не создавать разнобой между банками.</p></li><li><span class="st">Регистрация и хранение</span><p class="sd">Мандат регистрируется в журнале согласий с неизменяемой записью и цепочкой хэшей: последующая запись подтверждает предыдущую, поэтому изменение задним числом обнаруживается. Держатель журнала определяется отдельно — Система или расчётный банк; выбор влияет на доступность записи в споре.</p></li><li><span class="st">Расходование и обновление</span><p class="sd">Мандат живёт во времени: лимит расходуется, срок истекает, состав может уточняться. Каждое изменение — новая запись со ссылкой на предыдущую. Расширение полномочий требует подтверждения человеком, сужение — нет.</p></li><li><span class="st">Отзыв</span><p class="sd">Отзыв действует по модели отмены доверенности: с момента, когда об отмене узнала или должна была узнать сторона, полагавшаяся на полномочия. Практически это означает обязанность Системы распространить сведения об отзыве немедленно, а участников — проверять состояние мандата при авторизации.</p></li><li><span class="st">Проверка третьими лицами</span><p class="sd">Банк, торговая точка и оператор агента вправе проверить действительность мандата по его идентификатору, не получая при этом содержания задачи. Ответ ограничивается фактом действительности, пределами суммы и сроком.</p></li><li><span class="st">Доказательственная сила</span><p class="sd">Запись журнала используется как доказательство в споре и при запросах надзора. Устанавливаются порядок выгрузки, состав сведений и требования к их представлению в читаемой форме.</p></li><li><span class="st">Правовая модель передачи поручения</span><p class="sd">Отдельный раздел объясняет конструкцию юристам без погружения в криптографию: агент переносит поручение, но не является его источником; проверка идёт по документу, а не по каналу; отзыв действует по модели прекращения доверенности — с момента, когда о нём узнала полагавшаяся сторона; каждому участнику раскрывается только его часть.</p><p class="sp">Здесь же оговаривается, чего в конструкции доверенности нет и что приходится добавлять: сведения о расходовании мандата. Доверенность не знает понятия остатка, поэтому состояние ведётся отдельно, вне агента, и предоставляется по запросу обслуживающего участника.</p></li><li><span class="st">Форматы и соответствие</span><p class="sd">Структура мандата описывается так, чтобы отображаться на международную рамку без потери смысла. Поля, которых нет в рамке, выносятся в расширение с явной пометкой, а расхождения фиксируются в журнале расхождений.</p></li></ol></div>
+ <div class="row"><b class="lbl">что берётся из аналога</b>Из рамки — идея намерения, живущего во времени: регистрация, обращение, обновление до, во время и после операции; из открытого протокола — разделение намерения и корзины.</div>
+ <div class="row"><b class="lbl">чем отличается</b>Российская специфика в том, что конструкция доверенности уже даёт ответы на вопросы срока, объёма и отмены. Профиль пишется так, чтобы мандат читался как доверенность в электронной форме, а не как новая сущность без правового режима.</div>
+ <div class="open"><b>открытые вопросы:</b> Достаточно ли простой подписи через государственную идентификацию для бытовых сумм или требовать усиленную.</div>
+</article>
+<article class="doc" id="P8">
+ <h3><span class="n">шаг 8</span>Репутация агента по исполнению</h3>
+ <div class="meta"><span>функции: <a href="02-funkcii-i-roli.html#F4">F4</a></span><span>аналоги: <a href="03-reestr-dokumentov.html#D7">D7</a></span></div>
+ <div class="row"><b class="lbl">форма акта</b>Методика оператора и отдельный раздел положения о реестре.</div>
+ <div class="row"><b class="lbl">вид и порядок принятия</b>Методика оценки исполнения, утверждаемая приказом оператора и публикуемая, с отсылкой из положения о реестре агентов.</div>
+ <div class="row"><b class="lbl">правовая опора</b><ul class="law"><li>статья 10 закона № 135-ФЗ: прозрачность и недискриминационность критериев</li><li>закон № 289-ФЗ: требования к прозрачности рейтингования как ближайшая применимая аналогия</li><li>статья 5 закона № 152-ФЗ: соответствие объёма данных цели обработки, обезличивание</li></ul></div>
+ <div class="row"><b class="lbl">содержание по разделам</b><ol class="sect"><li><span class="st">Показатели</span><p class="sd">Четыре группы: соблюдение границ мандата, доля споров и возвратов, исполнение сроков, устойчивость работы. Показатели описывают поведение агента, а не популярность: количество сделок само по себе не улучшает оценку.</p></li><li><span class="st">Источники данных</span><p class="sd">Данные берутся из операций с признаком агентности, из записей мандатов и из результатов разбора споров. Внешние источники не используются: оценка должна быть воспроизводима по данным Системы.</p></li><li><span class="st">Окно и веса</span><p class="sd">Скользящее окно по времени и по числу операций, чтобы редко работающий агент не получал оценку по единичному случаю. Веса публикуются, изменение весов — с уведомлением и не задним числом.</p><p class="sp">Минимальный объём для присвоения оценки устанавливается явно; до его достижения агент имеет статус «недостаточно данных».</p></li><li><span class="st">Публикация</span><p class="sd">Человек видит уровень допуска и отметку о наличии инцидентов. Торговая точка — уровень и обобщённые показатели. Детальные значения остаются у Системы и у самого оператора агента. Это защищает от превращения оценки в рекламный инструмент.</p></li><li><span class="st">Связь с допуском</span><p class="sd">Оценка влияет на уровень допуска в реестре, а не на порядок выдачи. Понижение уровня означает сужение прав, а не исключение из каталога; исключение остаётся крайней мерой с самостоятельными основаниями.</p></li><li><span class="st">Оспаривание</span><p class="sd">Оператор агента вправе запросить расшифровку расчёта и оспорить включение конкретных инцидентов. Устанавливаются сроки ответа и порядок пересчёта после успешного оспаривания.</p></li><li><span class="st">Запрет платного влияния</span><p class="sd">Ни оценка, ни её элементы не могут быть предметом сделки. Попытка приобрести влияние на показатели — самостоятельное основание для приостановки.</p></li><li><span class="st">Пересмотр методики</span><p class="sd">Методика пересматривается по расписанию, а не по обстоятельствам. Изменения публикуются заранее, ретроспективный пересчёт не проводится.</p></li></ol></div>
+ <div class="row"><b class="lbl">что берётся из аналога</b>Из совместной рамки опознания — заявленное расширение сигналов: возможности агента, поведение, качество исполнения, данные о риске.</div>
+ <div class="row"><b class="lbl">чем отличается</b>В мире это пока намерение без реализации. У нас есть шанс написать методику первыми, но только после того, как признак операции и реестр дадут данные: раньше считать нечего.</div>
+ <div class="open"><b>открытые вопросы:</b> Публиковать ли числовую оценку или только уровень; как избежать превращения оценки в товар.</div>
+</article>
+<article class="doc" id="P9">
+ <h3><span class="n">шаг 9</span>Профиль совместимости</h3>
+ <div class="meta"><span>функции: <a href="02-funkcii-i-roli.html#F25">F25</a></span><span>аналоги: <a href="03-reestr-dokumentov.html#D1">D1</a> <a href="03-reestr-dokumentov.html#D7">D7</a></span></div>
+ <div class="row"><b class="lbl">форма акта</b>Таблица соответствий и профиль обмена для двусторонних соглашений с платёжными системами дружественных юрисдикций.</div>
+ <div class="row"><b class="lbl">вид и порядок принятия</b>Профиль совместимости как приложение к межсистемным соглашениям; утверждается оператором, состав раскрывается контрагенту по соглашению.</div>
+ <div class="row"><b class="lbl">правовая опора</b><ul class="law"><li>глава 4 и статья 19 закона № 161-ФЗ: трансграничные переводы и взаимодействие с иностранными платёжными системами</li><li>межсистемные соглашения как форма закрепления взаимного признания</li><li>статья 7 закона № 115-ФЗ: идентификация при трансграничных операциях</li></ul></div>
+ <div class="row"><b class="lbl">содержание по разделам</b><ol class="sect"><li><span class="st">Соответствие терминов</span><p class="sd">Таблица переводит наши понятия в понятия рамки и обратно: агент, оператор агента, принципал, мандат, признак операции. Там, где точного соответствия нет, фиксируется ближайшее с описанием разницы — это честнее, чем подгонять определения.</p></li><li><span class="st">Сопоставление идентификаторов</span><p class="sd">Правила чтения чужого идентификатора агента и представления своего. Пространство имён, заложенное на первом шаге, здесь окупается: признание чужого реестра сводится к добавлению пространства, а не к перестройке модели.</p></li><li><span class="st">Признание чужого реестра</span><p class="sd">Условия: сопоставимая процедура допуска, доступность проверки статуса в реальном времени, обязательство уведомлять о приостановках. Объём признания может быть частичным — например, только чтение каталога без права инициировать платёж.</p></li><li><span class="st">Трансграничный мандат</span><p class="sd">Определяется, чьё право применяется к полномочиям агента, как проверяется мандат другой стороной и какой объём сведений раскрывается. По умолчанию действует право стороны принципала, если иное не установлено соглашением.</p></li><li><span class="st">Споры с внешним агентом</span><p class="sd">Порядок разбора, сроки, взаимодействие операторов реестров и правило о приостановке агента на время разбирательства. Устанавливается точка отказа: при невозможности проверить мандат операция не признаётся совершённой в его пределах.</p></li><li><span class="st">Журнал расхождений</span><p class="sd">Ведётся с первого документа: каждое сознательное отступление от рамки записывается с обоснованием и датой. При выходе новой версии рамки журнал служит планом сближения.</p></li><li><span class="st">Пересмотр профиля</span><p class="sd">Профиль пересматривается при выходе новой версии рамки и при изменении состава соглашений. Устанавливается срок реакции и порядок уведомления участников.</p></li></ol></div>
+ <div class="row"><b class="lbl">что берётся из аналога</b>Из рамки и совместной работы сетей — принцип взаимного опознания агентов при сохранении собственных процедур проверки у каждой стороны.</div>
+ <div class="row"><b class="lbl">чем отличается</b>Совместимость с международной рамкой остаётся односторонней: читаем, сверяемся, фиксируем расхождения. Взаимность возможна только там, где есть договор, поэтому профиль пишется как приложение к межсистемному соглашению.</div>
+ <div class="open"><b>открытые вопросы:</b> С какой системы начинать и что предъявлять первой: реестр агентов или признак операции.</div>
+</article>
+
+<h2>Правовая карта: акты, на которые опираются документы</h2>
+<table><tbody>
+<tr><th style="width:26%">Акт</th><th style="width:16%">Статус</th><th>Что берётся</th></tr>
+<tr><td>161-ФЗ «О национальной платёжной системе» (ред. от 09.04.2026)</td><td>действует</td><td>Правила платёжной системы и их обязательность, требования к участникам, порядок использования электронного средства платежа, возврат при операции без добровольного согласия, база данных Банка России</td></tr>
+<tr><td>248-ФЗ от 23.07.2025</td><td>в силе с 01.09.2026</td><td>Универсальный платёжный код, статус оператора, безвозмездность услуги, изменения в 161-ФЗ, Закон № 2300-I и 86-ФЗ</td></tr>
+<tr><td>Приказ Банка России № ОД-2506 от 05.11.2025</td><td>действует с 01.01.2026</td><td>Признаки перевода без добровольного согласия клиента, включая операции на платформе цифрового рубля</td></tr>
+<tr><td>115-ФЗ, ст. 3 и 9 в редакции закона от 15.12.2025</td><td>в силе с 01.09.2026</td><td>Передача НСПК сведений об операциях по «Миру», СБП и универсальному коду; запрет раскрывать факт передачи</td></tr>
+<tr><td>ГК РФ, ст. 182, 185, 188, 189, 1005, 15, 401</td><td>действует</td><td>Представительство и доверенность как правовая конструкция мандата, агентский договор, убытки и основания ответственности</td></tr>
+<tr><td>63-ФЗ «Об электронной подписи»</td><td>действует</td><td>Виды подписи, условия признания электронного документа подписанным</td></tr>
+<tr><td>289-ФЗ от 31.07.2025</td><td>в силе с 01.10.2026</td><td>Регулирование цифровых платформ: публичность условий, порядок изменения тарифов, прозрачность рейтингования; на финансовые организации не распространяется</td></tr>
+<tr><td>54-ФЗ о применении контрольно-кассовой техники</td><td>действует</td><td>Момент расчёта, состав и способ выдачи кассового чека, в том числе при оплате по универсальному коду</td></tr>
+<tr><td>Закон № 2300-I «О защите прав потребителей»</td><td>действует</td><td>Состав обязательной информации, дистанционная продажа, недопустимость сужения ответственности договором</td></tr>
+<tr><td>135-ФЗ «О защите конкуренции»</td><td>действует</td><td>Недискриминационный доступ, запрет навязывания, прозрачность критериев</td></tr>
+<tr><td>152-ФЗ, 149-ФЗ</td><td>действует</td><td>Основания обработки персональных данных, режим сведений в реестре, обезличивание при расчёте показателей</td></tr>
+<tr><td>Положение Банка России № 719-П, ГОСТ Р 57580.1-2017</td><td>действует</td><td>Требования к защите информации при переводе денежных средств и к безопасности финансовых операций</td></tr>
+</tbody></table>
+<p class="note">Редакции приведены на 16 сентября 2026 года. Перед использованием во внешних материалах состав норм и номера статей требуют сверки с действующими редакциями: часть актов вступила в силу недавно и продолжает уточняться подзаконными документами.</p>
+
+
+<h2>Юридическая рамка: чем принимается каждый документ</h2>
+<p>Девять документов — не девять законов. Восемь из них принимаются в пределах действующих полномочий оператора платёжной системы и не требуют изменения федерального законодательства; закон нужен только там, где затрагиваются права третьих лиц за пределами платёжной системы.</p>
+<table><tbody>
+<tr><th style="width:26%">Вид акта</th><th style="width:22%">Кто утверждает</th><th>Что им закрепляется</th></tr>
+<tr><td>Правила платёжной системы «Мир»</td><td>Оператор платёжной системы; изменения направляются в Банк России в порядке статьи 20 закона № 161-ФЗ</td><td>Признак агентной операции, порядок его передачи, ответственность участников, порядок оспаривания</td></tr>
+<tr><td>Правила оператора услуг по предоставлению универсального платёжного кода</td><td>Оператор услуг — статус введён Федеральным законом от 23.07.2025 № 248-ФЗ</td><td>Сценарий подтверждения агентной операции человеком на платёжной странице</td></tr>
+<tr><td>Положение оператора о реестре агентов</td><td>Внутренний акт оператора, доводится договорами с участниками</td><td>Допуск, коды, ключи, уровни, приостановление</td></tr>
+<tr><td>Технические условия и альбом форматов</td><td>Приложения к правилам</td><td>Состав полей признака, форматы сообщений, коды отказов</td></tr>
+<tr><td>Типовой договор с оператором агентной платформы</td><td>Гражданско-правовой договор</td><td>Условия доступа, запреты, данные, вознаграждение, споры</td></tr>
+<tr><td>Методика оценки исполнения</td><td>Внутренний акт с обязательной публикацией</td><td>Показатели, период, влияние на уровень допуска</td></tr>
+<tr><td>Приложение к межсистемному соглашению</td><td>Соглашение с иностранной платёжной системой</td><td>Взаимное признание реестров и трансграничные мандаты</td></tr>
+</tbody></table>
+<div class="keybox"><b>Что можно сделать без изменения закона, а что нельзя</b>
+<ul>
+<li><b>Не требует закона:</b> признак операции, реестр агентов и ключи, ограничения в платёжном инструменте, требования к торговым точкам через договор эквайринга, правила партнёрства, методика оценки, профиль совместимости.</li>
+<li><b>Требует проверки толкования:</b> распространение порядка частей 11–15 статьи 9 закона № 161-ФЗ на операции, совершённые агентом за пределами мандата. Если толкование не подтвердится, потребуется точечная поправка в закон либо прямая норма в правилах с договорным механизмом возврата.</li>
+<li><b>Не требует нового регулирования:</b> статус агента как представителя и мандата как доверенности — конструкции Гражданского кодекса применяются напрямую.</li>
+<li><b>Зависит от чужого акта:</b> условное исполнение через платформу цифрового рубля и коммерческих смарт-контрактов — правила устанавливает Банк России.</li>
+</ul></div>
+
+<h2>Общее для всех девяти</h2>
+<div class="keybox">
+<b>Сквозные требования</b>
+<ul>
+<li><b>Единый словарь.</b> Термины агент, оператор агента, принципал, мандат, агентская операция определяются один раз в документе шага 1 и дальше используются без переопределения.</li>
+<li><b>Норма отдельно от формата.</b> Правило живёт в основном тексте, а поля, коды и длины — в приложении. Это то, что позволит обновить профили при снятии ограничений, не трогая нормы.</li>
+<li><b>Пространство имён с первого дня.</b> Идентификаторы агентов выдаются с явным указанием выдавшей стороны, иначе взаимное признание чужих реестров позже потребует перестройки.</li>
+<li><b>Журнал расхождений.</b> Каждое сознательное отступление от международной рамки фиксируется с обоснованием: это будущий план сближения, написанный по ходу дела.</li>
+<li><b>Переходные периоды в каждом документе.</b> Сначала приём и передача сведений, затем обязательность, затем ответственность за нарушение.</li>
+</ul>
+</div>
+
+<footer>
+<p>Связанные материалы: <a href="03-reestr-dokumentov.html#order-sanc">порядок разработки в условиях санкций</a> · <a href="03-reestr-dokumentov.html#order-after">переход после снятия</a> · <a href="01-ierarhiya-tranzakcii.html">иерархия транзакции</a> · <a href="18-svyazka.html">сквозная связка</a></p>
+<p class="note">Ссылки на нормы даны описательно, без номеров пунктов: материал предназначен для постановки задачи юристам и не заменяет юридического заключения. Пороговые значения и сроки приведены как ориентиры и подлежат обоснованию расчётом.</p>
+<div id="pool-logo">
+ <img src="data:image/png;base64,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" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a> · <a href="18-svyazka.html">сквозная связка</a></div>
+</div></footer>
+
+</div>
+<script>
+(function(){
+ var f=document.getElementById('full'), b=document.getElementById('brief');
+ function set(short){
+  document.body.classList.toggle('short',short);
+  f.setAttribute('aria-pressed',String(!short));
+  b.setAttribute('aria-pressed',String(short));
+ }
+ f.addEventListener('click',function(){set(false);});
+ b.addEventListener('click',function(){set(true);});
+})();
+</script>
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script><script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  if(e.classList && e.classList.contains('audhide')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')||e.closest('#audbar')) return;
+   if(e.closest('.audhide')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script>
+<script id="aud-js">
+(function(){
+ var RULES=[
+  ['law','Юристам',/(закон|кодекс|стать[яи]|ответственн|доверенн|полномоч|недействит|оспарив|спор|претенз|регресс|прекращен|переходн[ыи]|квалификац|договор|исключен|обязательств|права потребител)/i],
+  ['fin','Финансистам',/(тариф|вознагражд|комисси|лимит|сумм|расчёт|расчет|клиринг|убытк|возврат средств|обеспечен|страхован|оборот|стоимост|выплат|доля|платёжн|списани)/i],
+  ['mer','Продавцам',/(продав|торгово-сервисн|витрин|каталог|чек|товар|доставк|заказ|покупател|площадк|ассортимент|знак готовности|предприяти|ккт|кассов)/i],
+  ['it','Технологам',/(формат|альбом|поле |полей|ключ|подпис|интерфейс|сообщени|идемпотент|токен|шлюз|хэш|машиночитаем|структур|техническ|протокол|api|реквизит[ыа] распоряж)/i]
+ ];
+ var LABEL={law:'юристам',fin:'финансистам',mer:'продавцам',it:'технологам'};
+ var units=[].slice.call(document.querySelectorAll('ol.sect > li, article.draft .sec'));
+ if(!units.length) return;
+ units.forEach(function(u){
+  var t=(u.textContent||'');
+  var tags=RULES.filter(function(r){return r[2].test(t);}).map(function(r){return r[0];});
+  if(!tags.length){
+   var h=(u.querySelector('.st, h4')||{}).textContent||'';
+   tags=[/(формат|код|ключ|подпис|структур)/i.test(h)?'it':/(тариф|сумм|расчёт|вознагражд)/i.test(h)?'fin':/(продав|товар|витрин|заказ)/i.test(h)?'mer':'law'];
+  }
+  u.dataset.aud=tags.join(' ');
+  var box=document.createElement('span'); box.className='audchips';
+  tags.forEach(function(g){
+   var r=RULES.filter(function(x){return x[0]===g;})[0];
+   var c=document.createElement('span'); c.className='audchip '+g; c.textContent=r[1].slice(0,4).toLowerCase(); c.title=r[1];
+   box.appendChild(c);
+  });
+  var head=u.querySelector('.st, h4');
+  if(head) head.appendChild(box);
+ });
+ var bar=document.createElement('div'); bar.id='audbar';
+ var lbl=document.createElement('span'); lbl.className='cnt'; lbl.textContent='кому адресовано:'; bar.appendChild(lbl);
+ var cnt=document.createElement('span'); cnt.className='cnt';
+ var cur='all';
+ [['all','Все']].concat(RULES.map(function(r){return [r[0],r[1]];})).forEach(function(d){
+  var b=document.createElement('button'); b.type='button'; b.textContent=d[1];
+  b.setAttribute('aria-pressed',String(d[0]==='all'));
+  b.addEventListener('click',function(){
+   cur=d[0];
+   [].forEach.call(bar.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed',String(x===b));});
+   apply();
+  });
+  bar.appendChild(b);
+ });
+ var pbtn=document.createElement('button'); pbtn.type='button'; pbtn.textContent='Печать подборки'; pbtn.style.display='none';
+ pbtn.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+ var wbtn=document.createElement('button'); wbtn.type='button'; wbtn.textContent='Выгрузить подборку в Word'; wbtn.style.display='none';
+ wbtn.addEventListener('click',function(){
+  var t=[].slice.call(document.querySelectorAll('#pool-tools button')).filter(function(b){return b.textContent.indexOf('Word')>=0;})[0];
+  if(t) t.click();
+ });
+ bar.appendChild(pbtn); bar.appendChild(wbtn); bar.appendChild(cnt);
+ function apply(){
+  var shown=0;
+  units.forEach(function(u){
+   var ok = cur==='all' || (u.dataset.aud||'').split(' ').indexOf(cur)>=0;
+   u.classList.toggle('audhide',!ok); if(ok) shown++;
+  });
+  var docs=0;
+  [].forEach.call(document.querySelectorAll('article.doc, article.draft'),function(a){
+   var total=a.querySelectorAll('ol.sect > li, .sec').length;
+   var vis=a.querySelectorAll('ol.sect > li:not(.audhide), .sec:not(.audhide)').length;
+   a.classList.toggle('audhide', cur!=='all' && vis===0);
+   a.classList.toggle('audsel', cur!=='all' && vis>0);
+   var badge=a.querySelector('.audbadge');
+   if(cur==='all'){ if(badge) badge.remove(); }
+   else if(vis>0){
+    if(!badge){ badge=document.createElement('span'); badge.className='audbadge'; a.querySelector('h3').appendChild(badge); }
+    badge.textContent=LABEL[cur]+': '+vis+' из '+total+' разд.';
+   } else if(badge) badge.remove();
+   if(vis>0) docs++;
+  });
+  cnt.textContent = cur==='all' ? ('показано '+shown+' из '+units.length+' разделов')
+   : ('подборка: '+docs+' документов, '+shown+' разделов из '+units.length);
+  pbtn.style.display = cur==='all' ? 'none' : '';
+  wbtn.style.display = cur==='all' ? 'none' : '';
+ }
+ var note=document.createElement('p');
+ note.className='note'; note.id='audnote';
+ note.textContent='Переключатель оставляет разделы, относящиеся к выбранной специальности; раздел может адресоваться нескольким сразу — это показано пометками у заголовка. Выбранная подборка выделяется у документов и может быть распечатана или выгружена в Word кнопками рядом. Разметка ориентировочная и служит навигацией.';
+ var anchor=document.querySelector('.toc')||document.querySelector('h1');
+ anchor.parentNode.insertBefore(bar, anchor);
+ anchor.parentNode.insertBefore(note, anchor);
+ apply();
+})();
+</script>
+</body></html>

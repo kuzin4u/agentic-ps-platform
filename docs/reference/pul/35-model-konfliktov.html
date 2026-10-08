@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Модель конфликтов: как проходит агентная транзакция при сбоях</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#16202a;--ink2:#4a5a68;--paper:#f6f6f3;--card:#fff;--line:#dcdcd4;--ok:#1f7a5a;--stop:#a32a2a;--hold:#a35c13;--warn:#b07a00;--ret:#1a3a8f;--open:#7a1f6a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:15px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding:0 18px 70px}
+nav.strip{display:flex;flex-wrap:wrap;gap:4px;padding:14px 0 0}
+nav.strip a,nav.strip .cur{font:500 12.5px 'IBM Plex Sans';text-decoration:none;color:var(--ink2);border:1px solid var(--line);background:#fff;padding:5px 9px}
+nav.strip .cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+header.top{border-bottom:2px solid var(--ink);padding:18px 0 14px;margin-bottom:12px}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ok);margin:0 0 6px}
+h1{font-family:'IBM Plex Serif',Georgia,serif;font-size:27px;margin:0 0 8px;font-weight:600;line-height:1.15}
+.tagline{color:var(--ink2);margin:0;max-width:86ch}
+a{color:#1a3a8f}
+.lane{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:14px 0 6px}
+.stg{background:var(--card);border:2px solid var(--line);padding:9px 8px;min-height:84px;position:relative;transition:background .25s,border-color .25s}
+.stg .n{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink2)}
+.stg .t{font-weight:600;font-size:13.5px}
+.stg .m{font-size:11.5px;margin-top:4px;color:var(--ink2)}
+.stg.cur{border-color:var(--ink);box-shadow:0 0 0 2px var(--ink) inset}
+.stg.ok{background:#eef6f1;border-color:var(--ok)}
+.stg.stop{background:#fbeeee;border-color:var(--stop)}
+.stg.hold{background:#fdf4e8;border-color:var(--hold)}
+.stg.warn{background:#fdf8e6;border-color:var(--warn)}
+.stg.ret{background:#eef1f9;border-color:var(--ret)}
+.stg.open{background:#f6eef5;border-color:var(--open)}
+.stg.trig:after{content:"⚡";position:absolute;top:6px;right:8px;font-size:14px}
+.grid{display:grid;grid-template-columns:330px 1fr;gap:14px;margin-top:12px}
+.panel{background:var(--card);border:1px solid var(--line);padding:13px 15px}
+.panel h2{font-family:'IBM Plex Serif',Georgia,serif;font-size:17px;margin:0 0 8px}
+.klist{max-height:430px;overflow:auto;border:1px solid var(--line)}
+.kgrp{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink2);background:#f1f1ec;padding:4px 8px}
+.kitem{display:flex;gap:8px;padding:6px 8px;border-top:1px solid var(--line);cursor:pointer;font-size:13.3px;align-items:baseline}
+.kitem:hover{background:#f7f7f3}
+.kitem.sel{background:#16202a;color:#fff}
+.kitem .c{font-family:'IBM Plex Mono',monospace;font-size:11px;flex:none;width:30px}
+.mode{display:flex;gap:6px;margin:10px 0}
+.mode button,.ctrl button,.vars button{font:500 12.5px 'IBM Plex Sans';background:#fff;border:1px solid var(--line);padding:6px 10px;cursor:pointer;color:var(--ink)}
+.mode button[aria-pressed="true"],.vars button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.ctrl{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.panel .hdr{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.panel .hdr h2{margin:0}
+.panel .hdr .ctrl{margin:0 0 0 auto}
+
+.ctrl button.go{background:var(--ok);color:#fff;border-color:var(--ok)}
+button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+.trig{font-size:13.6px;border-left:3px solid var(--stop);padding:6px 10px;background:#fbf6f6;margin:8px 0}
+.vars{margin-top:8px}
+.vars .l{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink2);display:block;margin-bottom:4px}
+.vars button{margin:0 4px 4px 0}
+.state{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
+.state div{border:1px solid var(--line);padding:7px 9px}
+.state .l{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink2)}
+.state .v{font-weight:600;font-size:14px}
+.log{list-style:none;margin:0;padding:0;max-height:300px;overflow:auto}
+.log li{padding:6px 8px 6px 12px;border-left:4px solid var(--line);margin:4px 0;font-size:13.6px;background:#fafaf7}
+.log li .lk{display:block;margin-top:3px;font-size:12px;color:var(--ink2)}
+.log li .lk a{font-family:'IBM Plex Mono',monospace;font-size:11px;text-decoration:none;border-bottom:1px dotted currentColor}
+.log li .lk b{font-weight:600;color:var(--ink)}
+.log li .nx{display:block;margin-top:2px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8a8a80}
+.stg a.op{display:block;margin-top:5px;font-size:11px;line-height:1.3;color:#1a3a8f;text-decoration:none;border-top:1px dotted var(--line);padding-top:4px}
+.stg a.op:hover{text-decoration:underline}
+.log li .s{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink2);margin-right:6px}
+.log li.ok{border-left-color:var(--ok)}.log li.stop{border-left-color:var(--stop)}.log li.hold{border-left-color:var(--hold)}
+.log li.warn{border-left-color:var(--warn)}.log li.ret{border-left-color:var(--ret)}.log li.open{border-left-color:var(--open)}
+.log li.k{background:#fbf6f6;font-weight:600}
+.final{margin-top:12px;padding:12px 15px;border:2px solid var(--line);display:none}
+.final.on{display:block}
+.final.ok{border-color:var(--ok);background:#eef6f1}.final.stop{border-color:var(--stop);background:#fbeeee}
+.final.hold{border-color:var(--hold);background:#fdf4e8}.final.warn{border-color:var(--warn);background:#fdf8e6}
+.final.ret{border-color:var(--ret);background:#eef1f9}.final.open{border-color:var(--open);background:#f6eef5}
+.final b.h{display:block;font-size:15.5px;margin-bottom:4px}
+.final .row{font-size:13.6px;margin:3px 0}
+.final .row a{font-family:'IBM Plex Mono',monospace;font-size:12px}
+.final .row span{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink2);margin-right:6px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--ink2);margin:4px 0 0}
+.legend i{display:inline-block;width:12px;height:12px;margin-right:4px;vertical-align:-1px;border:2px solid}
+.compare{margin-top:14px}
+.compare table{width:100%;border-collapse:collapse;font-size:13px;background:var(--card)}
+.compare th,.compare td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+.compare th{background:#ecece7;font-size:11.5px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+footer{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.lane{grid-template-columns:repeat(4,1fr)}.state{grid-template-columns:1fr}h1{font-size:22px}}
+</style><link rel="icon" type="image/png" href="data:image/png;base64,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"><style id="backlink-css">
+#backbar{position:sticky;top:0;z-index:50;background:rgba(246,246,243,.94);backdrop-filter:blur(3px);
+ border-bottom:1px solid #dcdcd4;margin:0 -18px 0;padding:7px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#backbar a{font:500 12.5px 'IBM Plex Sans',system-ui,sans-serif;text-decoration:none;color:#16202a;
+ border:1px solid #dcdcd4;background:#fff;padding:5px 10px}
+#backbar a:hover{border-color:#16202a}
+#backbar .cur{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a68;margin-left:auto}
+@media print{#backbar{display:none}}
+</style><style id="pool-logo-css">
+#pool-logo{display:flex;align-items:center;gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid #dcdcd4;
+ font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8a8a80;letter-spacing:.02em}
+#pool-logo img{width:34px;height:auto;opacity:.55;transition:opacity .2s;flex:none}
+#pool-logo:hover img{opacity:1}
+#pool-logo .t{line-height:1.5}
+#pool-logo .t b{display:block;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:12.5px;font-weight:600;color:#4a5a68;letter-spacing:0}
+#pool-logo a{color:#8a8a80;text-decoration:none;border-bottom:1px dotted currentColor}
+#pool-logo a:hover{color:#16202a}
+@media print{#pool-logo img{opacity:1}}
+</style><style id="pool-tools-css">
+#pool-tools{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+#pool-tools button{font:500 12px 'IBM Plex Sans',system-ui,sans-serif;background:#fff;border:1px solid #dcdcd4;color:#16202a;padding:5px 9px;cursor:pointer}
+#pool-tools button:hover{border-color:#16202a}
+#pool-tools button:focus-visible{outline:2px solid #1a3a8f;outline-offset:2px}
+#pool-tools .ok{color:#1f7a5a;border-color:#1f7a5a}
+#backbar .cur{margin-left:12px}
+@media print{
+ #backbar,#pool-tools,nav.strip,.controls,.bar,.tabs,.filters,.chips,.presets,.nav,.topbar,#idxctl,#idxsub,#ctl,#zf,#order .tabs{display:none!important}
+ .pane[hidden],.pane{display:block!important}
+ .slide{display:block!important;page-break-after:always}
+ body.short ol.sect .sd, body.short ol.sect .sp{display:block!important}
+ .list{max-height:none!important;overflow:visible!important}
+ a[href]{text-decoration:none;color:#16202a}
+ .doc,.draft,.step,.node{break-inside:avoid}
+}
+</style></head><body><div class="wrap">
+
+<nav class="strip">
+ <a href="00-ukazatel-pula.html">Указатель пула</a>
+ <a href="29-konflikty.html">Конфликты по стадиям</a>
+ <a href="24-scenariy-operacii.html">Сквозной пример</a>
+ <a href="30-otkrytye-pozicii.html">Открытые позиции</a>
+ <a href="21-drafty-dokumentov.html">Драфты</a>
+ <span class="cur" aria-current="page">Модель конфликтов</span>
+</nav>
+
+<header class="top">
+ <p class="eyebrow">интерактивная модель · 20 конфликтов · два режима · восемь стадий</p>
+ <h1>Как проходит агентная транзакция, когда что-то ломается</h1>
+ <p class="tagline">Выберите конфликт и режим: с нашими нормами или без них. Транзакция пройдёт по стадиям, и видно будет, где она остановится, удержится, уйдёт в возврат или в спор, на ком окажется риск и каким пунктом документа это решено. Для нерешённых конфликтов можно выбрать вариант решения и посмотреть, как меняется исход.</p>
+</header>
+
+<div class="lane" id="lane">
+<div class="stg" data-i="0"><div class="n">стадия 0</div><div class="t">Допуск</div><div class="m" id="m0">—</div><a class="op" href="24-scenariy-operacii.html#stage-0" title="операции стадии в сквозном примере">Проверка агента в реестре</a></div><div class="stg" data-i="1"><div class="n">стадия 1</div><div class="t">Поручение</div><div class="m" id="m1">—</div><a class="op" href="24-scenariy-operacii.html#stage-1" title="операции стадии в сквозном примере">Мандат намерения и ограничения</a></div><div class="stg" data-i="2"><div class="n">стадия 2</div><div class="t">Поиск</div><div class="m" id="m2">—</div><a class="op" href="24-scenariy-operacii.html#stage-2" title="операции стадии в сквозном примере">Запрос каталога витрины</a></div><div class="stg" data-i="3"><div class="n">стадия 3</div><div class="t">Заказ</div><div class="m" id="m3">—</div><a class="op" href="24-scenariy-operacii.html#stage-3" title="операции стадии в сквозном примере">Мандат корзины и заказ</a></div><div class="stg" data-i="4"><div class="n">стадия 4</div><div class="t">Подтверждение</div><div class="m" id="m4">—</div><a class="op" href="24-scenariy-operacii.html#stage-4" title="операции стадии в сквозном примере">Передача признака агентной операции</a></div><div class="stg" data-i="5"><div class="n">стадия 5</div><div class="t">Авторизация</div><div class="m" id="m5">—</div><a class="op" href="24-scenariy-operacii.html#stage-5" title="операции стадии в сквозном примере">Проверка пределов и авторизация</a></div><div class="stg" data-i="6"><div class="n">стадия 6</div><div class="t">Расчёт</div><div class="m" id="m6">—</div><a class="op" href="24-scenariy-operacii.html#stage-6" title="операции стадии в сквозном примере">Клиринг и кассовый чек</a></div><div class="stg" data-i="7"><div class="n">стадия 7</div><div class="t">После сделки</div><div class="m" id="m7">—</div><a class="op" href="24-scenariy-operacii.html#stage-7" title="операции стадии в сквозном примере">Запись об исполнении и отчёт</a></div>
+</div>
+<div class="legend">
+ <span><i style="border-color:var(--ok);background:#eef6f1"></i>прошла</span>
+ <span><i style="border-color:var(--hold);background:#fdf4e8"></i>удержание</span>
+ <span><i style="border-color:var(--warn);background:#fdf8e6"></i>с риском</span>
+ <span><i style="border-color:var(--ret);background:#eef1f9"></i>возврат</span>
+ <span><i style="border-color:var(--stop);background:#fbeeee"></i>остановлена</span>
+ <span><i style="border-color:var(--open);background:#f6eef5"></i>не решено</span>
+ <span>⚡ место конфликта</span>
+</div>
+
+<div class="grid">
+ <div class="panel">
+  <h2>Конфликт</h2>
+  <div class="klist" id="klist">
+   <div class="kgrp">стадия 0 · Допуск</div><div class="kitem" id="k1" data-c="К1" tabindex="0" role="button"><span class="c">К1</span><span>Отказ в допуске агента</span></div><div class="kgrp">стадия 1 · Поручение</div><div class="kitem" id="k3" data-c="К3" tabindex="0" role="button"><span class="c">К3</span><span>Агент понял поручение не так</span></div><div class="kitem" id="k4" data-c="К4" tabindex="0" role="button"><span class="c">К4</span><span>Слишком широкий мандат</span></div><div class="kitem" id="k5" data-c="К5" tabindex="0" role="button"><span class="c">К5</span><span>Нет держателя журнала согласий</span></div><div class="kgrp">стадия 2 · Поиск</div><div class="kitem" id="k2" data-c="К2" tabindex="0" role="button"><span class="c">К2</span><span>Витрина блокирует агента</span></div><div class="kitem" id="k6" data-c="К6" tabindex="0" role="button"><span class="c">К6</span><span>Платное влияние на выдачу</span></div><div class="kitem" id="k7" data-c="К7" tabindex="0" role="button"><span class="c">К7</span><span>Агенту показано иное, чем человеку</span></div><div class="kgrp">стадия 3 · Заказ</div><div class="kitem" id="k8" data-c="К8" tabindex="0" role="button"><span class="c">К8</span><span>Цена изменилась после согласования</span></div><div class="kitem" id="k9" data-c="К9" tabindex="0" role="button"><span class="c">К9</span><span>Корзина из нескольких продавцов</span></div><div class="kgrp">стадия 4 · Подтверждение</div><div class="kitem" id="k10" data-c="К10" tabindex="0" role="button"><span class="c">К10</span><span>Дробление суммы ради обхода порога</span></div><div class="kitem" id="k11" data-c="К11" tabindex="0" role="button"><span class="c">К11</span><span>Порог подтверждения выбран неудачно</span></div><div class="kgrp">стадия 5 · Авторизация</div><div class="kitem" id="k12" data-c="К12" tabindex="0" role="button"><span class="c">К12</span><span>Состояние недоступно</span></div><div class="kitem" id="k13" data-c="К13" tabindex="0" role="button"><span class="c">К13</span><span>Нераспознанный тип ограничения</span></div><div class="kitem" id="k14" data-c="К14" tabindex="0" role="button"><span class="c">К14</span><span>Антифрод принимает агента за мошенника</span></div><div class="kgrp">стадия 6 · Расчёт</div><div class="kitem" id="k15" data-c="К15" tabindex="0" role="button"><span class="c">К15</span><span>Чек и вознаграждение посредников</span></div><div class="kitem" id="k16" data-c="К16" tabindex="0" role="button"><span class="c">К16</span><span>Возврат при частичном исполнении</span></div><div class="kgrp">стадия 7 · После сделки</div><div class="kitem" id="k17" data-c="К17" tabindex="0" role="button"><span class="c">К17</span><span>Товар не тот, но мандат соблюдён</span></div><div class="kitem" id="k18" data-c="К18" tabindex="0" role="button"><span class="c">К18</span><span>Оператор агента не может возместить</span></div><div class="kitem" id="k19" data-c="К19" tabindex="0" role="button"><span class="c">К19</span><span>Оператор агента оспаривает оценку</span></div><div class="kitem" id="k20" data-c="К20" tabindex="0" role="button"><span class="c">К20</span><span>Доказательства спустя месяцы</span></div>
+  </div>
+  <div class="mode" id="mode">
+   <button data-m="norm" aria-pressed="true">С нашими нормами</button>
+   <button data-m="bare" aria-pressed="false">Без норм</button>
+  </div>
+  <div id="ktrig" class="trig">Выберите конфликт в списке.</div>
+  <div class="vars" id="vars"></div>
+ </div>
+
+ <div class="panel">
+  <div class="hdr"><h2>Ход транзакции</h2><div class="ctrl">
+   <button class="go" id="run">▶ Пуск</button>
+   <button id="step">Шаг</button>
+   <button id="reset">Сброс</button>
+  </div></div>
+  <div class="state">
+   <div><div class="l">деньги</div><div class="v" id="sMoney">не списаны</div></div>
+   <div><div class="l">риск на ком</div><div class="v" id="sRisk">—</div></div>
+   <div><div class="l">стадия</div><div class="v" id="sStage">—</div></div>
+  </div>
+  <ol class="log" id="log"></ol>
+  <div class="final" id="final"></div>
+ </div>
+</div>
+
+<div class="compare panel">
+ <h2>Сравнение: что дают нормы</h2>
+ <p class="note" style="font-size:13px;color:var(--ink2)">Итог каждого конфликта в двух режимах. Цвет точки — исход: зелёный — сделка прошла, оранжевый — удержание, синий — возврат, красный — остановка или убыток, фиолетовый — не решено.</p>
+ <table><tbody>
+ <tr><th style="width:44px">Код</th><th style="width:22%">Конфликт</th><th>С нашими нормами</th><th>Без норм</th><th style="width:12%">Решено в</th></tr>
+ <tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К1</td><td><b>Отказ в допуске агента</b></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Сделка не начинается. Оператор агента исправляет недостаток и подаёт повторно. <span style="color:var(--ink2)">Риск: оператор агента.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Сделка не начинается, а доступ на рынок становится рычагом влияния. <span style="color:var(--ink2)">Риск: рынок в целом.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A2">A2 п. 3.1–3.4</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К2</td><td><b>Витрина блокирует агента</b></td>
+  <td><span class="dot" style="background:var(--ok)"></span>Сделка идёт дальше обычным порядком. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Поиск сорван, рынок для агентов распадается на произвольные участки. <span style="color:var(--ink2)">Риск: потребитель и продавец.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A5">A5 п. 2.1–2.2</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К3</td><td><b>Агент понял поручение не так</b></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Ошибка перехвачена до списания на этапе корзины. <span style="color:var(--ink2)">Риск: никто.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Деньги списаны за то, чего клиент не хотел; оснований для возврата нет. <span style="color:var(--ink2)">Риск: клиент.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A7">A7 п. 2</a>; ТЗ Т3</td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К4</td><td><b>Слишком широкий мандат</b></td>
+  <td><span class="dot" style="background:var(--ok)"></span>Свобода клиента сохранена, риск ограничен подтверждением. <span style="color:var(--ink2)">Риск: распределён.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Спор о пределах воли при формально действительном мандате. <span style="color:var(--ink2)">Риск: банк плательщика.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A7">A7 п. 3.2</a>; <a href="21-drafty-dokumentov.html#A5">A5 п. 3.1</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К5</td><td><b>Нет держателя журнала согласий</b></td>
+  <td><span class="dot" style="background:var(--ok)"></span>Проверка возможна, сделка идёт дальше. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--open)"></span>Проверка невозможна: либо отказ, либо действие на веру. <span style="color:var(--ink2)">Риск: неясно.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A7">A7 п. 4.3</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К6</td><td><b>Платное влияние на выдачу</b></td>
+  <td><span class="dot" style="background:var(--ok)"></span>Выдача остаётся нейтральной; платформа несёт последствия нарушения. <span style="color:var(--ink2)">Риск: платформа.</span></td>
+  <td><span class="dot" style="background:var(--warn)"></span>Формально всё законно, по существу клиент переплатил. <span style="color:var(--ink2)">Риск: клиент.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A6">A6 п. 2–3</a>; <a href="21-drafty-dokumentov.html#A8">A8 п. 5.3</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К7</td><td><b>Агенту показано иное, чем человеку</b></td>
+  <td><span class="dot" style="background:var(--warn)"></span>Нарушение наказуемо, но выявляется постфактум. <span style="color:var(--ink2)">Риск: продавец.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Клиент платит больше, чем согласовал, не понимая почему. <span style="color:var(--ink2)">Риск: клиент.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A5">A5 п. 1, 5.3</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К8</td><td><b>Цена изменилась после согласования</b></td>
+  <td><span class="dot" style="background:var(--hold)"></span>Исполнение по новой цене только после подтверждения; при истечении срока заказ прекращается. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Спор о том, на что клиент соглашался. <span style="color:var(--ink2)">Риск: продавец и клиент.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A7">A7 п. 5.2, 7.2–7.3</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К9</td><td><b>Корзина из нескольких продавцов</b></td>
+  <td><span class="dot" style="background:var(--ok)"></span>Сделка состоялась частично, без лишних списаний. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--warn)"></span>Лишнее списание и ручной возврат. <span style="color:var(--ink2)">Риск: банк и клиент.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A1">A1 п. 6.3</a>; <a href="21-drafty-dokumentov.html#A5">A5 п. 4.2</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К10</td><td><b>Дробление суммы ради обхода порога</b></td>
+  <td><span class="dot" style="background:var(--hold)"></span>Обход не удался: решение принимает человек. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Порог подтверждения обойдён. <span style="color:var(--ink2)">Риск: банк плательщика.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A3">A3 п. 4.1–4.4</a>; <a href="22-tz-agent-platforma.html">сценарий П13</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К11</td><td><b>Порог подтверждения выбран неудачно</b></td>
+  <td><span class="dot" style="background:var(--open)"></span>Механизм есть, значения нет — оно считается, а не назначается. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Безопасность становится предметом конкуренции. <span style="color:var(--ink2)">Риск: банки.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A5">A5 п. 3.1</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К12</td><td><b>Состояние недоступно</b></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Безопасный отказ: перерасход исключён ценой срыва сделки. <span style="color:var(--ink2)">Риск: сделка откладывается.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Перерасход бюджета при действительном мандате. <span style="color:var(--ink2)">Риск: банк плательщика.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A3">A3 п. 4.5</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К13</td><td><b>Нераспознанный тип ограничения</b></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Предсказуемый отказ, одинаковый у всех участников. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Разные выводы по одному мандату; убыток у продавца. <span style="color:var(--ink2)">Риск: продавец.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A3">A3 п. 4.5</a>; <a href="28-tezisy-i-otzyv.html">замечание 03</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К14</td><td><b>Антифрод принимает агента за мошенника</b></td>
+  <td><span class="dot" style="background:var(--ok)"></span>Ложные отказы измеряются и снижаются по мере накопления данных. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Добросовестная сделка сорвана, счёт клиента заблокирован. <span style="color:var(--ink2)">Риск: клиент.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A1">A1 п. 3.1</a>; <a href="26-programma-rabot.html">риск Р7</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К15</td><td><b>Чек и вознаграждение посредников</b></td>
+  <td><span class="dot" style="background:var(--open)"></span>Расчёт проходит; фискальный вопрос по вознаграждению остаётся. <span style="color:var(--ink2)">Риск: платформа.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Нарушение кассовой дисциплины. <span style="color:var(--ink2)">Риск: продавцы.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A5">A5 п. 4</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К16</td><td><b>Возврат при частичном исполнении</b></td>
+  <td><span class="dot" style="background:var(--ret)"></span>Клиент получает деньги за неисполненное без отмены всего поручения. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--warn)"></span>Поручение приходится выдавать заново. <span style="color:var(--ink2)">Риск: клиент.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A1">A1 п. 6.3</a>; <a href="21-drafty-dokumentov.html#A4">A4 п. 4.1</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К17</td><td><b>Товар не тот, но мандат соблюдён</b></td>
+  <td><span class="dot" style="background:var(--warn)"></span>Основания спора разделены: возврат по полномочиям не применяется. <span style="color:var(--ink2)">Риск: по общему порядку.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Спор о качестве подменяет спор о полномочиях; нагрузка на банк. <span style="color:var(--ink2)">Риск: банк.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A4">A4 п. 1.2–1.3</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К18</td><td><b>Оператор агента не может возместить</b></td>
+  <td><span class="dot" style="background:var(--ret)"></span>Клиент защищён, убыток ложится на виновного. <span style="color:var(--ink2)">Риск: оператор агента.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Убыток остаётся у банка. <span style="color:var(--ink2)">Риск: банк плательщика.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A4">A4 п. 3–5</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К19</td><td><b>Оператор агента оспаривает оценку</b></td>
+  <td><span class="dot" style="background:var(--ok)"></span>Спор о репутации решается по опубликованным правилам. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Оценка превращается в произвол. <span style="color:var(--ink2)">Риск: оператор агента.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A8">A8 п. 5</a></td></tr><tr><td style="font-family:'IBM Plex Mono',monospace;font-size:11.5px">К20</td><td><b>Доказательства спустя месяцы</b></td>
+  <td><span class="dot" style="background:var(--ok)"></span>Пределы поручения устанавливаются по документам. <span style="color:var(--ink2)">Риск: —.</span></td>
+  <td><span class="dot" style="background:var(--stop)"></span>Установить пределы невозможно — спор решается на усмотрение. <span style="color:var(--ink2)">Риск: неясно.</span></td>
+  <td style="font-family:'IBM Plex Mono',monospace;font-size:11px"><a href="21-drafty-dokumentov.html#A1">A1 п. 7</a>; <a href="21-drafty-dokumentov.html#A7">A7 п. 9.3</a></td></tr>
+ </tbody></table>
+</div>
+
+<footer>
+<p>Связанные материалы: <a href="29-konflikty.html">разбор конфликтов по стадиям</a> · <a href="24-scenariy-operacii.html">сквозной пример без сбоев</a> · <a href="30-otkrytye-pozicii.html">открытые позиции</a> · <a href="21-drafty-dokumentov.html">драфты документов</a></p>
+<p class="note">Модель упрощает сделку до одного сбоя за прогон. На практике конфликты сочетаются; для их совместной проверки предназначена программа испытаний.</p>
+<div id="pool-logo">
+ <img src="data:image/png;base64,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" alt="Luck Lyrics">
+ <div class="t"><b>Пул материалов по агентной коммерции</b>
+ 15.09.2026 · <a href="00-ukazatel-pula.html">указатель пула</a> · <a href="18-svyazka.html">сквозная связка</a></div>
+</div></footer>
+
+</div>
+<script>
+(function(){
+ var ST=["Допуск","Поручение","Поиск","Заказ","Подтверждение","Авторизация","Расчёт","После сделки"], HAPPY=["Агент опознан по коду, подпись обращения проверена по реестру.","Клиент подписал мандат намерения; ограничения записаны в платёжный инструмент.","Агент получил машиночитаемое описание товара у опознавшей его витрины.","Клиент согласовал корзину; создан мандат корзины со ссылкой на намерение.","Сумма ниже порога; признак агентной операции передан в обращении.","Пределы мандата и ограничения проверены до списания; операция авторизована.","Признак перенесён в клиринг; продавец сформировал чек.","Запись об исполнении сформирована участником; сделка закрыта."], K=[{"c":"К1","st":0,"t":"Отказ в допуске агента","tr":"Оператор агента получил отказ во включении в реестр.","norm":{"ev":[[0,"Отказ мотивирован, основание из закрытого перечня; оператор агента знает, что исправить.","stop","—","оператор агента"]],"fin":["Сделка не начинается. Оператор агента исправляет недостаток и подаёт повторно.","stop","оператор агента","A2 п. 3.1–3.4"]},"bare":{"ev":[[0,"Отказ без мотивов и срока; допуск превращается в предмет переговоров.","stop","—","рынок"]],"fin":["Сделка не начинается, а доступ на рынок становится рычагом влияния.","stop","рынок в целом","—"]},"open":"Апелляция на отказ не описана: вопрос O15."},{"c":"К2","st":2,"t":"Витрина блокирует агента","tr":"Продавец принимает агента за парсер и отказывает в доступе.","norm":{"ev":[[2,"Агент подписывает обращение; витрина со знаком готовности обязана обслужить опознанного агента.","ok","—","—"],[2,"Поиск продолжается на общих условиях.","ok","—","—"]],"fin":["Сделка идёт дальше обычным порядком.","ok","—","A5 п. 2.1–2.2"]},"bare":{"ev":[[2,"Агент получает отказ и пытается обойти защиту другими способами.","warn","—","продавец"],[2,"Продавец усиливает блокировку; добросовестные агенты теряют доступ.","stop","—","потребитель"]],"fin":["Поиск сорван, рынок для агентов распадается на произвольные участки.","stop","потребитель и продавец","—"]},"open":"Порядок для продавцов без знака готовности: O16."},{"c":"К3","st":1,"t":"Агент понял поручение не так","tr":"Клиент просил одно, агент сформулировал мандат иначе, клиент подписал.","norm":{"ev":[[1,"Ключевые параметры показаны отдельно от текста мандата; агент показывает границы и остаток в любой момент.","warn","—","клиент"],[3,"Корзина не совпадает с ожиданием — клиент видит это на согласовании корзины.","hold","—","—"],[3,"Клиент отклоняет корзину; мандат корзины не создаётся.","stop","—","—"]],"fin":["Ошибка перехвачена до списания на этапе корзины.","stop","никто","A7 п. 2; ТЗ Т3"]},"bare":{"ev":[[1,"Мандат подписан не читая; параметры расходятся с намерением.","warn","—","клиент"],[5,"Операция в пределах подписанного мандата проходит.","ok","списано","клиент"],[7,"Клиент оспаривает, но формально операция совершена с согласия.","stop","списано","клиент"]],"fin":["Деньги списаны за то, чего клиент не хотел; оснований для возврата нет.","stop","клиент","—"]},"open":"Статус краткого изложения запроса: O17."},{"c":"К4","st":1,"t":"Слишком широкий мандат","tr":"Клиент выдаёт мандат на крупную сумму и долгий срок.","norm":{"ev":[[1,"Для такой суммы и срока требуется усиленная подпись.","hold","—","—"],[4,"Каждая операция выше порога требует подтверждения человеком.","hold","—","—"],[5,"Подтверждённые операции проходят.","ok","списано частями","—"]],"fin":["Свобода клиента сохранена, риск ограничен подтверждением.","ok","распределён","A7 п. 3.2; A5 п. 3.1"]},"bare":{"ev":[[1,"Мандат выдан простой подписью без верхних значений.","warn","—","банк"],[5,"Агент исполняет серию крупных операций без участия клиента.","warn","списано","банк"],[7,"Клиент заявляет, что не имел в виду таких сумм.","stop","спор","банк"]],"fin":["Спор о пределах воли при формально действительном мандате.","stop","банк плательщика","—"]},"open":"Пороги для усиленной подписи: O08."},{"c":"К5","st":1,"t":"Нет держателя журнала согласий","tr":"Мандат подписан, но неясно, где он зарегистрирован и кто отвечает на проверку.","norm":{"ev":[[1,"Мандат регистрируется у держателя, определённого правилами; ссылка передаётся агенту.","ok","—","—"],[5,"Участник проверяет действительность мандата по ссылке.","ok","—","—"]],"fin":["Проверка возможна, сделка идёт дальше.","ok","—","A7 п. 4.3"]},"bare":{"ev":[[1,"Запись мандата есть только у агента.","warn","—","—"],[5,"Банк не может подтвердить действительность и остаток мандата.","open","—","—"]],"fin":["Проверка невозможна: либо отказ, либо действие на веру.","open","неясно","—"]},"open":"Держатель журнала не выбран — блокирующий вопрос O25.","vars":[["Оператор Системы","Одна точка ссылки для всех сторон, нейтральность; концентрация сведений.","ok"],["Банк плательщика","Меньше концентрации; продавец и эквайрер не могут проверить мандат напрямую.","warn"],["Несколько держателей","Координация между держателями непрактична — признано и самой рамкой.","stop"]]},{"c":"К6","st":2,"t":"Платное влияние на выдачу","tr":"Платформа получает вознаграждение от продавца и поднимает его в выдаче.","norm":{"ev":[[2,"Влияние на выдачу и на показатели запрещено; факт вознаграждения раскрывается.","ok","—","—"],[2,"Нарушение выявлено — доступ платформы приостановлен.","stop","—","платформа"]],"fin":["Выдача остаётся нейтральной; платформа несёт последствия нарушения.","ok","платформа","A6 п. 2–3; A8 п. 5.3"]},"bare":{"ev":[[2,"Агент выбирает не лучшее для клиента, а оплаченное продавцом.","warn","—","клиент"],[5,"Покупка проходит без нарушений пределов мандата.","ok","списано","клиент"]],"fin":["Формально всё законно, по существу клиент переплатил.","warn","клиент","—"]},"open":"Способ контроля соблюдения запрета не описан."},{"c":"К7","st":2,"t":"Агенту показано иное, чем человеку","tr":"Витрина скрывает от агента доплаты или показывает другую цену.","norm":{"ev":[[2,"Требование равного объёма сведений; расхождение — введение в заблуждение.","warn","—","продавец"],[7,"При выявлении — приостановка знака готовности продавца.","stop","—","продавец"]],"fin":["Нарушение наказуемо, но выявляется постфактум.","warn","продавец","A5 п. 1, 5.3"]},"bare":{"ev":[[3,"Агент собирает корзину по неполным сведениям.","warn","—","клиент"],[6,"Итог с доплатами выше согласованного.","warn","списано больше","клиент"]],"fin":["Клиент платит больше, чем согласовал, не понимая почему.","stop","клиент","—"]},"open":"Инструмент контроля равенства раскрытия: O18."},{"c":"К8","st":3,"t":"Цена изменилась после согласования","tr":"К моменту исполнения цена товара выросла.","norm":{"ev":[[3,"Изменение существенного условия — нужен новый мандат корзины.","hold","—","—"],[3,"Заказ удерживается, клиент получает запрос на подтверждение.","hold","—","—"]],"fin":["Исполнение по новой цене только после подтверждения; при истечении срока заказ прекращается.","hold","—","A7 п. 5.2, 7.2–7.3"]},"bare":{"ev":[[5,"Операция проходит по новой цене в пределах общего лимита.","warn","списано больше","клиент"],[7,"Клиент оспаривает разницу.","stop","спор","продавец"]],"fin":["Спор о том, на что клиент соглашался.","stop","продавец и клиент","—"]},"open":"Коридор допустимого отклонения цены: O27.","vars":[["Строгий подход","Любое изменение требует нового мандата — безопасно, но частые срывы.","hold"],["Коридор 3%","Мелкие колебания проходят без человека; граница согласия размывается.","warn"]]},{"c":"К9","st":3,"t":"Корзина из нескольких продавцов","tr":"Один продавец подтвердил заказ, другой отказал.","norm":{"ev":[[3,"Корзина разбита на заказы, каждый исполняется самостоятельно.","ok","—","—"],[5,"Авторизован только подтверждённый заказ.","ok","списано частично","—"],[6,"Чек по каждому продавцу, совместный показ клиенту.","ok","—","—"]],"fin":["Сделка состоялась частично, без лишних списаний.","ok","—","A1 п. 6.3; A5 п. 4.2"]},"bare":{"ev":[[5,"Авторизована вся сумма корзины.","warn","списано полностью","клиент"],[7,"По неисполненной части нужен возврат вручную.","ret","возврат","банк"]],"fin":["Лишнее списание и ручной возврат.","warn","банк и клиент","—"]},"open":"Восстановление бюджета при возврате: O20."},{"c":"К10","st":4,"t":"Дробление суммы ради обхода порога","tr":"Агент разбивает покупку на несколько операций ниже порога подтверждения.","norm":{"ev":[[4,"Порог применяется к совокупности операций по одному мандату.","warn","—","—"],[4,"Дробление выявлено по состоянию мандата — требуется подтверждение.","hold","—","—"]],"fin":["Обход не удался: решение принимает человек.","hold","—","A3 п. 4.1–4.4; сценарий П13"]},"bare":{"ev":[[5,"Каждая часть проходит отдельно.","warn","списано","клиент"],[7,"Суммарно — операция, которую клиент не подтверждал.","stop","спор","банк"]],"fin":["Порог подтверждения обойдён.","stop","банк плательщика","—"]},"open":"Параметры выявления дробления: O19."},{"c":"К11","st":4,"t":"Порог подтверждения выбран неудачно","tr":"Слишком низкий порог срывает автономные покупки; слишком высокий — пропускает рискованные.","norm":{"ev":[[4,"Порог единый для рынка; значение определяется по данным пилота.","open","—","—"]],"fin":["Механизм есть, значения нет — оно считается, а не назначается.","open","—","A5 п. 3.1"]},"bare":{"ev":[[4,"Каждый участник ставит свой порог; продавцы конкурируют снижением требований.","warn","—","банк"]],"fin":["Безопасность становится предметом конкуренции.","stop","банки","—"]},"open":"Значение порога и его зависимость от репутации: O05, O26.","vars":[["Низкий порог","Почти каждая операция требует человека — автономный режим теряет смысл.","hold"],["Высокий порог","Удобно, но крупные ошибки агента проходят без участия человека.","warn"],["Порог по данным пилота","Точка компромисса найдена по измеренной доле споров и конверсии.","ok"]]},{"c":"К12","st":5,"t":"Состояние недоступно","tr":"Сервис не ответил на запрос остатка бюджета в окне авторизации.","norm":{"ev":[[5,"Состояние подтвердить не удалось — операция считается вне пределов мандата.","stop","—","—"],[5,"Клиенту сообщается причина; повтор возможен после восстановления сервиса.","stop","—","—"]],"fin":["Безопасный отказ: перерасход исключён ценой срыва сделки.","stop","сделка откладывается","A3 п. 4.5"]},"bare":{"ev":[[5,"Банк пропускает операцию по последнему известному остатку.","warn","списано","банк"],[7,"Выясняется, что бюджет уже был исчерпан.","stop","перерасход","банк"]],"fin":["Перерасход бюджета при действительном мандате.","stop","банк плательщика","—"]},"open":"Допустимое время работы по кэшу: O12.","vars":[["Строгий отказ","Никакого риска перерасхода, но срывы при каждом сбое сети.","stop"],["Кэш на короткое время","Сделки проходят при кратких сбоях; отзыв действует с задержкой.","warn"]]},{"c":"К13","st":5,"t":"Нераспознанный тип ограничения","tr":"В мандате ограничение нового типа, которое один из участников не знает.","norm":{"ev":[[5,"Строгий режим: нераспознанное платёжное ограничение — отказ.","stop","—","—"],[5,"Эмитент и эквайрер приходят к одинаковому выводу.","stop","—","—"]],"fin":["Предсказуемый отказ, одинаковый у всех участников.","stop","—","A3 п. 4.5; замечание 03"]},"bare":{"ev":[[5,"Эквайрер пропускает, эмитент отклоняет.","warn","—","продавец"],[6,"Продавец отгрузил товар, оплата не прошла.","stop","—","продавец"]],"fin":["Разные выводы по одному мандату; убыток у продавца.","stop","продавец","—"]},"open":"Держатель реестра типов ограничений: O23."},{"c":"К14","st":5,"t":"Антифрод принимает агента за мошенника","tr":"Нетипичное время и серия мелких покупок похожи на автоматизированное мошенничество.","norm":{"ev":[[5,"Признак агентной операции — вход для модели мониторинга.","ok","—","—"],[5,"Отказ, если он есть, приходит отдельным кодом — агент не повторяет вслепую.","warn","—","—"]],"fin":["Ложные отказы измеряются и снижаются по мере накопления данных.","ok","—","A1 п. 3.1; риск Р7"]},"bare":{"ev":[[5,"Операция отклонена как мошенническая.","stop","—","клиент"],[5,"Агент повторяет попытку, счёт блокируется.","stop","—","клиент"]],"fin":["Добросовестная сделка сорвана, счёт клиента заблокирован.","stop","клиент","—"]},"open":"Момент перехода на отдельную модель: O24."},{"c":"К15","st":6,"t":"Чек и вознаграждение посредников","tr":"Корзина из нескольких продавцов, платформа получает вознаграждение.","norm":{"ev":[[6,"Чек по каждому продавцу; совместный показ документов клиенту.","ok","—","—"],[6,"Статус вознаграждения платформы — не определён.","open","—","—"]],"fin":["Расчёт проходит; фискальный вопрос по вознаграждению остаётся.","open","платформа","A5 п. 4"]},"bare":{"ev":[[6,"Один документ платформы вместо чеков продавцов.","stop","—","продавцы"]],"fin":["Нарушение кассовой дисциплины.","stop","продавцы","—"]},"open":"Разъяснение налогового органа: O29."},{"c":"К16","st":6,"t":"Возврат при частичном исполнении","tr":"Часть заказа исполнена, по другой части нужен возврат.","norm":{"ev":[[6,"Возврат по неисполненному заказу, остальные не затрагиваются.","ret","возврат части","—"],[6,"Мандат продолжает действовать для оставшихся заказов.","ok","—","—"]],"fin":["Клиент получает деньги за неисполненное без отмены всего поручения.","ret","—","A1 п. 6.3; A4 п. 4.1"]},"bare":{"ev":[[6,"Возврат оформляется вручную, мандат аннулируется целиком.","ret","возврат","клиент"]],"fin":["Поручение приходится выдавать заново.","warn","клиент","—"]},"open":"Восстанавливается ли израсходованный бюджет: O20."},{"c":"К17","st":7,"t":"Товар не тот, но мандат соблюдён","tr":"Агент купил в пределах мандата, клиент недоволен покупкой.","norm":{"ev":[[7,"Полномочия проверены механически — операция в пределах мандата.","ok","—","—"],[7,"Спор о качестве рассматривается обычным порядком с продавцом.","warn","—","клиент/продавец"]],"fin":["Основания спора разделены: возврат по полномочиям не применяется.","warn","по общему порядку","A4 п. 1.2–1.3"]},"bare":{"ev":[[7,"Клиент требует возврата как по неавторизованной операции.","stop","спор","банк"]],"fin":["Спор о качестве подменяет спор о полномочиях; нагрузка на банк.","stop","банк","—"]},"open":"Особый порядок отказа от покупки агента: O28."},{"c":"К18","st":7,"t":"Оператор агента не может возместить","tr":"Операция вне мандата; банк вернул деньги клиенту и предъявил регресс оператору агента.","norm":{"ev":[[7,"Операция вне мандата — возврат клиенту по действующему порядку.","ret","возврат","банк"],[7,"Регресс покрывается обеспечением оператора агента.","ok","—","оператор агента"]],"fin":["Клиент защищён, убыток ложится на виновного.","ret","оператор агента","A4 п. 3–5"]},"bare":{"ev":[[7,"Клиенту возвращено, регресс не исполнен — у оператора нет средств.","ret","возврат","банк"]],"fin":["Убыток остаётся у банка.","stop","банк плательщика","—"]},"open":"Размер обеспечения: O07."},{"c":"К19","st":7,"t":"Оператор агента оспаривает оценку","tr":"После понижения уровня допуска оператор агента не согласен с учётом случаев.","norm":{"ev":[[7,"Расчёт раскрыт оператору агента, есть срок на оспаривание.","warn","—","—"],[7,"Методика публикуется, изменения не имеют обратной силы.","ok","—","—"]],"fin":["Спор о репутации решается по опубликованным правилам.","ok","—","A8 п. 5"]},"bare":{"ev":[[7,"Уровень понижен без объяснения расчёта.","stop","—","оператор агента"]],"fin":["Оценка превращается в произвол.","stop","оператор агента","—"]},"open":"Пересчёт после успешного оспаривания: O21."},{"c":"К20","st":7,"t":"Доказательства спустя месяцы","tr":"Через полгода нужно установить, что именно было разрешено.","norm":{"ev":[[7,"Запись мандата и запись об исполнении хранятся вместе со сведениями об операции.","ok","—","—"],[7,"Выписка предоставляется в читаемой форме.","ok","—","—"]],"fin":["Пределы поручения устанавливаются по документам.","ok","—","A1 п. 7; A7 п. 9.3"]},"bare":{"ev":[[7,"Запись мандата утрачена или нечитаема.","stop","спор","—"]],"fin":["Установить пределы невозможно — спор решается на усмотрение.","stop","неясно","—"]},"open":"Резервный держатель записей: O22."}], OPS=[{"step":1,"op":"Проверка агента в реестре","api":"GET /v1/agents/{code}","a":"A2"},{"step":3,"op":"Мандат намерения и ограничения","api":"POST /v1/mandates · PUT /v1/instruments/{token}/limits","a":"A7"},{"step":5,"op":"Запрос каталога витрины","api":"GET /v1/shops/{id}/catalog","a":"A5"},{"step":7,"op":"Мандат корзины и заказ","api":"POST /v1/mandates (CART) · POST /v1/shops/{id}/orders","a":"A7"},{"step":9,"op":"Передача признака агентной операции","api":"POST /v1/pay/authorize","a":"A1"},{"step":11,"op":"Проверка пределов и авторизация","api":"POST /v1/pay/authorize","a":"A3"},{"step":12,"op":"Клиринг и кассовый чек","api":"клиринговое сообщение","a":"A5"},{"step":14,"op":"Запись об исполнении и отчёт","api":"GET /v1/runs/{id}/report","a":"A8"}];
+ var lane=[].slice.call(document.querySelectorAll('.stg'));
+ var log=document.getElementById('log'), fin=document.getElementById('final');
+ var sel=null, mode='norm', variant=null, queue=[], pos=0, timer=null;
+
+ function linkify(t){
+  return String(t)
+   .replace(/(A[0-9])((?: п. [0-9.–, ]+| разд. [0-9]+)?)/g,function(m,a,rest){ return '<a href="21-drafty-dokumentov.html#'+a+'">'+a+rest+'</a>'; })
+   .replace(/(^|[^A-Za-z0-9])(O[0-9]{2})(?![0-9])/g,'$1<a href="30-otkrytye-pozicii.html#$2">$2</a>')
+   .replace(/замечание (0[0-9]|1[0-2])/g,'<a href="28-tezisy-i-otzyv.html">замечание $1</a>')
+   .replace(/сценарий (П[0-9]{2})/g,'<a href="22-tz-agent-platforma.html">сценарий $1</a>')
+   .replace(/риск (Р[0-9]+)/g,'<a href="26-programma-rabot.html">риск $1</a>')
+   .replace(/ТЗ (Т[0-9]+)/g,'<a href="22-tz-agent-platforma.html">ТЗ $1</a>');
+ }
+ var CLS={ok:'прошла',stop:'остановлена',hold:'удержание',warn:'с риском',ret:'возврат',open:'не решено'};
+
+ function build(){
+  queue=[]; if(!sel) return;
+  var path=sel[mode];
+  var HM=function(i){ return i===5?'списано':(i===6?'списано, расчёт завершён':null); };
+  for(var i=0;i<sel.st;i++) queue.push({st:i,txt:HAPPY[i],cls:'ok',money:HM(i),risk:null,happy:true});
+  queue.push({st:sel.st,txt:'Конфликт: '+sel.tr,cls:'k',money:null,risk:null,k:true});
+  var cur=sel.st;
+  var chosenV=(mode==='norm' && variant!=null && sel.vars);
+  (chosenV?[]:path.ev).forEach(function(e){
+   for(var g=cur+1; g<e[0]; g++) queue.push({st:g,txt:HAPPY[g],cls:'ok',money:HM(g),risk:null,happy:true});
+   queue.push({st:e[0],txt:e[1],cls:e[2],money:e[3],risk:e[4]});
+   cur=Math.max(cur,e[0]);
+  });
+  if(mode==='norm' && variant!=null && sel.vars){
+   var v=sel.vars[variant];
+   queue.push({st:sel.st,txt:'Выбран вариант «'+v[0]+'»: '+v[1],cls:v[2],money:null,risk:null});
+  }
+  var f=path.fin.slice();
+  if(mode==='norm' && variant!=null && sel.vars){ f=[sel.vars[variant][1],sel.vars[variant][2],f[2],f[3]]; }
+  var last=path.ev.length?path.ev[path.ev.length-1][2]:'ok';
+  var chosen=(mode==='norm' && variant!=null && sel.vars);
+  var stopped= chosen ? ['stop','hold','open'].indexOf(f[1])>=0
+                      : (['stop','hold','open'].indexOf(f[1])>=0 || ['stop','hold','open'].indexOf(last)>=0);
+  if(!stopped){
+   var lastSt=(chosenV||!path.ev.length)?sel.st:Math.max.apply(null,path.ev.map(function(e){return e[0];}));
+   for(var j=lastSt+1;j<ST.length;j++) queue.push({st:j,txt:HAPPY[j],cls:'ok',money:HM(j),risk:null,happy:true});
+  }
+  queue.fin=f;
+ }
+ function reset(){
+  clearInterval(timer); timer=null; pos=0;
+  lane.forEach(function(s,i){ s.className='stg'; document.getElementById('m'+i).textContent='—'; });
+  if(sel){ lane[sel.st].classList.add('trig'); }
+  log.innerHTML=''; fin.className='final'; fin.innerHTML='';
+  document.getElementById('sMoney').textContent='не списаны';
+  document.getElementById('sRisk').textContent='—';
+  document.getElementById('sStage').textContent='—';
+  build();
+ }
+ function step(){
+  if(!sel){ return; }
+  if(pos>=queue.length){ showFinal(); clearInterval(timer); timer=null; return; }
+  var e=queue[pos++];
+  lane.forEach(function(s){ s.classList.remove('cur'); });
+  var box=lane[e.st];
+  box.classList.add('cur');
+  if(e.k){ if(!box.className.match(/ (ok|warn|ret|hold|open|stop)/)){ box.classList.add('warn'); document.getElementById('m'+e.st).textContent='конфликт'; } }
+  if(!e.k){
+   var PR=['ok','warn','ret','hold','open','stop'];
+   var had=PR.filter(function(c){ return box.classList.contains(c); })[0];
+   var keep = had && PR.indexOf(had)>PR.indexOf(e.cls) ? had : e.cls;
+   PR.forEach(function(c){ box.classList.remove(c); });
+   box.classList.add(keep);
+   document.getElementById('m'+e.st).textContent=CLS[keep]||'';
+  }
+  var li=document.createElement('li'); li.className=e.cls;
+  var links='';
+  if(e.happy){
+   var o=OPS[e.st];
+   links='<span class="lk"><b>'+o.op+'</b> · <a href="24-scenariy-operacii.html#step-'+o.step+'">шаг '+o.step+' примера</a> · <a href="23-specifikaciya-interfejsov.html" title="'+o.api+'">'+o.api+'</a> · <a href="21-drafty-dokumentov.html#'+o.a+'">'+o.a+'</a></span>';
+  } else if(e.k){
+   links='<span class="lk"><a href="29-konflikty.html#'+sel.c+'">разбор '+sel.c+'</a> · <a href="01-ierarhiya-tranzakcii.html#stage-'+e.st+'">стадия '+e.st+' в модели</a></span>';
+  } else {
+   var d=(sel[mode].fin[3]||'').match(/A[0-9]/);
+   links='<span class="lk">'+(d?'<a href="21-drafty-dokumentov.html#'+d[0]+'">норма '+d[0]+'</a> · ':'нормы нет · ')+'<a href="24-scenariy-operacii.html#stage-'+e.st+'">что должно быть на стадии '+e.st+'</a></span>';
+  }
+  // следующая операция
+  var nx=queue[pos];
+  var next = nx ? '<span class="nx">далее → '+(nx.happy?OPS[nx.st].op:(nx.k?'конфликт':'стадия '+nx.st))+'</span>' : '<span class="nx">далее → итог</span>';
+  li.innerHTML='<span class="s">ст. '+e.st+'</span>'+e.txt+links+next;
+  log.appendChild(li); log.scrollTop=log.scrollHeight;
+  if(e.money && e.money!=='—') document.getElementById('sMoney').textContent=e.money;
+  if(e.risk && e.risk!=='—') document.getElementById('sRisk').textContent=e.risk;
+  document.getElementById('sStage').textContent=e.st+' · '+ST[e.st];
+  if(pos>=queue.length){ showFinal(); clearInterval(timer); timer=null; }
+ }
+ function showFinal(){
+  var f=queue.fin; if(!f) return;
+  fin.className='final on '+f[1];
+  fin.innerHTML='<b class="h">Итог: '+f[0]+'</b>'+
+   '<div class="row"><span>риск</span>'+f[2]+'</div>'+
+   '<div class="row"><span>решено в</span>'+(f[3]==='—'?'нигде — нормы отсутствуют':linkify(f[3]))+'</div>'+
+   (sel.open?'<div class="row"><span>открыто</span>'+linkify(sel.open)+'</div>':'')+
+   '<div class="row"><span>разбор</span><a href="29-konflikty.html#'+sel.c+'">'+sel.c+' на странице конфликтов</a></div>';
+ }
+ function pick(c){
+  sel=K.filter(function(k){return k.c===c;})[0]; variant=null;
+  [].forEach.call(document.querySelectorAll('.kitem'),function(x){ x.classList.toggle('sel',x.dataset.c===c); });
+  document.getElementById('ktrig').innerHTML='<b>'+sel.c+' · стадия '+sel.st+'.</b> '+sel.tr;
+  var vb=document.getElementById('vars');
+  if(sel.vars){
+   vb.innerHTML='<span class="l">вопрос не решён — выберите вариант решения:</span>'+sel.vars.map(function(v,i){
+    return '<button data-v="'+i+'" aria-pressed="false" title="'+v[1]+'">'+v[0]+'</button>';}).join('');
+   [].forEach.call(vb.querySelectorAll('button'),function(b){ b.addEventListener('click',function(){
+    variant = (variant===+b.dataset.v) ? null : +b.dataset.v;
+    [].forEach.call(vb.querySelectorAll('button'),function(x){ x.setAttribute('aria-pressed',String(+x.dataset.v===variant)); });
+    reset(); });});
+  } else vb.innerHTML='';
+  history.replaceState(null,'','#k'+c.slice(1));
+  reset();
+ }
+ [].forEach.call(document.querySelectorAll('.kitem'),function(x){
+  x.addEventListener('click',function(){ pick(x.dataset.c); });
+  x.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pick(x.dataset.c); } });
+ });
+ [].forEach.call(document.querySelectorAll('#mode button'),function(b){ b.addEventListener('click',function(){
+  mode=b.dataset.m;
+  [].forEach.call(document.querySelectorAll('#mode button'),function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+  reset(); });});
+ document.getElementById('step').addEventListener('click',step);
+ document.getElementById('reset').addEventListener('click',reset);
+ document.getElementById('run').addEventListener('click',function(){
+  if(!sel) return; reset(); timer=setInterval(step,700);
+ });
+ var h=decodeURIComponent((location.hash||'').slice(1));
+ if(/^k[0-9]+$/.test(h)) h='К'+h.slice(1);
+ pick(K.some(function(k){return k.c===h;})?h:'К12');
+})();
+</script>
+<script id="backlink-js">
+(function(){
+ var TITLES={"00-ukazatel-pula.html": "Дерево материалов по агентной коммерции", "01-ierarhiya-tranzakcii.html": "Вся иерархия, привязанная к транзакции", "02-funkcii-i-roli.html": "Функции и роли в агентной коммерции: кто что занял", "03-reestr-dokumentov.html": "Чем регламентированы функции агентной коммерции", "04-ocenki-funkciy.html": "Откуда берутся четыре цифры", "05-vybor-roli.html": "Какую роль в агентной коммерции реалистично и выгодно занять", "06-opyt-visa-mc.html": "Опыт Visa и Mastercard в агентной коммерции", "07-karta-roley-nspk.html": "Взгляд НСПК: карта ролей", "08-rol-ps-mir.html": "Оператор платёжной системы «Мир»", "09-rol-opkc.html": "Операционный и клиринговый центр", "10-rol-sbp.html": "Оператор Системы быстрых платежей", "11-rol-edinyy-qr.html": "Оператор универсального платёжного кода", "12-rol-antifrod.html": "Аутентификация и антифрод", "13-rol-cifrovoy-rubl.html": "Инфраструктура цифрового рубля и смарт-контрактов", "14-rol-dannye-nadzor.html": "Данные, надзор и акционер", "15-vzglyad-nspk-rannyaya.html": "Взгляд НСПК: регуляторный слой агентной коммерции", "16-model-rynka.html": "Операционная модель рынка агентной коммерции", "17-model-tranzakciy-red1.html": "Операционная модель транзакций агентной коммерции", "18-svyazka.html": "Сквозная связка: стадии, функции, роли, документы", "19-prezentaciya.html": "Презентация: модель агентной коммерции и результаты", "20-plany-dokumentov.html": "Планы документов: что писать и из чего исходить", "21-drafty-dokumentov.html": "Драфты документов: текст для обсуждения", "22-tz-agent-platforma.html": "Агентная платформа оператора и эталонный агент покупателя", "23-specifikaciya-interfejsov.html": "Интерфейсы испытательного контура: что вызывает агент", "24-scenariy-operacii.html": "Агентная операция по стадиям: сквозной пример", "25-glossariy.html": "Глоссарий агентной коммерции", "26-programma-rabot.html": "Программа работ: от порядка документов к исполнению", "27-konspekt-ramki-d1.html": "Конспект черновика рамки агентных платежей (D1)", "28-tezisy-i-otzyv.html": "Тезисы рамки, сверка с моделью и замечания к черновику", "29-konflikty.html": "Конфликтные ситуации агентной сделки по стадиям", "30-otkrytye-pozicii.html": "Открытые позиции разработки документов", "31-mvp.html": "MVP агентной коммерции: интересы, цель, условия и состав", "32-prezentaciya-mvp.html": "Презентация MVP агентной коммерции", "33-ramka-po-kostochkam.html": "Рамка агентных платежей по косточкам", "34-ramka-po-polochkam.html": "Рамка по полочкам и три комплекта документа", "35-model-konfliktov.html": "Модель конфликтов: как проходит транзакция при сбоях", "36-spornye-mesta-ramki.html": "Спорные места рамки: одна сделка — два хода", "37-izderzhki-skhem.html": "Издержки схем: слабости рамки против цены строгости"};
+ var here=(location.pathname.split('/').pop()||'').split('?')[0];
+
+ // перехват кликов: любая внутренняя ссылка уносит адрес вызывающей страницы и её позицию
+ document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if(!a) return;
+  var h = a.getAttribute('href') || '';
+  if(!h || /^https?:/i.test(h) || h.charAt(0)==='#' || h.indexOf('.html')<0) return;
+  if(/[?&]back=/.test(h)) return;
+  var self = here + (location.hash || '');
+  var parts = h.split('#');
+  var sep = parts[0].indexOf('?')>=0 ? '&' : '?';
+  a.setAttribute('href', parts[0] + sep + 'back=' + encodeURIComponent(self) + (parts[1] ? '#'+parts[1] : ''));
+ }, true);
+ var bar=document.createElement('div'); bar.id='backbar';
+ function seg(u){ try{ return (u.split('#')[0].split('?')[0].split('/').pop())||''; }catch(e){ return ''; } }
+ var backParam='';
+ try{ backParam=new URLSearchParams(location.search).get('back')||''; }catch(e){}
+ var ref=backParam?decodeURIComponent(backParam):(document.referrer||'');
+ var from=seg(ref), hash='';
+ var hi=ref.indexOf('#'); if(hi>=0) hash=ref.slice(hi);
+ var made=false;
+ if(TITLES[from] && from!==here){
+  var a=document.createElement('a');
+  a.href=from+hash; a.textContent='← назад: '+TITLES[from];
+  a.title='вернуться к файлу, из которого вы сюда перешли';
+  bar.appendChild(a); made=true;
+ } else if(window.history.length>1){
+  var b=document.createElement('a');
+  b.href='#'; b.textContent='← назад';
+  b.title='вернуться на предыдущую страницу';
+  b.addEventListener('click',function(e){ e.preventDefault(); history.back(); });
+  bar.appendChild(b); made=true;
+ }
+ if(here!=='00-ukazatel-pula.html'){
+  var c=document.createElement('a');
+  c.href='00-ukazatel-pula.html'; c.textContent='↑ указатель пула';
+  bar.appendChild(c); made=true;
+ }
+ if(!made) return;
+ var cur=document.createElement('span'); cur.className='cur';
+ cur.textContent=here+(TITLES[here]?' · '+TITLES[here]:'');
+ bar.appendChild(cur);
+ var wrap=document.querySelector('.wrap')||document.body;
+ wrap.insertBefore(bar, wrap.firstChild);
+})();
+</script><script id="pool-tools-js">
+(function(){
+ function el(t,txt,title){var b=document.createElement(t);b.type='button';b.textContent=txt;if(title)b.title=title;return b;}
+ function place(){
+  var bar=document.getElementById('backbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='backbar';
+   var w=document.querySelector('.wrap')||document.body; w.insertBefore(bar,w.firstChild); }
+  var box=document.createElement('span'); box.id='pool-tools';
+  var here=(location.pathname.split('/').pop()||'stranica.html').split('?')[0];
+  var stem=here.replace(/\.html$/,'');
+
+  var bp=el('button','Печать','распечатать страницу целиком, включая свёрнутые вкладки');
+  bp.addEventListener('click',function(){ try{ window.print(); }catch(e){} });
+
+  var bh=el('button','Скачать HTML','сохранить страницу в её текущем состоянии');
+  bh.addEventListener('click',function(){
+   try{
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    save(new Blob([html],{type:'text/html;charset=utf-8'}), here, bh);
+   }catch(e){ alert('Не удалось сохранить страницу'); }
+  });
+
+  var tables=document.querySelectorAll('table');
+  box.appendChild(bp); box.appendChild(bh);
+  if(tables.length){
+   var bc=el('button','Таблицы в CSV','выгрузить все таблицы страницы одним файлом');
+   bc.addEventListener('click',function(){
+    try{ save(new Blob(['\ufeff'+csv()],{type:'text/csv;charset=utf-8'}), stem+'-tablicy.csv', bc); }
+    catch(e){ alert('Не удалось выгрузить таблицы'); }
+   });
+   box.appendChild(bc);
+  }
+  var bt=el('button','Скачать Word','выгрузить содержание страницы в документ Word');
+  bt.addEventListener('click',function(){
+   try{ save(docxBlob(), stem+'.docx', bt); }
+   catch(e){ alert('Не удалось сформировать документ Word'); }
+  });
+  box.appendChild(bt);
+  bar.appendChild(box);
+ }
+ function save(blob,name,btn){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  if(btn){ var t=btn.textContent; btn.textContent='готово'; btn.classList.add('ok');
+   setTimeout(function(){btn.textContent=t;btn.classList.remove('ok');},1600); }
+ }
+ function vis(e){ if(e.nodeType!==1) return true; if(e.hasAttribute('hidden')) return false;
+  var st=e.getAttribute('style')||''; if(/display\s*:\s*none/.test(st)) return false; return true; }
+ function txt(node){
+  if(node.nodeType===3) return node.nodeValue;
+  if(node.nodeType!==1 || !vis(node)) return '';
+  var out='';
+  [].forEach.call(node.childNodes,function(c){
+   var t=txt(c); if(!t) return;
+   if(out && !/\s$/.test(out) && !/^[\s,.;:)\]]/.test(t)) out+=' ';
+   out+=t;
+  });
+  return out;
+ }
+ function q(s){ s=(s==null?'':String(s)).replace(/\s+/g,' ').trim(); return '"'+s.replace(/"/g,'""')+'"'; }
+ function csv(){
+  var out=[], n=0;
+  [].forEach.call(document.querySelectorAll('table'),function(t){
+   var rows=t.querySelectorAll('tr'); if(!rows.length) return;
+   n++;
+   var cap=(t.id||'')||('таблица '+n);
+   out.push(q('# '+cap));
+   [].forEach.call(rows,function(tr){
+    if(tr.offsetParent===null && tr.style.display==='none') return;
+    var cells=[].map.call(tr.querySelectorAll('th,td'),function(c){return q(txt(c));});
+    if(cells.length) out.push(cells.join(';'));
+   });
+   out.push('');
+  });
+  return out.join('\n');
+ }
+
+ // ---- выгрузка в docx ----
+ var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return function(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=t[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};})();
+ function zipStore(files){
+  var enc=new TextEncoder(), chunks=[], central=[], off=0;
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  files.forEach(function(f){
+   var name=enc.encode(f.name), data=typeof f.data==='string'?enc.encode(f.data):f.data;
+   var crc=CRC(data);
+   var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+   chunks.push(new Uint8Array(lh),name,data);
+   central.push({name:name,crc:crc,len:data.length,off:off});
+   off+=lh.length+name.length+data.length;
+  });
+  var cd=[];
+  central.forEach(function(c){
+   cd=cd.concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(c.crc),u32(c.len),u32(c.len),
+    u16(c.name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(c.off));
+   cd=cd.concat(Array.from(c.name));
+  });
+  var cdArr=new Uint8Array(cd);
+  var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cdArr.length),u32(off),u16(0)));
+  chunks.push(cdArr,end);
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+ }
+ function xesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+ function para(text,opt){
+  opt=opt||{};
+  var pr='<w:pPr>'+(opt.outline!=null?'<w:outlineLvl w:val="'+opt.outline+'"/>':'')+
+   (opt.space?'<w:spacing w:before="200" w:after="80"/>':'<w:spacing w:after="80"/>')+
+   (opt.ind?'<w:ind w:left="360"/>':'')+'</w:pPr>';
+  var rpr='<w:rPr>'+(opt.b?'<w:b/>':'')+(opt.sz?'<w:sz w:val="'+opt.sz+'"/><w:szCs w:val="'+opt.sz+'"/>':'')+
+   (opt.color?'<w:color w:val="'+opt.color+'"/>':'')+'</w:rPr>';
+  return '<w:p>'+pr+'<w:r>'+rpr+'<w:t xml:space="preserve">'+xesc(text)+'</w:t></w:r></w:p>';
+ }
+ function tableXml(tbl){
+  var rows=[].slice.call(tbl.querySelectorAll('tr')).filter(function(tr){
+   return !(tr.style && tr.style.display==='none');});
+  if(!rows.length) return '';
+  var maxc=0; rows.forEach(function(r){maxc=Math.max(maxc,r.querySelectorAll('th,td').length);});
+  if(!maxc) return '';
+  var w=Math.floor(9360/maxc);
+  var grid='<w:tblGrid>'+Array(maxc).fill('<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  var body=rows.map(function(tr){
+   var cells=[].slice.call(tr.querySelectorAll('th,td'));
+   var head=cells.length&&cells[0].tagName==='TH';
+   var tc=cells.map(function(c){
+    return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+
+     para(txt(c).replace(/\s+/g,' ').trim(),{b:head,sz:18})+'</w:tc>';
+   }).join('');
+   while(cells.length<maxc){ tc+='<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para('',{sz:18})+'</w:tc>'; cells.push(1); }
+   return '<w:tr>'+tc+'</w:tr>';
+  }).join('');
+  var pr='<w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders>'+
+   ['top','left','bottom','right','insideH','insideV'].map(function(s){
+    return '<w:'+s+' w:val="single" w:sz="4" w:color="CCCCCC"/>';}).join('')+
+   '</w:tblBorders></w:tblPr>';
+  return '<w:tbl>'+pr+grid+body+'</w:tbl>'+para('');
+ }
+ function docxBlob(){
+  var body='', h1=document.querySelector('h1');
+  if(h1) body+=para(txt(h1).trim(),{b:true,sz:36,outline:0,space:true});
+  var scope=document.querySelector('.tagline');
+  if(scope) body+=para(txt(scope).trim(),{sz:20,color:'4A5A68'});
+  var sel='h2,h3,h4,p,li,table';
+  [].forEach.call(document.querySelectorAll(sel),function(e){
+   if(e.closest('#backbar')||e.closest('nav.strip')||e.closest('#pool-tools')||e.closest('#pool-logo')) return;
+   if(e.closest('table') && e.tagName!=='TABLE') return;
+   if(e.classList && (e.classList.contains('tagline'))) return;
+   if(e.tagName==='TABLE'){ body+=tableXml(e); return; }
+   var t=txt(e).replace(/\s+/g,' ').trim();
+   if(!t) return;
+   var tag=e.tagName.toLowerCase();
+   if(tag==='h2') body+=para(t,{b:true,sz:28,outline:1,space:true});
+   else if(tag==='h3') body+=para(t,{b:true,sz:24,outline:2,space:true});
+   else if(tag==='h4') body+=para(t,{b:true,sz:22,outline:3,space:true});
+   else if(tag==='li') body+=para('• '+t,{sz:20,ind:true});
+   else body+=para(t,{sz:20});
+  });
+  body+=para('Источник: '+location.href.split('?')[0],{sz:16,color:'8A8A80'});
+  var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+   '<w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+   '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>';
+  var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+   '<Default Extension="xml" ContentType="application/xml"/>'+
+   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+   '</Types>';
+  var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+   '</Relationships>';
+  var drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>';
+  return zipStore([
+   {name:'[Content_Types].xml',data:ct},
+   {name:'_rels/.rels',data:rels},
+   {name:'word/document.xml',data:doc},
+   {name:'word/_rels/document.xml.rels',data:drels}
+  ]);
+ }
+
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',place);
+ else place();
+})();
+</script></body></html>
