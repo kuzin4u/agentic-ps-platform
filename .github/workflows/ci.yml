@@ -25,6 +25,12 @@ jobs:
         run: if [ -f package-lock.json ]; then npm ci; else npm install; fi
       - name: Проверка типов
         run: npm run check
+      - name: Линт
+        run: npm run lint
+      - name: Сборка
+        run: npm run build
+      - name: Проверка docker-compose.yml
+        run: docker compose config --quiet
       - name: Тесты и сценарии приёмки
         run: npm test
       - name: Поиск ключей и реквизитов
