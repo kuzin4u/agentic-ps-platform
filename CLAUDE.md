@@ -26,7 +26,7 @@
 | `docs/core/NORMS.md` | Нормы A1–A9 | через `/decision` |
 | `docs/core/SCENARIOS.md`, `tests/scenarios/scenarios.json` | 28 сценариев (JSON — источник) | через `/decision` |
 | `docs/core/PARAMS.md`, `config/params.stand.json` | Стендовые параметры | значения — с записью в журнал |
-| `docs/core/DECISIONS.md` | РП1–РП12 | через `/decision` |
+| `docs/core/DECISIONS.md` | РП1–РП15 | через `/decision` |
 | `docs/core/ROADMAP.md` | План продукта | с утверждения владельца |
 | `docs/core/STATUS.md` | Состояние, расхождения, следующая сессия | через `/finish` |
 | `docs/reference/` | Пул и обзорная страница | **только чтение** |

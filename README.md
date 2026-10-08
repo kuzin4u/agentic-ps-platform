@@ -5,3 +5,18 @@
 - Правила и инварианты — [`CLAUDE.md`](CLAUDE.md)
 - Документы — [`docs/core/INDEX.md`](docs/core/INDEX.md)
 - Архитектура — [`docs/core/ARCHITECTURE.md`](docs/core/ARCHITECTURE.md)
+
+## Запуск
+
+```
+npm ci
+npm test            # модульные тесты и сценарии
+npm run check       # проверка типов
+npm run lint
+npm run build && npm start   # сервер на 127.0.0.1:8080, GET /health
+npm run dev                  # то же с перезапуском при изменениях
+```
+
+Среда — переменная `PLATFORM_ENV`: `dev` (по умолчанию, всё в памяти, без базы) или `sandbox`. Порт — `PORT`.
+
+Песочница: `docker compose up -d` поднимает PostgreSQL 16 (`postgres`/`postgres`, база `platform` — стендовые значения).
