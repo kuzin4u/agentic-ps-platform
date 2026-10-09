@@ -1,0 +1,5 @@
+name: codeql-config
+# docs/reference — справочные материалы только для чтения (страницы пула),
+# не рабочий код; исправления — в источнике пула.
+paths-ignore:
+  - docs/reference/**
