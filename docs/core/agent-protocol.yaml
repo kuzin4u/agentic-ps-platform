@@ -1,10 +1,11 @@
 openapi: 3.0.3
 info:
   title: Протокол агентских операций (ПАО)
-  version: 1.1.0
+  version: 1.2.0
   description: 'Интерфейс агентов покупателя с Платформой платёжной системы. Описание — AGENT-PROTOCOL.md. Авторизацию платежа
     агент не инициирует (РП2). Номера карт и персональные данные принципала не передаются никогда. Суммы — копейки, время
-    — UTC. v1.1.0 — совместимое расширение: условное исполнение (CONDITIONAL-EXECUTION.md, РП13).'
+    — UTC. v1.1.0 — совместимое расширение: условное исполнение (CONDITIONAL-EXECUTION.md, РП13). v1.2.0 — совместимо:
+    смысл retry, x-pao-errors, digest пустого тела (РП16).'
 servers:
 - url: https://sandbox.platform.local
   description: песочница
@@ -51,11 +52,18 @@ components:
       name: Content-Digest
       in: header
       required: false
+      description: У запросов без тела — digest пустого тела (РП16).
       schema:
         type: string
   responses:
     Error:
       description: Ошибка
+      headers:
+        Retry-After:
+          description: Через сколько секунд повторять; передаётся при 429 и 503 (РП16).
+          schema:
+            type: integer
+            minimum: 0
       content:
         application/json:
           schema:
@@ -598,6 +606,81 @@ components:
           format: date-time
         data:
           type: object
+x-pao-errors:
+  description: 'Перечень ошибок ПАО — источник для AGENT-PROTOCOL.md §6 (РП16). Смысл retry — в §6.'
+  errors:
+  - code: AGENT_UNKNOWN
+    http: 401
+    retry: never
+    description: "Нет в реестре"
+  - code: AGENT_SUSPENDED
+    http: 403
+    retry: never
+    description: "Приостановлен"
+  - code: AGENT_KEY_REVOKED
+    http: 401
+    retry: new_key
+    description: "Ключ отозван или истёк"
+  - code: SIGNATURE_INVALID
+    http: 401
+    retry: after_fix
+    description: "Подпись, окно времени, повтор nonce"
+  - code: MANDATE_NOT_FOUND
+    http: 404
+    retry: after_human
+    description: "Мандат не найден"
+  - code: MANDATE_EXPIRED
+    http: 409
+    retry: after_human
+    description: "Мандат истёк"
+  - code: MANDATE_REVOKED
+    http: 409
+    retry: never
+    description: "Мандат отозван"
+  - code: MANDATE_SCOPE
+    http: 409
+    retry: after_human
+    description: "Продавец, категория или сумма вне мандата"
+  - code: PRINCIPAL_SIGNATURE_PENDING
+    http: 409
+    retry: after_human
+    description: "Мандат ещё не подписан"
+  - code: LIMIT_EXCEEDED
+    http: 409
+    retry: after_human
+    description: "Ограничение инструмента"
+  - code: STATE_UNAVAILABLE
+    http: 503
+    retry: same_key
+    description: "Состояние не подтверждено"
+  - code: CONFIRMATION_REQUIRED
+    http: 428
+    retry: after_human
+    description: "Нужно подтверждение"
+  - code: CREDENTIAL_INVALID
+    http: 409
+    retry: after_fix
+    description: "Реквизит использован, истёк, не для этого продавца"
+  - code: CREDENTIALS_FORBIDDEN
+    http: 422
+    retry: never
+    description: "В запросе есть платёжные реквизиты"
+  - code: IDEMPOTENCY_REQUIRED
+    http: 400
+    retry: same_key
+    description: "Нет ключа"
+  - code: IDEMPOTENCY_CONFLICT
+    http: 409
+    retry: after_fix
+    description: "Тот же ключ, другое тело"
+  - code: RATE_LIMITED
+    http: 429
+    retry: same_key
+    description: "Частота"
+  - code: UPSTREAM_UNAVAILABLE
+    http: 503
+    retry: same_key
+    description: "Компонент Платформы недоступен"
 paths:
   /.well-known/pao-configuration:
     get:
