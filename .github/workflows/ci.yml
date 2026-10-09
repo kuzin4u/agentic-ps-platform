@@ -27,6 +27,8 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Аудит инструментов разработки
         run: npm audit --audit-level=high
+      - name: Сверка src/shared со спецификациями
+        run: npm run gen:shared:check
       - name: Проверка типов
         run: npm run check
       - name: Линт
