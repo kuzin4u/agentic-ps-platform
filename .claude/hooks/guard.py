@@ -8,7 +8,7 @@
      rm, truncate), а не любое упоминание пути — чтение разрешено.
   2. Чтение .env и ключей через Read и через Bash (cat/less/head/tail/grep/source и т. п.).
   3. Содержимое с ключом API (sk-ant-), приватным ключом PEM или номером карты (проверка Луна).
-  4. git push / создание и слияние PR — это делает владелец.
+  4. git push — только в ветки task/* (без --force, --tags, удаления); создание PR разрешено; слияние PR — владелец.
 """
 import json, re, shlex, sys, os
 
@@ -128,6 +128,62 @@ def bash_read_targets(cmd: str):
     return reads
 
 
+# --- push разрешён только в ветки task/* (решение владельца 09.10.2026) ---
+TASK_RE = re.compile(r"^(refs/heads/)?task/[A-Za-z0-9._/-]+$")
+FORBIDDEN_PUSH_FLAGS = {"-f", "--force", "--force-with-lease", "--force-if-includes", "--mirror", "--all",
+                        "--tags", "--follow-tags", "--delete", "-d", "--prune", "--no-verify"}
+
+
+def current_branch() -> str:
+    import subprocess
+    try:
+        out = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True,
+                             cwd=os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()), timeout=5)
+        return out.stdout.strip()
+    except Exception:
+        return ""
+
+
+def check_git_push(cmd: str):
+    """None — push разрешён; иначе текст причины отказа."""
+    for segment in re.split(r"&&|\|\||;|\|", cmd):
+        if not re.search(r"\bgit\b.*\bpush\b", segment):
+            continue
+        try:
+            tok = shlex.split(segment, posix=True)
+        except ValueError:
+            return "Не удалось разобрать команду git push."
+        if "git" not in tok or "push" not in tok:
+            continue
+        rest = tok[tok.index("push") + 1:]
+        for t in rest:
+            if t in FORBIDDEN_PUSH_FLAGS or t.startswith("--force") or t.startswith("--push-option") or t.startswith("-o"):
+                return f"git push с флагом {t} запрещён: только обычный push в ветки task/*."
+        args = [t for t in rest if not t.startswith("-")]
+        refspecs = args[1:] if args else []
+        if not refspecs:
+            br = current_branch()
+            if not TASK_RE.match(br):
+                return f"git push без указания ветки разрешён только из веток task/* (сейчас: {br or 'неизвестно'})."
+            continue
+        for r in refspecs:
+            if r.startswith("+"):
+                return "Принудительный push (+refspec) запрещён."
+            if ":" in r:
+                src, dst = r.split(":", 1)
+                if not src:
+                    return "Удаление ветки через push запрещено."
+            else:
+                src, dst = r, r
+            if dst == "HEAD":
+                dst = current_branch()
+            if src == "HEAD" and ":" not in r:
+                dst = current_branch()
+            if not TASK_RE.match(dst):
+                return f"git push разрешён только в ветки task/* (цель: {dst}). main, теги и другие ветки — владелец."
+    return None
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -152,8 +208,11 @@ def main():
 
     elif tool == "Bash":
         cmd = ti.get("command", "")
-        if re.search(r"\bgit\s+push\b", cmd) or re.search(r"\bgh\s+pr\s+(create|merge)\b", cmd):
-            block("git push и Pull Request делает владелец.")
+        if re.search(r"\bgh\s+pr\s+merge\b", cmd):
+            block("Слияние PR делает владелец.")
+        err = check_git_push(cmd)
+        if err:
+            block(err)
         for t in bash_write_targets(cmd):
             if is_protected_write(t):
                 block(f"команда пишет в защищённый путь {rel(t)}.")
