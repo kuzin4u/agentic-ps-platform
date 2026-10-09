@@ -23,7 +23,7 @@
     "tsx": "^4.23.15",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.71.1",
-    "vitest": "^2.0.0"
+    "vitest": "^5.0.3"
   },
   "dependencies": {
     "@kuzin4u/agentic-core": "git+https://github.com/kuzin4u/agentic-core.git#v0.1.0",
