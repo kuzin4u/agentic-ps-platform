@@ -37,6 +37,56 @@ export function parseDecisionReason(v: unknown): DecisionReason {
   return v;
 }
 
+/** Кто сформировал решение: ADP (ПИ-1) или процессинг от своего имени при таймауте ADP (РП19). */
+export type DecisionSource = "adp" | "processing";
+
+export interface DecisionPair {
+  readonly decision: DecisionKind;
+  readonly reason: DecisionReason | null;
+}
+
+export class DecisionPairError extends Error {
+  constructor(
+    readonly source: DecisionSource,
+    readonly decision: DecisionKind,
+    readonly reason: DecisionReason | null,
+  ) {
+    super(`Недопустимая пара от ${source}: ${decision} / ${reason ?? "null"} (РП19)`);
+    this.name = "DecisionPairError";
+  }
+}
+
+const NOT_ADP_DECLINE: readonly DecisionReason[] = ["CONFIRMATION_REQUIRED", "ADP_UNAVAILABLE"];
+
+function pairAllowed(source: DecisionSource, decision: DecisionKind, reason: DecisionReason | null): boolean {
+  if (source === "processing") return decision === "DECLINE" && reason === "ADP_UNAVAILABLE";
+  switch (decision) {
+    case "APPROVE":
+    case "BYPASS":
+      return reason === null;
+    case "CONFIRMATION_REQUIRED":
+      return reason === "CONFIRMATION_REQUIRED";
+    case "DECLINE":
+      return reason !== null && !NOT_ADP_DECLINE.includes(reason);
+  }
+}
+
+/**
+ * Пара «решение — причина» из ответа ADP или из решения процессинга (ПИ §3, РП19). Только пара:
+ * остальные поля Decision проверяются при разборе ответа целиком (PS-10, PS-11).
+ * Неизвестный код или источник, несогласованная пара, поле из прототипа — исключение, не догадка (A3 п. 4.5).
+ */
+export function parseDecision(raw: unknown, source: DecisionSource): DecisionPair {
+  if (source !== "adp" && source !== "processing") throw new UnknownCodeError("источника решения", source);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UnknownCodeError("решения", raw);
+  const src = raw as Record<string, unknown>;
+  const decision = parseDecisionKind(Object.hasOwn(src, "decision") ? src.decision : undefined);
+  const r = Object.hasOwn(src, "reason") ? src.reason : null;
+  const reason = r === null ? null : parseDecisionReason(r);
+  if (!pairAllowed(source, decision, reason)) throw new DecisionPairError(source, decision, reason);
+  return Object.freeze({ decision, reason });
+}
+
 const BY_CODE = new Map<string, PaoErrorSpec>(PAO_ERRORS.map((e) => [e.code, e]));
 
 /** Запись таблицы ошибок ПАО: HTTP и retry. Неизвестный код — исключение, не догадка. */

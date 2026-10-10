@@ -15,13 +15,46 @@ describe("стендовые параметры", () => {
     expect(Object.isFrozen(p)).toBe(true);
   });
 
-  it("каждый ключ PARAMS.md есть в схеме загрузчика", () => {
+  it("ключи PARAMS.md и загрузчика совпадают в обе стороны", () => {
     const doc = readFileSync("docs/core/PARAMS.md", "utf8");
-    const p = loadParams("config/params.stand.json");
-    for (const k of Object.keys(p)) {
-      const base = k.replace(/_(kop|days)$/, "_*");
-      expect(doc.includes(`\`${k}\``) || doc.includes(`\`${base}\``), k).toBe(true);
+    const end = doc.indexOf("## Журнал");
+    expect(end).toBeGreaterThan(0);
+    const table = doc.slice(0, end);
+    const loader = Object.keys(loadParams("config/params.stand.json"));
+    const documented = new Set<string>();
+    for (const line of table.split("\n")) {
+      const cell = /^\| (`[^|]+`) \|/.exec(line)?.[1];
+      if (!cell) continue;
+      for (const m of cell.matchAll(/`([a-z0-9_*]+)`/g)) {
+        const key = m[1] as string;
+        if (!key.endsWith("_*")) {
+          documented.add(key);
+          continue;
+        }
+        // Шаблон раскрывается только в суффиксы единиц, которые стоят в колонке «Стенд»: ₽ → _kop, дней → _days.
+        const expanded = ["_kop", "_days"].map((u) => key.slice(0, -2) + u);
+        for (const k of expanded) expect(loader, k).toContain(k);
+        for (const k of expanded) documented.add(k);
+      }
     }
+    expect([...documented].sort()).toEqual([...loader].sort());
+  });
+
+  it.each(["constructor", "__proto__", "toString", "hasOwnProperty"])(
+    "ключ прототипа %s не считается параметром",
+    (k) => {
+      const raw = JSON.parse(`{${JSON.stringify(k)}: 1}`) as Record<string, unknown>;
+      Object.assign(raw, stand());
+      expect(() => parseParams(raw)).toThrow(new RegExp(`${k}: неизвестный ключ`));
+    },
+  );
+
+  it("отсутствующий ключ не берётся из прототипа", () => {
+    const raw = Object.create({ adp_timeout_ms: 150 }) as Record<string, unknown>;
+    const rest = stand();
+    delete rest.adp_timeout_ms;
+    Object.assign(raw, rest);
+    expect(() => parseParams(raw)).toThrow(/adp_timeout_ms: нет ключа/);
   });
 
   it("нет ключа — отказ, значения по умолчанию нет", () => {

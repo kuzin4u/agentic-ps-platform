@@ -109,7 +109,7 @@ export function parseParams(raw: unknown): Params {
   const problems: string[] = [];
   const out: Record<string, unknown> = {};
   for (const [k, rule] of Object.entries(RULES)) {
-    if (!(k in src)) {
+    if (!Object.hasOwn(src, k)) {
       problems.push(`${k}: нет ключа`);
       continue;
     }
@@ -120,7 +120,7 @@ export function parseParams(raw: unknown): Params {
     }
   }
   for (const k of Object.keys(src)) {
-    if (!(k in RULES) && !SERVICE_KEYS.has(k)) problems.push(`${k}: неизвестный ключ`);
+    if (!Object.hasOwn(RULES, k) && !SERVICE_KEYS.has(k)) problems.push(`${k}: неизвестный ключ`);
   }
   if (problems.length === 0) {
     const p = out as unknown as Params;
