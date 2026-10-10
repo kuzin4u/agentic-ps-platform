@@ -1,6 +1,7 @@
 // Стендовые параметры Платформы (docs/core/PARAMS.md). В коде значений нет — только из файла.
 // Читается через fs при запуске: tsconfig.build.json собирает только src/.
-// Fail-closed: отсутствующий, лишний или неверный ключ — отказ запуска, значений по умолчанию нет.
+// Fail-closed: отсутствующий, лишний или неверный ключ, нарушенная граница — отказ запуска, значений по умолчанию нет.
+// Границы и перекрёстные правила — PARAMS.md «Границы» (РП20).
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -75,7 +76,7 @@ const RULES: Record<keyof Params, Rule> = {
   revocation_propagation_max_ms: int(1),
   reservation_ttl_sec: int(1),
   event_reorder_window_ms: int(0),
-  event_retry_max: int(0),
+  event_retry_max: int(1),
   cryptogram_ttl_sec: int(1),
   order_hold_sec: int(1),
   confirm_above_kop: int(1),
@@ -88,7 +89,7 @@ const RULES: Record<keyof Params, Rule> = {
   qualified_signature_above_days: int(1),
   restore_budget_on_refund: bool,
   aoi_rollout_phase: int(1, 3),
-  protocol_overlap_days: int(0),
+  protocol_overlap_days: int(1),
   issuer_mode_default: oneOf(ISSUER_MODES),
   cx_outcome_timeout_days: int(1),
 };
@@ -124,7 +125,8 @@ export function parseParams(raw: unknown): Params {
   }
   if (problems.length === 0) {
     const p = out as unknown as Params;
-    if (p.adp_timeout_ms < p.adp_p99_ms) problems.push("adp_timeout_ms меньше adp_p99_ms");
+    if (p.adp_timeout_ms <= p.adp_p99_ms) problems.push("adp_timeout_ms не больше adp_p99_ms");
+    if (p.bypass_overhead_ms >= p.adp_p99_ms) problems.push("bypass_overhead_ms не меньше adp_p99_ms");
     if (p.key_overlap_days >= p.key_ttl_days) problems.push("key_overlap_days не меньше key_ttl_days");
   }
   if (problems.length) throw new ParamsError(problems);
