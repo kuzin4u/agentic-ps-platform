@@ -155,7 +155,19 @@ def check_git_push(cmd: str):
             return "Не удалось разобрать команду git push."
         if "git" not in tok or "push" not in tok:
             continue
-        rest = tok[tok.index("push") + 1:]
+        raw = tok[tok.index("push") + 1:]
+        # перенаправления вывода (2>&1, >/dev/null, > файл) — не аргументы git push
+        rest, skip = [], False
+        for t in raw:
+            if skip:
+                skip = False
+                continue
+            if re.match(r"^(\d*|&)[<>]+&?\d*$", t):
+                skip = not re.search(r"&\d*$", t)
+                continue
+            if re.match(r"^(\d*|&)[<>]", t):
+                continue
+            rest.append(t)
         for t in rest:
             if t in FORBIDDEN_PUSH_FLAGS or t.startswith("--force") or t.startswith("--push-option") or t.startswith("-o"):
                 return f"git push с флагом {t} запрещён: только обычный push в ветки task/*."
