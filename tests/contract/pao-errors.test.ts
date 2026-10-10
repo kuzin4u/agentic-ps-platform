@@ -9,7 +9,7 @@ import {
   paoError,
   UnknownCodeError,
 } from "../../src/shared/index.js";
-import { CORE_PAO_VERSION, ERROR_CODES_MATCH_CORE } from "../../src/shared/pao.js";
+import { CORE_PAO_ERRORS, CORE_PAO_VERSION, ERROR_CODES_MATCH_CORE } from "../../src/shared/pao.js";
 
 const pao = parse(readFileSync("docs/core/agent-protocol.yaml", "utf8"), { maxAliasCount: -1 });
 
@@ -44,7 +44,13 @@ describe("таблица ошибок ПАО (x-pao-errors, РП16)", () => {
 
   it("набор кодов совпадает с типами agentic-core", () => {
     expect(ERROR_CODES_MATCH_CORE).toBe(true);
-    expect(CORE_PAO_VERSION).toMatch(/^1\./);
+    expect(CORE_PAO_VERSION).toBe(PAO_SPEC_VERSION);
+  });
+
+  it("HTTP и retry каждого кода совпадают с agentic-core", () => {
+    for (const e of PAO_ERRORS) {
+      expect(CORE_PAO_ERRORS[e.code], e.code).toMatchObject({ http: e.http, retry: e.retry });
+    }
   });
 
   it("сгенерированные файлы соответствуют спецификациям", () => {

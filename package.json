@@ -29,7 +29,7 @@
     "yaml": "^2.9.1"
   },
   "dependencies": {
-    "@kuzin4u/agentic-core": "git+https://github.com/kuzin4u/agentic-core.git#v0.2.0",
+    "@kuzin4u/agentic-core": "github:kuzin4u/agentic-core#v0.2.1",
     "fastify": "^5.12.5"
   }
 }
