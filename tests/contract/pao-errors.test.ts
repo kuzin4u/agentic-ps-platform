@@ -44,15 +44,42 @@ describe("таблица ошибок ПАО (x-pao-errors, РП16)", () => {
 
   it("набор кодов совпадает с типами agentic-core", () => {
     expect(ERROR_CODES_MATCH_CORE).toBe(true);
+  });
+});
+
+// Платформа может выпустить ПАО раньше core: тогда сверка ждёт выпуска agentic-core.
+// Core новее Платформы быть не может — его спецификация берётся из Платформы.
+const CORE_BEHIND = "платформа впереди core, ждём выпуск agentic-core";
+const cmpVersion = (a: string, b: string): number => {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+};
+const platformAhead = cmpVersion(PAO_SPEC_VERSION, CORE_PAO_VERSION) > 0;
+
+describe("сверка с agentic-core", () => {
+  it("версия ПАО core не новее спецификации Платформы", () => {
+    expect(cmpVersion(PAO_SPEC_VERSION, CORE_PAO_VERSION)).toBeGreaterThanOrEqual(0);
+  });
+
+  it("версия ПАО совпадает с agentic-core", (ctx) => {
+    if (platformAhead) ctx.skip(CORE_BEHIND);
     expect(CORE_PAO_VERSION).toBe(PAO_SPEC_VERSION);
   });
 
-  it("HTTP и retry каждого кода совпадают с agentic-core", () => {
+  it("HTTP и retry каждого кода совпадают с agentic-core", (ctx) => {
+    if (platformAhead) ctx.skip(CORE_BEHIND);
     for (const e of PAO_ERRORS) {
       expect(CORE_PAO_ERRORS[e.code], e.code).toMatchObject({ http: e.http, retry: e.retry });
     }
   });
+});
 
+describe("генерация src/shared", () => {
   it("сгенерированные файлы соответствуют спецификациям", () => {
     expect(() => execFileSync("node", ["scripts/gen-shared.mjs", "--check"], { stdio: "pipe" })).not.toThrow();
   });
