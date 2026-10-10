@@ -1,9 +1,9 @@
 // Сгенерировано scripts/gen-shared.mjs из docs/core/processing-interface.yaml — не править вручную.
-// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 dd119fba9d6a528ad5b462243bacde331a576c2ec2d074abd92b2ded202a464b
+// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 6cb50db5e49678e02cc5d458557778eaccd8008cbde54e0460d6137daa29088e
 // Номера полей и кодов внешних форматов здесь нет: только каноническая модель [альбом] (РП6).
 
 export const PI_VERSION = "1.0.0-draft";
-export const PI_SPEC_SHA256 = "dd119fba9d6a528ad5b462243bacde331a576c2ec2d074abd92b2ded202a464b";
+export const PI_SPEC_SHA256 = "6cb50db5e49678e02cc5d458557778eaccd8008cbde54e0460d6137daa29088e";
 
 export interface Instrument {
   kind: "AGENT_TOKEN" | "ACCOUNT_LINK" | "CARD_TOKEN";
@@ -45,6 +45,7 @@ export interface CanonicalMessage {
   ts?: string;
 }
 
+/** Пары в ответе ADP (РП19): APPROVE, BYPASS — reason null; DECLINE — код ПИ §6, кроме CONFIRMATION_REQUIRED и ADP_UNAVAILABLE; CONFIRMATION_REQUIRED — reason CONFIRMATION_REQUIRED. ADP_UNAVAILABLE — только в решении процессинга при таймауте ADP (DECLINE / ADP_UNAVAILABLE). Несогласованная пара — отказ. */
 export interface Decision {
   decision: "APPROVE" | "DECLINE" | "CONFIRMATION_REQUIRED" | "BYPASS";
   reason?: null | "AOI_MISSING" | "AOI_MISMATCH" | "AGENT_UNKNOWN" | "AGENT_SUSPENDED" | "CREDENTIAL_INVALID" | "MANDATE_NOT_FOUND" | "MANDATE_EXPIRED" | "MANDATE_REVOKED" | "MANDATE_SCOPE" | "LIMIT_EXCEEDED" | "STATE_UNAVAILABLE" | "CONFIRMATION_REQUIRED" | "ADP_UNAVAILABLE";
@@ -240,6 +241,7 @@ export const PI_SCHEMAS: Record<string, unknown> = {
   },
   "Decision": {
     "type": "object",
+    "description": "Пары в ответе ADP (РП19): APPROVE, BYPASS — reason null; DECLINE — код ПИ §6, кроме CONFIRMATION_REQUIRED и ADP_UNAVAILABLE; CONFIRMATION_REQUIRED — reason CONFIRMATION_REQUIRED. ADP_UNAVAILABLE — только в решении процессинга при таймауте ADP (DECLINE / ADP_UNAVAILABLE). Несогласованная пара — отказ.",
     "required": [
       "decision",
       "decided_in_ms"
