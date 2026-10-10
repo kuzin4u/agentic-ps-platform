@@ -57,24 +57,17 @@ function fieldNames(spec: unknown): Map<string, string> {
     }
     if (!node || typeof node !== "object") return;
     const obj = node as Record<string, unknown>;
-    if (typeof obj.name === "string" && typeof obj.in === "string")
-      out.set(obj.name, `${path}.name`);
+    if (typeof obj.name === "string" && typeof obj.in === "string") out.set(obj.name, `${path}.name`);
     if (path === ".paths") {
       for (const p of Object.keys(obj))
-        for (const m of p.matchAll(/\{([^}]+)\}/g))
-          out.set(m[1] as string, `paths.${p}`);
+        for (const m of p.matchAll(/\{([^}]+)\}/g)) out.set(m[1] as string, `paths.${p}`);
     }
     for (const [k, v] of Object.entries(obj)) {
-      if (
-        (k === "properties" || k === "headers") &&
-        v &&
-        typeof v === "object"
-      ) {
+      if ((k === "properties" || k === "headers") && v && typeof v === "object") {
         for (const f of Object.keys(v)) out.set(f, `${path}.${k}.${f}`);
       }
       if (k === "required" && Array.isArray(v))
-        for (const f of v)
-          if (typeof f === "string") out.set(f, `${path}.required`);
+        for (const f of v) if (typeof f === "string") out.set(f, `${path}.required`);
       walk(v, `${path}.${k}`);
     }
   };
@@ -82,10 +75,7 @@ function fieldNames(spec: unknown): Map<string, string> {
   return out;
 }
 
-const SPECS = [
-  "docs/core/processing-interface.yaml",
-  "docs/core/agent-protocol.yaml",
-];
+const SPECS = ["docs/core/processing-interface.yaml", "docs/core/agent-protocol.yaml"];
 
 describe("номера карты нет в схемах (инвариант 1)", () => {
   it("детектор различает слова, а не подстроки", () => {
@@ -128,9 +118,7 @@ describe("номера карты нет в схемах (инвариант 1)"
     const spec = parse(readFileSync(file, "utf8"), { maxAliasCount: -1 });
     const names = fieldNames(spec);
     expect(names.size).toBeGreaterThan(20);
-    const hits = [...names]
-      .filter(([n]) => forbidden(n))
-      .map(([n, at]) => `${n} @ ${at}`);
+    const hits = [...names].filter(([n]) => forbidden(n)).map(([n, at]) => `${n} @ ${at}`);
     expect(hits).toEqual([]);
   });
 });

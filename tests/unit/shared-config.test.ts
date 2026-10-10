@@ -2,14 +2,9 @@ import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  loadParams,
-  parseParams,
-  ParamsError,
-} from "../../src/shared/config.js";
+import { loadParams, parseParams, ParamsError } from "../../src/shared/config.js";
 
-const stand = (): Record<string, unknown> =>
-  JSON.parse(readFileSync("config/params.stand.json", "utf8"));
+const stand = (): Record<string, unknown> => JSON.parse(readFileSync("config/params.stand.json", "utf8"));
 
 describe("стендовые параметры", () => {
   it("стендовый файл загружается полностью и заморожен", () => {
@@ -48,22 +43,14 @@ describe("стендовые параметры", () => {
   it.each(["constructor", "__proto__", "toString", "hasOwnProperty"])(
     "ключ прототипа %s не считается параметром",
     (k) => {
-      const raw = JSON.parse(`{${JSON.stringify(k)}: 1}`) as Record<
-        string,
-        unknown
-      >;
+      const raw = JSON.parse(`{${JSON.stringify(k)}: 1}`) as Record<string, unknown>;
       Object.assign(raw, stand());
-      expect(() => parseParams(raw)).toThrow(
-        new RegExp(`${k}: неизвестный ключ`),
-      );
+      expect(() => parseParams(raw)).toThrow(new RegExp(`${k}: неизвестный ключ`));
     },
   );
 
   it("отсутствующий ключ не берётся из прототипа", () => {
-    const raw = Object.create({ adp_timeout_ms: 150 }) as Record<
-      string,
-      unknown
-    >;
+    const raw = Object.create({ adp_timeout_ms: 150 }) as Record<string, unknown>;
     const rest = stand();
     delete rest.adp_timeout_ms;
     Object.assign(raw, rest);
@@ -77,9 +64,7 @@ describe("стендовые параметры", () => {
   });
 
   it("лишний ключ — отказ", () => {
-    expect(() => parseParams({ ...stand(), adp_p95_ms: 10 })).toThrow(
-      /adp_p95_ms: неизвестный ключ/,
-    );
+    expect(() => parseParams({ ...stand(), adp_p95_ms: 10 })).toThrow(/adp_p95_ms: неизвестный ключ/);
   });
 
   it.each([
@@ -118,9 +103,7 @@ describe("стендовые параметры", () => {
     const keysOf = (label: string): string[] => {
       const row = section.split("\n").find((l) => l.startsWith(`| ${label}`));
       expect(row, label).toBeDefined();
-      return [
-        ...(row as string).split("|")[1]!.matchAll(/`([a-z0-9_]+)`/g),
-      ].map((m) => m[1] as string);
+      return [...(row as string).split("|")[1]!.matchAll(/`([a-z0-9_]+)`/g)].map((m) => m[1] as string);
     };
     const min1 = keysOf("Целые ≥ 1:");
     const min0 = keysOf("Целые ≥ 0:");
@@ -131,13 +114,9 @@ describe("стендовые параметры", () => {
       .map(([k]) => k);
     expect([...min1, ...min0].sort()).toEqual(ints.sort());
     for (const k of min1)
-      expect(() => parseParams({ ...stand(), [k]: 0 }), k).toThrow(
-        new RegExp(`${k}: ожидается целое 1`),
-      );
+      expect(() => parseParams({ ...stand(), [k]: 0 }), k).toThrow(new RegExp(`${k}: ожидается целое 1`));
     for (const k of min0) {
-      expect(() => parseParams({ ...stand(), [k]: -1 }), k).toThrow(
-        new RegExp(`${k}: ожидается целое 0`),
-      );
+      expect(() => parseParams({ ...stand(), [k]: -1 }), k).toThrow(new RegExp(`${k}: ожидается целое 0`));
       expect(() => parseParams({ ...stand(), [k]: 0 }), k).not.toThrow();
     }
     for (const rule of [
@@ -150,9 +129,7 @@ describe("стендовые параметры", () => {
   });
 
   it("PARAMS_PATH описан в PARAMS.md", () => {
-    expect(readFileSync("docs/core/PARAMS.md", "utf8")).toContain(
-      "`PARAMS_PATH`",
-    );
+    expect(readFileSync("docs/core/PARAMS.md", "utf8")).toContain("`PARAMS_PATH`");
   });
 
   it("испорченный файл — отказ запуска", () => {
