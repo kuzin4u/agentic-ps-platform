@@ -107,6 +107,7 @@ components:
           format: date-time
     Decision:
       type: object
+      description: 'Пары в ответе ADP (РП19): APPROVE, BYPASS — reason null; DECLINE — код ПИ §6, кроме CONFIRMATION_REQUIRED и ADP_UNAVAILABLE; CONFIRMATION_REQUIRED — reason CONFIRMATION_REQUIRED. ADP_UNAVAILABLE — только в решении процессинга при таймауте ADP (DECLINE / ADP_UNAVAILABLE). Несогласованная пара — отказ.'
       required:
       - decision
       - decided_in_ms

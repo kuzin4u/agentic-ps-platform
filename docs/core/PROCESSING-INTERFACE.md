@@ -64,6 +64,7 @@
 
 `decision`: `APPROVE` · `DECLINE` · `CONFIRMATION_REQUIRED` · `BYPASS` (операция не агентская; процессинг продолжает без изменений).
 `reason` — код из раздела 6.
+Пары в ответе ADP (РП19): `APPROVE`, `BYPASS` — `reason: null`; `DECLINE` — код раздела 6, кроме `CONFIRMATION_REQUIRED` и `ADP_UNAVAILABLE`; `CONFIRMATION_REQUIRED` — `reason: CONFIRMATION_REQUIRED`. `ADP_UNAVAILABLE` ADP не возвращает: это решение процессинга при таймауте (`DECLINE` / `ADP_UNAVAILABLE`). Несогласованная пара — отказ, как неизвестный код (A3 п. 4.5).
 
 **Требования:**
 - p99 ≤ `adp_p99_ms`; процессинг ждёт не дольше `adp_timeout_ms`, затем отклоняет **агентскую** операцию кодом `ADP_UNAVAILABLE`;
@@ -122,7 +123,7 @@
 | LIMIT_EXCEEDED | Превышено ограничение | `[альбом]` «превышение полномочий агента» | `operation.declined` |
 | STATE_UNAVAILABLE | Состояние не подтверждено | `[альбом]` «превышение полномочий агента» | `operation.declined` |
 | CONFIRMATION_REQUIRED | Нужно подтверждение | `[альбом]` «требуется подтверждение клиента» (аналог мягкого отказа) | `confirmation.required` |
-| ADP_UNAVAILABLE | Таймаут ADP | `[альбом]` «агентская проверка недоступна» | `operation.declined` |
+| ADP_UNAVAILABLE | Таймаут ADP; код ставит процессинг (РП19) | `[альбом]` «агентская проверка недоступна» | `operation.declined` |
 
 Продавец получает от эквайрера отказ с этим кодом. Агент узнаёт о результате событием ПАО от Платформы, а не от продавца — так агенту не нужно доверять пересказу продавца.
 

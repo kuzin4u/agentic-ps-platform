@@ -2,6 +2,8 @@
 
 Значения из `config/params.stand.json` — настройки песочницы, а не нормы и не нормативы процессинга. В коде — только из конфигурации.
 
+Файл задаётся переменной окружения `PARAMS_PATH` (по умолчанию `config/params.stand.json`). Нет ключа, лишний ключ, неверный тип или нарушенная граница — отказ запуска, значений по умолчанию нет (РП20).
+
 | Ключ | Стенд | Смысл | Чем закрывается |
 |---|---|---|---|
 | `adp_p99_ms` / `adp_timeout_ms` | 50 / 150 | Задержка точки решения и таймаут процессинга | нормативы ОПКЦ, нагрузочный прогон |
@@ -22,6 +24,19 @@
 | `protocol_overlap_days` | 180 | Параллельная работа версий ПАО | решение владельца |
 | `issuer_mode_default` | ON_BEHALF | Режим эмитента по умолчанию | РП3 |
 | `cx_outcome_timeout_days` | 30 | Срок, за который поставщик условного исполнения сообщает итог сделки | договор с ПУИ |
+
+## Границы
+
+| Правило | Почему |
+|---|---|
+| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
+| Целые ≥ 0: `bypass_overhead_ms`, `event_reorder_window_ms`, `key_overlap_days` | ноль допустим |
+| `split_min_ops` ≥ 2 | дробление — от двух операций |
+| `aoi_rollout_phase` ∈ 1…3 | A1 п. 8.3 |
+| `adp_availability_target` — строка «N%», 0 < N ≤ 100 | |
+| `bypass_overhead_ms` < `adp_p99_ms` | РП4, РП20 |
+| `adp_timeout_ms` > `adp_p99_ms` | ПИ §3, РП20 |
+| `key_overlap_days` < `key_ttl_days` | перекрытие ключей короче их жизни |
 
 ## Журнал изменений
 
