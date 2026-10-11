@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Хук PostToolUse: одна строка JSON на каждое изменение в .claude/hooks.log.
-Учитываются правки через Write/Edit/MultiEdit и через Bash (cp, mv, sed -i, cat >>, tee, rm и т. п.)."""
-import json, os, sys, datetime, re
+Учитываются правки через Write/Edit/MultiEdit и через Bash (cp, mv, sed -i, cat >>, tee, rm и т. п.).
+В каждой записи — head: коммит HEAD на момент записи; от первой записи сессии сводка считает git diff."""
+import json, os, sys, datetime, re, subprocess
 sys.path.insert(0, os.path.dirname(__file__))
 try:
     from guard import bash_write_targets, rel
@@ -34,6 +35,11 @@ def main():
     else:
         return
     root = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+    try:
+        rec["head"] = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                                     text=True, timeout=5).stdout.strip()
+    except Exception:
+        pass
     with open(os.path.join(root, ".claude", "hooks.log"), "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
