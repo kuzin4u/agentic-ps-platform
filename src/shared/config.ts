@@ -27,6 +27,8 @@ export interface Params {
   readonly split_window_sec: number;
   readonly split_min_ops: number;
   readonly signature_skew_sec: number;
+  /** Retry-After у ответов ПАО 503; 0…30 — не больше maxRetryAfterSec клиента agentic-core (РП24). */
+  readonly unavailable_retry_after_sec: number;
   readonly key_ttl_days: number;
   readonly key_overlap_days: number;
   readonly qualified_signature_above_kop: number;
@@ -83,6 +85,7 @@ const RULES: Record<keyof Params, Rule> = {
   split_window_sec: int(1),
   split_min_ops: int(2),
   signature_skew_sec: int(1),
+  unavailable_retry_after_sec: int(0, 30),
   key_ttl_days: int(1),
   key_overlap_days: int(0),
   qualified_signature_above_kop: int(1),

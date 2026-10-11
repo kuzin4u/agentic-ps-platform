@@ -21,7 +21,7 @@ const verifier = new PaoRequestVerifier(
   { skewSec: params.signature_skew_sec },
 );
 
-const app = buildServer({ env, logger: true, pao: { verifier, keys } });
+const app = buildServer({ env, logger: true, pao: { verifier, keys, params } });
 app.log.info({ params }, "стендовые параметры загружены");
 
 try {

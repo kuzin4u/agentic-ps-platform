@@ -3,6 +3,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AgentKeys } from "../registry/agent-keys.js";
 import type { AgentRecord } from "../registry/model.js";
+import type { Params } from "../shared/config.js";
 import type { AgentSelf } from "../shared/pao.js";
 import { paoError } from "./errors.js";
 import type { PaoRequestVerifier } from "./verify.js";
@@ -10,6 +11,7 @@ import type { PaoRequestVerifier } from "./verify.js";
 export interface PaoDeps {
   readonly verifier: PaoRequestVerifier;
   readonly keys: AgentKeys;
+  readonly params: Pick<Params, "unavailable_retry_after_sec">;
 }
 
 declare module "fastify" {
@@ -36,6 +38,8 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     const r = deps.verifier.verify({ method: req.method, path, query, headers: req.headers, body });
     if (!r.ok) {
       const e = paoError(r.code, r.norm);
+      // ПАО §2: Retry-After и с ответами 503 — из стендовых параметров (РП24).
+      if (e.http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
       return reply.code(e.http).send(e.body);
     }
     req.paoAgent = r.agent;

@@ -27,6 +27,6 @@ export function stand(): Stand {
     { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
     { skewSec: params.signature_skew_sec, now },
   );
-  const app = buildServer({ env: "sandbox", pao: { verifier, keys } });
+  const app = buildServer({ env: "sandbox", pao: { verifier, keys, params } });
   return { params, store, registry, keys, verifier, app, setClock: (d) => (clock = d) };
 }

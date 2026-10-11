@@ -93,6 +93,19 @@ describe("стендовые параметры", () => {
     expect(() => parseParams({ ...stand(), [k]: v })).toThrow(msg);
   });
 
+  it("unavailable_retry_after_sec: 0 и 30 принимаются, 31 — отказ (РП24: не больше maxRetryAfterSec клиента core)", () => {
+    for (const v of [0, 30]) expect(parseParams({ ...stand(), unavailable_retry_after_sec: v }).unavailable_retry_after_sec).toBe(v);
+    for (const v of [31, -1, 1.5, "1"]) {
+      expect(() => parseParams({ ...stand(), unavailable_retry_after_sec: v }), String(v)).toThrow(
+        /unavailable_retry_after_sec: ожидается целое 0…30/,
+      );
+    }
+    const doc = readFileSync("docs/core/PARAMS.md", "utf8");
+    expect(doc.slice(doc.indexOf("## Границы"), doc.indexOf("## Журнал"))).toContain(
+      "| `unavailable_retry_after_sec` — целое 0…30 |",
+    );
+  });
+
   it("границы PARAMS.md совпадают с загрузчиком (РП20)", () => {
     const doc = readFileSync("docs/core/PARAMS.md", "utf8");
     const from = doc.indexOf("## Границы");
@@ -108,7 +121,7 @@ describe("стендовые параметры", () => {
     const min1 = keysOf("Целые ≥ 1:");
     const min0 = keysOf("Целые ≥ 0:");
     // Каждое целое без особой границы — ровно в одной из строк.
-    const special = new Set(["split_min_ops", "aoi_rollout_phase"]);
+    const special = new Set(["split_min_ops", "aoi_rollout_phase", "unavailable_retry_after_sec"]);
     const ints = Object.entries(stand())
       .filter(([k, v]) => Number.isInteger(v) && !special.has(k))
       .map(([k]) => k);
