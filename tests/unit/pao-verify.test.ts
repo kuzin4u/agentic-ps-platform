@@ -2,7 +2,13 @@ import { readFileSync } from "node:fs";
 import { newEd25519Signer, signRequest, type HttpLike, type Signer } from "@kuzin4u/agentic-core";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { NonceStore, PaoRequestVerifier, paoError, type PaoRequest } from "../../src/pao/index.js";
+import {
+  NonceStore,
+  PaoRequestVerifier,
+  paoError,
+  type PaoAuthSources,
+  type PaoRequest,
+} from "../../src/pao/index.js";
 import {
   AgentKeys,
   AgentRegistry,
@@ -315,19 +321,46 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
     );
   });
 
-  it("сбой поиска ключа — отказ, не исключение (инвариант 3)", () => {
+  it("сбой реестра или ключей — 503 UPSTREAM_UNAVAILABLE, не ошибка агента и не исключение (аудит PS-04 №2)", () => {
     const s = stand();
     const signer = s.admit(A);
-    const broken = new PaoRequestVerifier(
+    const down = (): never => {
+      throw new Error("db down");
+    };
+    const verifierWith = (sources: Partial<PaoAuthSources>) =>
+      new PaoRequestVerifier(
+        {
+          getAgent: (c) => s.registry.get(c),
+          lookupKey: (c, kid) => s.keys.lookup(c, kid),
+          ...sources,
+        },
+        { skewSec: SKEW, now: () => NOW },
+      );
+    const r1 = verifierWith({ lookupKey: down }).verify(signed(signer, A));
+    const r2 = verifierWith({ getAgent: down }).verify(signed(signer, A));
+    for (const r of [r1, r2]) expect(r).toEqual({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
+    expect(paoError("UPSTREAM_UNAVAILABLE").http).toBe(503);
+    expect(paoError("UPSTREAM_UNAVAILABLE").body.retry).toBe("same_key");
+  });
+
+  it("сбой источника не занимает nonce: повтор после восстановления принимается", () => {
+    const s = stand();
+    const signer = s.admit(A);
+    let up = false;
+    const v = new PaoRequestVerifier(
       {
         getAgent: (c) => s.registry.get(c),
-        lookupKey: () => {
-          throw new Error("хранилище недоступно");
+        lookupKey: (c, kid) => {
+          if (!up) throw new Error("db down");
+          return s.keys.lookup(c, kid);
         },
       },
       { skewSec: SKEW, now: () => NOW },
     );
-    expect(code(broken.verify(signed(signer, A)))).toBe("SIGNATURE_INVALID");
+    const req = signed(signer, A);
+    expect(code(v.verify(req))).toBe("UPSTREAM_UNAVAILABLE");
+    up = true;
+    expect(code(v.verify(req))).toBe("OK");
   });
 });
 
@@ -336,11 +369,14 @@ describe("хранилище nonce", () => {
     const n = new NonceStore(2 * SKEW * 1000);
     const t = NOW.getTime();
     n.remember(A, "x", t);
-    expect(n.has(A, "x", t + 2 * SKEW * 1000 - 1)).toBe(true);
-    expect(n.has(A, "x", t + 2 * SKEW * 1000)).toBe(false);
+    expect(n.has(A, "x", t + 2 * SKEW * 1000)).toBe(true);
+    expect(n.has(A, "x", t + 2 * SKEW * 1000 + 1)).toBe(false);
     expect(n.has(B, "x", t)).toBe(false);
-    n.remember(A, "y", t + 2 * SKEW * 1000);
-    expect(n.size).toBe(1);
+    n.remember(A, "z", t + 2 * SKEW * 1000);
+    expect(n.size).toBe(2);
+    n.remember(A, "y", t + 2 * SKEW * 1000 + 1);
+    expect(n.size).toBe(2);
+    expect(n.has(A, "x", t)).toBe(false);
   });
 
   it("по умолчанию ttl = 2 × signature_skew_sec: повтор в пределах окна времени ловится всегда", () => {
@@ -350,7 +386,12 @@ describe("хранилище nonce", () => {
     const ts = new Date(NOW.getTime() + SKEW * 1000);
     const req = signed(signer, A, { ts });
     expect(code(s.verifier.verify(req))).toBe("OK");
-    s.setClock(new Date(NOW.getTime() + 2 * SKEW * 1000 - 1));
+    for (const ms of [2 * SKEW * 1000 - 1, 2 * SKEW * 1000]) {
+      s.setClock(new Date(NOW.getTime() + ms));
+      expect(code(s.verifier.verify(req)), `+${ms} мс`).toBe("SIGNATURE_INVALID");
+    }
+    // Дальше обращение вне окна времени: повтор закрыт окном, а не памятью nonce.
+    s.setClock(new Date(NOW.getTime() + 2 * SKEW * 1000 + 1));
     expect(code(s.verifier.verify(req))).toBe("SIGNATURE_INVALID");
   });
 });

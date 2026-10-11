@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   AgentExcludedError,
@@ -13,6 +13,7 @@ import {
   KeyInvalidError,
   KeyNotFoundError,
   KeyTakenError,
+  isWeakEd25519,
   jwkThumbprint,
   parseKey,
   type AdmissionDecision,
@@ -116,6 +117,67 @@ describe("kid — отпечаток JWK по RFC 7638 (РП23 п. 3)", () => {
     expect(parseKey([ED25519], "ED25519", RFC8037_SPKI)).toBeNull();
     expect(parseKey([], "ed25519", RFC8037_SPKI)).toBeNull();
     expect(parseKey([ED25519], undefined, RFC8037_SPKI)).toBeNull();
+  });
+});
+
+describe("слабые ключи Ed25519 — KEY_INVALID (аудит PS-04 №1, A2 п. 5.1, РП23 п. 2)", () => {
+  const spkiOf = (hex: string): string =>
+    Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(hex, "hex")]).toString("base64");
+  // Восемь точек малого порядка — независимый список (как блок-лист libsodium), не из кода Платформы.
+  const SMALL_ORDER = [
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+  ];
+  // Неканоническая запись: нейтраль и −1 со знаковым битом при x = 0; y = p + 1 и y = p.
+  const NON_CANONICAL = [
+    "0100000000000000000000000000000000000000000000000000000000000080",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  ];
+
+  it("почему блокер: с ключом-нейтралью подпись «R = нейтраль, S = 0» верна для любого сообщения", () => {
+    const pub = createPublicKey({ key: Buffer.from(spkiOf(SMALL_ORDER[0]!), "base64"), format: "der", type: "spki" });
+    const forged = Buffer.concat([Buffer.from(SMALL_ORDER[0]!, "hex"), Buffer.alloc(32)]);
+    expect(verify(null, Buffer.from("любое обращение"), pub, forged)).toBe(true);
+  });
+
+  it.each(SMALL_ORDER)("точка малого порядка %s — слабая, не разбирается", (hex) => {
+    expect(isWeakEd25519(Buffer.from(hex, "hex"))).toBe(true);
+    expect(parseKey([ED25519], "ed25519", spkiOf(hex))).toBeNull();
+  });
+
+  it.each(NON_CANONICAL)("неканоническая запись %s — слабая", (hex) => {
+    expect(isWeakEd25519(Buffer.from(hex, "hex"))).toBe(true);
+  });
+
+  it("эталон RFC 8037 и случайные ключи — не слабые", () => {
+    expect(isWeakEd25519(Buffer.from(RFC8037_X, "base64url"))).toBe(false);
+    for (let i = 0; i < 50; i++) {
+      const x = Buffer.from(newPublicKey(), "base64").subarray(12);
+      expect(isWeakEd25519(x)).toBe(false);
+    }
+  });
+
+  it("допуск со слабым ключом — KEY_INVALID, ничего не сохранено; register — KeyInvalidError", () => {
+    const s = stand();
+    const d = s.registry.admit(application({ public_key: spkiOf(SMALL_ORDER[0]!) }), {
+      contour: "sandbox",
+      operator: OPERATOR,
+    });
+    expect(reasons(d)).toEqual(["KEY_INVALID"]);
+    expect(s.store.get(CODE)).toBeUndefined();
+    s.admit();
+    for (const hex of SMALL_ORDER) {
+      expect(() => s.keys.register(CODE, { alg: "ed25519", public_key: spkiOf(hex) })).toThrow(KeyInvalidError);
+    }
+    expect(s.keys.list(CODE)).toHaveLength(1);
   });
 });
 

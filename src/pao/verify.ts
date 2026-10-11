@@ -14,11 +14,19 @@ export interface PaoRequest {
   readonly body: string;
 }
 
-export type PaoAuthError = "AGENT_UNKNOWN" | "SIGNATURE_INVALID" | "AGENT_KEY_REVOKED" | "AGENT_SUSPENDED";
+export type PaoAuthError =
+  | "AGENT_UNKNOWN"
+  | "SIGNATURE_INVALID"
+  | "AGENT_KEY_REVOKED"
+  | "AGENT_SUSPENDED"
+  | "UPSTREAM_UNAVAILABLE";
 
 export type PaoAuthResult =
   | { readonly ok: true; readonly agent: AgentRecord; readonly kid: string }
-  | { readonly ok: false; readonly code: PaoAuthError; readonly norm: string };
+  | { readonly ok: false; readonly code: PaoAuthError; readonly norm?: string };
+
+/** Сбой реестра или ключей — не ошибка агента: 503 UPSTREAM_UNAVAILABLE, same_key (ПАО §6; аудит PS-04 №2). */
+const UPSTREAM: PaoAuthResult = { ok: false, code: "UPSTREAM_UNAVAILABLE" };
 
 /** Реестр и ключи в той мере, в какой они нужны проверке (П1). */
 export interface PaoAuthSources {
@@ -28,7 +36,9 @@ export interface PaoAuthSources {
 
 /**
  * Использованные nonce в паре «агент + nonce» (ПАО §2: не повторяется в пределах окна).
- * Хранятся ttlMs после запоминания; ttlMs ≥ 2 × signature_skew_sec (РП23 п. 6).
+ * Хранятся ttlMs после запоминания включительно; ttlMs ≥ 2 × signature_skew_sec (РП23 п. 6): обращение, принятое в t
+ * с меткой t + skew, проходит окно до t + 2 × skew включительно — до этого момента nonce помнится (аудит PS-04 №3).
+ * Хранилище процесса: на PostgreSQL — атомарное «запомнить, если ещё нет» (CO-2, STATUS).
  */
 export class NonceStore {
   readonly #until = new Map<string, number>();
@@ -37,13 +47,13 @@ export class NonceStore {
 
   has(agent_code: string, nonce: string, nowMs: number): boolean {
     const until = this.#until.get(`${agent_code}\u0000${nonce}`);
-    return until !== undefined && until > nowMs;
+    return until !== undefined && until >= nowMs;
   }
 
   remember(agent_code: string, nonce: string, nowMs: number): void {
     // Записи в порядке вставки, срок у всех одинаков: истёкшие — в начале.
     for (const [k, until] of this.#until) {
-      if (until > nowMs) break;
+      if (until >= nowMs) break;
       this.#until.delete(k);
     }
     const key = `${agent_code}\u0000${nonce}`;
@@ -81,7 +91,10 @@ export class PaoRequestVerifier {
     this.verifier = opts.verifier ?? ed25519Verifier;
   }
 
-  /** Порядок РП23 п. 6: AGENT_UNKNOWN → SIGNATURE_INVALID / AGENT_KEY_REVOKED → AGENT_SUSPENDED. Любой сбой — отказ. */
+  /**
+   * Порядок РП23 п. 6: AGENT_UNKNOWN → SIGNATURE_INVALID / AGENT_KEY_REVOKED → AGENT_SUSPENDED. Любой сбой — отказ:
+   * сбой источника (реестр, ключи) — UPSTREAM_UNAVAILABLE, прочие исключения проверки — SIGNATURE_INVALID.
+   */
   verify(req: PaoRequest): PaoAuthResult {
     // Повтор заголовка — неоднозначность, не догадка (инвариант 3).
     const headers: Record<string, string> = {};
@@ -92,15 +105,27 @@ export class PaoRequestVerifier {
     }
 
     const agentCode = headers["x-agent-code"];
-    const agent = agentCode ? this.sources.getAgent(agentCode) : undefined;
+    let agent: AgentRecord | undefined;
+    try {
+      agent = agentCode ? this.sources.getAgent(agentCode) : undefined;
+    } catch {
+      return UPSTREAM;
+    }
     if (!agentCode || !agent) return { ok: false, code: "AGENT_UNKNOWN", norm: "A2 п. 5.1" };
 
     const nonce = headers["x-nonce"] ?? "";
     const now = this.now().getTime();
     // Алгоритм подписи — атрибут ключа (РП5): alg из Signature-Input должен совпасть с alg ключа.
     let keyAlg: string | undefined;
+    let sourceFailed = false;
     const lookupKey = (kid: string): KeyForVerify | undefined => {
-      const key = this.sources.lookupKey(agent.agent_code, kid);
+      let key: KeyForVerify | undefined;
+      try {
+        key = this.sources.lookupKey(agent.agent_code, kid);
+      } catch (e) {
+        sourceFailed = true;
+        throw e;
+      }
       keyAlg = key?.alg;
       return key;
     };
@@ -122,7 +147,7 @@ export class PaoRequestVerifier {
         },
       );
     } catch {
-      return fail("SIGNATURE_INVALID");
+      return sourceFailed ? UPSTREAM : fail("SIGNATURE_INVALID");
     }
     if (!result.ok) return fail(result.code);
     this.nonces.remember(agent.agent_code, nonce, now);
