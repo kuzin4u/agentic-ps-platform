@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import { paoRoutes, type PaoDeps } from "./pao/routes.js";
 
 // Среды — SPEC §8, ARCHITECTURE «Среды». dev работает в памяти, без PostgreSQL.
 export const ENVIRONMENTS = ["dev", "sandbox"] as const;
@@ -15,6 +16,8 @@ export function parseEnv(value: string | undefined): PlatformEnv {
 export interface ServerOptions {
   env: PlatformEnv;
   logger?: boolean;
+  /** Шлюз ПАО (П9); без него маршрутов /pao нет. */
+  pao?: PaoDeps;
 }
 
 export function buildServer(opts: ServerOptions): FastifyInstance {
@@ -22,6 +25,10 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
 
   // Живость процесса; к базе не обращается.
   app.get("/health", async () => ({ status: "ok", env: opts.env }));
+
+  // Проверка обращения — в отдельном контексте: /health её не проходит.
+  const pao = opts.pao;
+  if (pao) void app.register(async (scope) => paoRoutes(scope, pao));
 
   return app;
 }
