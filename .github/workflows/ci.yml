@@ -39,5 +39,11 @@ jobs:
         run: docker compose config --quiet
       - name: Тесты и сценарии приёмки
         run: npm test
+      - name: Стенд для агента — установка из npm pack (РП25)
+        run: npm run test:install -- --pack
+      # Коммит PR из форка в клоне основного репозитория недоступен — шаг только для PR из этого репозитория и push.
+      - name: Стенд для агента — установка по git+https с prepare, как у агента (РП25)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: npm run test:install -- --git ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Поиск ключей и реквизитов
         run: python3 .claude/hooks/scan_secrets.py .
