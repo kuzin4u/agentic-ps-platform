@@ -74,7 +74,7 @@ const wrap = (store: AgentRegistryStore, over: Partial<AgentRegistryStore>): Age
   updateStatus: (c, v, f) => store.updateStatus(c, v, f),
   getKey: (kid) => store.getKey(kid),
   keysOf: (c) => store.keysOf(c),
-  addKey: (k, e, sh) => store.addKey(k, e, sh),
+  addKey: (k, e, sh, v) => store.addKey(k, e, sh, v),
   revokeKey: (kid, v, at) => store.revokeKey(kid, v, at),
   ...over,
 });
@@ -399,7 +399,7 @@ describe("регистрация ключа и перекрытие (A2 п. 5.3,
     s.keys.register(CODE, { alg: "ed25519", public_key: newPublicKey() });
     const pk = parseKey([ED25519], "ed25519", newPublicKey()) as { kid: string; alg: string; public_key: string };
     const late: AgentKey = { ...first, ...pk, row_version: 1 };
-    expect(s.store.addKey(late, expected, new Map())).toBe(false);
+    expect(s.store.addKey(late, expected, new Map(), 1)).toBe(false);
     expect(s.store.getKey(pk.kid)).toBeUndefined();
     expect(s.keys.list(CODE)).toHaveLength(2);
   });
@@ -408,14 +408,29 @@ describe("регистрация ключа и перекрытие (A2 п. 5.3,
     const s = stand();
     s.admit();
     const racing = wrap(s.store, {
-      addKey: (key, expected, shorten) => {
+      addKey: (key, expected, shorten, v) => {
         s.keys.register(CODE, { alg: "ed25519", public_key: newPublicKey() });
-        return s.store.addKey(key, expected, shorten);
+        return s.store.addKey(key, expected, shorten, v);
       },
     });
     const keys = new AgentKeys(racing, { keys: POLICY, now: () => NOW });
     expect(() => keys.register(CODE, { alg: "ed25519", public_key: newPublicKey() })).toThrow(ConcurrentChangeError);
     expect(s.keys.list(CODE)).toHaveLength(2);
+  });
+
+  it("исключение агента между проверкой статуса и вставкой — ключ не добавлен (РП23, дополнения; аудит №11)", () => {
+    const s = stand();
+    s.admit();
+    const racing = wrap(s.store, {
+      addKey: (key, expected, shorten, v) => {
+        s.registry.changeStatus(CODE, { to: "EXCLUDED", ground: "WITHDRAWN" });
+        return s.store.addKey(key, expected, shorten, v);
+      },
+    });
+    const keys = new AgentKeys(racing, { keys: POLICY, now: () => NOW });
+    expect(() => keys.register(CODE, { alg: "ed25519", public_key: newPublicKey() })).toThrow(ConcurrentChangeError);
+    expect(s.keys.list(CODE)).toHaveLength(1);
+    expect(s.registry.get(CODE)?.status).toBe("EXCLUDED");
   });
 });
 

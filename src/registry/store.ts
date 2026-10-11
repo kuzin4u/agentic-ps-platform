@@ -35,9 +35,15 @@ export interface AgentRegistryStore {
   keysOf(agent_code: string): readonly AgentKey[];
   /**
    * Новый ключ и сокращение valid_to остальных — неделимо (РП23 п. 4). `expected` — kid → row_version всех ключей агента
-   * на момент чтения; набор изменился — false (конкурентное изменение). kid уже есть — KeyTakenError.
+   * на момент чтения, `agentRowVersion` — версия записи агента, по которой проверен статус (РП23, дополнения):
+   * изменилось что-то из них — false (конкурентное изменение). kid уже есть — KeyTakenError.
    */
-  addKey(key: AgentKey, expected: ReadonlyMap<string, number>, shorten: ReadonlyMap<string, string>): boolean;
+  addKey(
+    key: AgentKey,
+    expected: ReadonlyMap<string, number>,
+    shorten: ReadonlyMap<string, string>,
+    agentRowVersion: number,
+  ): boolean;
   /** Отзыв при совпадении row_version; не совпала — undefined. */
   revokeKey(kid: string, expectedRowVersion: number, revoked_at: string): AgentKey | undefined;
 }
@@ -92,10 +98,16 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
     return (this.#keysByAgent.get(agent_code) ?? []).map((kid) => this.#keys.get(kid) as AgentKey);
   }
 
-  addKey(key: AgentKey, expected: ReadonlyMap<string, number>, shorten: ReadonlyMap<string, string>): boolean {
+  addKey(
+    key: AgentKey,
+    expected: ReadonlyMap<string, number>,
+    shorten: ReadonlyMap<string, string>,
+    agentRowVersion: number,
+  ): boolean {
     const kids = this.#keysByAgent.get(key.agent_code);
     if (!kids) throw new Error(`Агента нет в реестре: ${key.agent_code}`);
     if (this.#keys.has(key.kid)) throw new KeyTakenError(key.kid);
+    if (this.#byCode.get(key.agent_code)?.row_version !== agentRowVersion) return false;
     const same =
       kids.length === expected.size && kids.every((kid) => this.#keys.get(kid)?.row_version === expected.get(kid));
     if (!same || [...shorten.keys()].some((kid) => !expected.has(kid))) return false;

@@ -47,7 +47,7 @@ describe("ПС02: отзыв ключа и распространение", () =
     expect(elapsed).toBeLessThanOrEqual(s.params.revocation_propagation_max_ms);
   });
 
-  it("принятое до отзыва не отменяется; после отзыва новый ключ оператора работает, старый — нет", async () => {
+  it("после отзыва и регистрации нового ключа оператором: новый ключ — 200, старый — 401; в GET /agent только новый", async () => {
     const before = await signedInject(s.app, side, CODE);
     s.keys.revoke(CODE, side.kid);
     expect(before.statusCode).toBe(200);
@@ -58,6 +58,7 @@ describe("ПС02: отзыв ключа и распространение", () =
     expect((await signedInject(s.app, next, CODE)).json().keys.map((k: { kid: string }) => k.kid)).toEqual([next.kid]);
   });
 
+  it.todo("авторизованное до отзыва исполняется (инвариант 8) — PS-10 (ADP), PS-14 (криптограмма)");
   it.todo("распространение отзыва в ADP ≤ revocation_propagation_max_ms — PS-10 (точка решения), PS-17");
   it.todo("продавец проводит авторизацию с ранее выданной криптограммой — PS-14 (реквизиты), PS-10");
 });

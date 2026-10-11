@@ -70,7 +70,8 @@ export class AgentKeys {
 
   /**
    * Новый ключ агента (A2 п. 5.3): valid_to = now + key_ttl_days; у остальных действующих ключей valid_to сокращается
-   * до now + key_overlap_days (РП23 п. 4). Исключённому агенту — отказ; приостановленному — можно (смена ключа при компрометации).
+   * до now + key_overlap_days (РП23 п. 4). Исключённому агенту — отказ; приостановленному — можно (смена ключа при компрометации);
+   * проверка статуса неделима с добавлением ключа (РП23, дополнения).
    */
   register(agent_code: string, input: unknown): AgentKey {
     const rec = this.store.get(agent_code);
@@ -96,7 +97,8 @@ export class AgentKeys {
     const key = newAgentKey(agent_code, parsed, now, this.policy);
     let ok: boolean;
     try {
-      ok = this.store.addKey(key, expected, shorten);
+      // Статус проверен по версии записи агента: исключение между проверкой и вставкой — конкурентное изменение.
+      ok = this.store.addKey(key, expected, shorten, rec.row_version);
     } catch (e) {
       if (e instanceof KeyTakenError) throw new KeyInvalidError(agent_code);
       throw e;

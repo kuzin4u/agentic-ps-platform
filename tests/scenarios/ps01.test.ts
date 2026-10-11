@@ -57,7 +57,7 @@ describe("ПС01: допуск оператора агента и выдача �
     expect(days).toBe(s.params.key_ttl_days);
   });
 
-  it("значения класса и уровня в запросе агента игнорируются — только реестр (инвариант 5)", async () => {
+  it("класс и уровень в строке запроса и заголовках игнорируются — только реестр (инвариант 5)", async () => {
     admit();
     const res = await signedInject(s.app, side, CODE, {
       query: "class=SELLER&level=9&status=ACTIVE",
@@ -91,5 +91,6 @@ describe("ПС01: допуск оператора агента и выдача �
     expect((await s.app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
   });
 
+  it.todo("класс в теле запроса игнорируется — с первым POST по ПАО, PS-05");
   it.todo("сертификат mTLS, связанный с agent_code, выдаётся при допуске — SEC-1");
 });

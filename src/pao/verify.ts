@@ -23,10 +23,16 @@ export type PaoAuthError =
 
 export type PaoAuthResult =
   | { readonly ok: true; readonly agent: AgentRecord; readonly kid: string }
-  | { readonly ok: false; readonly code: PaoAuthError; readonly norm?: string };
+  | {
+      readonly ok: false;
+      readonly code: PaoAuthError;
+      readonly norm?: string;
+      /** Исключение источника — для журнала процесса Платформы; агенту не передаётся. */
+      readonly cause?: unknown;
+    };
 
-/** Сбой реестра или ключей — не ошибка агента: 503 UPSTREAM_UNAVAILABLE, same_key (ПАО §6; аудит PS-04 №2). */
-const UPSTREAM: PaoAuthResult = { ok: false, code: "UPSTREAM_UNAVAILABLE" };
+/** Сбой реестра или ключей — не ошибка агента: 503 UPSTREAM_UNAVAILABLE, same_key (ПАО §6; РП23 п. 6; аудит PS-04 №2). */
+const upstream = (cause: unknown): PaoAuthResult => ({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause });
 
 /** Реестр и ключи в той мере, в какой они нужны проверке (П1). */
 export interface PaoAuthSources {
@@ -108,8 +114,8 @@ export class PaoRequestVerifier {
     let agent: AgentRecord | undefined;
     try {
       agent = agentCode ? this.sources.getAgent(agentCode) : undefined;
-    } catch {
-      return UPSTREAM;
+    } catch (e) {
+      return upstream(e);
     }
     if (!agentCode || !agent) return { ok: false, code: "AGENT_UNKNOWN", norm: "A2 п. 5.1" };
 
@@ -117,13 +123,13 @@ export class PaoRequestVerifier {
     const now = this.now().getTime();
     // Алгоритм подписи — атрибут ключа (РП5): alg из Signature-Input должен совпасть с alg ключа.
     let keyAlg: string | undefined;
-    let sourceFailed = false;
+    let sourceFailure: { readonly cause: unknown } | undefined;
     const lookupKey = (kid: string): KeyForVerify | undefined => {
       let key: KeyForVerify | undefined;
       try {
         key = this.sources.lookupKey(agent.agent_code, kid);
       } catch (e) {
-        sourceFailed = true;
+        sourceFailure = { cause: e };
         throw e;
       }
       keyAlg = key?.alg;
@@ -147,8 +153,10 @@ export class PaoRequestVerifier {
         },
       );
     } catch {
-      return sourceFailed ? UPSTREAM : fail("SIGNATURE_INVALID");
+      return sourceFailure ? upstream(sourceFailure.cause) : fail("SIGNATURE_INVALID");
     }
+    // Сбой источника — UPSTREAM и тогда, когда core перехватит исключение сам и вернёт отказ (повторный аудит №3).
+    if (sourceFailure) return upstream(sourceFailure.cause);
     if (!result.ok) return fail(result.code);
     this.nonces.remember(agent.agent_code, nonce, now);
 

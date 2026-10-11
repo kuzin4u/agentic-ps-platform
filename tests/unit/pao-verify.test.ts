@@ -338,9 +338,31 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
       );
     const r1 = verifierWith({ lookupKey: down }).verify(signed(signer, A));
     const r2 = verifierWith({ getAgent: down }).verify(signed(signer, A));
-    for (const r of [r1, r2]) expect(r).toEqual({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
+    for (const r of [r1, r2]) {
+      expect(r).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
+      expect((r as { cause?: Error }).cause?.message).toBe("db down");
+    }
     expect(paoError("UPSTREAM_UNAVAILABLE").http).toBe(503);
     expect(paoError("UPSTREAM_UNAVAILABLE").body.retry).toBe("same_key");
+  });
+
+  it("исключение не из источника (проверка подписи) — SIGNATURE_INVALID, не UPSTREAM (повторный аудит №2)", () => {
+    const s = stand();
+    const signer = s.admit(A);
+    const v = new PaoRequestVerifier(
+      { getAgent: (c) => s.registry.get(c), lookupKey: (c, kid) => s.keys.lookup(c, kid) },
+      {
+        skewSec: SKEW,
+        now: () => NOW,
+        verifier: {
+          verify: () => {
+            throw new Error("сбой криптографии");
+          },
+        },
+      },
+    );
+    const r = v.verify(signed(signer, A));
+    expect(r).toEqual({ ok: false, code: "SIGNATURE_INVALID", norm: "A2 п. 5.1" });
   });
 
   it("сбой источника не занимает nonce: повтор после восстановления принимается", () => {
