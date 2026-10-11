@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   ADMISSION_REFUSALS,
@@ -16,14 +17,32 @@ import {
   parseAgentCode,
   type AdmissionContext,
   type AdmissionDecision,
+  type AgentKey,
   type AgentRecord,
   type AgentRegistryStore,
   type AgentStatus,
   type Contour,
+  type KeyPolicy,
+  DEFAULT_KEY_ALGORITHMS,
+  ED25519,
 } from "../../src/registry/index.js";
 
 const NOW = new Date("2026-10-10T12:00:00Z");
-const fresh = (): AgentRegistry => new AgentRegistry(new InMemoryAgentRegistryStore(), () => NOW);
+const KEYS: KeyPolicy = { key_ttl_days: 90, key_overlap_days: 7 };
+const opts = { keys: KEYS, now: () => NOW };
+const fresh = (): AgentRegistry => new AgentRegistry(new InMemoryAgentRegistryStore(), opts);
+// Контур оператора принимает ГОСТ после точки расширения РП5; до неё в тестах логики допуска — ed25519 вместо ГОСТ.
+const freshFor = (contour: Contour): AgentRegistry =>
+  contour === "operator"
+    ? new AgentRegistry(new InMemoryAgentRegistryStore(), {
+        ...opts,
+        algorithms: { ...DEFAULT_KEY_ALGORITHMS, operator: [ED25519] },
+      })
+    : fresh();
+
+/** Открытый ключ ed25519, DER SPKI base64 — пару генерирует оператор агента (РП23 п. 2). */
+const newPublicKey = (): string =>
+  generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "der" }).toString("base64");
 
 /** Заявление оператора BuyerAgent (ПС01); оператор — в контексте вызова, не в заявлении. */
 const buyerApplication = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -31,6 +50,8 @@ const buyerApplication = (over: Record<string, unknown> = {}): Record<string, un
   class: "BUYER",
   model: "buyer-agent-ref",
   runtime: "node-20",
+  alg: "ed25519",
+  public_key: newPublicKey(),
   ...over,
 });
 
@@ -148,6 +169,8 @@ describe("основания отказа — закрытый перечень 
     agent_card: { "x-system": { agent_code: "nspk:agent:buyref-01:v3", class: "BUYER", ...x } },
   });
   // Цифровые строки не проходят проверку Луна: номера карты в тестах нет (инвариант 1).
+  const x25519PublicKey = (): string =>
+    generateKeyPairSync("x25519").publicKey.export({ type: "spki", format: "der" }).toString("base64");
   const cases: [string, Record<string, unknown>, Contour][] = [
     ["APPLICATION_INCOMPLETE", { model: undefined }, "sandbox"],
     ["APPLICATION_INCOMPLETE", { model: "  " }, "sandbox"],
@@ -171,6 +194,18 @@ describe("основания отказа — закрытый перечень 
     ["AGENT_CARD_MISMATCH", card({ agent_code: "nspk:agent:other:v1" }), "sandbox"],
     ["AGENT_CARD_MISMATCH", card({ class: "SELLER" }), "sandbox"],
     ["AGENT_CARD_MISMATCH", { agent_card: {} }, "sandbox"],
+    ["APPLICATION_INCOMPLETE", { alg: undefined }, "sandbox"],
+    ["APPLICATION_INCOMPLETE", { public_key: undefined }, "sandbox"],
+    ["CODE_INVALID", { agent_code: "bank-1:shop-bot:v1" }, "sandbox"],
+    ["CODE_INVALID", { agent_code: "nspk:buyref-01:v3" }, "sandbox"],
+    ["KEY_INVALID", { alg: "rsa" }, "sandbox"],
+    ["KEY_INVALID", { alg: "ED25519" }, "sandbox"],
+    ["KEY_INVALID", { alg: 5 }, "sandbox"],
+    ["KEY_INVALID", { public_key: "" }, "sandbox"],
+    ["KEY_INVALID", { public_key: "not base64!" }, "sandbox"],
+    ["KEY_INVALID", { public_key: "MCowBQYDK2VwAyEA11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo=" }, "sandbox"],
+    ["KEY_INVALID", { public_key: x25519PublicKey() }, "sandbox"],
+    ["KEY_INVALID", { public_key: Buffer.alloc(32, 7).toString("base64") }, "sandbox"],
   ];
 
   const build = (over: Record<string, unknown>): Record<string, unknown> => {
@@ -183,7 +218,7 @@ describe("основания отказа — закрытый перечень 
   };
 
   it.each(cases)("%s: %j в контуре %s — ровно это основание", (reason, over, contour) => {
-    expect(refused(fresh().admit(build(over), ctx(contour)))).toEqual([reason]);
+    expect(refused(freshFor(contour).admit(build(over), ctx(contour)))).toEqual([reason]);
   });
 
   it("каждое основание перечня покрыто случаем с точным набором оснований", () => {
@@ -251,16 +286,19 @@ describe("основания отказа — закрытый перечень 
 
   it("CODE_TAKEN неделим с вставкой: хранилище само отказывает при чужом владельце", () => {
     const store = new InMemoryAgentRegistryStore();
-    const rec = admitted(new AgentRegistry(store, () => NOW).admit(buyerApplication(), ctx()));
+    const d = new AgentRegistry(store, opts).admit(buyerApplication(), ctx());
+    const rec = admitted(d);
+    const key = (d as { key: AgentKey }).key;
     expect(store.ownerOf("nspk:agent", "buyref-01")).toBe(OPERATOR);
-    expect(() => store.insert({ ...rec, agent_code: "nspk:agent:buyref-01:v4", version: 4, operator: "x" })).toThrow(
-      AgentCodeTakenError,
-    );
-    expect(() => store.insert(rec)).toThrow(AgentCodeTakenError);
+    const v4 = { ...rec, agent_code: "nspk:agent:buyref-01:v4", version: 4, operator: "x" };
+    expect(() => store.insert(v4, { ...key, kid: "other", agent_code: v4.agent_code })).toThrow(AgentCodeTakenError);
+    expect(() => store.insert(rec, key)).toThrow(AgentCodeTakenError);
   });
 
   it("контур оператора с прогоном набора — допуск, ссылка в записи (РП17)", () => {
-    const rec = admitted(fresh().admit(buyerApplication({ conformance_run_ref: "RUN-77" }), ctx("operator")));
+    const rec = admitted(
+      freshFor("operator").admit(buyerApplication({ conformance_run_ref: "RUN-77" }), ctx("operator")),
+    );
     expect(rec).toMatchObject({ contour: "operator", conformance_run_ref: "RUN-77" });
   });
 
@@ -348,7 +386,7 @@ describe("статус допуска (РП21 п. 4)", () => {
 
   it("конкурентное изменение: проверка по версии строки, ABA не проходит", () => {
     const store = new InMemoryAgentRegistryStore();
-    const reg = new AgentRegistry(store, () => NOW);
+    const reg = new AgentRegistry(store, opts);
     const rec = admitted(reg.admit(buyerApplication(), ctx()));
     expect(rec.row_version).toBe(1);
     // Пока первый читатель держит запись с версией 1, второй успевает ACTIVE → SUSPENDED → ACTIVE.
@@ -369,15 +407,19 @@ describe("статус допуска (РП21 п. 4)", () => {
       ownerOf: () => undefined,
       insert: () => undefined,
       updateStatus: (c, v, f) => store.updateStatus(c, v, f),
+      getKey: () => undefined,
+      keysOf: () => [],
+      addKey: () => false,
+      revokeKey: () => undefined,
     };
     expect(() =>
-      new AgentRegistry(stale, () => NOW).changeStatus(CODE, { to: "EXCLUDED", ground: "WITHDRAWN" }),
+      new AgentRegistry(stale, opts).changeStatus(CODE, { to: "EXCLUDED", ground: "WITHDRAWN" }),
     ).toThrow(ConcurrentChangeError);
   });
 
   it("смена статуса меняет только поля статуса", () => {
     const store = new InMemoryAgentRegistryStore();
-    const reg = new AgentRegistry(store, () => NOW);
+    const reg = new AgentRegistry(store, opts);
     admitted(reg.admit(buyerApplication(), ctx()));
     const before = store.get(CODE) as AgentRecord;
     const after = reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" });

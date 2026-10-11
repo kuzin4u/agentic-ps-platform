@@ -15,6 +15,9 @@ export class AgentCodeError extends Error {
   }
 }
 
+/** Единственная выдавшая сторона кода — оператор реестра Платформы (РП23 п. 1); другая — CODE_INVALID при допуске. */
+export const REGISTRY_ISSUER = "nspk:agent";
+
 const PART = /^[a-z0-9-]+$/;
 const VERSION = /^v([1-9][0-9]{0,8})$/;
 

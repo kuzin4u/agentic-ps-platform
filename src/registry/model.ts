@@ -9,7 +9,7 @@ export type AgentClass = (typeof AGENT_CLASSES)[number];
 export const AGENT_STATUSES = ["ACTIVE", "SUSPENDED", "EXCLUDED"] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
-/** Закрытый перечень оснований отказа в допуске (РП21 п. 2). */
+/** Закрытый перечень оснований отказа в допуске (РП21 п. 2, РП23 п. 2). */
 export const ADMISSION_REFUSALS = [
   "APPLICATION_INCOMPLETE",
   "CLASS_UNKNOWN",
@@ -18,6 +18,7 @@ export const ADMISSION_REFUSALS = [
   "PRINCIPAL_DATA",
   "CONFORMANCE_MISSING",
   "AGENT_CARD_MISMATCH",
+  "KEY_INVALID",
 ] as const;
 export type AdmissionRefusal = (typeof ADMISSION_REFUSALS)[number];
 
