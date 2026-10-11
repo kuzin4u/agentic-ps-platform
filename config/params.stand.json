@@ -14,6 +14,7 @@
   "split_window_sec": 600,
   "split_min_ops": 2,
   "signature_skew_sec": 300,
+  "unavailable_retry_after_sec": 1,
   "key_ttl_days": 90,
   "key_overlap_days": 7,
   "qualified_signature_above_kop": 5000000,

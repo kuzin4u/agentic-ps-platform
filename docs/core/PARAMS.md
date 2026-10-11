@@ -17,6 +17,7 @@
 | `confirm_above_kop` | 300 000 | Порог подтверждения | данные пилота (В2, Р6) |
 | `split_window_sec` / `split_min_ops` | 600 / 2 | Выявление дробления | данные пилота (К10) |
 | `signature_skew_sec` | 300 | Окно подписи ПАО | прогон |
+| `unavailable_retry_after_sec` | 1 | `Retry-After` у ответов ПАО 503 (`UPSTREAM_UNAVAILABLE`, `STATE_UNAVAILABLE`) | прогон (РП24) |
 | `key_ttl_days` / `key_overlap_days` | 90 / 7 | Ключи агентов | O02 |
 | `qualified_signature_above_*` | 50 000 ₽ / 30 дней | Усиленная подпись мандата | юридическая оценка (O08, Р9) |
 | `restore_budget_on_refund` | false | Восстановление бюджета при возврате | юридическая оценка (В8, РП9) |
@@ -37,9 +38,11 @@
 | `bypass_overhead_ms` < `adp_p99_ms` | РП4, РП20 |
 | `adp_timeout_ms` > `adp_p99_ms` | ПИ §3, РП20 |
 | `key_overlap_days` < `key_ttl_days` | перекрытие ключей короче их жизни |
+| `unavailable_retry_after_sec` — целое 0…30 | 0 — «повторить сразу» (ПАО `minimum: 0`); верхняя граница — `maxRetryAfterSec` клиента ПАО agentic-core (30): больший `Retry-After` эталонный клиент отвергает (РП24) |
 
 ## Журнал изменений
 
 | Дата | Ключ | Было | Стало | Основание |
 |---|---|---|---|---|
 | 08.10.2026 | все | — | стенд | первичная конфигурация |
+| 11.10.2026 | `unavailable_retry_after_sec` | — | 1 | РП24, аудит PS-04 №2 |

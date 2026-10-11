@@ -1,6 +1,6 @@
-// П1 Реестр агентов: допуск по заявлению, класс, уровень, статус (SPEC §3, ФП1, A2, РП17, РП21).
+// П1 Реестр агентов: допуск по заявлению с первым ключом, класс, уровень, статус (SPEC §3, ФП1, A2, РП17, РП21, РП23).
 // Класс и уровень агента — только отсюда, не из тела запросов агента (инвариант 5).
-import { parseAgentCode, type AgentCode } from "./code.js";
+import { REGISTRY_ISSUER, parseAgentCode, type AgentCode } from "./code.js";
 import {
   ADMISSION_LEVEL,
   AGENT_CLASSES,
@@ -9,11 +9,12 @@ import {
   type AgentRecord,
   type Contour,
 } from "./model.js";
+import { DEFAULT_KEY_ALGORITHMS, newAgentKey, parseKey, type AgentKey, type KeyAlgorithm, type KeyPolicy } from "./keys.js";
 import { checkTransition } from "./status.js";
-import { AgentCodeTakenError, type AgentRegistryStore } from "./store.js";
+import { AgentCodeTakenError, KeyTakenError, type AgentRegistryStore } from "./store.js";
 
 export type AdmissionDecision =
-  | { readonly admitted: true; readonly record: AgentRecord }
+  | { readonly admitted: true; readonly record: AgentRecord; readonly key: AgentKey }
   | { readonly admitted: false; readonly reasons: readonly [AdmissionRefusal, ...AdmissionRefusal[]] };
 
 /** Контекст вызова допуска: контур (РП17) и оператор агента — аутентифицированный вызывающий, не тело заявления. */
@@ -86,11 +87,27 @@ function xSystemHasPrincipalData(node: unknown, top = true): boolean {
 const own = (o: Record<string, unknown>, k: string): unknown => (Object.hasOwn(o, k) ? o[k] : undefined);
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
 
+export interface RegistryOptions {
+  /** Сроки ключей (PARAMS.md, РП23 п. 4). */
+  readonly keys: KeyPolicy;
+  readonly now?: () => Date;
+  /** Алгоритмы ключей по контуру — точка расширения РП5; по умолчанию DEFAULT_KEY_ALGORITHMS. */
+  readonly algorithms?: Readonly<Record<Contour, readonly KeyAlgorithm[]>>;
+}
+
 export class AgentRegistry {
+  private readonly now: () => Date;
+  private readonly policy: KeyPolicy;
+  private readonly algorithms: Readonly<Record<Contour, readonly KeyAlgorithm[]>>;
+
   constructor(
     private readonly store: AgentRegistryStore,
-    private readonly now: () => Date = () => new Date(),
-  ) {}
+    opts: RegistryOptions,
+  ) {
+    this.policy = opts.keys;
+    this.now = opts.now ?? (() => new Date());
+    this.algorithms = opts.algorithms ?? DEFAULT_KEY_ALGORITHMS;
+  }
 
   /**
    * Решение по заявлению оператора агента. Отказ — только по закрытому перечню РП21 п. 2, все применимые основания сразу;
@@ -111,8 +128,13 @@ export class AgentRegistry {
     const model = text(own(a, "model"));
     const runtime = text(own(a, "runtime"));
     const rawCode = own(a, "agent_code");
-    if (!model || !runtime || rawCode === undefined) reasons.add("APPLICATION_INCOMPLETE");
+    const alg = own(a, "alg");
+    const publicKey = own(a, "public_key");
+    if (!model || !runtime || rawCode === undefined || alg === undefined || publicKey === undefined) {
+      reasons.add("APPLICATION_INCOMPLETE");
+    }
 
+    // Код — грамматика РП21 п. 1 и выдавшая сторона только nspk:agent (РП23 п. 1).
     let code: AgentCode | null = null;
     if (rawCode !== undefined) {
       try {
@@ -120,6 +142,16 @@ export class AgentRegistry {
       } catch {
         reasons.add("CODE_INVALID");
       }
+      if (code && code.issuer !== REGISTRY_ISSUER) {
+        code = null;
+        reasons.add("CODE_INVALID");
+      }
+    }
+
+    // Первый ключ (РП23 п. 2–3): alg из перечня контура, разбираемый ключ, kid ещё не зарегистрирован.
+    const parsedKey = parseKey(this.algorithms[contour], alg, publicKey);
+    if (alg !== undefined && publicKey !== undefined && (!parsedKey || this.store.getKey(parsedKey.kid))) {
+      reasons.add("KEY_INVALID");
     }
 
     const cls = own(a, "class");
@@ -145,11 +177,12 @@ export class AgentRegistry {
 
     const [first, ...rest] = [...reasons];
     if (first) return { admitted: false, reasons: [first, ...rest] };
-    if (!code || !model || !runtime || !isOneOf(AGENT_CLASSES, cls)) {
+    if (!code || !model || !runtime || !isOneOf(AGENT_CLASSES, cls) || !parsedKey) {
       throw new Error("Заявление без оснований отказа неполно — нарушен закрытый перечень РП21");
     }
 
-    const at = this.now().toISOString();
+    const now = this.now();
+    const at = now.toISOString();
     const record: AgentRecord = {
       agent_code: code.code,
       issuer: code.issuer,
@@ -169,14 +202,16 @@ export class AgentRegistry {
       row_version: 1,
     };
     try {
-      this.store.insert(record);
+      this.store.insert(record, newAgentKey(record.agent_code, parsedKey, now, this.policy));
     } catch (e) {
       if (e instanceof AgentCodeTakenError) return { admitted: false, reasons: ["CODE_TAKEN"] };
+      if (e instanceof KeyTakenError) return { admitted: false, reasons: ["KEY_INVALID"] };
       throw e;
     }
     return {
       admitted: true,
       record: this.store.get(record.agent_code) as AgentRecord,
+      key: this.store.getKey(parsedKey.kid) as AgentKey,
     };
   }
 
