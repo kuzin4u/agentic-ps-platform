@@ -1,14 +1,27 @@
 {
   "name": "agentic-ps-platform",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "Агентная платформа платёжной системы: ADP, журнал согласий, ПАО, эмуляторы окружения",
   "type": "module",
+  "exports": {
+    "./stand": {
+      "types": "./dist/stand/index.d.ts",
+      "default": "./dist/stand/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "!dist/main.*",
+    "config/params.stand.json"
+  ],
   "engines": {
     "node": ">=20.19"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepare": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "dev": "tsx watch src/main.ts",
     "test": "vitest run",
@@ -17,7 +30,8 @@
     "lint": "eslint .",
     "scan:secrets": "python3 .claude/hooks/scan_secrets.py .",
     "gen:shared": "node scripts/gen-shared.mjs",
-    "gen:shared:check": "node scripts/gen-shared.mjs --check"
+    "gen:shared:check": "node scripts/gen-shared.mjs --check",
+    "test:install": "node scripts/check-install.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

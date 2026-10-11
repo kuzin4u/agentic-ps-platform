@@ -4,8 +4,12 @@
 // Границы и перекрёстные правила — PARAMS.md «Границы» (РП20).
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const DEFAULT_PARAMS_PATH = "config/params.stand.json";
+// От корня пакета Платформы, а не от текущего каталога: стенд в чужом репозитории читает свои параметры (РП25).
+// src/shared/config.ts и dist/shared/config.js лежат на одной глубине от корня.
+const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 /** Режимы эмитента (РП3, GLOSSARY). */
 export const ISSUER_MODES = ["ON_BEHALF", "ISSUER_SIDE"] as const;
@@ -136,7 +140,7 @@ export function parseParams(raw: unknown): Params {
   return Object.freeze(out) as unknown as Params;
 }
 
-export function loadParams(path = process.env.PARAMS_PATH ?? DEFAULT_PARAMS_PATH): Params {
+export function loadParams(path = process.env.PARAMS_PATH ?? resolve(PACKAGE_ROOT, DEFAULT_PARAMS_PATH)): Params {
   const full = resolve(path);
   let raw: unknown;
   try {
