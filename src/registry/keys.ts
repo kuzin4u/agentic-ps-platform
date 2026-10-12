@@ -24,12 +24,14 @@ export interface KeyAlgorithm {
   toJwk(public_key: string): JwkMembers | null;
 }
 
-const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-
-/** Строгий разбор base64 SPKI: только каноническая запись, иначе один ключ получил бы несколько строк. */
+/**
+ * Строгий разбор base64 SPKI: только каноническая запись (RFC 4648 §3.5; РП23, дополнение 6), иначе один ключ
+ * получил бы несколько строк. Запись должна совпасть с повторным кодированием своих байтов: так отсекаются
+ * лишние биты перед «=», запись без дополнения, пробелы, переводы строки и алфавит base64url.
+ */
 function spki(public_key: string): ReturnType<typeof createPublicKey> | null {
-  if (public_key === "" || !BASE64.test(public_key)) return null;
   const der = Buffer.from(public_key, "base64");
+  if (der.length === 0 || der.toString("base64") !== public_key) return null;
   try {
     const key = createPublicKey({ key: der, format: "der", type: "spki" });
     return key.export({ type: "spki", format: "der" }).equals(der) ? key : null;
