@@ -11,8 +11,9 @@
 | [`NORMS.md`](NORMS.md) | Нормы A1–A9 |
 | [`SCENARIOS.md`](SCENARIOS.md) | 28 сценариев Платформы |
 | [`PARAMS.md`](PARAMS.md) | Стендовые параметры |
-| [`DECISIONS.md`](DECISIONS.md) | РП1–РП15 |
-| [`ROADMAP.md`](ROADMAP.md) | 7 этапов, 27 сессий |
+| [`SECURITY.md`](SECURITY.md) | Модель угроз по компонентам, ключи Платформы, mTLS песочницы, аутентификация операторов агентов, ограничения песочницы |
+| [`DECISIONS.md`](DECISIONS.md) | РП1–РП28 |
+| [`ROADMAP.md`](ROADMAP.md) | 7 этапов, 31 сессия |
 | [`STATUS.md`](STATUS.md) | Состояние и следующая сессия |
 | [`GLOSSARY.md`](GLOSSARY.md) | Термины |
 | [`../reference/joint-plan.md`](../reference/joint-plan.md) | Совместный план с агентом и agentic-core: коды задач PS/AG/CO, связи, точки сверки С0–С5 |
