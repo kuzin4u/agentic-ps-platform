@@ -108,6 +108,8 @@ describe("kid — отпечаток JWK по RFC 7638 (РП23 п. 3)", () => {
     ["ключ X25519", newPublicKey("x25519")],
     ["32 байта без SPKI", Buffer.from(RFC8037_X, "base64url").toString("base64")],
     ["лишний байт после DER", Buffer.concat([Buffer.from(RFC8037_SPKI, "base64"), Buffer.from([0])]).toString("base64")],
+    // RFC 4648 §3.5: «…URo=» и «…URp=» — те же байты; каноническая — с нулевыми лишними битами (агент, расхождение № 8).
+    ["лишние биты перед «=»", RFC8037_SPKI.replace(/o=$/, "p=")],
   ])("неканоничная запись или не Ed25519 — не разбирается: %s", (_name, pk) => {
     expect(ED25519.toJwk(pk)).toBeNull();
     expect(parseKey([ED25519], "ed25519", pk)).toBeNull();
@@ -134,12 +136,15 @@ describe("слабые ключи Ed25519 — KEY_INVALID (аудит PS-04 №1
     "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
     "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
   ];
-  // Неканоническая запись: нейтраль и −1 со знаковым битом при x = 0; y = p + 1 и y = p.
+  // Неканоническая запись: нейтраль и −1 со знаковым битом при x = 0; y = p + 1, y = p и y = p + 3.
+  // y = p + 1 и y = p по модулю p — точки малого порядка; y = p + 3 — нет, его ловит только проверка y < p.
+  const Y_P_PLUS_3 = "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f";
   const NON_CANONICAL = [
     "0100000000000000000000000000000000000000000000000000000000000080",
     "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
     "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    Y_P_PLUS_3,
   ];
 
   it("почему блокер: с ключом-нейтралью подпись «R = нейтраль, S = 0» верна для любого сообщения", () => {
@@ -155,6 +160,22 @@ describe("слабые ключи Ed25519 — KEY_INVALID (аудит PS-04 №1
 
   it.each(NON_CANONICAL)("неканоническая запись %s — слабая", (hex) => {
     expect(isWeakEd25519(Buffer.from(hex, "hex"))).toBe(true);
+    expect(parseKey([ED25519], "ed25519", spkiOf(hex))).toBeNull();
+  });
+
+  it("y = p + 3 — запись точки большого порядка: каноническая (y = 3) не слабая", () => {
+    expect(isWeakEd25519(Buffer.from(`03${"00".repeat(31)}`, "hex"))).toBe(false);
+  });
+
+  it("допуск с лишними битами base64 — KEY_INVALID, ничего не сохранено; канонический — тот же kid", () => {
+    const s = stand();
+    const noncanonical = RFC8037_SPKI.replace(/o=$/, "p=");
+    expect(Buffer.from(noncanonical, "base64").equals(Buffer.from(RFC8037_SPKI, "base64"))).toBe(true);
+    const d = s.registry.admit(application({ public_key: noncanonical }), { contour: "sandbox", operator: OPERATOR });
+    expect(reasons(d)).toEqual(["KEY_INVALID"]);
+    expect(s.store.get(CODE)).toBeUndefined();
+    expect(s.admit({ public_key: RFC8037_SPKI }).kid).toBe(RFC8037_KID);
+    expect(() => s.keys.register(CODE, { alg: "ed25519", public_key: noncanonical })).toThrow(KeyInvalidError);
   });
 
   it("эталон RFC 8037 и случайные ключи — не слабые", () => {
