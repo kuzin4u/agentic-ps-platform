@@ -21,6 +21,8 @@ export type StatusFields = Pick<AgentRecord, "status" | "status_ground" | "statu
 
 export interface AgentRegistryStore {
   get(agent_code: string): AgentRecord | undefined;
+  /** Коды всех агентов в порядке допуска — для каталога ключей (РП22 п. 1). */
+  agentCodes(): readonly string[];
   /** Оператор, которому принадлежат версии агента «сторона : идентификатор»; нет версий — undefined. */
   ownerOf(issuer: string, id: string): string | undefined;
   /**
@@ -56,6 +58,10 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
 
   get(agent_code: string): AgentRecord | undefined {
     return this.#byCode.get(agent_code);
+  }
+
+  agentCodes(): readonly string[] {
+    return [...this.#byCode.keys()];
   }
 
   ownerOf(issuer: string, id: string): string | undefined {

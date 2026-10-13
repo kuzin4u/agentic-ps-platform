@@ -93,10 +93,15 @@ describe("РП25: граница «стенд ≠ рабочий сервер»"
     expect(files).toContain("src/registry/registry.ts");
     expect(violations).toEqual([]);
     expect([...files].filter(inStand)).toEqual([]);
+    // Эмуляторы окружения и фикстуры (PS-12) — тоже не часть рабочего сервера.
+    expect([...files].filter((f) => f.startsWith("src/env/") || f.startsWith("src/fixtures/"))).toEqual([]);
   });
 
   it("обход видит стенд, если он импортирован (контроль самой проверки)", () => {
-    expect([...importGraph("tests/support/stand.ts").files].filter(inStand)).toEqual(["src/stand/index.ts"]);
+    expect([...importGraph("tests/support/stand.ts").files].filter(inStand)).toEqual([
+      "src/stand/index.ts",
+      "src/stand/merchants.ts",
+    ]);
   });
 
   describe("контроль: обходы границы — нарушение, а не пропуск", () => {

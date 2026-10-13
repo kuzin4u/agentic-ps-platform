@@ -69,6 +69,7 @@ function stand(policy: KeyPolicy = POLICY) {
 /** Хранилище-обёртка: все методы делегируются, кроме подменённых (гонка между чтением и записью). */
 const wrap = (store: AgentRegistryStore, over: Partial<AgentRegistryStore>): AgentRegistryStore => ({
   get: (c) => store.get(c),
+  agentCodes: () => store.agentCodes(),
   ownerOf: (i, id) => store.ownerOf(i, id),
   insert: (r, k) => store.insert(r, k),
   updateStatus: (c, v, f) => store.updateStatus(c, v, f),
