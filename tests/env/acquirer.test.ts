@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import { Acquirer, OpkcStub, parsePaymentPackage, type PaymentPackage } from "../../src/env/acquirer/index.js";
 import { MerchantAgentVerifier, buildMerchantsServer } from "../../src/env/merchants/index.js";
 import { createMerchants, createStand } from "../../src/stand/index.js";
+import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
 import { merchantCall } from "../support/merchant-call.js";
 
+const LIMIT = loadParams().merchant_rate_limit_per_min;
 const CODE = "nspk:agent:acq-a:v1";
 const merchant = { id: "MER-1042", mcc: "5462", name: "Масса Мадре" };
 
@@ -107,7 +109,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
         throw new Error("API для продавцов недоступен");
       },
     };
-    const app = buildMerchantsServer({ verifier, acquirer, reconciliation });
+    const app = buildMerchantsServer({ verifier, acquirer, reconciliation, rateLimitPerMin: LIMIT });
     const who = { side, agentCode: CODE };
     const o = (await merchantCall(app, { ...who, path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], cart_mandate_id: "MND-1" } })).json();
     const r = await merchantCall(app, { ...who, path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: { ...card(), order_ref: o.id } });
@@ -118,7 +120,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
   it("эквайрер без aoi без порта сверки — ошибка сборки витрин", () => {
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: false, opkc: new OpkcStub() });
     const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
-    expect(() => buildMerchantsServer({ verifier, acquirer })).toThrow(/порт сверки/);
+    expect(() => buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT })).toThrow(/порт сверки/);
   });
 
   it("с поддержкой aoi метаданные не передаются", async () => {

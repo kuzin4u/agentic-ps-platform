@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SHOPS, SHOP_BEHAVIOURS, buildMerchantsServer, MerchantAgentVerifier } from "../../src/env/merchants/index.js";
 import { Acquirer, OpkcStub } from "../../src/env/acquirer/index.js";
 import { createMerchants, createStand, type MerchantsStand, type Stand } from "../../src/stand/index.js";
+import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { merchantCall } from "../support/merchant-call.js";
 
+const LIMIT = loadParams().merchant_rate_limit_per_min;
 const A = "nspk:agent:shop-a:v1";
 const B = "nspk:agent:shop-b:v1";
 const T0 = new Date("2026-10-13T10:00:00Z");
@@ -63,8 +65,8 @@ describe("К6: список витрин и зоны", () => {
     const opkc = new OpkcStub();
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc });
     const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
-    const one = buildMerchantsServer({ verifier, acquirer });
-    const two = buildMerchantsServer({ verifier, acquirer, shops: flipped });
+    const one = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT });
+    const two = buildMerchantsServer({ verifier, acquirer, shops: flipped, rateLimitPerMin: LIMIT });
     const list = async (app: typeof one) => (await merchantCall(app, { path: "/v1/shops" })).json().shops as { id: string; zone: string }[];
     const [a, b] = [await list(one), await list(two)];
     // Зоны действительно разные (у каждой витрины CONTOUR ↔ OUTSIDE), порядок — один.
@@ -163,7 +165,7 @@ describe("SHOP-4401: отказ неопознанным, опознанный �
       },
       { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 },
     );
-    const app = buildMerchantsServer({ verifier, acquirer });
+    const app = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT });
     const side = newAgentSide();
     const r = await merchantCall(app, { side, agentCode: A, path });
     expect(r.statusCode).toBe(503);
@@ -180,7 +182,7 @@ describe("РП22 п. 3: перечитывание каталога по неи�
       { maxAgeMs: 3_600_000, refetchMinMs: 60_000, skewSec: 60, now: () => now },
     );
     const side = newAgentSide();
-    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub() }) });
+    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub() }), rateLimitPerMin: LIMIT });
     const path = "/v1/shops/SHOP-1042/catalog";
     expect((await merchantCall(app, { side, agentCode: A, now, path })).statusCode).toBe(503);
     for (let i = 0; i < 3; i++) expect((await merchantCall(app, { side, agentCode: A, now, path })).json().code).toBe("KEY_UNKNOWN");
@@ -274,6 +276,34 @@ describe("Недобросовестные и особые витрины", () =
   });
 });
 
+describe("Лимит частоты витрин по адресу (CodeQL js/missing-rate-limiting)", () => {
+  it("сверх лимита — 429 RATE_LIMITED с Retry-After; на все маршруты /v1, до опознания агента", async () => {
+    const s = createStand();
+    const m2 = createMerchants(s, { rateLimitPerMin: 3 });
+    try {
+      for (let i = 0; i < 3; i++) expect((await merchantCall(m2.app, { path: "/v1/shops" })).statusCode).toBe(200);
+      for (const path of ["/v1/shops", "/v1/shops/SHOP-1042/catalog", "/v1/shops/SHOP-1042/orders"]) {
+        const r = await merchantCall(m2.app, { path, ...(path.endsWith("orders") ? { body: {} } : {}) });
+        expect(r.statusCode, path).toBe(429);
+        expect(r.json()).toEqual({ code: "RATE_LIMITED" });
+        expect(Number(r.headers["retry-after"])).toBeGreaterThan(0);
+      }
+    } finally {
+      await m2.close();
+    }
+  });
+
+  it("на стенде лимит щедрый — из params.stand.json", () => {
+    expect(LIMIT).toBeGreaterThanOrEqual(1000);
+  });
+
+  it("лимит — целое ≥ 1", () => {
+    const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub() });
+    const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
+    for (const v of [0, 1.5, Number.NaN]) expect(() => buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: v })).toThrow();
+  });
+});
+
 describe("Заказ и пакет: привязка к агенту", () => {
   it("в заказе — мандат корзины cart_mandate_id; без него (в том числе со старым mandate_id) — ITEM_INVALID", async () => {
     const { app, asA } = setup();
@@ -335,7 +365,7 @@ describe("Заказ и пакет: привязка к агенту", () => {
     };
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc });
     const verifier = new MerchantAgentVerifier(() => s.keys.jwks(), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
-    const app = buildMerchantsServer({ verifier, acquirer });
+    const app = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT });
     const who = { side: a, agentCode: A, now: s.now() };
     const o = (await order(app, who, "SHOP-1042", "BRD-1042-01")).json();
     const path = `/v1/shops/SHOP-1042/orders/${o.id}/payment`;

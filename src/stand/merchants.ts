@@ -17,6 +17,8 @@ export interface MerchantsStandOptions {
   readonly aoiSupport?: boolean;
   readonly jwksMaxAgeMs?: number;
   readonly jwksRefetchMinMs?: number;
+  /** Лимит обращений с адреса в минуту; по умолчанию — `merchant_rate_limit_per_min` стенда. */
+  readonly rateLimitPerMin?: number;
   /** Решение заглушки ОПКЦ; по умолчанию одобрение. */
   readonly decide?: ConstructorParameters<typeof OpkcStub>[0];
 }
@@ -44,7 +46,12 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     skewSec: stand.params.signature_skew_sec,
     now: stand.now,
   });
-  const app = buildMerchantsServer({ verifier, acquirer, reconciliation });
+  const app = buildMerchantsServer({
+    verifier,
+    acquirer,
+    reconciliation,
+    rateLimitPerMin: opts.rateLimitPerMin ?? stand.params.merchant_rate_limit_per_min,
+  });
   return {
     app,
     acquirer,

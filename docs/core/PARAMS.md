@@ -18,6 +18,7 @@
 | `split_window_sec` / `split_min_ops` | 600 / 2 | Выявление дробления | данные пилота (К10) |
 | `signature_skew_sec` | 300 | Окно подписи ПАО | прогон |
 | `unavailable_retry_after_sec` | 1 | `Retry-After` у ответов ПАО 503 (`UPSTREAM_UNAVAILABLE`, `STATE_UNAVAILABLE`) | прогон (РП24) |
+| `merchant_rate_limit_per_min` | 6 000 | Лимит обращений к витринам эмулятора продавцов с одного адреса в минуту (все маршруты `/v1`); превышение — 429 `RATE_LIMITED` с `Retry-After`. На стенде щедрый: тесты агента не упираются | прогон песочницы для сторонних агентов (PS-26) |
 | `key_ttl_days` / `key_overlap_days` | 90 / 7 | Ключи агентов | O02 |
 | `qualified_signature_above_*` | 50 000 ₽ / 30 дней | Усиленная подпись мандата | юридическая оценка (O08, Р9) |
 | `restore_budget_on_refund` | false | Восстановление бюджета при возврате | юридическая оценка (В8, РП9) |
@@ -30,7 +31,7 @@
 
 | Правило | Почему |
 |---|---|
-| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
+| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `merchant_rate_limit_per_min` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
 | Целые ≥ 0: `bypass_overhead_ms`, `event_reorder_window_ms`, `key_overlap_days` | ноль допустим |
 | `split_min_ops` ≥ 2 | дробление — от двух операций |
 | `aoi_rollout_phase` ∈ 1…3 | A1 п. 8.3 |
@@ -46,3 +47,4 @@
 |---|---|---|---|---|
 | 08.10.2026 | все | — | стенд | первичная конфигурация |
 | 11.10.2026 | `unavailable_retry_after_sec` | — | 1 | РП24, аудит PS-04 №2 |
+| 13.10.2026 | `merchant_rate_limit_per_min` | — | 6 000 | PS-12, CodeQL №82 `js/missing-rate-limiting`; решение владельца (РП29) |
