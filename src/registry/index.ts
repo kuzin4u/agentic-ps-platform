@@ -8,3 +8,4 @@ export * from "./store.js";
 export * from "./registry.js";
 export * from "./keys.js";
 export * from "./agent-keys.js";
+export * from "./jwks.js";

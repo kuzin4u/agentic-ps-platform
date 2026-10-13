@@ -404,6 +404,7 @@ describe("статус допуска (РП21 п. 4)", () => {
     const stale: AgentRegistryStore = {
       ...store,
       get: () => rec,
+      agentCodes: () => [],
       ownerOf: () => undefined,
       insert: () => undefined,
       updateStatus: (c, v, f) => store.updateStatus(c, v, f),

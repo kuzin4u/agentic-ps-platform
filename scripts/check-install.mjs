@@ -47,7 +47,8 @@ try {
     join(app, "check.mjs"),
     `
 import { createHash, createPublicKey } from "node:crypto";
-import { createStand } from "agentic-ps-platform/stand";
+import { createMerchants, createStand } from "agentic-ps-platform/stand";
+import { AGENT_FIXTURES, MERCHANT_FIXTURES } from "agentic-ps-platform/fixtures";
 import { newEd25519Signer } from "@kuzin4u/agentic-core";
 import { PaoClient } from "@kuzin4u/agentic-core/pao";
 
@@ -67,6 +68,17 @@ try {
   if (health.env !== "dev") throw new Error("среда стенда не dev: " + JSON.stringify(health));
   if ("store" in s || "verifier" in s) throw new Error("стенд отдаёт хранилище или проверку подписи (РП25)");
   console.log("стенд из установки: GET /pao/v1/agent 200, kid совпал, среда dev");
+  // PS-12: фикстуры и витрины — из того же пакета, один источник.
+  const m = createMerchants(s);
+  try {
+    const shopsUrl = await m.listen();
+    const shops = (await (await fetch(shopsUrl + "/v1/shops")).json()).shops.map((x) => x.id);
+    if (JSON.stringify(shops) !== JSON.stringify(MERCHANT_FIXTURES.map((x) => x.id))) throw new Error("витрины ≠ фикстуры: " + shops);
+    if (!AGENT_FIXTURES.length) throw new Error("нет фикстур агентов");
+    console.log("витрины из установки: GET /v1/shops 200, совпадают с фикстурами");
+  } finally {
+    await m.close();
+  }
 } finally {
   await s.close();
 }

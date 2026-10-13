@@ -9,6 +9,10 @@
       "types": "./dist/stand/index.d.ts",
       "default": "./dist/stand/index.js"
     },
+    "./fixtures": {
+      "types": "./dist/fixtures/index.d.ts",
+      "default": "./dist/fixtures/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

@@ -12,6 +12,7 @@ import {
   type KeyPolicy,
   type KeyStatus,
 } from "./keys.js";
+import { agentJwk, type AgentJwks } from "./jwks.js";
 import type { Contour } from "./model.js";
 import { AgentNotFoundError, ConcurrentChangeError } from "./registry.js";
 import { KeyTakenError, type AgentRegistryStore } from "./store.js";
@@ -127,6 +128,23 @@ export class AgentKeys {
   lookup(agent_code: string, kid: string): KeyForVerify | undefined {
     const key = this.own(agent_code, kid);
     return key && { alg: key.alg, publicKey: key.public_key, status: keyStatus(key, this.now()) };
+  }
+
+  /**
+   * Каталог ключей агентов для продавцов и площадок (РП22 п. 1–2): только действующие ключи агентов ACTIVE;
+   * отозванный, истёкший ключ и ключи приостановленного или исключённого агента в каталог не попадают.
+   * Одна функция для эмулятора продавцов (PS-12) и HTTP-адреса каталога (PS-30).
+   */
+  jwks(): AgentJwks {
+    const now = this.now();
+    const keys = this.store
+      .agentCodes()
+      .filter((code) => this.store.get(code)?.status === "ACTIVE")
+      .flatMap((code) => this.store.keysOf(code))
+      .filter((k) => keyStatus(k, now) === "ACTIVE" && Date.parse(k.valid_from) <= now.getTime())
+      .map(agentJwk)
+      .filter((k) => k !== null);
+    return { keys };
   }
 
   private own(agent_code: string, kid: string): AgentKey | undefined {

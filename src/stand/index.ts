@@ -16,6 +16,8 @@ export interface Stand {
   readonly app: FastifyInstance;
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
   setClock(d: Date | undefined): void;
+  /** Текущее время стенда — те же часы, что у реестра и эмуляторов. */
+  now(): Date;
   /** Допуск по заявлению (РП21, РП23) в контуре sandbox; оператор — от вызывающего (только стенд, №9). */
   admit(application: unknown, operator: string): AdmissionDecision;
   /** Запуск на 127.0.0.1 и свободном порту; возвращает базовый адрес для клиента ПАО. */
@@ -43,6 +45,7 @@ export function createStand(): Stand {
     keys,
     app,
     setClock: (d) => (clock = d),
+    now,
     admit: (application, operator) => registry.admit(application, { contour: "sandbox", operator }),
     async listen() {
       await app.listen({ host: "127.0.0.1", port: 0 });
@@ -53,3 +56,5 @@ export function createStand(): Stand {
     close: () => app.close(),
   };
 }
+
+export { createMerchants, type MerchantsStand, type MerchantsStandOptions } from "./merchants.js";
