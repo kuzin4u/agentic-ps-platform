@@ -38,7 +38,7 @@ const pkg = (order_ref: string, mandate = "MND-cart-1", agent = A) => ({
 });
 
 async function order(app: Stand["app"], who: object, shop: string, sku: string, qty = 1, extra: object = {}) {
-  return merchantCall(app, { ...who, path: `/v1/shops/${shop}/orders`, body: { items: [{ sku, qty }], mandate_id: "MND-cart-1", ...extra } });
+  return merchantCall(app, { ...who, path: `/v1/shops/${shop}/orders`, body: { items: [{ sku, qty }], cart_mandate_id: "MND-cart-1", ...extra } });
 }
 
 describe("К6: список витрин и зоны", () => {
@@ -65,8 +65,14 @@ describe("К6: список витрин и зоны", () => {
     const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
     const one = buildMerchantsServer({ verifier, acquirer });
     const two = buildMerchantsServer({ verifier, acquirer, shops: flipped });
-    const ids = async (app: typeof one) => (await merchantCall(app, { path: "/v1/shops" })).json().shops.map((s: { id: string }) => s.id);
-    expect(await ids(two)).toEqual(await ids(one));
+    const list = async (app: typeof one) => (await merchantCall(app, { path: "/v1/shops" })).json().shops as { id: string; zone: string }[];
+    const [a, b] = [await list(one), await list(two)];
+    // Зоны действительно разные (у каждой витрины CONTOUR ↔ OUTSIDE), порядок — один.
+    expect(a.every((s, i) => s.zone !== b[i]!.zone)).toBe(true);
+    expect(b.map((s) => s.id)).toEqual(a.map((s) => s.id));
+    // И каталог внутри витрины от знака не зависит.
+    const items = async (app: typeof one) => (await merchantCall(app, { path: "/v1/shops/SHOP-1042/catalog" })).json().items;
+    expect(await items(two)).toEqual(await items(one));
   });
 
   it("MKT-77 — только чтение: каталог отдаёт, заказ — ORDERS_NOT_ACCEPTED", async () => {
@@ -258,17 +264,27 @@ describe("Недобросовестные и особые витрины", () =
     expect(rev!.aoi).toEqual(auth!.aoi);
   });
 
-  it("SHOP-1042: заказ и оплата — PAID, сумма из заказа продавца", async () => {
+  it("инвариант 5: сумма из тела заказа, тела /payment и пакета не читается — в авторизации сумма заказа продавца", async () => {
     const { app, asA, m: ms } = setup();
     const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-02", 1, { total: 1 })).json();
     expect(o.total).toBe(189000);
-    const r = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: { ...pkg(o.id), amount: 1 } });
+    const r = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: { ...pkg(o.id), amount: 1, amount_max: 1, payload: { ...pkg(o.id).payload, amount: 1 } } });
     expect(r.json()).toMatchObject({ status: "PAID", payment: { approved: true } });
     expect(ms.opkc.messages[0]).toMatchObject({ amount: 189000, order_ref: o.id, merchant: { id: "MER-1042", acquirer_id: "ACQ-01" } });
   });
 });
 
 describe("Заказ и пакет: привязка к агенту", () => {
+  it("в заказе — мандат корзины cart_mandate_id; без него (в том числе со старым mandate_id) — ITEM_INVALID", async () => {
+    const { app, asA } = setup();
+    const ok = await order(app, asA(), "SHOP-1042", "BRD-1042-01");
+    expect(ok.json()).toMatchObject({ cart_mandate_id: "MND-cart-1" });
+    expect(ok.json()).not.toHaveProperty("mandate_id");
+    const r = await merchantCall(app, { ...asA(), path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], mandate_id: "MND-cart-1" } });
+    expect(r.statusCode).toBe(422);
+    expect(r.json().code).toBe("ITEM_INVALID");
+  });
+
   it("заказ без подписи — 403 AGENT_UNIDENTIFIED", async () => {
     const { app } = setup();
     const r = await order(app, {}, "SHOP-1042", "BRD-1042-01");

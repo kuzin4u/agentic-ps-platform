@@ -46,7 +46,8 @@ export interface Order {
   readonly items: readonly OrderLine[];
   readonly total: number;
   readonly currency: string;
-  readonly mandate_id: string;
+  /** Мандат корзины, по которому агент оформляет заказ; сверяется с cart_mandate_id пакета. */
+  readonly cart_mandate_id: string;
   readonly agent_code: string;
   readonly status: OrderStatus;
   /**
@@ -192,10 +193,10 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
     if (!agent) return reply;
     if (shop.behaviour === "READ_ONLY") return fail(reply, "ORDERS_NOT_ACCEPTED");
 
-    const body = json(req) as { items?: unknown; mandate_id?: unknown } | undefined;
-    const mandate_id = body?.mandate_id;
+    const body = json(req) as { items?: unknown; cart_mandate_id?: unknown } | undefined;
+    const cart_mandate_id = body?.cart_mandate_id;
     const raw = body?.items;
-    if (typeof mandate_id !== "string" || mandate_id === "" || !Array.isArray(raw) || raw.length === 0) {
+    if (typeof cart_mandate_id !== "string" || cart_mandate_id === "" || !Array.isArray(raw) || raw.length === 0) {
       return fail(reply, "ITEM_INVALID");
     }
     const lines: OrderLine[] = [];
@@ -219,7 +220,7 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
       items: lines,
       total: lines.reduce((s, l) => s + l.price * l.qty, 0),
       currency: currency as string,
-      mandate_id,
+      cart_mandate_id,
       agent_code: agent,
       status: "CREATED",
       payment: null,
@@ -240,10 +241,11 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
       if (!order || order.shop_id !== shop.id || order.agent_code !== agent) return fail(reply, "ORDER_NOT_FOUND");
       if (order.status !== "CREATED") return fail(reply, "ORDER_NOT_PAYABLE");
 
+      // aoi.mandate_id с мандатом корзины сверяет ADP (AOI_MISMATCH, ПИ §6), не продавец: источник истины — запись мандата.
       // Пакет подписан агентом: подпись обращения покрывает тело через content-digest (RFC 9421, РП22 п. 5).
       const pkg = parsePaymentPackage(json(req));
       if (!pkg) return fail(reply, "PACKAGE_INVALID");
-      if (pkg.order_ref !== order.id || pkg.aoi.agent_code !== agent || pkg.cart_mandate_id !== order.mandate_id) {
+      if (pkg.order_ref !== order.id || pkg.aoi.agent_code !== agent || pkg.cart_mandate_id !== order.cart_mandate_id) {
         return fail(reply, "PACKAGE_MISMATCH");
       }
 

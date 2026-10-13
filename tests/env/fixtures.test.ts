@@ -96,7 +96,7 @@ describe("Ответы эмуляторов и сообщения в ОПКЦ �
       for (const f of MERCHANT_FIXTURES) {
         seen.push((await merchantCall(m.app, { ...who, path: `/v1/shops/${f.id}/catalog` })).json());
         const sku = f.items.find((i) => typeof i.price === "number")?.sku ?? f.items[0]!.sku;
-        const o = await merchantCall(m.app, { ...who, path: `/v1/shops/${f.id}/orders`, body: { items: [{ sku, qty: 1 }], mandate_id: "MND-1" } });
+        const o = await merchantCall(m.app, { ...who, path: `/v1/shops/${f.id}/orders`, body: { items: [{ sku, qty: 1 }], cart_mandate_id: "MND-1" } });
         seen.push(o.json());
         if (o.statusCode !== 201) continue;
         const id = o.json().id;

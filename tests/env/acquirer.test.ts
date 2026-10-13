@@ -84,7 +84,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
     const m = createMerchants(s, { aoiSupport: false });
     try {
       const who = { side, agentCode: CODE };
-      const o = (await merchantCall(m.app, { ...who, path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], mandate_id: "MND-1" } })).json();
+      const o = (await merchantCall(m.app, { ...who, path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], cart_mandate_id: "MND-1" } })).json();
       const p = { ...card(), order_ref: o.id };
       const r = await merchantCall(m.app, { ...who, path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: p });
       expect(r.json().status).toBe("PAID");
@@ -109,7 +109,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
     };
     const app = buildMerchantsServer({ verifier, acquirer, reconciliation });
     const who = { side, agentCode: CODE };
-    const o = (await merchantCall(app, { ...who, path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], mandate_id: "MND-1" } })).json();
+    const o = (await merchantCall(app, { ...who, path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], cart_mandate_id: "MND-1" } })).json();
     const r = await merchantCall(app, { ...who, path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: { ...card(), order_ref: o.id } });
     expect(r.json().status).toBe("PAID");
     expect(opkc.messages).toHaveLength(1);
@@ -128,7 +128,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
     const m = createMerchants(s);
     try {
       const who = { side, agentCode: CODE };
-      const o = (await merchantCall(m.app, { ...who, path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], mandate_id: "MND-1" } })).json();
+      const o = (await merchantCall(m.app, { ...who, path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], cart_mandate_id: "MND-1" } })).json();
       const r = await merchantCall(m.app, { ...who, path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: { ...card(), order_ref: o.id } });
       expect(r.json().status).toBe("PAID");
       expect(m.opkc.messages[0]).toHaveProperty("aoi");
