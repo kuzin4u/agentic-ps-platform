@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from guard import API_KEY, PEM, has_card
 
 SKIP_DIRS = {"node_modules", ".git", "dist", "coverage", "reference"}
-EXT = {".ts", ".js", ".json", ".md", ".yaml", ".yml", ".log", ".jsonl", ".txt", ".env", ".html"}
+EXT = {".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".cjs", ".json", ".md", ".yaml", ".yml", ".log", ".jsonl", ".txt", ".env", ".html"}
 
 def main(root):
     bad = []

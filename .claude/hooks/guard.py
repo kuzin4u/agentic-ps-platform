@@ -9,6 +9,7 @@
   2. Чтение .env и ключей через Read и через Bash (cat/less/head/tail/grep/source и т. п.).
   3. Содержимое с ключом API (sk-ant-), приватным ключом PEM или номером карты (проверка Луна).
   4. git push — только в ветки task/* (без --force, --tags, удаления); создание PR разрешено; слияние PR — владелец.
+     Тело heredoc — данные, не команда; подстановка $(…) и `…` проверяется как команда (К2.1, 14.10.2026).
 """
 import json, re, shlex, sys, os
 
@@ -128,6 +129,43 @@ def bash_read_targets(cmd: str):
     return reads
 
 
+# --- heredoc и подстановка команд (служебная сессия 14.10.2026, К2.1) ---
+HEREDOC = re.compile(r"(?<!<)<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+SUBST = re.compile(r"\$\(|`")
+
+
+def strip_heredocs(cmd: str) -> str:
+    """Убирает тела heredoc: это данные, а не команда.
+
+    Тело с незакавыченным ограничителем, где есть $(…) или `…`, оболочка исполняет — оно остаётся.
+    Незакрытый heredoc не убирается (fail-closed).
+    """
+    lines = cmd.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        for m in HEREDOC.finditer(line):
+            dash, quote, word = m.group(1), m.group(2), m.group(3)
+            j = i
+            while j < len(lines) and (lines[j].lstrip("\t") if dash else lines[j]) != word:
+                j += 1
+            if j == len(lines):
+                return cmd
+            body = lines[i:j]
+            if not quote and any(SUBST.search(b) for b in body):
+                out += body
+            i = j + 1
+    return "\n".join(out)
+
+
+def command_segments(cmd: str):
+    """Сегменты команды: разделители оболочки, перевод строки и начало подстановки $(…) или `…`."""
+    text = SUBST.sub("\n", strip_heredocs(cmd))
+    return [s for s in re.split(r"&&|\|\||;|\||\n", text) if s.strip()]
+
+
 # --- push разрешён только в ветки task/* (решение владельца 09.10.2026) ---
 TASK_RE = re.compile(r"^(refs/heads/)?task/[A-Za-z0-9._/-]+$")
 FORBIDDEN_PUSH_FLAGS = {"-f", "--force", "--force-with-lease", "--force-if-includes", "--mirror", "--all",
@@ -146,7 +184,7 @@ def current_branch() -> str:
 
 def check_git_push(cmd: str):
     """None — push разрешён; иначе текст причины отказа."""
-    for segment in re.split(r"&&|\|\||;|\|", cmd):
+    for segment in command_segments(cmd):
         if not re.search(r"\bgit\b.*\bpush\b", segment):
             continue
         try:

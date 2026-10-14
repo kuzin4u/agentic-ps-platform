@@ -14,12 +14,9 @@
       "Read(./.env.*)",
       "Edit(./.env)",
       "Edit(./.env.*)",
-      "Write(./.env)",
-      "Write(./.env.*)",
       "Read(./**/*.pem)",
       "Read(./**/*.key)",
-      "Edit(./docs/reference/**)",
-      "Write(./docs/reference/**)"
+      "Edit(./docs/reference/**)"
     ],
     "ask": [
       "Bash(git commit:*)",

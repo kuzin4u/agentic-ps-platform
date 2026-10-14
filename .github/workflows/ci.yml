@@ -4,13 +4,20 @@ on:
   push:
     branches: [main]
 jobs:
-  test:
+  # Матрица Node: нижняя граница engines (>=20.19) и текущая LTS (служебная 14.10, часть 2, К3.1; как AG-04 К3.1 агента и П3 agentic-core).
+  test-node:
+    name: test (${{ matrix.node }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.19", "22"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -47,3 +54,14 @@ jobs:
         run: npm run test:install -- --git ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Поиск ключей и реквизитов
         run: python3 .claude/hooks/scan_secrets.py .
+
+  # Итоговая проверка под прежним именем test — её требует защита ветки main, имя не меняется.
+  # if: always() обязателен: без него при красной матрице test была бы пропущена (skipped), а пропущенная обязательная
+  # проверка засчитывается как пройденная (ревью #23 агента п. 1). Зелёная — только при success всей матрицы.
+  test:
+    needs: test-node
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Матрица Node прошла целиком
+        run: test "${{ needs.test-node.result }}" = "success"
