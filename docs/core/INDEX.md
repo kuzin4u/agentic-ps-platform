@@ -13,8 +13,9 @@
 | [`PARAMS.md`](PARAMS.md) | Стендовые параметры |
 | [`SECURITY.md`](SECURITY.md) | Модель угроз по компонентам, ключи Платформы, mTLS песочницы, аутентификация операторов агентов, ограничения песочницы |
 | [`DECISIONS.md`](DECISIONS.md) | РП1–РП28 |
-| [`ROADMAP.md`](ROADMAP.md) | 7 этапов, 31 сессия |
+| [`ROADMAP.md`](ROADMAP.md) | Ред. 2: 8 этапов (0–7), 34 сессии, сроки по календарю планов рынков |
 | [`STATUS.md`](STATUS.md) | Состояние и следующая сессия |
 | [`GLOSSARY.md`](GLOSSARY.md) | Термины |
-| [`../reference/joint-plan.md`](../reference/joint-plan.md) | Совместный план с агентом и agentic-core: коды задач PS/AG/CO, связи, точки сверки С0–С5 |
+| [`../reference/joint-plan.md`](../reference/joint-plan.md) | План «Россия» ред. 1: общее ядро (инвариант), задачи PS-01…PS-32, SEC-1, SEC-2, PS-К1, точки сверки С0–С6, общий календарь |
+| [`../reference/plan-west.md`](../reference/plan-west.md) | План «Запад» ред. 1: агент под брендом банка для ЕС и США, задачи платформы PS-К2, PS-К3, З1 MVP Запада |
 | [`../reference/`](../reference/) | Обзорная страница и исходный пул (только чтение) |
