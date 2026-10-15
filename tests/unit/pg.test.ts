@@ -1,0 +1,44 @@
+// PostgreSQL в CI (РП30 п. 7, PS-05 К2.2): страж и миграции ядра на настоящей базе.
+// Страж — как в agentic-core (К2.4 ядра): в CI PG-тесты не пропускаются молча — без DATABASE_URL падает этот тест.
+// Локально без базы — пропуск (PostgreSQL только в CI, решение владельца 15.10.2026).
+import { applyMigrations, migrationsDir, type SqlClient } from "@kuzin4u/agentic-core";
+import type pg from "pg";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
+
+// pg.Pool подходит как SqlClient ядра без обёртки (РП30 п. 4) — проверка типов.
+const _pool: (p: pg.Pool) => SqlClient = (p) => p;
+void _pool;
+
+describe("страж PG-тестов", () => {
+  it.runIf(process.env.CI)("в CI задан DATABASE_URL — PG-тесты выполняются, а не пропускаются", () => {
+    expect(DATABASE_URL, "в CI нет DATABASE_URL: PG-тесты были бы пропущены").toBeTruthy();
+  });
+});
+
+describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 (РП30 п. 5)", () => {
+  let db: TestDb;
+  beforeAll(async () => {
+    db = await openTestDb("migr");
+  });
+  afterAll(async () => {
+    await db?.close();
+  });
+
+  it("применены 001–004, таблицы nonce и идемпотентности есть; повторный запуск ничего не применяет", async () => {
+    const applied = (await db.pool.query<{ name: string }>("SELECT name FROM core_migrations ORDER BY name")).rows;
+    expect(applied.map((r) => r.name)).toEqual([
+      "001_journal.sql",
+      "002_holds.sql",
+      "003_idempotency.sql",
+      "004_nonces.sql",
+    ]);
+    const tables = (
+      await db.pool.query<{ t: string }>(
+        "SELECT table_name AS t FROM information_schema.tables WHERE table_schema = current_schema() ORDER BY 1",
+      )
+    ).rows.map((r) => r.t);
+    expect(tables).toEqual(expect.arrayContaining(["core_idempotency", "core_nonces"]));
+    expect(await applyMigrations(db.pool, migrationsDir())).toEqual([]);
+  });
+});
