@@ -106,6 +106,13 @@ describe("стендовые параметры", () => {
     );
   });
 
+  it("idempotency_ttl_sec: 60 принимается, 59 — отказ (РП30: не меньше аренды захвата ядра)", () => {
+    expect(parseParams({ ...stand(), idempotency_ttl_sec: 60 }).idempotency_ttl_sec).toBe(60);
+    expect(() => parseParams({ ...stand(), idempotency_ttl_sec: 59 })).toThrow(/idempotency_ttl_sec: ожидается целое 60/);
+    const doc = readFileSync("docs/core/PARAMS.md", "utf8");
+    expect(doc.slice(doc.indexOf("## Границы"), doc.indexOf("## Журнал"))).toContain("| `idempotency_ttl_sec` — целое ≥ 60 |");
+  });
+
   it("границы PARAMS.md совпадают с загрузчиком (РП20)", () => {
     const doc = readFileSync("docs/core/PARAMS.md", "utf8");
     const from = doc.indexOf("## Границы");
@@ -121,7 +128,7 @@ describe("стендовые параметры", () => {
     const min1 = keysOf("Целые ≥ 1:");
     const min0 = keysOf("Целые ≥ 0:");
     // Каждое целое без особой границы — ровно в одной из строк.
-    const special = new Set(["split_min_ops", "aoi_rollout_phase", "unavailable_retry_after_sec"]);
+    const special = new Set(["split_min_ops", "aoi_rollout_phase", "unavailable_retry_after_sec", "idempotency_ttl_sec"]);
     const ints = Object.entries(stand())
       .filter(([k, v]) => Number.isInteger(v) && !special.has(k))
       .map(([k]) => k);

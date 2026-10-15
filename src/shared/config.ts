@@ -35,6 +35,8 @@ export interface Params {
   readonly unavailable_retry_after_sec: number;
   /** Лимит обращений к витринам эмулятора продавцов с одного адреса в минуту (PS-12); на стенде — щедрый. */
   readonly merchant_rate_limit_per_min: number;
+  /** Срок хранения результата идемпотентности ПАО, с; ≥ 60 — не меньше аренды захвата ядра (РП30 п. 3). */
+  readonly idempotency_ttl_sec: number;
   readonly key_ttl_days: number;
   readonly key_overlap_days: number;
   readonly qualified_signature_above_kop: number;
@@ -93,6 +95,7 @@ const RULES: Record<keyof Params, Rule> = {
   signature_skew_sec: int(1),
   unavailable_retry_after_sec: int(0, 30),
   merchant_rate_limit_per_min: int(1),
+  idempotency_ttl_sec: int(60),
   key_ttl_days: int(1),
   key_overlap_days: int(0),
   qualified_signature_above_kop: int(1),
