@@ -1,4 +1,6 @@
 import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   AgentExcludedError,
@@ -200,6 +202,28 @@ describe("слабые ключи Ed25519 — KEY_INVALID (аудит PS-04 №1
       expect(() => s.keys.register(CODE, { alg: "ed25519", public_key: spkiOf(hex) })).toThrow(KeyInvalidError);
     }
     expect(s.keys.list(CODE)).toHaveLength(1);
+  });
+});
+
+// Векторы ядра — общий источник для платформы, агента и продавцов (agentic-core v0.3.0, К10). Свои векторы выше остаются:
+// они независимы от ядра (y = p + 3 у нас — без знакового бита, у агента — со знаковым, ревью PR #29).
+describe("слабые ключи Ed25519 — сверка с векторами ed25519_weak_keys ядра (PS-05 К1.2)", () => {
+  const vectorsPath = fileURLToPath(new URL("../../vectors/vectors.json", import.meta.resolve("@kuzin4u/agentic-core")));
+  const VECTORS = (JSON.parse(readFileSync(vectorsPath, "utf8")) as {
+    ed25519_weak_keys: { point: string; weak: boolean; why: string }[];
+  }).ed25519_weak_keys;
+  const spkiOf = (hex: string): string =>
+    Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(hex, "hex")]).toString("base64");
+
+  it("векторы на месте: есть и слабые, и годные", () => {
+    expect(VECTORS.filter((v) => v.weak).length).toBeGreaterThanOrEqual(8);
+    expect(VECTORS.some((v) => !v.weak)).toBe(true);
+  });
+
+  it.each(VECTORS.map((v) => [v.why, v] as const))("%s", (_why, v) => {
+    expect(isWeakEd25519(Buffer.from(v.point, "hex"))).toBe(v.weak);
+    // Слабый — KEY_INVALID при разборе (null); годный — разбирается.
+    expect(parseKey([ED25519], "ed25519", spkiOf(v.point)) === null).toBe(v.weak);
   });
 });
 

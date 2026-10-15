@@ -1,6 +1,7 @@
 // Ключи агентов (A2 п. 5, РП23): разбор открытого ключа, kid — отпечаток JWK по RFC 7638, срок и статус.
 // Закрытый ключ агента Платформа не получает: пару генерирует оператор агента (РП23 п. 2).
 import { createHash, createPublicKey } from "node:crypto";
+import { isWeakEd25519 } from "@kuzin4u/agentic-core";
 import type { Params } from "../shared/config.js";
 import type { Key } from "../shared/pao.js";
 import type { Contour } from "./model.js";
@@ -40,57 +41,13 @@ function spki(public_key: string): ReturnType<typeof createPublicKey> | null {
   }
 }
 
-// Кривая Ed25519 (RFC 8032 §5.1): p = 2^255 − 19, d = −121665/121666, a = −1.
-const P = 2n ** 255n - 19n;
-const mod = (n: bigint): bigint => ((n % P) + P) % P;
-function pow(b: bigint, e: bigint): bigint {
-  let r = 1n;
-  for (b = mod(b); e > 0n; e >>= 1n, b = (b * b) % P) if (e & 1n) r = (r * b) % P;
-  return r;
-}
-const inv = (n: bigint): bigint => pow(n, P - 2n);
-const D = mod(-121665n * inv(121666n));
-const SQRT_M1 = pow(2n, (P - 1n) / 4n);
-
-type Point = readonly [bigint, bigint];
-
-/** Полная формула сложения скрученной кривой Эдвардса (a = −1). */
-function add([x1, y1]: Point, [x2, y2]: Point): Point {
-  const t = mod(D * x1 * x2 * y1 * y2);
-  return [mod((x1 * y2 + y1 * x2) * inv(1n + t)), mod((y1 * y2 + x1 * x2) * inv(1n - t))];
-}
-
-/** Разбор 32 байт по RFC 8032 §5.1.3 со строгой каноничностью: y < p, x = 0 без знакового бита. Иначе null. */
-function decodePoint(bytes: Buffer): Point | null {
-  if (bytes.length !== 32) return null;
-  const sign = bytes[31]! >> 7;
-  const le = Buffer.from(bytes);
-  le[31] = le[31]! & 0x7f;
-  const y = BigInt(`0x${Buffer.from(le).reverse().toString("hex")}`);
-  if (y >= P) return null;
-  const u = mod(y * y - 1n);
-  const v = mod(D * y * y + 1n);
-  let x = mod(u * pow(v, 3n) * pow(u * pow(v, 7n), (P - 5n) / 8n));
-  if (mod(v * x * x) !== u) {
-    if (mod(v * x * x) !== mod(-u)) return null;
-    x = mod(x * SQRT_M1);
-  }
-  if (x === 0n && sign === 1) return null;
-  if (Number(x & 1n) !== sign) x = mod(-x);
-  return [x, y];
-}
-
 /**
  * Слабый открытый ключ Ed25519 (аудит PS-04 №1): неканоническая запись или точка малого порядка ([8]A = O).
  * С ключом малого порядка подпись «R = нейтраль, S = 0» проходит для любого сообщения — подписать может любой (A2 п. 5.1).
+ * Проверка — agentic-core v0.3.0 (К10, векторы `ed25519_weak_keys`): та же, что у агента и продавцов; своя арифметика
+ * на BigInt (≈ 2,8 мс на ключ, повторный аудит PS-04 №5) снята в PS-05 К1.2 — ядро ≈ 0,45 мс.
  */
-export function isWeakEd25519(x: Buffer): boolean {
-  const a = decodePoint(x);
-  if (!a) return true;
-  let q: Point = a;
-  for (let i = 0; i < 3; i++) q = add(q, q);
-  return q[0] === 0n && q[1] === 1n;
-}
+export { isWeakEd25519 };
 
 export const ED25519: KeyAlgorithm = {
   alg: "ed25519",
