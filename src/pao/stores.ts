@@ -20,10 +20,7 @@ export interface PaoNonceStoreOptions {
 /** skewSec передаётся ядру: срок меньше 2 × skew ядро отвергает при создании (RangeError). */
 export function paoNonceStore(o: PaoNonceStoreOptions): AsyncNonceStore {
   const opts = { retainMs: nonceRetainMs(o.skewSec), skewSec: o.skewSec, ...(o.now ? { now: o.now } : {}) };
-  // ПОДСТАВНАЯ ПОЛОМКА (PS-05 К2.3б): nonce в памяти процесса, база не используется. Откатывается следующим коммитом.
-  void PgNonceStore;
-  void PAO_NONCE_SCOPE;
-  return new AsyncMemoryNonceStore(opts);
+  return o.client ? new PgNonceStore(o.client, PAO_NONCE_SCOPE, opts) : new AsyncMemoryNonceStore(opts);
 }
 
 /**
