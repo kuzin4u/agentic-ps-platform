@@ -8,7 +8,10 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import type { Acquirer } from "../acquirer/acquirer.js";
 import { parsePaymentPackage, type PaymentPackage } from "../acquirer/package.js";
 import { SHOPS, byShopId, catalogView, isOrderable, zoneOf, type Shop } from "./shops.js";
-import type { MerchantAgentVerifier, MerchantAuthError } from "./verify.js";
+import { MERCHANT_ERROR_HTTP, type MerchantErrorCode } from "./errors.js";
+import type { MerchantAgentVerifier } from "./verify.js";
+
+export type { MerchantErrorCode };
 
 /** Метаданные пакета для сверки при эквайрере без поддержки aoi (РП22 п. 6; API для продавцов — PS-30). */
 export interface PackageMetadata {
@@ -62,39 +65,8 @@ export interface Order {
   readonly fulfilment_refused: boolean;
 }
 
-export type MerchantErrorCode =
-  | "AGENT_UNIDENTIFIED"
-  | MerchantAuthError
-  | "SHOP_NOT_FOUND"
-  | "ORDER_NOT_FOUND"
-  | "ORDERS_NOT_ACCEPTED"
-  | "ITEM_INVALID"
-  | "ITEM_INCOMPLETE"
-  | "PACKAGE_INVALID"
-  | "PACKAGE_MISMATCH"
-  | "ORDER_NOT_PAYABLE"
-  | "UPSTREAM_UNAVAILABLE"
-  | "RATE_LIMITED";
-
-const HTTP: Record<MerchantErrorCode, number> = {
-  AGENT_UNIDENTIFIED: 403,
-  KEY_UNKNOWN: 401,
-  AGENT_MISMATCH: 401,
-  KEY_EXPIRED: 401,
-  SIGNATURE_INVALID: 401,
-  SHOP_NOT_FOUND: 404,
-  ORDER_NOT_FOUND: 404,
-  ORDERS_NOT_ACCEPTED: 409,
-  ITEM_INVALID: 422,
-  ITEM_INCOMPLETE: 422,
-  PACKAGE_INVALID: 422,
-  PACKAGE_MISMATCH: 409,
-  ORDER_NOT_PAYABLE: 409,
-  UPSTREAM_UNAVAILABLE: 503,
-  RATE_LIMITED: 429,
-};
-
-const fail = (reply: FastifyReply, code: MerchantErrorCode): FastifyReply => reply.code(HTTP[code]).send({ code });
+const fail = (reply: FastifyReply, code: MerchantErrorCode): FastifyReply =>
+  reply.code(MERCHANT_ERROR_HTTP[code]).send({ code });
 
 const shopView = (s: Shop) => ({
   id: s.id,

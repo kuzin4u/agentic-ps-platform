@@ -1,6 +1,7 @@
 // PS-12: фикстуры витрин и агентов (AG-04, AG-09) — из того же источника, что эмулятор; номеров карт и закрытых ключей нет.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { AGENT_FIXTURES, MERCHANT_FIXTURES, agentApplication } from "../../src/fixtures/index.js";
+import { AGENT_FIXTURES, MERCHANT_ERROR_CODES, MERCHANT_FIXTURES, agentApplication } from "../../src/fixtures/index.js";
 import { SHOPS } from "../../src/env/merchants/index.js";
 import { createMerchants, createStand } from "../../src/stand/index.js";
 import { newAgentSide } from "../support/agent.js";
@@ -115,6 +116,36 @@ describe("Ответы эмуляторов и сообщения в ОПКЦ �
       expectNoCardData(m.opkc.messages);
     } finally {
       await m.close();
+    }
+  });
+});
+
+// Р26 п. 5 агента (К3.3 PS-05): перечень кодов отказа витрин — из того же источника, что ответы эмулятора.
+describe("Коды отказа витрин", () => {
+  it("перечень закрыт и совпадает с кодами, которые отдаёт эмулятор", () => {
+    const src = readFileSync("src/env/merchants/server.ts", "utf8") + readFileSync("src/env/merchants/verify.ts", "utf8");
+    // Коды, которые эмулятор отдаёт: fail(reply, "…") и коды проверки подписи (MerchantAuthError).
+    const emitted = new Set(
+      [...src.matchAll(/fail\(reply, "([A-Z_]+)"\)|code: "([A-Z_]+)"/g)].map((m) => (m[1] ?? m[2]) as string),
+    );
+    const listed = MERCHANT_ERROR_CODES.map((e) => e.code);
+    for (const c of emitted) expect(listed, c).toContain(c);
+    expect(listed).toEqual([...listed].sort());
+    expect(new Set(listed).size).toBe(listed.length);
+    for (const { code, http } of MERCHANT_ERROR_CODES) expect([401, 403, 404, 409, 422, 429, 503], code).toContain(http);
+  });
+
+  it("ответ витрины несёт код из перечня с его HTTP-статусом: без подписи — 403 AGENT_UNIDENTIFIED", async () => {
+    const stand = createStand();
+    const m = createMerchants(stand);
+    try {
+      const res = await m.app.inject({ method: "POST", url: "/v1/shops/SHOP-1042/orders", payload: { items: [] } });
+      const body = res.json() as { code: string };
+      expect(MERCHANT_ERROR_CODES).toContainEqual({ code: body.code, http: res.statusCode });
+      expect(body.code).toBe("AGENT_UNIDENTIFIED");
+    } finally {
+      await m.app.close();
+      await stand.close();
     }
   });
 });

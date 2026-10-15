@@ -1,9 +1,20 @@
 // Фикстуры витрин и агентов для тестов агента (AG-04 лёгкий мок, AG-09 поиск и зоны) — из тех же данных,
 // что эмулятор продавцов (src/env/merchants/shops.ts): один источник. Тестовый интерфейс, не контракт (инвариант 10).
 // Закрытых ключей нет: пару генерирует потребитель, Платформа получает только открытый ключ (РП23 п. 2).
+import { MERCHANT_ERROR_HTTP, type MerchantErrorCode } from "../env/merchants/errors.js";
 import { SHOPS, byShopId, catalogView, zoneOf, type ShopBehaviour, type ShopItem, type Zone } from "../env/merchants/shops.js";
 
-export type { ShopBehaviour, ShopItem, Zone };
+export type { MerchantErrorCode, ShopBehaviour, ShopItem, Zone };
+
+/**
+ * Коды отказа витрин эмулятора с HTTP-статусами (Р26 п. 5 агента; AG-04, AG-09): тело отказа витрины — `{code}`.
+ * Перечень закрыт: другой код от витрины — расхождение эмулятора, а не новый код.
+ */
+export const MERCHANT_ERROR_CODES: readonly { readonly code: MerchantErrorCode; readonly http: number }[] = Object.freeze(
+  (Object.entries(MERCHANT_ERROR_HTTP) as [MerchantErrorCode, number][])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([code, http]) => Object.freeze({ code, http })),
+);
 
 export interface MerchantFixture {
   readonly id: string;
