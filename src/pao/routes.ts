@@ -35,10 +35,10 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   app.addHook("preHandler", async (req, reply) => {
     const { path, query } = target(req);
     const body = typeof req.body === "string" ? req.body : "";
-    const r = deps.verifier.verify({ method: req.method, path, query, headers: req.headers, body });
+    const r = await deps.verifier.verify({ method: req.method, path, query, headers: req.headers, body });
     if (!r.ok) {
       // Сбой источника — в журнал процесса, не в ответ агенту (повторный аудит PS-04 №4).
-      if (r.cause !== undefined) req.log.error({ err: r.cause }, "ПАО: сбой реестра или ключей при проверке обращения");
+      if (r.cause !== undefined) req.log.error({ err: r.cause }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
       const e = paoError(r.code, r.norm);
       // ПАО §2: Retry-After и с ответами 503 — из стендовых параметров (РП24).
       if (e.http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));

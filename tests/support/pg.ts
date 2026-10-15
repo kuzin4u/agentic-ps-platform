@@ -11,6 +11,8 @@ export interface TestDb {
   readonly pool: pg.Pool;
   /** Новый пул на той же схеме — «перезапуск» процесса Платформы на той же базе. */
   reopen(): pg.Pool;
+  /** Параметр `options` пула для своей схемы — для пула со своими настройками (таймауты). */
+  readonly searchPathOption: string;
   close(): Promise<void>;
 }
 
@@ -21,8 +23,9 @@ export async function openTestDb(label: string): Promise<TestDb> {
   const admin = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pools: pg.Pool[] = [];
+  const searchPathOption = `-c search_path=${schema}`;
   const open = (): pg.Pool => {
-    const p = new pg.Pool({ connectionString: DATABASE_URL, options: `-c search_path=${schema}`, max: 20 });
+    const p = new pg.Pool({ connectionString: DATABASE_URL, options: searchPathOption, max: 20 });
     pools.push(p);
     return p;
   };
@@ -31,6 +34,7 @@ export async function openTestDb(label: string): Promise<TestDb> {
   return {
     pool,
     reopen: open,
+    searchPathOption,
     async close() {
       await Promise.all(pools.map((p) => p.end()));
       await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);

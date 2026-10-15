@@ -3,3 +3,4 @@ export const component = "П9";
 
 export * from "./errors.js";
 export * from "./verify.js";
+export * from "./stores.js";
