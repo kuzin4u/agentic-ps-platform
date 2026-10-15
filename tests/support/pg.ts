@@ -36,7 +36,8 @@ export async function openTestDb(label: string): Promise<TestDb> {
     reopen: open,
     searchPathOption,
     async close() {
-      await Promise.all(pools.map((p) => p.end()));
+      // Пул, закрытый самим тестом (сбой базы), второй раз не закрывается.
+      await Promise.all(pools.filter((p) => !p.ended).map((p) => p.end()));
       await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
       await admin.end();
     },
