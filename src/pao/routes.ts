@@ -5,7 +5,6 @@ import rateLimit, { normalizeIP } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, type AgentKeys } from "../registry/agent-keys.js";
-import { toPaoKey } from "../registry/keys.js";
 import type { AgentRecord } from "../registry/model.js";
 import type { Params } from "../shared/config.js";
 import type { AgentSelf } from "../shared/pao.js";
@@ -158,8 +157,11 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   app.post("/pao/v1/agent/keys", async (req, reply) =>
     mutating(req, reply, keyRegistrationBody, (agent, input) => {
       try {
+        // Свой действующий ключ повторно — тот же Key, 201 (РП23 доп. 7): повтор после потерянного ответа.
         const added = deps.keys.register(agent.agent_code, input, { requireActive: true });
-        return { status: 201, body: toPaoKey(added, new Date(added.valid_from)) };
+        const key = deps.keys.list(agent.agent_code).find((k) => k.kid === added.kid);
+        if (!key) throw new Error("ПАО: ключ после регистрации не найден");
+        return { status: 201, body: key };
       } catch (err) {
         if (err instanceof KeyInvalidError) {
           req.log.info({ agent_code: agent.agent_code, reason: err.reason }, "ПАО: ключ не принят (РП23 п. 2–3)");

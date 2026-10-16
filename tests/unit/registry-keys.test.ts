@@ -380,13 +380,32 @@ describe("регистрация ключа и перекрытие (A2 п. 5.3,
     expect(s.store.getKey(second.kid)).toEqual(revokedBefore);
   });
 
-  it.each([
-    ["свой действующий", (k: AgentKey) => k.public_key],
-    ["неразборчивый", () => "AAAA"],
-  ])("повтор или неверный ключ — KeyInvalidError: %s", (_n, pk) => {
+  it("свой действующий ключ повторно — тот же ключ без изменений (РП23 доп. 7)", () => {
     const s = stand();
     const first = s.admit();
-    expect(() => s.keys.register(CODE, { alg: "ed25519", public_key: pk(first) })).toThrow(KeyInvalidError);
+    s.setClock(at(10));
+    const second = s.keys.register(CODE, { alg: "ed25519", public_key: newPublicKey() });
+    s.setClock(at(12)); // первый ключ ещё действует: перекрытие сократило его до at(17)
+    const before = s.keys.list(CODE);
+    expect(s.keys.register(CODE, { alg: "ed25519", public_key: second.public_key })).toEqual(second);
+    expect(s.keys.register(CODE, { alg: "ed25519", public_key: first.public_key })).toEqual(s.store.getKey(first.kid));
+    expect(s.keys.list(CODE)).toEqual(before);
+  });
+
+  it("свой истёкший ключ повторно — KeyInvalidError TAKEN: истёкший действующим не возвращается", () => {
+    const s = stand();
+    const first = s.admit();
+    s.setClock(at(91));
+    expect(s.keys.lookup(CODE, first.kid)?.status).toBe("EXPIRED");
+    expect(() => s.keys.register(CODE, { alg: "ed25519", public_key: first.public_key })).toThrow(
+      expect.objectContaining({ reason: "TAKEN" }),
+    );
+  });
+
+  it.each([["неразборчивый", () => "AAAA"]])("неверный ключ — KeyInvalidError: %s", (_n, pk) => {
+    const s = stand();
+    s.admit();
+    expect(() => s.keys.register(CODE, { alg: "ed25519", public_key: pk() })).toThrow(KeyInvalidError);
     expect(() => s.keys.register(CODE, { alg: "rsa", public_key: newPublicKey() })).toThrow(KeyInvalidError);
     expect(() => s.keys.register(CODE, null)).toThrow(KeyInvalidError);
     expect(s.keys.list(CODE)).toHaveLength(1);

@@ -20,7 +20,8 @@ import type { Key } from "../shared/pao.js";
 
 /**
  * Причина отказа в ключе — только для журнала процесса (РП31 п. 2): агенту — один код KEY_INVALID.
- * ALG — alg не из перечня контура; KEY — ключ не разбирается, неканоническая запись или слабый ключ; TAKEN — ключ уже в реестре.
+ * ALG — alg не из перечня контура; KEY — ключ не разбирается, неканоническая запись или слабый ключ; TAKEN — ключ у другого
+ * агента или свой отозванный или истёкший (свой действующий возвращается, РП23 доп. 7).
  */
 export type KeyInvalidReason = "ALG" | "KEY" | "TAKEN";
 
@@ -102,6 +103,9 @@ export class AgentKeys {
     const alg = Object.hasOwn(i, "alg") ? i.alg : undefined;
     const parsed = parseKey(algorithms, alg, Object.hasOwn(i, "public_key") ? i.public_key : undefined);
     if (!parsed) throw new KeyInvalidError(agent_code, algorithms.some((a) => a.alg === alg) ? "KEY" : "ALG");
+    // Идемпотентность ресурса (РП23 доп. 7): свой действующий ключ — тот же ключ без изменений.
+    const existing = this.ownActive(agent_code, parsed.kid);
+    if (existing) return existing;
     if (this.store.getKey(parsed.kid)) throw new KeyInvalidError(agent_code, "TAKEN");
 
     const now = this.now();
@@ -119,7 +123,12 @@ export class AgentKeys {
       // Статус проверен по версии записи агента: исключение между проверкой и вставкой — конкурентное изменение.
       ok = this.store.addKey(key, expected, shorten, rec.row_version);
     } catch (e) {
-      if (e instanceof KeyTakenError) throw new KeyInvalidError(agent_code, "TAKEN");
+      if (e instanceof KeyTakenError) {
+        // Одновременная вставка того же ключа: свой действующий — тот же ответ, иначе — занят (РП23 доп. 7).
+        const raced = this.ownActive(agent_code, parsed.kid);
+        if (raced) return raced;
+        throw new KeyInvalidError(agent_code, "TAKEN");
+      }
       throw e;
     }
     if (!ok) throw new ConcurrentChangeError(agent_code);
@@ -163,6 +172,11 @@ export class AgentKeys {
       .map(agentJwk)
       .filter((k) => k !== null);
     return { keys };
+  }
+
+  private ownActive(agent_code: string, kid: string): AgentKey | undefined {
+    const key = this.own(agent_code, kid);
+    return key && keyStatus(key, this.now()) === "ACTIVE" ? key : undefined;
   }
 
   private own(agent_code: string, kid: string): AgentKey | undefined {

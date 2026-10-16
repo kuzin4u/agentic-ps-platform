@@ -127,7 +127,6 @@ describe("POST /pao/v1/agent/keys", () => {
   it("недопустимый ключ → 422 KEY_INVALID, причина не раскрывается (РП31 п. 2)", async () => {
     const cases = [
       keyBody(IDENTITY), // слабый (РП23 доп. 1)
-      keyBody(a.publicKey), // уже у себя
       keyBody(b.publicKey), // уже у другого агента
       JSON.stringify({ alg: "gost", public_key: newAgentSide().publicKey }), // alg не из контура
       keyBody("не-base64"),
@@ -155,6 +154,46 @@ describe("POST /pao/v1/agent/keys", () => {
     expect(reason({ alg: "ed25519", public_key: IDENTITY })).toBe("KEY");
     expect(reason({ alg: "ed25519", public_key: "не-base64" })).toBe("KEY");
     expect(reason({ alg: "ed25519", public_key: b.publicKey })).toBe("TAKEN");
+  });
+
+  it("свой действующий public_key повторно, другой Idempotency-Key → 201 тот же Key (РП23 доп. 7)", async () => {
+    const n = newAgentSide();
+    const first = await post(a, A, keyBody(n.publicKey));
+    const before = keysOf(A);
+    const again = await post(a, A, keyBody(n.publicKey));
+    expect([first.statusCode, again.statusCode]).toEqual([201, 201]);
+    expect(again.json()).toEqual(first.json());
+    expect(keysOf(A)).toEqual(before);
+    // Первый ключ из допуска — тоже свой действующий.
+    const own = await post(a, A, keyBody(a.publicKey));
+    expect(own.statusCode).toBe(201);
+    expect(own.json().kid).toBe(a.kid);
+  });
+
+  it("потерянный ответ: ключ записан, результат идемпотентности — нет → повтор с тем же ключом 201, не 422 (/audit К2.4 № 4)", async () => {
+    const key = randomUUID();
+    const n = newAgentSide();
+    const body = keyBody(n.publicKey);
+    const register = s.keys.register.bind(s.keys);
+    // Ключ в реестре появляется, затем сбой до записи результата: захват снимается, ответ — 503.
+    vi.spyOn(s.keys, "register").mockImplementationOnce((code, input, o) => {
+      register(code, input, o);
+      throw new Error("сбой после записи ключа");
+    });
+    expect((await post(a, A, body, key)).statusCode).toBe(503);
+    const again = await post(a, A, body, key);
+    expect(again.statusCode).toBe(201);
+    expect(again.json().kid).toBe(n.kid);
+    expect(keysOf(A)).toHaveLength(2);
+  });
+
+  it("свой отозванный ключ повторно → 422 KEY_INVALID (РП23 п. 3, 5)", async () => {
+    const n = newAgentSide();
+    expect((await post(a, A, keyBody(n.publicKey))).statusCode).toBe(201);
+    s.keys.revoke(A, n.kid);
+    const res = await post(a, A, keyBody(n.publicKey));
+    expect(res.statusCode).toBe(422);
+    expect(res.json()).toMatchObject({ code: "KEY_INVALID" });
   });
 
   it("повтор с тем же ключом → прежний ответ, второго ключа нет (РП30 п. 3)", async () => {
