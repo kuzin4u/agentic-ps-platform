@@ -18,5 +18,4 @@
 | [`GLOSSARY.md`](GLOSSARY.md) | Термины |
 | [`../reference/joint-plan.md`](../reference/joint-plan.md) | План «Россия» ред. 1: общее ядро (инвариант), задачи PS-01…PS-32, SEC-1, SEC-2, PS-К1, точки сверки С0–С6, общий календарь |
 | [`../reference/plan-west.md`](../reference/plan-west.md) | План «Запад» ред. 1: агент под брендом банка для ЕС и США, задачи платформы PS-К2, PS-К3, З1 MVP Запада |
-| [`../proposals/agent-protocol-1.3.0.yaml`](../proposals/agent-protocol-1.3.0.yaml) | ПАО 1.3.0 до выпуска (РП31): источник для ядра; в `docs/core` — побайтно, с тегом ядра |
 | [`../reference/`](../reference/) | Обзорная страница и исходный пул (только чтение) |
