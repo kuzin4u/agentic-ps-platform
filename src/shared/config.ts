@@ -37,6 +37,7 @@ export interface Params {
   readonly merchant_rate_limit_per_min: number;
   /** Срок хранения результата идемпотентности ПАО, с; ≥ 60 — не меньше аренды захвата ядра (РП30 п. 3). */
   readonly idempotency_ttl_sec: number;
+  readonly pao_rate_limit_per_30s: number;
   readonly key_ttl_days: number;
   readonly key_overlap_days: number;
   readonly qualified_signature_above_kop: number;
@@ -96,6 +97,7 @@ const RULES: Record<keyof Params, Rule> = {
   unavailable_retry_after_sec: int(0, 30),
   merchant_rate_limit_per_min: int(1),
   idempotency_ttl_sec: int(60),
+  pao_rate_limit_per_30s: int(1),
   key_ttl_days: int(1),
   key_overlap_days: int(0),
   qualified_signature_above_kop: int(1),

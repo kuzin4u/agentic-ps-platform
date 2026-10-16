@@ -1,6 +1,7 @@
 // П9 Маршруты ПАО (AGENT-PROTOCOL.md §3). Каждое обращение проверяется до обработчика: агент → подпись → статус (РП23 п. 6).
 // Изменяющий метод затем: Idempotency-Key → тело по схеме (REQUEST_INVALID) → захват ключа → обработчик (РП30 п. 3, РП31).
 // /revoke — в PS-05 часть 3.
+import rateLimit from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, type AgentKeys } from "../registry/agent-keys.js";
@@ -17,8 +18,14 @@ export interface PaoDeps {
   readonly verifier: PaoRequestVerifier;
   readonly keys: AgentKeys;
   readonly idempotency: PaoIdempotency;
-  readonly params: Pick<Params, "unavailable_retry_after_sec">;
+  readonly params: Pick<Params, "unavailable_retry_after_sec" | "pao_rate_limit_per_30s">;
 }
+
+/** Окно грубого лимита (РП32 п. 2, 4): 30 с — Retry-After не больше maxRetryAfterSec клиента ядра (РП24). */
+export const PAO_RATE_WINDOW_MS = 30_000;
+
+/** Метка превышения лимита: errorResponseBuilder выбрасывает её, обработчик ошибок области отвечает телом ПАО §6. */
+const RATE_LIMITED = Object.freeze({ statusCode: 429, code: "RATE_LIMITED" });
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -35,6 +42,17 @@ function target(req: FastifyRequest): { path: string; query: string } {
 }
 
 export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<void> {
+  const limit = deps.params.pao_rate_limit_per_30s;
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("pao_rate_limit_per_30s — целое ≥ 1");
+  // Первый слой лимита (РП32): по адресу, хук onRequest — до проверки обращения и до чтения тела; неподписанный поток
+  // тоже ограничен. Retry-After ставит плагин до выброса метки. Маршруты — ниже: хук onRoute плагина видит каждый.
+  await app.register(rateLimit, {
+    global: true,
+    max: limit,
+    timeWindow: PAO_RATE_WINDOW_MS,
+    keyGenerator: (req) => req.ip,
+    errorResponseBuilder: () => RATE_LIMITED,
+  });
   // Тело — строкой, как подписано: content-digest считается от байтов, а не от разобранного JSON. Любой тип содержимого —
   // строкой (UTF-8): тело с чужим типом доходит до проверки обращения и схемы и получает ответ ПАО §6, а не 415 Fastify.
   // Ответы Fastify до шлюза остаются: тело больше bodyLimit (413), неразборный Content-Type (STATUS «Открыто»).
@@ -48,6 +66,11 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     if (e.http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
     return reply.code(e.http).send(e.body);
   };
+
+  app.setErrorHandler((err, _req, reply) => {
+    if (err === RATE_LIMITED) return reply.code(429).send(paoError("RATE_LIMITED").body);
+    return reply.send(err);
+  });
 
   app.addHook("preHandler", async (req, reply) => {
     const { path, query } = target(req);

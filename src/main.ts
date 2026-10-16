@@ -1,6 +1,6 @@
 import { applyMigrations } from "@kuzin4u/agentic-core";
 import pg from "pg";
-import { buildServer, parseEnv } from "./server.js";
+import { buildServer, parseEnv, parseTrustedProxies } from "./server.js";
 import { paoIdempotency } from "./pao/idempotency.js";
 import { paoNonceStore, paoPoolConfig, requireDatabaseUrl, startNoncePurge } from "./pao/stores.js";
 import { PaoRequestVerifier } from "./pao/verify.js";
@@ -15,6 +15,8 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error(`Недопустимый PORT=${process.env.PORT}`);
 }
 const host = process.env.HOST ?? "127.0.0.1";
+// Доверенные прокси (РП32 п. 5): неверный список — отказ запуска.
+const trustedProxies = parseTrustedProxies(process.env.PAO_TRUSTED_PROXIES);
 
 // Хранилища шлюза ПАО (РП30 п. 4–6): sandbox без DATABASE_URL не запускается; dev без базы — память ядра, один процесс.
 // Миграции ядра 001–004 — при запуске одним экземпляром, отдельным пулом без таймаута запроса; сбой — отказ запуска.
@@ -47,7 +49,7 @@ const verifier = new PaoRequestVerifier(
   { skewSec: params.signature_skew_sec, nonces },
 );
 
-const app = buildServer({ env, logger: true, pao: { verifier, keys, idempotency, params } });
+const app = buildServer({ env, logger: true, trustedProxies, pao: { verifier, keys, idempotency, params } });
 app.log.info({ params }, "стендовые параметры загружены");
 if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce и идемпотентность в памяти — один процесс, повтор после перезапуска не ловится");
 const stopPurge = startNoncePurge(nonces, params.signature_skew_sec * 1000, (err) =>
