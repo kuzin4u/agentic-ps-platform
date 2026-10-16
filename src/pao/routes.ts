@@ -1,7 +1,7 @@
 // П9 Маршруты ПАО (AGENT-PROTOCOL.md §3). Каждое обращение проверяется до обработчика: агент → подпись → статус (РП23 п. 6).
 // Изменяющий метод затем: Idempotency-Key → тело по схеме (REQUEST_INVALID) → захват ключа → обработчик (РП30 п. 3, РП31).
 // /revoke — в PS-05 часть 3.
-import rateLimit from "@fastify/rate-limit";
+import rateLimit, { normalizeIP } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, type AgentKeys } from "../registry/agent-keys.js";
@@ -23,6 +23,15 @@ export interface PaoDeps {
 
 /** Окно грубого лимита (РП32 п. 2, 4): 30 с — Retry-After не больше maxRetryAfterSec клиента ядра (РП24). */
 export const PAO_RATE_WINDOW_MS = 30_000;
+
+/** Ключ лимита для IPv6 — подсеть /64 (РП32, дополнение п. 1): иначе клиент меняет адрес внутри своей /64 на каждом обращении. */
+export const PAO_RATE_IPV6_SUBNET = 64;
+
+/** Граница Retry-After у 429 (РП24, РП32 дополнение п. 3): и при переводе часов назад. */
+const MAX_RETRY_AFTER_SEC = 30;
+
+/** Ключ лимита: IPv4 — как есть, IPv6 — начало своей /64, IPv4 в IPv6 — как IPv4. */
+export const rateLimitKey = (ip: string): string => normalizeIP(ip, PAO_RATE_IPV6_SUBNET);
 
 /** Метка превышения лимита: errorResponseBuilder выбрасывает её, обработчик ошибок области отвечает телом ПАО §6. */
 const RATE_LIMITED = Object.freeze({ statusCode: 429, code: "RATE_LIMITED" });
@@ -50,7 +59,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     global: true,
     max: limit,
     timeWindow: PAO_RATE_WINDOW_MS,
-    keyGenerator: (req) => req.ip,
+    keyGenerator: (req) => rateLimitKey(req.ip),
     errorResponseBuilder: () => RATE_LIMITED,
   });
   // Тело — строкой, как подписано: content-digest считается от байтов, а не от разобранного JSON. Любой тип содержимого —
@@ -68,7 +77,13 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   };
 
   app.setErrorHandler((err, _req, reply) => {
-    if (err === RATE_LIMITED) return reply.code(429).send(paoError("RATE_LIMITED").body);
+    if (err === RATE_LIMITED) {
+      // Остаток окна плагин считает по Date.now(): при переводе часов назад он больше окна — обрезаем до границы РП24.
+      const computed = Number(reply.getHeader("retry-after"));
+      const retryAfter = Number.isFinite(computed) ? Math.min(Math.max(computed, 0), MAX_RETRY_AFTER_SEC) : MAX_RETRY_AFTER_SEC;
+      void reply.header("retry-after", String(retryAfter));
+      return reply.code(429).send(paoError("RATE_LIMITED").body);
+    }
     return reply.send(err);
   });
 

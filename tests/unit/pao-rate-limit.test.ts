@@ -1,7 +1,7 @@
 // Грубый лимит частоты шлюза ПАО по адресу (РП32; CodeQL № 81, Ш12): до проверки подписи, 429 по ПАО §6, Retry-After ≤ 30.
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PAO_RATE_WINDOW_MS, PaoRequestVerifier, paoIdempotency } from "../../src/pao/index.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "../../src/registry/index.js";
 import { buildServer, parseTrustedProxies } from "../../src/server.js";
@@ -104,6 +104,37 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
     }
   });
 
+  const from = (a: FastifyInstance, remoteAddress: string) =>
+    a.inject({ method: "GET", url: "/pao/v1/agent", headers: { "x-agent-code": A }, remoteAddress });
+
+  it("IPv6 — по подсети /64: адреса одной /64 — один счётчик, другой /64 — свой (РП32, дополнение п. 1)", async () => {
+    const { app } = platform();
+    for (let i = 1; i <= LIMIT; i++) expect((await from(app, `2001:db8:1:2::${i}`)).statusCode).toBe(401);
+    expect429(await from(app, "2001:db8:1:2:ffff:ffff:ffff:ffff"));
+    expect((await from(app, "2001:db8:1:3::1")).statusCode).toBe(401);
+    // IPv4 и IPv4 в IPv6 — один адрес, один счётчик.
+    const { app: b } = platform(1);
+    expect((await from(b, "192.0.2.7")).statusCode).toBe(401);
+    expect429(await from(b, "::ffff:192.0.2.7"));
+    expect((await from(b, "192.0.2.8")).statusCode).toBe(401);
+  });
+
+  it("часы переведены назад внутри окна — Retry-After всё равно ≤ 30 (РП32, дополнение п. 3; РП24)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const t = new Date("2026-10-16T12:00:00Z");
+      vi.setSystemTime(t);
+      const { app } = platform(1);
+      expect((await unsigned(app)).statusCode).toBe(401);
+      vi.setSystemTime(new Date(t.getTime() - 60_000));
+      const res = await unsigned(app);
+      expect429(res);
+      expect(res.headers["retry-after"]).toBe("30");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("/health вне лимита", async () => {
     const { app } = platform(1);
     for (let i = 0; i < 5; i++) expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
@@ -135,11 +166,12 @@ describe("PAO_TRUSTED_PROXIES (РП32 п. 5)", () => {
   it("пусто или нет — прокси не доверяем; адреса и CIDR — список", () => {
     expect(parseTrustedProxies(undefined)).toEqual([]);
     expect(parseTrustedProxies(" ")).toEqual([]);
-    expect(parseTrustedProxies("10.0.0.0/8, 192.168.1.10,::1,fd00::/8")).toEqual([
-      "10.0.0.0/8",
+    expect(parseTrustedProxies("10.0.0.0/16, 192.168.1.10,::1,fd00::/32,10.1.2.0/24")).toEqual([
+      "10.0.0.0/16",
       "192.168.1.10",
       "::1",
-      "fd00::/8",
+      "fd00::/32",
+      "10.1.2.0/24",
     ]);
   });
 
@@ -149,6 +181,10 @@ describe("PAO_TRUSTED_PROXIES (РП32 п. 5)", () => {
     "*",
     "0.0.0.0/0",
     "::/0",
+    "0.0.0.0/1,128.0.0.0/1",
+    "10.0.0.0/15",
+    "10.0.0.0/8",
+    "fd00::/31",
     "10.0.0.0/08",
     "fe80::1%eth0",
     "0.0.0.0/33",
