@@ -46,9 +46,8 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("pao_rate_limit_per_30s — целое ≥ 1");
   // Первый слой лимита (РП32): по адресу, хук onRequest — до проверки обращения и до чтения тела; неподписанный поток
   // тоже ограничен. Retry-After ставит плагин до выброса метки. Маршруты — ниже: хук onRoute плагина видит каждый.
-  // ПОДСТАВНАЯ ПОЛОМКА К4.3а: лимит выключен (global: false) — ожидается красный CI; откат — следующим коммитом.
   await app.register(rateLimit, {
-    global: false,
+    global: true,
     max: limit,
     timeWindow: PAO_RATE_WINDOW_MS,
     keyGenerator: (req) => req.ip,
