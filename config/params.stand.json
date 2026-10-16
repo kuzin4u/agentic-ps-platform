@@ -16,6 +16,8 @@
   "signature_skew_sec": 300,
   "unavailable_retry_after_sec": 1,
   "merchant_rate_limit_per_min": 6000,
+  "idempotency_ttl_sec": 86400,
+  "pao_rate_limit_per_30s": 3000,
   "key_ttl_days": 90,
   "key_overlap_days": 7,
   "qualified_signature_above_kop": 5000000,

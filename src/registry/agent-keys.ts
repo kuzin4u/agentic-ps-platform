@@ -18,9 +18,19 @@ import { AgentNotFoundError, ConcurrentChangeError } from "./registry.js";
 import { KeyTakenError, type AgentRegistryStore } from "./store.js";
 import type { Key } from "../shared/pao.js";
 
+/**
+ * Причина отказа в ключе — только для журнала процесса (РП31 п. 2): агенту — один код KEY_INVALID.
+ * ALG — alg не из перечня контура; KEY — ключ не разбирается, неканоническая запись или слабый ключ; TAKEN — ключ у другого
+ * агента или свой отозванный или истёкший (свой действующий возвращается, РП23 доп. 7).
+ */
+export type KeyInvalidReason = "ALG" | "KEY" | "TAKEN";
+
 export class KeyInvalidError extends Error {
-  constructor(readonly agent_code: string) {
-    super(`Ключ не принят (РП23 п. 2–3): ${agent_code}`);
+  constructor(
+    readonly agent_code: string,
+    readonly reason: KeyInvalidReason,
+  ) {
+    super(`Ключ не принят (РП23 п. 2–3, ${reason}): ${agent_code}`);
     this.name = "KeyInvalidError";
   }
 }
@@ -32,6 +42,14 @@ export class KeyNotFoundError extends Error {
   ) {
     super(`У агента ${agent_code} нет ключа ${kid}`);
     this.name = "KeyNotFoundError";
+  }
+}
+
+/** Агент не ACTIVE при регистрации ключа по ПАО (РП23 п. 6.3): смена ключа приостановленным — через оператора (PS-31). */
+export class AgentNotActiveError extends Error {
+  constructor(readonly agent_code: string) {
+    super(`Агент не ACTIVE, ключ по ПАО не регистрируется: ${agent_code}`);
+    this.name = "AgentNotActiveError";
   }
 }
 
@@ -74,17 +92,21 @@ export class AgentKeys {
    * до now + key_overlap_days (РП23 п. 4). Исключённому агенту — отказ; приостановленному — можно (смена ключа при компрометации);
    * проверка статуса неделима с добавлением ключа (РП23, дополнения).
    */
-  register(agent_code: string, input: unknown): AgentKey {
+  register(agent_code: string, input: unknown, opts: { readonly requireActive?: boolean } = {}): AgentKey {
     const rec = this.store.get(agent_code);
     if (!rec) throw new AgentNotFoundError(agent_code);
     if (rec.status === "EXCLUDED") throw new AgentExcludedError(agent_code);
+    // По ПАО — только ACTIVE; статус проверен по той же версии записи, что и вставка ниже (гонка — ConcurrentChangeError).
+    if (opts.requireActive && rec.status !== "ACTIVE") throw new AgentNotActiveError(agent_code);
     const i = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
-    const parsed = parseKey(
-      this.algorithms[rec.contour],
-      Object.hasOwn(i, "alg") ? i.alg : undefined,
-      Object.hasOwn(i, "public_key") ? i.public_key : undefined,
-    );
-    if (!parsed || this.store.getKey(parsed.kid)) throw new KeyInvalidError(agent_code);
+    const algorithms = this.algorithms[rec.contour];
+    const alg = Object.hasOwn(i, "alg") ? i.alg : undefined;
+    const parsed = parseKey(algorithms, alg, Object.hasOwn(i, "public_key") ? i.public_key : undefined);
+    if (!parsed) throw new KeyInvalidError(agent_code, algorithms.some((a) => a.alg === alg) ? "KEY" : "ALG");
+    // Идемпотентность ресурса (РП23 доп. 7): свой действующий ключ — тот же ключ без изменений.
+    const existing = this.ownActive(agent_code, parsed.kid);
+    if (existing) return existing;
+    if (this.store.getKey(parsed.kid)) throw new KeyInvalidError(agent_code, "TAKEN");
 
     const now = this.now();
     const end = overlapEnd(now, this.policy);
@@ -101,7 +123,12 @@ export class AgentKeys {
       // Статус проверен по версии записи агента: исключение между проверкой и вставкой — конкурентное изменение.
       ok = this.store.addKey(key, expected, shorten, rec.row_version);
     } catch (e) {
-      if (e instanceof KeyTakenError) throw new KeyInvalidError(agent_code);
+      if (e instanceof KeyTakenError) {
+        // Одновременная вставка того же ключа: свой действующий — тот же ответ, иначе — занят (РП23 доп. 7).
+        const raced = this.ownActive(agent_code, parsed.kid);
+        if (raced) return raced;
+        throw new KeyInvalidError(agent_code, "TAKEN");
+      }
       throw e;
     }
     if (!ok) throw new ConcurrentChangeError(agent_code);
@@ -145,6 +172,11 @@ export class AgentKeys {
       .map(agentJwk)
       .filter((k) => k !== null);
     return { keys };
+  }
+
+  private ownActive(agent_code: string, kid: string): AgentKey | undefined {
+    const key = this.own(agent_code, kid);
+    return key && keyStatus(key, this.now()) === "ACTIVE" ? key : undefined;
   }
 
   private own(agent_code: string, kid: string): AgentKey | undefined {

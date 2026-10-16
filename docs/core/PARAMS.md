@@ -19,6 +19,8 @@
 | `signature_skew_sec` | 300 | Окно подписи ПАО | прогон |
 | `unavailable_retry_after_sec` | 1 | `Retry-After` у ответов ПАО 503 (`UPSTREAM_UNAVAILABLE`, `STATE_UNAVAILABLE`) | прогон (РП24) |
 | `merchant_rate_limit_per_min` | 6 000 | Лимит обращений к витринам эмулятора продавцов с одного адреса в минуту (все маршруты `/v1`); превышение — 429 `RATE_LIMITED` с `Retry-After`. На стенде щедрый: тесты агента не упираются | прогон песочницы для сторонних агентов (PS-26) |
+| `idempotency_ttl_sec` | 86 400 | Срок хранения результата по `Idempotency-Key` ПАО (пара «агент + ключ»): повтор в этот срок возвращает прежний ответ (РП30) | прогон; публикация агентам — `/.well-known/pao-configuration` (ПАО 1.4.0) |
+| `pao_rate_limit_per_30s` | 3 000 | Грубый лимит обращений к шлюзу ПАО с одного адреса за окно 30 с (все маршруты `/pao`, до проверки подписи); превышение — 429 `RATE_LIMITED` с `Retry-After` ≤ 30 (окно 30 с — граница РП24). На стенде щедрый (≈ 6 000 в минуту): тесты агента не упираются. Лимит по уровню агента — отдельно (РП32 п. 6) | прогон песочницы для сторонних агентов (PS-26) |
 | `key_ttl_days` / `key_overlap_days` | 90 / 7 | Ключи агентов | O02 |
 | `qualified_signature_above_*` | 50 000 ₽ / 30 дней | Усиленная подпись мандата | юридическая оценка (O08, Р9) |
 | `restore_budget_on_refund` | false | Восстановление бюджета при возврате | юридическая оценка (В8, РП9) |
@@ -31,7 +33,7 @@
 
 | Правило | Почему |
 |---|---|
-| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `merchant_rate_limit_per_min` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
+| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
 | Целые ≥ 0: `bypass_overhead_ms`, `event_reorder_window_ms`, `key_overlap_days` | ноль допустим |
 | `split_min_ops` ≥ 2 | дробление — от двух операций |
 | `aoi_rollout_phase` ∈ 1…3 | A1 п. 8.3 |
@@ -39,6 +41,7 @@
 | `bypass_overhead_ms` < `adp_p99_ms` | РП4, РП20 |
 | `adp_timeout_ms` > `adp_p99_ms` | ПИ §3, РП20 |
 | `key_overlap_days` < `key_ttl_days` | перекрытие ключей короче их жизни |
+| `idempotency_ttl_sec` — целое ≥ 60 | не меньше аренды захвата ключа ядра (60 с, условие К6 agentic-core: аренда ≤ ttl; РП30 п. 3) |
 | `unavailable_retry_after_sec` — целое 0…30 | 0 — «повторить сразу» (ПАО `minimum: 0`); верхняя граница — `maxRetryAfterSec` клиента ПАО agentic-core (30): больший `Retry-After` эталонный клиент отвергает (РП24) |
 
 ## Журнал изменений
@@ -48,3 +51,5 @@
 | 08.10.2026 | все | — | стенд | первичная конфигурация |
 | 11.10.2026 | `unavailable_retry_after_sec` | — | 1 | РП24, аудит PS-04 №2 |
 | 13.10.2026 | `merchant_rate_limit_per_min` | — | 6 000 | PS-12, CodeQL №82 `js/missing-rate-limiting`; решение владельца (РП29) |
+| 15.10.2026 | `idempotency_ttl_sec` | — | 86 400 | PS-05, Ш16; решение владельца (РП30) |
+| 16.10.2026 | `pao_rate_limit_per_30s` | — | 3 000 | PS-05, CodeQL №81 `js/missing-rate-limiting`, Ш12; решение владельца (РП32) |

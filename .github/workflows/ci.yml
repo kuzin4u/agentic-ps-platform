@@ -13,6 +13,22 @@ jobs:
       fail-fast: false
       matrix:
         node: ["20.19", "22"]
+    # PostgreSQL для хранилищ шлюза ПАО (РП30 п. 7) — в каждой ветке матрицы, как в agentic-core; страж — tests/unit/pg.test.ts.
+    # Пароль — значение CI-базы, не секрет.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: platform
+          POSTGRES_PASSWORD: platform
+          POSTGRES_DB: platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U platform"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,8 +60,10 @@ jobs:
         run: npm run build
       - name: Проверка docker-compose.yml
         run: docker compose config --quiet
-      - name: Тесты и сценарии приёмки
+      - name: Тесты и сценарии приёмки (PostgreSQL — сервис postgres:16)
         run: npm test
+        env:
+          DATABASE_URL: postgres://platform:platform@localhost:5432/platform
       - name: Стенд для агента — установка из npm pack (РП25)
         run: npm run test:install -- --pack
       # Коммит PR из форка в клоне основного репозитория недоступен — шаг только для PR из этого репозитория и push.

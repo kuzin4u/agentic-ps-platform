@@ -1,4 +1,6 @@
 import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   AgentExcludedError,
@@ -203,6 +205,28 @@ describe("слабые ключи Ed25519 — KEY_INVALID (аудит PS-04 №1
   });
 });
 
+// Векторы ядра — общий источник для платформы, агента и продавцов (agentic-core v0.3.0, К10). Свои векторы выше остаются:
+// они независимы от ядра (y = p + 3 у нас — без знакового бита, у агента — со знаковым, ревью PR #29).
+describe("слабые ключи Ed25519 — сверка с векторами ed25519_weak_keys ядра (PS-05 К1.2)", () => {
+  const vectorsPath = fileURLToPath(new URL("../../vectors/vectors.json", import.meta.resolve("@kuzin4u/agentic-core")));
+  const VECTORS = (JSON.parse(readFileSync(vectorsPath, "utf8")) as {
+    ed25519_weak_keys: { point: string; weak: boolean; why: string }[];
+  }).ed25519_weak_keys;
+  const spkiOf = (hex: string): string =>
+    Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(hex, "hex")]).toString("base64");
+
+  it("векторы на месте: есть и слабые, и годные", () => {
+    expect(VECTORS.filter((v) => v.weak).length).toBeGreaterThanOrEqual(8);
+    expect(VECTORS.some((v) => !v.weak)).toBe(true);
+  });
+
+  it.each(VECTORS.map((v) => [v.why, v] as const))("%s", (_why, v) => {
+    expect(isWeakEd25519(Buffer.from(v.point, "hex"))).toBe(v.weak);
+    // Слабый — KEY_INVALID при разборе (null); годный — разбирается.
+    expect(parseKey([ED25519], "ed25519", spkiOf(v.point)) === null).toBe(v.weak);
+  });
+});
+
 describe("первый ключ при допуске (РП23 п. 2)", () => {
   it("ключ сохраняется вместе с записью: kid, срок key_ttl_days, ACTIVE", () => {
     const s = stand();
@@ -356,13 +380,32 @@ describe("регистрация ключа и перекрытие (A2 п. 5.3,
     expect(s.store.getKey(second.kid)).toEqual(revokedBefore);
   });
 
-  it.each([
-    ["свой действующий", (k: AgentKey) => k.public_key],
-    ["неразборчивый", () => "AAAA"],
-  ])("повтор или неверный ключ — KeyInvalidError: %s", (_n, pk) => {
+  it("свой действующий ключ повторно — тот же ключ без изменений (РП23 доп. 7)", () => {
     const s = stand();
     const first = s.admit();
-    expect(() => s.keys.register(CODE, { alg: "ed25519", public_key: pk(first) })).toThrow(KeyInvalidError);
+    s.setClock(at(10));
+    const second = s.keys.register(CODE, { alg: "ed25519", public_key: newPublicKey() });
+    s.setClock(at(12)); // первый ключ ещё действует: перекрытие сократило его до at(17)
+    const before = s.keys.list(CODE);
+    expect(s.keys.register(CODE, { alg: "ed25519", public_key: second.public_key })).toEqual(second);
+    expect(s.keys.register(CODE, { alg: "ed25519", public_key: first.public_key })).toEqual(s.store.getKey(first.kid));
+    expect(s.keys.list(CODE)).toEqual(before);
+  });
+
+  it("свой истёкший ключ повторно — KeyInvalidError TAKEN: истёкший действующим не возвращается", () => {
+    const s = stand();
+    const first = s.admit();
+    s.setClock(at(91));
+    expect(s.keys.lookup(CODE, first.kid)?.status).toBe("EXPIRED");
+    expect(() => s.keys.register(CODE, { alg: "ed25519", public_key: first.public_key })).toThrow(
+      expect.objectContaining({ reason: "TAKEN" }),
+    );
+  });
+
+  it.each([["неразборчивый", () => "AAAA"]])("неверный ключ — KeyInvalidError: %s", (_n, pk) => {
+    const s = stand();
+    s.admit();
+    expect(() => s.keys.register(CODE, { alg: "ed25519", public_key: pk() })).toThrow(KeyInvalidError);
     expect(() => s.keys.register(CODE, { alg: "rsa", public_key: newPublicKey() })).toThrow(KeyInvalidError);
     expect(() => s.keys.register(CODE, null)).toThrow(KeyInvalidError);
     expect(s.keys.list(CODE)).toHaveLength(1);

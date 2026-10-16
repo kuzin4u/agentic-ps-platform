@@ -1,9 +1,11 @@
 // П9 Проверка обращения ПАО (ПАО §2, A2 п. 5, РП23 п. 6): агент в реестре → подпись → статус агента.
-// Подпись проверяет agentic-core verifyRequest — тот же код, которым подписывает агент (совместный тест С0).
+// Подпись проверяет agentic-core verifyRequestAsync — тот же код, которым подписывает агент (совместный тест С0).
 // Ключ ищется только среди ключей агента из x-agent-code: иначе агент A подписывал бы за агента B (инвариант 5).
-import { ed25519Verifier, verifyRequest, type Verifier } from "@kuzin4u/agentic-core";
+// Nonce — хранилище ядра, проверка и запись одной командой после верной подписи (РП30 п. 1–2, Ш3а).
+import { ed25519Verifier, verifyRequestAsync, type AsyncNonceStore, type Verifier } from "@kuzin4u/agentic-core";
 import type { KeyForVerify } from "../registry/agent-keys.js";
 import type { AgentRecord } from "../registry/model.js";
+import { paoNonceStore } from "./stores.js";
 
 /** Обращение в том виде, в каком оно пришло: путь и запрос — без декодирования, тело — строкой, без тела — "" (РП16). */
 export interface PaoRequest {
@@ -41,36 +43,11 @@ export interface PaoAuthSources {
 }
 
 /**
- * Использованные nonce в паре «агент + nonce» (ПАО §2: не повторяется в пределах окна).
- * Хранятся ttlMs после запоминания включительно; ttlMs ≥ 2 × signature_skew_sec (РП23 п. 6): обращение, принятое в t
- * с меткой t + skew, проходит окно до t + 2 × skew включительно — до этого момента nonce помнится (аудит PS-04 №3).
- * Хранилище процесса: на PostgreSQL — атомарное «запомнить, если ещё нет» (CO-2, STATUS).
+ * Значение nonce в общей области `pao` (РП30 п. 2): код агента, пробел, x-nonce. Пробела нет в грамматике кода агента
+ * (РП21: части [a-z0-9-] через «:»), поэтому разбор по первому пробелу однозначен; x-nonce — любой.
+ * Пустой x-nonce сюда не попадает: с приставкой он стал бы непустым значением (см. verify).
  */
-export class NonceStore {
-  readonly #until = new Map<string, number>();
-
-  constructor(private readonly ttlMs: number) {}
-
-  has(agent_code: string, nonce: string, nowMs: number): boolean {
-    const until = this.#until.get(`${agent_code}\u0000${nonce}`);
-    return until !== undefined && until >= nowMs;
-  }
-
-  remember(agent_code: string, nonce: string, nowMs: number): void {
-    // Записи в порядке вставки, срок у всех одинаков: истёкшие — в начале.
-    for (const [k, until] of this.#until) {
-      if (until >= nowMs) break;
-      this.#until.delete(k);
-    }
-    const key = `${agent_code}\u0000${nonce}`;
-    this.#until.delete(key);
-    this.#until.set(key, nowMs + this.ttlMs);
-  }
-
-  get size(): number {
-    return this.#until.size;
-  }
-}
+export const nonceValue = (agent_code: string, nonce: string): string => `${agent_code} ${nonce}`;
 
 /** Методы, доступные приостановленному и исключённому агенту: узнать свой статус (РП23 п. 6.3). */
 const STATUS_EXEMPT = new Set(["GET /pao/v1/agent"]);
@@ -78,14 +55,15 @@ const STATUS_EXEMPT = new Set(["GET /pao/v1/agent"]);
 export interface PaoVerifierOptions {
   readonly skewSec: number;
   readonly now?: () => Date;
-  readonly nonces?: NonceStore;
+  /** Хранилище nonce ядра (РП30); по умолчанию — память ядра со сроком 2 × skewSec (dev, стенд, тесты). */
+  readonly nonces?: AsyncNonceStore;
   /** Проверка подписи по алгоритму ключа — точка расширения РП5; по умолчанию ed25519. */
   readonly verifier?: Verifier;
 }
 
 export class PaoRequestVerifier {
   private readonly now: () => Date;
-  readonly nonces: NonceStore;
+  readonly nonces: AsyncNonceStore;
   private readonly verifier: Verifier;
 
   constructor(
@@ -93,15 +71,16 @@ export class PaoRequestVerifier {
     private readonly opts: PaoVerifierOptions,
   ) {
     this.now = opts.now ?? (() => new Date());
-    this.nonces = opts.nonces ?? new NonceStore(2 * opts.skewSec * 1000);
+    this.nonces = opts.nonces ?? paoNonceStore({ skewSec: opts.skewSec, now: () => this.now().getTime() });
     this.verifier = opts.verifier ?? ed25519Verifier;
   }
 
   /**
    * Порядок РП23 п. 6: AGENT_UNKNOWN → SIGNATURE_INVALID / AGENT_KEY_REVOKED → AGENT_SUSPENDED. Любой сбой — отказ:
-   * сбой источника (реестр, ключи) — UPSTREAM_UNAVAILABLE, прочие исключения проверки — SIGNATURE_INVALID.
+   * сбой источника (реестр, ключи, хранилище nonce — РП30 п. 1) — UPSTREAM_UNAVAILABLE, прочие исключения проверки —
+   * SIGNATURE_INVALID.
    */
-  verify(req: PaoRequest): PaoAuthResult {
+  async verify(req: PaoRequest): Promise<PaoAuthResult> {
     // Повтор заголовка — неоднозначность, не догадка (инвариант 3).
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(req.headers)) {
@@ -119,7 +98,6 @@ export class PaoRequestVerifier {
     }
     if (!agentCode || !agent) return { ok: false, code: "AGENT_UNKNOWN", norm: "A2 п. 5.1" };
 
-    const nonce = headers["x-nonce"] ?? "";
     const now = this.now().getTime();
     // Алгоритм подписи — атрибут ключа (РП5): alg из Signature-Input должен совпасть с alg ключа.
     let keyAlg: string | undefined;
@@ -139,18 +117,29 @@ export class PaoRequestVerifier {
       verify: (alg, publicKey, data, sig) => alg === keyAlg && this.verifier.verify(alg, publicKey, data, sig),
     };
 
-    let result: ReturnType<typeof verifyRequest>;
+    // Ядро вызывает seenNonce только после верной подписи (РП23 п. 6.2, Ш4): проверка и запись — одна команда.
+    // После записи окно проверяется ещё раз по свежим часам (аудит К2.3 №2): ядро сверило окно до поиска ключа,
+    // подписи и ожидания пула, а очистка вправе удалить строку nonce через 2 × skew после её записи. Повтор, прошедший
+    // окно на самом краю, мог бы вставиться уже после такой очистки; по свежим часам он вне окна — отказ.
+    const ts = Date.parse(headers["x-timestamp"] ?? "");
+    const seenNonce = async (n: string): Promise<boolean> => {
+      if (n === "") return true;
+      let seen: boolean;
+      try {
+        seen = await this.nonces.seen(nonceValue(agent.agent_code, n));
+      } catch (e) {
+        sourceFailure = { cause: e };
+        throw e;
+      }
+      return seen || !(Math.abs(this.now().getTime() - ts) <= this.opts.skewSec * 1000);
+    };
+
+    let result: Awaited<ReturnType<typeof verifyRequestAsync>>;
     try {
-      result = verifyRequest(
+      result = await verifyRequestAsync(
         { method: req.method, path: req.path, query: req.query, headers, body: req.body },
         lookupKey,
-        {
-          now,
-          skewSec: this.opts.skewSec,
-          // Только проверка: запоминается после успешной проверки подписи (РП23 п. 6.2).
-          seenNonce: (n) => n === "" || this.nonces.has(agent.agent_code, n, now),
-          verifier,
-        },
+        { now, skewSec: this.opts.skewSec, seenNonce, verifier },
       );
     } catch {
       return sourceFailure ? upstream(sourceFailure.cause) : fail("SIGNATURE_INVALID");
@@ -158,7 +147,6 @@ export class PaoRequestVerifier {
     // Сбой источника — UPSTREAM и тогда, когда core перехватит исключение сам и вернёт отказ (повторный аудит №3).
     if (sourceFailure) return upstream(sourceFailure.cause);
     if (!result.ok) return fail(result.code);
-    this.nonces.remember(agent.agent_code, nonce, now);
 
     if (agent.status !== "ACTIVE" && !STATUS_EXEMPT.has(`${req.method.toUpperCase()} ${req.path}`)) {
       return { ok: false, code: "AGENT_SUSPENDED", norm: "A2 п. 7.1" };

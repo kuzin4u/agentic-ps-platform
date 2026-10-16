@@ -1,7 +1,7 @@
 // Маршруты ПАО: ответ на сбой источника по HTTP — 503 UPSTREAM_UNAVAILABLE с Retry-After (ПАО §2, §6; РП24; аудит PS-04 №2).
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { PaoRequestVerifier } from "../../src/pao/index.js";
+import { PaoRequestVerifier, paoIdempotency } from "../../src/pao/index.js";
 import { AgentKeys, InMemoryAgentRegistryStore } from "../../src/registry/index.js";
 import { buildServer } from "../../src/server.js";
 import { loadParams } from "../../src/shared/config.js";
@@ -26,7 +26,7 @@ describe("ПАО по HTTP: сбой источника", () => {
       },
       { skewSec: params.signature_skew_sec },
     );
-    return buildServer({ env: "sandbox", pao: { verifier, keys, params } });
+    return buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params } });
   };
 
   it("503 UPSTREAM_UNAVAILABLE, Retry-After из параметров, тело ПАО §6 без текста исключения", async () => {
@@ -52,7 +52,7 @@ describe("ПАО по HTTP: сбой источника", () => {
       { getAgent: () => undefined, lookupKey: () => undefined },
       { skewSec: params.signature_skew_sec },
     );
-    app = buildServer({ env: "sandbox", pao: { verifier, keys, params } });
+    app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params } });
     const res = await signedInject(app, newAgentSide(), "nspk:agent:buyref-01:v3");
     expect(res.statusCode).toBe(401);
     expect(res.headers["retry-after"]).toBeUndefined();

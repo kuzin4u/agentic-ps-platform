@@ -1,11 +1,11 @@
 openapi: 3.0.3
 info:
   title: Протокол агентских операций (ПАО)
-  version: 1.2.0
+  version: 1.3.0
   description: 'Интерфейс агентов покупателя с Платформой платёжной системы. Описание — AGENT-PROTOCOL.md. Авторизацию платежа
     агент не инициирует (РП2). Номера карт и персональные данные принципала не передаются никогда. Суммы — копейки, время
     — UTC. v1.1.0 — совместимое расширение: условное исполнение (CONDITIONAL-EXECUTION.md, РП13). v1.2.0 — совместимо:
-    смысл retry, x-pao-errors, digest пустого тела (РП16).'
+    смысл retry, x-pao-errors, digest пустого тела (РП16). v1.3.0 — совместимо (AGENT-PROTOCOL §7, РП31): коды REQUEST_INVALID и KEY_INVALID с retry after_fix.'
 servers:
 - url: https://sandbox.platform.local
   description: песочница
@@ -90,6 +90,8 @@ components:
       - IDEMPOTENCY_CONFLICT
       - RATE_LIMITED
       - UPSTREAM_UNAVAILABLE
+      - REQUEST_INVALID
+      - KEY_INVALID
     Error:
       type: object
       required:
@@ -681,6 +683,14 @@ x-pao-errors:
     http: 503
     retry: same_key
     description: "Компонент Платформы недоступен"
+  - code: REQUEST_INVALID
+    http: 400
+    retry: after_fix
+    description: "Тело не по схеме метода"
+  - code: KEY_INVALID
+    http: 422
+    retry: after_fix
+    description: "Ключ не принят"
 paths:
   /.well-known/pao-configuration:
     get:
@@ -750,7 +760,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Key'
+        '400': *id001
         '401': *id001
+        '409': *id001
+        '422': *id001
+        '503': *id001
   /pao/v1/agent/keys/{kid}/revoke:
     post:
       summary: Отзыв своего ключа

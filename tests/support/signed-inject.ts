@@ -9,7 +9,7 @@ export interface SignedCall {
   path?: string;
   query?: string;
   body?: string;
-  headers?: Record<string, string>;
+  headers?: Record<string, string | null>;
   now?: Date;
 }
 
@@ -23,14 +23,16 @@ export async function signedInject(
   const path = call.path ?? "/pao/v1/agent";
   const query = call.query ?? "";
   const body = call.body ?? "";
-  const headers: Record<string, string> = {
+  const headers: Record<string, string | null> = {
     ...call.headers,
     "x-agent-code": agentCode,
     "x-timestamp": (call.now ?? new Date()).toISOString().slice(0, 19) + "Z",
     "x-nonce": randomUUID(),
   };
-  if (body !== "") headers["content-type"] = "application/json";
-  const signed = signRequest({ method, path, query, headers, body }, side.signer);
+  // Тип содержимого вызывающего не перезаписывается; null в headers — без заголовка.
+  if (body !== "" && !("content-type" in headers)) headers["content-type"] = "application/json";
+  const sent = Object.fromEntries(Object.entries(headers).filter((e): e is [string, string] => e[1] !== null));
+  const signed = signRequest({ method, path, query, headers: sent, body }, side.signer);
   return app.inject({
     method,
     url: query ? `${path}?${query}` : path,
