@@ -4,6 +4,7 @@
 // Оператор при допуске — от вызывающего: обход расхождения №9 допустим только здесь. Рабочий сервер
 // (src/main.ts и его граф импортов) этот модуль не импортирует — проверяет tests/unit/stand-boundary.test.ts.
 import type { FastifyInstance } from "fastify";
+import { paoIdempotency } from "../pao/idempotency.js";
 import { PaoRequestVerifier } from "../pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore, type AdmissionDecision } from "../registry/index.js";
 import { buildServer } from "../server.js";
@@ -38,7 +39,9 @@ export function createStand(): Stand {
     { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
     { skewSec: params.signature_skew_sec, now },
   );
-  const app = buildServer({ env: "dev", pao: { verifier, keys, params } });
+  // Идемпотентность — память ядра (РП30 п. 6): стенд живёт в процессе теста агента.
+  const idempotency = paoIdempotency({ ttlSec: params.idempotency_ttl_sec, now: () => now().getTime() });
+  const app = buildServer({ env: "dev", pao: { verifier, keys, idempotency, params } });
   return {
     params,
     registry,

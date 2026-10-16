@@ -8,6 +8,7 @@ import {
   PAO_NONCE_SCOPE,
   PaoRequestVerifier,
   nonceValue,
+  paoIdempotency,
   paoNonceStore,
   paoPoolConfig,
   requireDatabaseUrl,
@@ -194,7 +195,7 @@ describe("сбой хранилища nonce по HTTP — 503 с Retry-After (Р
         throw new Error("connect ECONNREFUSED secret-db:5432");
       },
     };
-    app = buildServer({ env: "sandbox", pao: { verifier: r.gateway(failing), keys: r.keys, params } });
+    app = buildServer({ env: "sandbox", pao: { verifier: r.gateway(failing), keys: r.keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params } });
     const res = await signedInject(app, r.sides.get(A)!, A);
     expect(res.statusCode).toBe(503);
     expect(res.headers["retry-after"]).toBe(String(params.unavailable_retry_after_sec));

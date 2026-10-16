@@ -1,6 +1,7 @@
 import { applyMigrations } from "@kuzin4u/agentic-core";
 import pg from "pg";
 import { buildServer, parseEnv } from "./server.js";
+import { paoIdempotency } from "./pao/idempotency.js";
 import { paoNonceStore, paoPoolConfig, requireDatabaseUrl, startNoncePurge } from "./pao/stores.js";
 import { PaoRequestVerifier } from "./pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "./registry/index.js";
@@ -35,6 +36,7 @@ const pool = databaseUrl ? new pg.Pool(paoPoolConfig(databaseUrl)) : undefined;
 // Сбой соединения в простое — в журнал, а не падение процесса; обращения получат 503 через сбой хранилища.
 pool?.on("error", (err) => console.error("PostgreSQL: сбой соединения пула", err));
 const nonces = paoNonceStore({ client: pool, skewSec: params.signature_skew_sec });
+const idempotency = paoIdempotency({ client: pool, ttlSec: params.idempotency_ttl_sec });
 
 // Реестр в памяти до PostgreSQL (PS-06); допуск операторов по HTTP — после их аутентификации (SEC-1, расхождение №9).
 const store = new InMemoryAgentRegistryStore();
@@ -45,9 +47,9 @@ const verifier = new PaoRequestVerifier(
   { skewSec: params.signature_skew_sec, nonces },
 );
 
-const app = buildServer({ env, logger: true, pao: { verifier, keys, params } });
+const app = buildServer({ env, logger: true, pao: { verifier, keys, idempotency, params } });
 app.log.info({ params }, "стендовые параметры загружены");
-if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce в памяти — один процесс, повтор после перезапуска не ловится");
+if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce и идемпотентность в памяти — один процесс, повтор после перезапуска не ловится");
 const stopPurge = startNoncePurge(nonces, params.signature_skew_sec * 1000, (err) =>
   app.log.error({ err }, "ПАО: сбой очистки nonce"),
 );

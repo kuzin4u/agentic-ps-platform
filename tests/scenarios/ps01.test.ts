@@ -91,6 +91,20 @@ describe("ПС01: допуск оператора агента и выдача �
     expect((await s.app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
   });
 
-  it.todo("класс в теле запроса игнорируется — с первым POST по ПАО, PS-05");
+  it("класс и уровень в теле запроса игнорируются: POST /pao/v1/agent/keys, затем GET /pao/v1/agent — из реестра (инвариант 5)", async () => {
+    admit();
+    const next = newAgentSide();
+    const res = await signedInject(s.app, side, CODE, {
+      method: "POST",
+      path: "/pao/v1/agent/keys",
+      body: JSON.stringify({ alg: "ed25519", public_key: next.publicKey, class: "OPERATOR", level: 3, status: "ACTIVE" }),
+      headers: { "idempotency-key": "ps01-class" },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).not.toHaveProperty("class");
+    const self = (await signedInject(s.app, next, CODE)).json();
+    expect(self).toMatchObject({ class: "BUYER", level: 1, status: "ACTIVE" });
+    expect(s.registry.get(CODE)).toMatchObject({ class: "BUYER", level: 1 });
+  });
   it.todo("сертификат mTLS, связанный с agent_code, выдаётся при допуске — РП27, PS-05");
 });
