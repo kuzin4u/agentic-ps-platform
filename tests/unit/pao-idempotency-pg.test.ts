@@ -1,9 +1,9 @@
 // Идемпотентность POST /pao/v1/agent/keys на PostgreSQL (РП30 п. 3, 7 и дополнение — хэш ключа; Ш16). PG-тесты — только
 // при DATABASE_URL: локально пропуск, в CI их выполнение сторожит tests/unit/pg.test.ts.
 import { randomUUID } from "node:crypto";
+import type { SqlClient } from "@kuzin4u/agentic-core";
 import type { FastifyInstance } from "fastify";
-import type pg from "pg";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   PaoRequestVerifier,
   idempotencyKeyHash,
@@ -16,15 +16,15 @@ import { buildServer } from "../../src/server.js";
 import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
+import { barrierClient } from "../support/pg-barrier.js";
 import { signedInject } from "../support/signed-inject.js";
+import { memoryConsent } from "../support/consent.js";
 
 const params = loadParams();
 const SKEW = params.signature_skew_sec;
 const A = "nspk:agent:buyref-01:v3";
 const B = "nspk:agent:other-01:v1";
 const PATH = "/pao/v1/agent/keys";
-
-type Client = pg.Pool | { query: () => Promise<never> };
 
 /** Реестр в памяти с A и B; «экземпляр шлюза» — сервер на своём пуле той же базы (nonce и идемпотентность — PG). */
 function platform() {
@@ -38,14 +38,14 @@ function platform() {
     sides.set(code, side);
   }
   const apps: FastifyInstance[] = [];
-  const instance = (idem: Client, nonces: Client = idem): FastifyInstance => {
+  const instance = (idem: SqlClient, nonces: SqlClient = idem): FastifyInstance => {
     const verifier = new PaoRequestVerifier(
       { getAgent: (c) => reg.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
       { skewSec: SKEW, nonces: paoNonceStore({ client: nonces, skewSec: SKEW }) },
     );
     const app = buildServer({
       env: "sandbox",
-      pao: { verifier, keys, idempotency: paoIdempotency({ client: idem, ttlSec: params.idempotency_ttl_sec }), params },
+      pao: { verifier, keys, idempotency: paoIdempotency({ client: idem, ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() },
     });
     apps.push(app);
     return app;
@@ -115,6 +115,32 @@ describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на Postg
     expect(codes.filter((c) => c === 201).length).toBeGreaterThanOrEqual(1);
     for (const r of res.filter((x) => x.statusCode === 503)) expect(r.json()).toMatchObject({ retry: "same_key" });
     const ok = res.filter((r) => r.statusCode === 201).map((r) => r.json());
+    for (const x of ok) expect(x).toEqual(ok[0]);
+    expect(p.keys.list(A)).toHaveLength(2);
+  });
+
+  // Тест выше идёт через пулы: первый вызов успевает и проверку, и захват, поэтому поломку «проверка и захват двумя
+  // командами» он не ловит (№ 21 ядра). Через барьер первые ответы базы — захваты, по одному на обращение, — приходят
+  // вместе; nonce — на своём пуле, мимо барьера. Остальные девять — повтор сохранённого ответа или 503 same_key,
+  // смотря по тому, успел ли обработчик записать ответ: обработчик ровно один.
+  it("10 одновременных через барьер ответов базы — обработчик ровно один (проверка и захват — одна команда)", async () => {
+    p = platform();
+    const a = p.sides.get(A)!;
+    const key = randomUUID();
+    const body = keyBody(newAgentSide().publicKey);
+    const n = 10;
+    const b = barrierClient(db.pool, n);
+    const app = p.instance(b.client, db.pool);
+    const handler = vi.spyOn(p.keys, "register");
+    const res = await Promise.all(Array.from({ length: n }, () => post(app, a, A, body, key)));
+    b.close();
+    expect(b.left()).toBe(0);
+    expect(handler).toHaveBeenCalledTimes(1);
+    const codes = res.map((r) => r.statusCode);
+    expect(codes.every((c) => c === 201 || c === 503)).toBe(true);
+    for (const r of res.filter((x) => x.statusCode === 503)) expect(r.json()).toMatchObject({ retry: "same_key" });
+    const ok = res.filter((r) => r.statusCode === 201).map((r) => r.json());
+    expect(ok.length).toBeGreaterThanOrEqual(1);
     for (const x of ok) expect(x).toEqual(ok[0]);
     expect(p.keys.list(A)).toHaveLength(2);
   });

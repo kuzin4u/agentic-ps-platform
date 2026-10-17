@@ -1,6 +1,6 @@
 // Nonce шлюза ПАО на PostgreSQL (РП30 п. 1–2, 7; Ш3а; «Условие CO-2» STATUS). PG-тесты — только при DATABASE_URL:
 // локально пропуск, в CI их выполнение сторожит tests/unit/pg.test.ts.
-import { signRequest, type HttpLike } from "@kuzin4u/agentic-core";
+import { signRequest, type HttpLike, type SqlClient } from "@kuzin4u/agentic-core";
 import type { FastifyInstance } from "fastify";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -20,7 +20,9 @@ import { buildServer } from "../../src/server.js";
 import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
+import { barrierClient } from "../support/pg-barrier.js";
 import { signedInject } from "../support/signed-inject.js";
+import { memoryConsent } from "../support/consent.js";
 
 const params = loadParams();
 const SKEW = params.signature_skew_sec;
@@ -38,7 +40,7 @@ function registry() {
     expect(reg.admit(buyerApplication(code, side), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
     sides.set(code, side);
   }
-  const gateway = (client: pg.Pool | { query: () => Promise<never> }, now: () => Date = () => new Date()) =>
+  const gateway = (client: SqlClient, now: () => Date = () => new Date()) =>
     new PaoRequestVerifier(
       { getAgent: (c) => reg.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
       { skewSec: SKEW, now, nonces: paoNonceStore({ client, skewSec: SKEW, now: () => now().getTime() }) },
@@ -107,6 +109,21 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
     const results = await Promise.all(Array.from({ length: 20 }, (_, i) => (i % 2 ? g1 : g2).verify(req)));
     expect(results.map(code).filter((c) => c === "OK")).toHaveLength(1);
     expect(results.map(code).filter((c) => c === "SIGNATURE_INVALID")).toHaveLength(19);
+  });
+
+  // Тест выше идёт через пул: первый вызов успевает и проверку, и запись, поэтому поломку «проверка и захват двумя
+  // командами» он не ловит (№ 21 ядра). Через барьер первые ответы базы — по одному на обращение — приходят вместе.
+  it("10 одновременных через барьер ответов базы — принято ровно одно (проверка и захват — одна команда)", async () => {
+    const r = registry();
+    const req = signed(r.sides.get(A)!, A, fresh());
+    const n = 10;
+    const b = barrierClient(db.pool, n);
+    const g = r.gateway(b.client);
+    const results = await Promise.all(Array.from({ length: n }, () => g.verify(req)));
+    b.close();
+    expect(b.left()).toBe(0);
+    expect(results.map(code).filter((c) => c === "OK")).toHaveLength(1);
+    expect(results.map(code).filter((c) => c === "SIGNATURE_INVALID")).toHaveLength(n - 1);
   });
 
   it("неподписанное, с чужой подписью или просроченное обращение nonce не записывает", async () => {
@@ -195,7 +212,7 @@ describe("сбой хранилища nonce по HTTP — 503 с Retry-After (Р
         throw new Error("connect ECONNREFUSED secret-db:5432");
       },
     };
-    app = buildServer({ env: "sandbox", pao: { verifier: r.gateway(failing), keys: r.keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params } });
+    app = buildServer({ env: "sandbox", pao: { verifier: r.gateway(failing), keys: r.keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() } });
     const res = await signedInject(app, r.sides.get(A)!, A);
     expect(res.statusCode).toBe(503);
     expect(res.headers["retry-after"]).toBe(String(params.unavailable_retry_after_sec));

@@ -4,6 +4,7 @@
 import { applyMigrations, migrationsDir, type SqlClient } from "@kuzin4u/agentic-core";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { applyPlatformMigrations } from "../../src/shared/migrations.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
 // pg.Pool подходит как SqlClient ядра без обёртки (РП30 п. 4) — проверка типов.
@@ -16,7 +17,7 @@ describe("страж PG-тестов", () => {
   });
 });
 
-describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 (РП30 п. 5)", () => {
+describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 и Платформы 100 (РП30 п. 5, PS-06)", () => {
   let db: TestDb;
   beforeAll(async () => {
     db = await openTestDb("migr");
@@ -25,20 +26,22 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 
     await db?.close();
   });
 
-  it("применены 001–004, таблицы nonce и идемпотентности есть; повторный запуск ничего не применяет", async () => {
+  it("применены 001–004 и 100_consent, таблицы nonce, идемпотентности и согласий есть; повторный запуск ничего не применяет", async () => {
     const applied = (await db.pool.query<{ name: string }>("SELECT name FROM core_migrations ORDER BY name")).rows;
     expect(applied.map((r) => r.name)).toEqual([
       "001_journal.sql",
       "002_holds.sql",
       "003_idempotency.sql",
       "004_nonces.sql",
+      "100_consent.sql",
     ]);
     const tables = (
       await db.pool.query<{ t: string }>(
         "SELECT table_name AS t FROM information_schema.tables WHERE table_schema = current_schema() ORDER BY 1",
       )
     ).rows.map((r) => r.t);
-    expect(tables).toEqual(expect.arrayContaining(["core_idempotency", "core_nonces"]));
+    expect(tables).toEqual(expect.arrayContaining(["core_idempotency", "core_nonces", "consent_mandates", "consent_subjects"]));
     expect(await applyMigrations(db.pool, migrationsDir())).toEqual([]);
+    expect(await applyPlatformMigrations(db.pool)).toEqual([]);
   });
 });

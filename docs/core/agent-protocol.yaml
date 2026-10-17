@@ -801,13 +801,17 @@ paths:
               $ref: '#/components/schemas/MandateRequest'
       responses:
         '201':
-          description: Создан, PENDING_SIGNATURE
+          description: 'Создан, PENDING_SIGNATURE; CART при отзыве или истечении родителя — REVOKED или EXPIRED (РП35), проверять status'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Mandate'
         '400': *id001
+        '401': *id001
+        '403': *id001
+        '404': *id001
         '409': *id001
+        '503': *id001
   /pao/v1/mandates/{id}:
     get:
       summary: Мандат этого агента
@@ -829,7 +833,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Mandate'
+        '401': *id001
+        '403': *id001
         '404': *id001
+        '503': *id001
   /pao/v1/mandates/{id}/verify:
     get:
       summary: Проверка и остаток

@@ -23,6 +23,37 @@ export type PaoIdempotency = (agent_code: string) => AsyncIdempotencyStore<PaoRe
  */
 export const PAO_IDEMPOTENCY_LEASE_MS = 60_000;
 
+/**
+ * Предел времени обработчика под ключом (РП33 доп. п. 8, В2): обработчик проверяет его перед каждой командой записи
+ * в хранилище, в том числе перед каждой попыткой вставки в журнал, и после него не пишет. Команда ограничена
+ * соединением и исполнением по PAO_DB_TIMEOUT_MS (stores.ts, statement_timeout — и на сервере), поэтому последняя
+ * запись — не позже предела + 2 × таймаут базы, раньше конца аренды: второй обработчик того же ключа не начнёт ту же
+ * запись, пока первый может писать. Константа кода, как аренда и таймаут базы: граница отказа, а не настройка
+ * поведения для агента. Остаток риска (процесс, вставший дольше аренды между проверкой и записью) — условная вставка
+ * журнала в ядре (п. 9).
+ */
+export const PAO_HANDLER_BUDGET_MS = 30_000;
+
+/** Предел + худшая команда записи (соединение и исполнение) — меньше аренды ключа; иначе шлюз не запускается. */
+export function assertHandlerBudget(budgetMs: number, dbTimeoutMs: number, leaseMs: number): void {
+  if (budgetMs + 2 * dbTimeoutMs >= leaseMs) throw new Error("ПАО: предел обработчика с таймаутом базы ≥ аренды ключа");
+}
+
+/** Предел времени обработчика исчерпан до записи: исключение снимает захват ключа, повтор исполняется заново. */
+export class PaoHandlerDeadline extends Error {
+  constructor(readonly budgetMs: number) {
+    super(`ПАО: обработчик дольше ${budgetMs} мс — запись не начата`);
+  }
+}
+
+/** Проверка предела: вызывать перед каждой записью; now — монотонные миллисекунды. */
+export function handlerDeadline(budgetMs: number, now: () => number): () => void {
+  const end = now() + budgetMs;
+  return () => {
+    if (now() > end) throw new PaoHandlerDeadline(budgetMs);
+  };
+}
+
 /** Область «агент + ключ» (Ш16): тот же Idempotency-Key у другого агента — другая строка таблицы. */
 export const idempotencyScope = (agent_code: string): string => `pao:${agent_code}`;
 

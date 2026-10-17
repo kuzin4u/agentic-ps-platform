@@ -9,6 +9,7 @@ import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
 import { signedInject } from "../support/signed-inject.js";
 import { stand } from "../support/stand.js";
+import { memoryConsent } from "../support/consent.js";
 
 const A = "nspk:agent:buyref-01:v3";
 const LIMIT = 3;
@@ -34,7 +35,7 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
     app = buildServer({
       env: "sandbox",
       ...(trustedProxies ? { trustedProxies } : {}),
-      pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params },
+      pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() },
     });
     return { app, side, keys };
   };
@@ -157,7 +158,7 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
     const params = { ...loadParams(), pao_rate_limit_per_30s: 0 };
     const keys = new AgentKeys(new InMemoryAgentRegistryStore(), { keys: params });
     const verifier = new PaoRequestVerifier({ getAgent: () => undefined, lookupKey: () => undefined }, { skewSec: 1 });
-    app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: 60 }), params } });
+    app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: 60 }), params, consent: memoryConsent() } });
     await expect(app.ready()).rejects.toThrow(/pao_rate_limit_per_30s/);
   });
 });

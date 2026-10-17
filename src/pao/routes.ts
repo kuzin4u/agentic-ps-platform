@@ -1,23 +1,46 @@
 // П9 Маршруты ПАО (AGENT-PROTOCOL.md §3). Каждое обращение проверяется до обработчика: агент → подпись → статус (РП23 п. 6).
 // Изменяющий метод затем: Idempotency-Key → тело по схеме (REQUEST_INVALID) → захват ключа → обработчик (РП30 п. 3, РП31).
-// /revoke — в PS-05 часть 3.
+// /revoke — в PS-05б; POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
 import rateLimit, { normalizeIP } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, type AgentKeys } from "../registry/agent-keys.js";
+import type { ConsentJournal } from "../consent/journal.js";
+import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord } from "../registry/model.js";
 import type { Params } from "../shared/config.js";
 import type { AgentSelf } from "../shared/pao.js";
-import { keyRegistrationBody } from "./body.js";
+import { keyRegistrationBody, mandateRequestBody } from "./body.js";
+import { consentErrorReply } from "./consent-errors.js";
 import { paoError, type PaoErrorReply } from "./errors.js";
-import { idempotencyKeyHash, type PaoIdempotency, type PaoReply } from "./idempotency.js";
+import {
+  assertHandlerBudget,
+  handlerDeadline,
+  idempotencyKeyHash,
+  PAO_HANDLER_BUDGET_MS,
+  PAO_IDEMPOTENCY_LEASE_MS,
+  type PaoIdempotency,
+  PaoHandlerDeadline,
+  type PaoReply,
+} from "./idempotency.js";
+import { PAO_DB_TIMEOUT_MS } from "./stores.js";
 import type { PaoRequestVerifier } from "./verify.js";
 
 export interface PaoDeps {
   readonly verifier: PaoRequestVerifier;
   readonly keys: AgentKeys;
   readonly idempotency: PaoIdempotency;
+  /** Журнал согласий (П2): запрос мандата по ПАО. */
+  readonly consent: ConsentJournal;
   readonly params: Pick<Params, "unavailable_retry_after_sec" | "pao_rate_limit_per_30s">;
+  /** Монотонные часы предела обработчика (РП33 доп.); по умолчанию performance.now — в тестах подменяются. */
+  readonly clock?: () => number;
+}
+
+/** Под ключом обработчику передаются хэш ключа и проверка предела времени перед записью (РП33 доп.). */
+interface MutatingCtx {
+  readonly keyHash: string;
+  readonly beforeWrite: () => void;
 }
 
 /** Окно грубого лимита (РП32 п. 2, 4): 30 с — Retry-After не больше maxRetryAfterSec клиента ядра (РП24). */
@@ -50,6 +73,9 @@ function target(req: FastifyRequest): { path: string; query: string } {
 }
 
 export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<void> {
+  // Предел обработчика с таймаутом базы — меньше аренды ключа (РП33 доп. п. 8).
+  assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS);
+  const clock = deps.clock ?? (() => performance.now());
   const limit = deps.params.pao_rate_limit_per_30s;
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("pao_rate_limit_per_30s — целое ≥ 1");
   // Первый слой лимита (РП32): по адресу, хук onRequest — до проверки обращения и до чтения тела; неподписанный поток
@@ -114,13 +140,14 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   /**
    * Изменяющий метод под ключом идемпотентности (РП30 п. 3, РП31): без ключа — IDEMPOTENCY_REQUIRED, тело не по схеме —
    * REQUEST_INVALID, оба до захвата: неполный запрос ключ не занимает. Хэш — от метода, пути, запроса и сырого тела.
-   * Ответ обработчика (2xx, 4xx) сохраняется; исключение обработчика — 503, захват снимает ядро, повтор исполняется заново.
+   * Ответ обработчика (2xx, 4xx) сохраняется; 5xx обработчика уходит со своим кодом (STATE_UNAVAILABLE), исключение —
+   * 503 UPSTREAM_UNAVAILABLE; в обоих случаях захват снимает ядро, повтор исполняется заново.
    */
   async function mutating<T>(
     req: FastifyRequest,
     reply: FastifyReply,
     parse: (raw: string) => T | undefined,
-    handler: (agent: AgentRecord, input: T) => PaoReply,
+    handler: (agent: AgentRecord, input: T, ctx: MutatingCtx) => PaoReply | Promise<PaoReply>,
   ): Promise<FastifyReply> {
     const agent = req.paoAgent as AgentRecord;
     const key = req.headers["idempotency-key"];
@@ -129,24 +156,29 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     const input = parse(raw);
     if (input === undefined) return send(reply, paoError("REQUEST_INVALID"));
     const { path, query } = target(req);
+    const keyHash = idempotencyKeyHash(key);
     let r: PaoReply;
     try {
       r = (
         await deps.idempotency(agent.agent_code).run(
-          idempotencyKeyHash(key),
+          keyHash,
           { method: req.method, path, query, body: raw },
           async () => {
-            const out = handler(agent, input);
-            // 5xx не сохраняется (РП30 п. 3): исключение снимает захват, повтор исполняется заново.
-            if (out.status >= 500) throw new Error(`ПАО: обработчик вернул ${out.status}`);
+            // Предел — от захвата ключа: аренда отсчитывается от него же.
+            const out = await handler(agent, input, { keyHash, beforeWrite: handlerDeadline(PAO_HANDLER_BUDGET_MS, clock) });
+            // 5xx не сохраняется (РП30 п. 3): исключение снимает захват, повтор исполняется заново; ответ — как вернул обработчик.
+            if (out.status >= 500) throw new UnstoredReply({ http: out.status, body: out.body as PaoErrorReply["body"] });
             return out;
           },
         )
       ).result;
     } catch (err) {
       if (err instanceof IdempotencyConflict) return send(reply, paoError("IDEMPOTENCY_CONFLICT"));
-      // Тот же ключ ещё выполняется — 503 same_key (РП30 п. 3); сбой хранилища или обработчика — 503 и журнал процесса.
-      if (!(err instanceof IdempotencyInProgress)) req.log.error({ err }, "ПАО: сбой хранилища идемпотентности или обработчика");
+      if (err instanceof UnstoredReply) return send(reply, err.reply);
+      // Тот же ключ ещё выполняется — 503 same_key (РП30 п. 3); предел обработчика исчерпан (РП33 доп. п. 8) — 503,
+      // предупреждение; сбой хранилища или обработчика — 503 и ошибка в журнале процесса.
+      if (err instanceof PaoHandlerDeadline) req.log.warn({ agent_code: agent.agent_code }, err.message);
+      else if (!(err instanceof IdempotencyInProgress)) req.log.error({ err }, "ПАО: сбой хранилища идемпотентности или обработчика");
       return send(reply, paoError("UPSTREAM_UNAVAILABLE"));
     }
     return reply.code(r.status).send(r.body);
@@ -175,6 +207,51 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       }
     }),
   );
+
+  // Запрос мандата (ПАО §3, A7 п. 1–3; РП33): PENDING_SIGNATURE, подпись — у принципала в банке. agent_code — из
+  // проверенного обращения (инвариант 5). id — от (агент, ключ): повтор находит записанный мандат (РП33 доп.). Отказ журнала — код ПАО по РП33 п. 1; причина (поле) — только в журнал процесса.
+  app.post("/pao/v1/mandates", async (req, reply) =>
+    mutating(req, reply, mandateRequestBody, async (agent, input, ctx) => {
+      try {
+        return { status: 201, body: await deps.consent.request(agent.agent_code, ctx.keyHash, input, ctx.beforeWrite) };
+      } catch (err) {
+        const e = consentErrorReply(err);
+        if (!e) throw err;
+        if (e.http >= 500) req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
+        else req.log.info({ agent_code: agent.agent_code, reason: (err as Error).message }, "ПАО: мандат не записан");
+        return reply4xx(e);
+      }
+    }),
+  );
+
+  // Мандат этого агента (ПАО §3, A7; PS-06 К2.2): статус — свёртка записей на момент чтения, а не сохранённый ответ
+  // запроса. Чужой, неизвестный и не по форме id — один ответ 404 MANDATE_NOT_FOUND: чужой неотличим от неизвестного.
+  // Цепочка нарушена или состояние не определяется — 503 STATE_UNAVAILABLE (инвариант 3); сбой хранилища — 503 UPSTREAM_UNAVAILABLE.
+  app.get<{ Params: { id: string } }>("/pao/v1/mandates/:id", async (req, reply) => {
+    const agent = req.paoAgent as AgentRecord;
+    const id = req.params.id;
+    if (!MANDATE_ID.test(id)) return send(reply, paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+    try {
+      const m = await deps.consent.get(id, agent.agent_code);
+      if (!m) return send(reply, paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+      return reply.code(200).send(m);
+    } catch (err) {
+      const e = consentErrorReply(err);
+      if (e) {
+        req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
+        return send(reply, e);
+      }
+      req.log.error({ err }, "ПАО: сбой журнала согласий при чтении мандата");
+      return send(reply, paoError("UPSTREAM_UNAVAILABLE"));
+    }
+  });
 }
 
 const reply4xx = (e: PaoErrorReply): PaoReply => ({ status: e.http, body: e.body });
+
+/** Ответ 5xx обработчика — тело ПАО §6: не сохраняется под ключом (РП30 п. 3), но уходит агенту с кодом обработчика. */
+class UnstoredReply extends Error {
+  constructor(readonly reply: PaoErrorReply) {
+    super(`ПАО: ответ ${reply.http} не сохраняется`);
+  }
+}

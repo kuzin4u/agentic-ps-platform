@@ -7,6 +7,7 @@ import { buildServer } from "../../src/server.js";
 import { loadParams } from "../../src/shared/config.js";
 import { newAgentSide } from "../support/agent.js";
 import { signedInject } from "../support/signed-inject.js";
+import { memoryConsent } from "../support/consent.js";
 
 describe("ПАО по HTTP: сбой источника", () => {
   let app: FastifyInstance | undefined;
@@ -26,7 +27,7 @@ describe("ПАО по HTTP: сбой источника", () => {
       },
       { skewSec: params.signature_skew_sec },
     );
-    return buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params } });
+    return buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() } });
   };
 
   it("503 UPSTREAM_UNAVAILABLE, Retry-After из параметров, тело ПАО §6 без текста исключения", async () => {
@@ -52,7 +53,7 @@ describe("ПАО по HTTP: сбой источника", () => {
       { getAgent: () => undefined, lookupKey: () => undefined },
       { skewSec: params.signature_skew_sec },
     );
-    app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params } });
+    app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() } });
     const res = await signedInject(app, newAgentSide(), "nspk:agent:buyref-01:v3");
     expect(res.statusCode).toBe(401);
     expect(res.headers["retry-after"]).toBeUndefined();
