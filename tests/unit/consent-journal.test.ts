@@ -23,6 +23,7 @@ import {
   MANDATE_ID,
   mandateIdFor,
   subjectCommitment,
+  withParentStatus,
   type MandateRequestedPayload,
 } from "../../src/consent/model.js";
 import { ConsentRowConflict, MemoryConsentStore, PgConsentStore, type ConsentStore } from "../../src/consent/store.js";
@@ -398,9 +399,84 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
       const row = (await store.getMandate(p.id!))!;
       await new AsyncHashChainJournal(store.journal(row.chain), () => T0.toISOString()).append("MANDATE_REVOKED", `${p.id}:revoked`, {}, p.id);
       const again = await journal.request(A, k, cart(p.id!));
-      expect(again.id).toBe(c.id);
+      expect([again.id, again.status]).toEqual([c.id, "REVOKED"]);
       await expect(journal.request(A, k2, cart(p.id!))).rejects.toEqual(rejected("PARENT_NOT_ACTIVE", "parent_id"));
       expect(await journal.get(mandateIdFor(A, k2), A)).toBeUndefined();
+    });
+
+    // РП35: статус CART — вместе с родителем; записей потомкам нет.
+    const appendTo = async (id: string, kind: string) => {
+      const row = (await store.getMandate(id))!;
+      await new AsyncHashChainJournal(store.journal(row.chain), () => now.toISOString()).append(kind, `${id}:${kind}`, {}, id);
+    };
+
+    it.each(["MANDATE_REVOKED", "MANDATE_RELINQUISHED"])("родитель %s — все его CART REVOKED, собственный REJECTED сохраняется", async (kind) => {
+      now = T0;
+      const p = await signedIntent();
+      const pending = await journal.request(A, key(), cart(p.id!));
+      const active = await journal.request(A, key(), cart(p.id!));
+      await sign(store, active.id!);
+      const rejectedC = await journal.request(A, key(), cart(p.id!));
+      await appendTo(rejectedC.id!, "MANDATE_REJECTED");
+      const before = (await store.journal(consentChain(p.id!)).all()).length;
+      await appendTo(p.id!, kind);
+      expect((await journal.get(pending.id!, A))!.status).toBe("REVOKED");
+      expect((await journal.get(active.id!, A))!.status).toBe("REVOKED");
+      expect((await journal.get(rejectedC.id!, A))!.status).toBe("REJECTED");
+      // Одна новая запись — у родителя; потомкам записей не пишется.
+      expect((await store.journal(consentChain(p.id!)).all()).length).toBe(before + 1);
+    });
+
+    it("собственный отзыв CART не меняет статус родителя и соседних CART", async () => {
+      now = T0;
+      const p = await signedIntent();
+      const c1 = await journal.request(A, key(), cart(p.id!));
+      const c2 = await journal.request(A, key(), cart(p.id!));
+      await sign(store, c2.id!);
+      await appendTo(c1.id!, "MANDATE_REVOKED");
+      expect((await journal.get(c1.id!, A))!.status).toBe("REVOKED");
+      expect((await journal.get(c2.id!, A))!.status).toBe("ACTIVE");
+      expect((await journal.get(p.id!, A))!.status).toBe("ACTIVE");
+    });
+
+    it("гонка: отзыв родителя записан между проверкой и записью CART — CART после отзыва, статус REVOKED с первого ответа", async () => {
+      now = T0;
+      const p = await signedIntent();
+      const k = key();
+      const cartId = mandateIdFor(A, k);
+      let injected = false;
+      const racing: ConsentStore = {
+        insertMandate: (r) => store.insertMandate(r),
+        getMandate: (id) => store.getMandate(id),
+        getSubject: (id) => store.getSubject(id),
+        insertSubject: (r) => store.insertSubject(r),
+        journal: (chain) => {
+          const inner = store.journal(chain);
+          return {
+            ...(inner.genesis !== undefined ? { genesis: inner.genesis } : {}),
+            last: () => inner.last(),
+            all: () => inner.all(),
+            append: async (e) => {
+              if (e.ref === cartId && !injected) {
+                injected = true;
+                await appendTo(p.id!, "MANDATE_REVOKED");
+              }
+              return inner.append(e);
+            },
+          };
+        },
+      };
+      const c = await new ConsentJournal(racing, { now: () => now }).request(A, k, cart(p.id!));
+      expect(injected).toBe(true);
+      expect(c.status).toBe("REVOKED");
+      const rows = await store.journal(consentChain(p.id!)).all();
+      const revokedAt = rows.findIndex((e) => e.kind === "MANDATE_REVOKED" && e.parent_ref === p.id);
+      const cartAt = rows.findIndex((e) => e.ref === cartId);
+      expect(cartAt).toBeGreaterThan(revokedAt);
+      expect(await new AsyncHashChainJournal(store.journal(consentChain(p.id!))).verify()).toEqual({ ok: true });
+      expect((await journal.get(cartId, A))!.status).toBe("REVOKED");
+      // Повтор тем же ключом — тот же ответ (РП33 доп. п. 6).
+      expect((await journal.request(A, k, cart(p.id!))).status).toBe("REVOKED");
     });
 
     it("beforeWrite отказал перед предметом — записан только индекс; повтор доделывает", async () => {
@@ -567,6 +643,27 @@ describe("подмена записи журнала и предмета — Con
       subject_commitment: "0".repeat(64),
     });
     await expect(j.get(id, A)).rejects.toBeInstanceOf(ConsentIntegrityError);
+  });
+});
+
+describe("withParentStatus — статус CART вместе с родителем (РП35)", () => {
+  const S = ["PENDING_SIGNATURE", "ACTIVE", "REJECTED", "EXPIRED", "REVOKED"] as const;
+  it("собственные REVOKED и REJECTED сохраняются; родитель REVOKED/REJECTED — REVOKED; EXPIRED — EXPIRED; иначе свой", () => {
+    for (const own of S) {
+      for (const parent of S) {
+        const expected =
+          own === "REVOKED" || own === "REJECTED"
+            ? own
+            : parent === "REVOKED" || parent === "REJECTED"
+              ? "REVOKED"
+              : parent === "EXPIRED"
+                ? "EXPIRED"
+                : own;
+        expect(withParentStatus(own, parent), `${own} / ${parent}`).toBe(expected);
+      }
+    }
+    expect(withParentStatus("ACTIVE", "EXPIRED")).toBe("EXPIRED");
+    expect(withParentStatus("PENDING_SIGNATURE", "REJECTED")).toBe("REVOKED");
   });
 });
 

@@ -801,7 +801,7 @@ paths:
               $ref: '#/components/schemas/MandateRequest'
       responses:
         '201':
-          description: Создан, PENDING_SIGNATURE
+          description: 'Создан, PENDING_SIGNATURE; CART при отзыве или истечении родителя — REVOKED или EXPIRED (РП35), проверять status'
           content:
             application/json:
               schema:

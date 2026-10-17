@@ -137,3 +137,18 @@ export function deriveStatus(mandateId: string, entries: readonly JournalEntry[]
   }
   return status;
 }
+
+/**
+ * Статус CART под INTENT — свёртка вместе со статусом родителя (РП35): собственные REVOKED и REJECTED сохраняются;
+ * родитель REVOKED или REJECTED — CART REVOKED; родитель EXPIRED — CART EXPIRED; иначе — собственный статус.
+ * Записей потомкам нет: отзыв родителя действует на CART с момента своей записи, в том числе на CART, записанный
+ * в цепочку позже отзыва по гонке «проверка родителя → запись CART». Одно вычисление для GET, verify, подписи и ADP.
+ * Ветки «родитель EXPIRED» и «родитель REJECTED» сейчас недостижимы (срок CART не позже родителя — assertNarrows;
+ * CART пишется только под ACTIVE) и оставлены защитой на случай смены этих правил.
+ */
+export function withParentStatus(own: MandateStatus, parent: MandateStatus): MandateStatus {
+  if (own === "REVOKED" || own === "REJECTED") return own;
+  if (parent === "REVOKED" || parent === "REJECTED") return "REVOKED";
+  if (parent === "EXPIRED") return "EXPIRED";
+  return own;
+}

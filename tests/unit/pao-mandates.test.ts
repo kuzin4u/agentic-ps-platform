@@ -382,6 +382,39 @@ describe("POST /pao/v1/mandates", () => {
     expect(down.body).not.toContain("secret-host");
   });
 
+  it("РП35: CART при отзыве родителя — GET REVOKED; гонка «отзыв между проверкой и записью» — 201 со статусом REVOKED", async () => {
+    const p = (await post(a, A, intent())).json();
+    await sign(p.id);
+    const c = (await post(a, A, cart(p.id))).json();
+    expect(c.status).toBe("PENDING_SIGNATURE");
+    const key = randomUUID();
+    const cartId = mandateIdFor(A, keyHash(key));
+    const journalOf = store.journal.bind(store);
+    let injected = false;
+    store.journal = (chain) => {
+      const inner = journalOf(chain);
+      return {
+        ...(inner.genesis !== undefined ? { genesis: inner.genesis } : {}),
+        last: () => inner.last(),
+        all: () => inner.all(),
+        append: async (e) => {
+          if (e.ref === cartId && !injected) {
+            injected = true;
+            await append(p.id, "MANDATE_REVOKED");
+          }
+          return inner.append(e);
+        },
+      };
+    };
+    const raced = await post(a, A, cart(p.id), key);
+    expect(injected).toBe(true);
+    expect([raced.statusCode, raced.json().id, raced.json().status]).toEqual([201, cartId, "REVOKED"]);
+    expect((await get(a, A, c.id)).json().status).toBe("REVOKED");
+    // Родитель отозван до проверки — основной путь, 409 (РП35, В1).
+    const after = await post(a, A, cart(p.id));
+    expect([after.statusCode, after.json().code]).toEqual([409, "MANDATE_REVOKED"]);
+  });
+
   it("FIELD_INVALID сохраняется под ключом: повтор — тот же 400, другое тело — IDEMPOTENCY_CONFLICT (РП33 п. 1)", async () => {
     const key = randomUUID();
     const bad = intent({ principal_ref: "79990000000" });

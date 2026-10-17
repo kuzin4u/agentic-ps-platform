@@ -11,6 +11,8 @@ import {
   mandateIdFor,
   newSalt,
   subjectCommitment,
+  withParentStatus,
+  ConsentStateUnknown,
   type MandateRequestedPayload,
   type MandateStatus,
   type MandateSubject,
@@ -158,8 +160,12 @@ export class ConsentJournal {
     }
     const payload: MandateRequestedPayload = { ...terms, subject_commitment: subjectCommitment(salt, subj) };
     const entry = await this.chainJournal(chain, beforeWrite).append("MANDATE_REQUESTED", id, payload, terms.parent_id ?? null);
-    // Статус — свёрткой и в ответе на запрос, как при чтении.
-    return this.toMandate(id, entry, subj, deriveStatus(id, [entry], this.now()));
+    // Статус — свёрткой и в ответе на запрос, как при чтении. CART — вместе с родителем (РП35): отзыв, записанный между
+    // проверкой родителя и записью CART, даёт 201 со статусом REVOKED, а не действующий CART.
+    if (!terms.parent_id) return this.toMandate(id, entry, subj, deriveStatus(id, [entry], this.now()));
+    const written = await this.load(id, terms.agent_code);
+    if (!written) throw new ConsentStateUnknown(id, "CART после записи не читается");
+    return this.toMandate(id, written.head, written.subj, written.status);
   }
 
   /**
@@ -177,7 +183,8 @@ export class ConsentJournal {
     const journal = this.chainJournal(row.chain);
     const check = await journal.verify();
     if (!check.ok) throw new ConsentIntegrityError(id, `цепочка ${row.chain} нарушена на seq ${check.brokenAt}`);
-    const entries = await journal.extract(id);
+    // Один снимок цепочки: статус мандата и, у CART, статус родителя — по одним и тем же записям (РП35).
+    const entries = await this.store.journal(row.chain).all();
     const head = entries.find((e) => e.ref === id && e.kind === "MANDATE_REQUESTED");
     // Индекс без записи журнала — запись не завершилась: мандата нет.
     if (!head) return undefined;
@@ -194,7 +201,12 @@ export class ConsentJournal {
     if (subjectCommitment(s.salt, subj) !== payload.subject_commitment) {
       throw new ConsentIntegrityError(id, "предмет не совпадает с обязательством");
     }
-    return { row, head, subj, status: deriveStatus(id, entries, this.now()) };
+    const now = this.now();
+    const own = deriveStatus(id, entries, now);
+    // CART под INTENT — статус вместе с родителем, одним проходом по той же цепочке (РП35).
+    if (!head.parent_ref) return { row, head, subj, status: own };
+    const parent = deriveStatus(head.parent_ref, entries, now);
+    return { row, head, subj, status: withParentStatus(own, parent) };
   }
 
   private toMandate(id: string, head: JournalEntry, subj: MandateSubject, status: MandateStatus): Mandate {
