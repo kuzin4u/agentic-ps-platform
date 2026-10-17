@@ -17,6 +17,7 @@ import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 import { signedInject } from "../support/signed-inject.js";
+import { memoryConsent } from "../support/consent.js";
 
 const params = loadParams();
 const SKEW = params.signature_skew_sec;
@@ -45,7 +46,7 @@ function platform() {
     );
     const app = buildServer({
       env: "sandbox",
-      pao: { verifier, keys, idempotency: paoIdempotency({ client: idem, ttlSec: params.idempotency_ttl_sec }), params },
+      pao: { verifier, keys, idempotency: paoIdempotency({ client: idem, ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() },
     });
     apps.push(app);
     return app;

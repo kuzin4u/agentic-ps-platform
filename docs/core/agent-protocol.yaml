@@ -807,7 +807,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/Mandate'
         '400': *id001
+        '401': *id001
+        '403': *id001
+        '404': *id001
         '409': *id001
+        '503': *id001
   /pao/v1/mandates/{id}:
     get:
       summary: Мандат этого агента

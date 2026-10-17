@@ -21,6 +21,7 @@ import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 import { signedInject } from "../support/signed-inject.js";
+import { memoryConsent } from "../support/consent.js";
 
 const params = loadParams();
 const SKEW = params.signature_skew_sec;
@@ -195,7 +196,7 @@ describe("сбой хранилища nonce по HTTP — 503 с Retry-After (Р
         throw new Error("connect ECONNREFUSED secret-db:5432");
       },
     };
-    app = buildServer({ env: "sandbox", pao: { verifier: r.gateway(failing), keys: r.keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params } });
+    app = buildServer({ env: "sandbox", pao: { verifier: r.gateway(failing), keys: r.keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() } });
     const res = await signedInject(app, r.sides.get(A)!, A);
     expect(res.statusCode).toBe(503);
     expect(res.headers["retry-after"]).toBe(String(params.unavailable_retry_after_sec));

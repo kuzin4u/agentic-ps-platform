@@ -52,7 +52,7 @@ Signature: sig1=:MEQCIF...:
 | Агент | `GET /pao/v1/agent` | Свой статус, класс, уровень, действующие ключи, лимиты частоты | A2 |
 | | `POST /pao/v1/agent/keys` | Регистрация нового ключа (период параллельного действия) | A2 п. 5.3 |
 | | `POST /pao/v1/agent/keys/{kid}/revoke` | Отзыв своего ключа при компрометации | A2 п. 5.4 |
-| Мандаты | `POST /pao/v1/mandates` | Запрос мандата INTENT или CART; статус `PENDING_SIGNATURE`, подпись — у принципала в банке | A7 п. 1–3 |
+| Мандаты | `POST /pao/v1/mandates` | Запрос мандата INTENT или CART; статус `PENDING_SIGNATURE`, подпись — у принципала в банке. CART под INTENT — только под подписанным и только сужением; отказы — `REQUEST_INVALID`, `MANDATE_NOT_FOUND`, `PRINCIPAL_SIGNATURE_PENDING`, `MANDATE_EXPIRED`, `MANDATE_REVOKED`, `MANDATE_SCOPE`, `STATE_UNAVAILABLE` (РП33) | A7 п. 1–3, 5 |
 | | `GET /pao/v1/mandates/{id}` | Мандат, выданный этому агенту | A7 |
 | | `GET /pao/v1/mandates/{id}/verify` | Действительность, остаток, срок, исход проверки | A7 п. 9 |
 | | `POST /pao/v1/mandates/{id}/relinquish` | Агент отказывается от полномочий (например, при отзыве ключа) | A7 п. 6 |

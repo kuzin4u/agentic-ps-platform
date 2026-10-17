@@ -58,7 +58,7 @@ export class ConsentJournal {
       // Родитель — по журналу, как при чтении: индекс без записи, чужой агент — как неизвестный.
       const parent = await this.load(terms.parent_id, agent_code);
       if (!parent) throw new ConsentRequestRejected("PARENT_NOT_FOUND", "parent_id");
-      if (parent.status !== "ACTIVE") throw new ConsentRequestRejected("PARENT_NOT_ACTIVE", "parent_id");
+      if (parent.status !== "ACTIVE") throw new ConsentRequestRejected("PARENT_NOT_ACTIVE", "parent_id", parent.status);
       assertNarrows(terms, subj, parent.head.payload as MandateRequestedPayload);
       chain = parent.row.chain;
     }
@@ -68,7 +68,7 @@ export class ConsentJournal {
     await this.store.insertSubject({ mandate_id: id, salt, subject_json: canonicalJson(subj) });
     const entry = await this.chainJournal(chain).append("MANDATE_REQUESTED", id, payload, terms.parent_id ?? null);
     // Статус — свёрткой и в ответе на запрос, как при чтении.
-    return this.toMandate(id, entry, subj, deriveStatus(id, [entry], this.now()));
+    return this.toMandate(id, entry, subj, deriveStatus(id, [entry], now));
   }
 
   /**

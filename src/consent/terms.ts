@@ -16,8 +16,10 @@ export class ConsentRequestRejected extends Error {
   constructor(
     readonly reason: ConsentRejectReason,
     readonly field: string,
+    /** Статус родителя при PARENT_NOT_ACTIVE: по нему шлюз выбирает код ПАО (РП33 п. 1). */
+    readonly parentStatus?: string,
   ) {
-    super(`CONSENT_REQUEST_REJECTED: ${reason}: ${field}`);
+    super(`CONSENT_REQUEST_REJECTED: ${reason}: ${field}${parentStatus ? `: ${parentStatus}` : ""}`);
   }
 }
 

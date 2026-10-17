@@ -23,6 +23,7 @@ import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { signedInject } from "../support/signed-inject.js";
 import { stand, type Stand } from "../support/stand.js";
+import { memoryConsent } from "../support/consent.js";
 
 const A = "nspk:agent:buyref-01:v3";
 const B = "nspk:agent:other-01:v1";
@@ -348,7 +349,7 @@ describe("POST /pao/v1/agent/keys: тот же ключ, пока первое �
       { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
       { skewSec: params.signature_skew_sec },
     );
-    app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: held, params } });
+    app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: held, params, consent: memoryConsent() } });
     const key = randomUUID();
     const body = JSON.stringify({ alg: "ed25519", public_key: newAgentSide().publicKey });
     const call = () =>

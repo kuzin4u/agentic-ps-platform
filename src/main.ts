@@ -1,5 +1,6 @@
 import pg from "pg";
 import { buildServer, parseEnv, parseTrustedProxies } from "./server.js";
+import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
 import { paoIdempotency } from "./pao/idempotency.js";
 import { paoNonceStore, paoPoolConfig, requireDatabaseUrl, startNoncePurge } from "./pao/stores.js";
 import { PaoRequestVerifier } from "./pao/verify.js";
@@ -49,9 +50,12 @@ const verifier = new PaoRequestVerifier(
   { skewSec: params.signature_skew_sec, nonces },
 );
 
-const app = buildServer({ env, logger: true, trustedProxies, pao: { verifier, keys, idempotency, params } });
+// Журнал согласий (П2): PostgreSQL при DATABASE_URL, иначе (dev) — память ядра.
+const consent = new ConsentJournal(pool ? new PgConsentStore(pool) : new MemoryConsentStore());
+
+const app = buildServer({ env, logger: true, trustedProxies, pao: { verifier, keys, idempotency, params, consent } });
 app.log.info({ params }, "стендовые параметры загружены");
-if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce и идемпотентность в памяти — один процесс, повтор после перезапуска не ловится");
+if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce, идемпотентность и журнал согласий в памяти — один процесс, повтор после перезапуска не ловится");
 const stopPurge = startNoncePurge(nonces, params.signature_skew_sec * 1000, (err) =>
   app.log.error({ err }, "ПАО: сбой очистки nonce"),
 );
