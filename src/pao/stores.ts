@@ -20,20 +20,7 @@ export interface PaoNonceStoreOptions {
 /** skewSec передаётся ядру: срок меньше 2 × skew ядро отвергает при создании (RangeError). */
 export function paoNonceStore(o: PaoNonceStoreOptions): AsyncNonceStore {
   const opts = { retainMs: nonceRetainMs(o.skewSec), skewSec: o.skewSec, ...(o.now ? { now: o.now } : {}) };
-  if (!o.client) return new AsyncMemoryNonceStore(opts);
-  // ВРЕМЕННАЯ ПОЛОМКА К3.2 (откатывается следующим коммитом): проверка и захват — двумя командами.
-  const client = o.client;
-  const real = new PgNonceStore(client, PAO_NONCE_SCOPE, opts);
-  const now = o.now ?? Date.now;
-  return {
-    async seen(nonce) {
-      const r = await client.query("SELECT 1 AS x FROM core_nonces WHERE scope = $1 AND nonce = $2", [PAO_NONCE_SCOPE, nonce]);
-      if (r.rows.length > 0) return true;
-      await client.query("INSERT INTO core_nonces (scope, nonce, at) VALUES ($1, $2, $3::bigint) ON CONFLICT DO NOTHING", [PAO_NONCE_SCOPE, nonce, now()]);
-      return false;
-    },
-    purge: () => real.purge(),
-  };
+  return o.client ? new PgNonceStore(o.client, PAO_NONCE_SCOPE, opts) : new AsyncMemoryNonceStore(opts);
 }
 
 /**
