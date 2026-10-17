@@ -84,3 +84,11 @@ describe("ответы POST /pao/v1/mandates — по РП33 п. 3", () => {
     expect(op.parameters.map((p: { $ref?: string }) => p.$ref)).toContain("#/components/parameters/IdempotencyKey");
   });
 });
+
+describe("ответы GET /pao/v1/mandates/{id} — по РП34 п. 4", () => {
+  it("200, 401, 403, 404, 503; 200 — схема Mandate", () => {
+    const op = pao.paths["/pao/v1/mandates/{id}"].get;
+    expect(Object.keys(op.responses).sort()).toEqual(["200", "401", "403", "404", "503"]);
+    expect(op.responses["200"].content["application/json"].schema.$ref).toBe("#/components/schemas/Mandate");
+  });
+});

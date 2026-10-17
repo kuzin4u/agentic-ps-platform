@@ -1,11 +1,12 @@
 // П9 Маршруты ПАО (AGENT-PROTOCOL.md §3). Каждое обращение проверяется до обработчика: агент → подпись → статус (РП23 п. 6).
 // Изменяющий метод затем: Idempotency-Key → тело по схеме (REQUEST_INVALID) → захват ключа → обработчик (РП30 п. 3, РП31).
-// /revoke — в PS-05б; POST /pao/v1/mandates — PS-06 К1.3 (РП33).
+// /revoke — в PS-05б; POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
 import rateLimit, { normalizeIP } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, type AgentKeys } from "../registry/agent-keys.js";
 import type { ConsentJournal } from "../consent/journal.js";
+import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord } from "../registry/model.js";
 import type { Params } from "../shared/config.js";
 import type { AgentSelf } from "../shared/pao.js";
@@ -222,6 +223,28 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       }
     }),
   );
+
+  // Мандат этого агента (ПАО §3, A7; PS-06 К2.2): статус — свёртка записей на момент чтения, а не сохранённый ответ
+  // запроса. Чужой, неизвестный и не по форме id — один ответ 404 MANDATE_NOT_FOUND: чужой неотличим от неизвестного.
+  // Цепочка нарушена или состояние не определяется — 503 STATE_UNAVAILABLE (инвариант 3); сбой хранилища — 503 UPSTREAM_UNAVAILABLE.
+  app.get<{ Params: { id: string } }>("/pao/v1/mandates/:id", async (req, reply) => {
+    const agent = req.paoAgent as AgentRecord;
+    const id = req.params.id;
+    if (!MANDATE_ID.test(id)) return send(reply, paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+    try {
+      const m = await deps.consent.get(id, agent.agent_code);
+      if (!m) return send(reply, paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+      return reply.code(200).send(m);
+    } catch (err) {
+      const e = consentErrorReply(err);
+      if (e) {
+        req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
+        return send(reply, e);
+      }
+      req.log.error({ err }, "ПАО: сбой журнала согласий при чтении мандата");
+      return send(reply, paoError("UPSTREAM_UNAVAILABLE"));
+    }
+  });
 }
 
 const reply4xx = (e: PaoErrorReply): PaoReply => ({ status: e.http, body: e.body });

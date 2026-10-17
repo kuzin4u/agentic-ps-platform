@@ -1,6 +1,8 @@
 // POST /pao/v1/mandates по HTTP (PS-06 К1.3): РП33 (отказы журнала → коды ПАО), РП31 (REQUEST_INVALID до захвата
 // ключа), РП30 п. 3 (повтор — тот же ответ); agent_code — из обращения (инвариант 5). Журнал — память ядра.
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { parse } from "yaml";
 import { AsyncHashChainJournal, type JournalEntry } from "@kuzin4u/agentic-core";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -21,6 +23,7 @@ import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { signedInject } from "../support/signed-inject.js";
 
+const pao = parse(readFileSync("docs/core/agent-protocol.yaml", "utf8"), { maxAliasCount: -1 });
 const A = "nspk:agent:mand-a:v1";
 const B = "nspk:agent:mand-b:v1";
 const PATH = "/pao/v1/mandates";
@@ -313,6 +316,70 @@ describe("POST /pao/v1/mandates", () => {
     const r2 = await post(a, A, intent(), key);
     expect([r2.statusCode, r2.json().id]).toEqual([201, id]);
     expect(await heads(id)).toHaveLength(1);
+  });
+
+  // GET /pao/v1/mandates/{id} (К2.2): статус — свёртка на момент чтения; чужой неотличим от неизвестного.
+  const get = (side: AgentSide, code: string, id: string) =>
+    signedInject(app, side, code, { method: "GET", path: `${PATH}/${id}`, body: "" });
+  /** Mandate = allOf(MandateRequest, свои поля): свойства и обязательные — объединением частей. */
+  type Part = { $ref?: string; properties?: Record<string, unknown>; required?: string[] };
+  const parts = (pao.components.schemas.Mandate.allOf as Part[]).map((p) =>
+    p.$ref ? (pao.components.schemas[p.$ref.split("/").pop()!] as Part) : p,
+  );
+  const mandateSchema = {
+    properties: Object.assign({}, ...parts.map((p) => p.properties ?? {})) as Record<string, unknown>,
+    required: parts.flatMap((p) => p.required ?? []),
+  };
+
+  it("GET свой мандат — 200 по схеме Mandate; статус на момент чтения (подписан — ACTIVE, повтор POST — прежний ответ)", async () => {
+    const key = randomUUID();
+    const created = (await post(a, A, intent(), key)).json();
+    const r1 = await get(a, A, created.id);
+    expect(r1.statusCode).toBe(200);
+    expect(r1.json()).toEqual(created);
+    for (const k of Object.keys(r1.json())) expect(Object.keys(mandateSchema.properties)).toContain(k);
+    for (const k of mandateSchema.required ?? []) expect(r1.json()).toHaveProperty(k);
+    await sign(created.id);
+    expect((await get(a, A, created.id)).json().status).toBe("ACTIVE");
+    expect((await post(a, A, intent(), key)).json().status).toBe("PENDING_SIGNATURE");
+    shiftMs = 8 * 86_400_000;
+    expect((await get(a, A, created.id)).json().status).toBe("EXPIRED");
+  });
+
+  it("GET чужой, неизвестный, не по форме id, индекс без записи — один и тот же 404 MANDATE_NOT_FOUND", async () => {
+    const own = (await post(a, A, intent())).json();
+    const orphan = mandateIdFor(A, keyHash(randomUUID()));
+    await store.insertMandate({ id: orphan, chain: `consent:${orphan}`, agent_code: A, created_at: new Date().toISOString(), terms_hash: "0".repeat(64) });
+    const replies = [
+      await get(b, B, own.id),
+      await get(a, A, mandateIdFor(A, keyHash(randomUUID()))),
+      await get(a, A, "mnd_x"),
+      await get(a, A, orphan),
+    ];
+    for (const r of replies) {
+      expect(r.statusCode).toBe(404);
+      expect(r.json()).toEqual(replies[0]!.json());
+      expect(r.body).not.toContain(own.id);
+    }
+    expect(replies[0]!.json()).toMatchObject({ code: "MANDATE_NOT_FOUND" });
+  });
+
+  it("GET: цепочка нарушена — 503 STATE_UNAVAILABLE с Retry-After; сбой хранилища — 503 UPSTREAM_UNAVAILABLE без подробностей", async () => {
+    const m = (await post(a, A, intent())).json();
+    const rows = (await store.journal((await store.getMandate(m.id))!.chain).all()) as JournalEntry[];
+    const original = rows[0]!;
+    rows[0] = { ...original, payload: { ...(original.payload as object), amount_limit: 99_999_999 } };
+    const broken = await get(a, A, m.id);
+    expect([broken.statusCode, broken.json().code]).toEqual([503, "STATE_UNAVAILABLE"]);
+    expect(broken.headers["retry-after"]).toBeDefined();
+    expect(broken.body).not.toContain("99999999");
+    rows[0] = original;
+    store.getMandate = async () => {
+      throw new Error("db down: secret-host:5432");
+    };
+    const down = await get(a, A, m.id);
+    expect([down.statusCode, down.json().code]).toEqual([503, "UPSTREAM_UNAVAILABLE"]);
+    expect(down.body).not.toContain("secret-host");
   });
 
   it("FIELD_INVALID сохраняется под ключом: повтор — тот же 400, другое тело — IDEMPOTENCY_CONFLICT (РП33 п. 1)", async () => {
