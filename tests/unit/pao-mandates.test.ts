@@ -1,11 +1,19 @@
 // POST /pao/v1/mandates по HTTP (PS-06 К1.3): РП33 (отказы журнала → коды ПАО), РП31 (REQUEST_INVALID до захвата
 // ключа), РП30 п. 3 (повтор — тот же ответ); agent_code — из обращения (инвариант 5). Журнал — память ядра.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { AsyncHashChainJournal, type JournalEntry } from "@kuzin4u/agentic-core";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ConsentJournal, MemoryConsentStore, type ConsentStore } from "../../src/consent/index.js";
-import { PaoRequestVerifier, paoIdempotency } from "../../src/pao/index.js";
+import { ConsentJournal, mandateIdFor, MemoryConsentStore, type ConsentStore } from "../../src/consent/index.js";
+import {
+  assertHandlerBudget,
+  PAO_DB_TIMEOUT_MS,
+  PAO_HANDLER_BUDGET_MS,
+  PAO_IDEMPOTENCY_LEASE_MS,
+  PaoRequestVerifier,
+  paoIdempotency,
+  type PaoIdempotency,
+} from "../../src/pao/index.js";
 import { PARENT_REJECTED_MESSAGE } from "../../src/pao/consent-errors.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "../../src/registry/index.js";
 import { buildServer } from "../../src/server.js";
@@ -46,6 +54,11 @@ describe("POST /pao/v1/mandates", () => {
   let shiftMs = 0;
   let a: AgentSide;
   let b: AgentSide;
+  /** Хранилище идемпотентности; новое — как память ключей ядра, истёкшая за TTL. */
+  let idem: PaoIdempotency;
+  let failDone = false;
+  /** Часы предела обработчика (РП33 доп.). */
+  let clockMs = 0;
 
   beforeEach(() => {
     const params = loadParams();
@@ -58,8 +71,20 @@ describe("POST /pao/v1/mandates", () => {
     );
     store = new MemoryConsentStore();
     shiftMs = 0;
+    clockMs = 0;
+    failDone = false;
     const consent = new ConsentJournal(store, { now: () => new Date(Date.now() + shiftMs) });
-    app = buildServer({ env: "dev", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent } });
+    idem = paoIdempotency({ ttlSec: params.idempotency_ttl_sec });
+    // Сбой отметки DONE: обработчик исполнен, результат не сохранён — ядро снова отдаст ключ (аренда истекла).
+    const idempotency: PaoIdempotency = (code) => ({
+      run: async (k, body, fn) => {
+        if (!failDone) return idem(code).run(k, body, fn);
+        failDone = false;
+        await fn();
+        throw new Error("отметка DONE не записана");
+      },
+    });
+    app = buildServer({ env: "dev", pao: { verifier, keys, idempotency, params, consent, clock: () => clockMs } });
     a = newAgentSide();
     b = newAgentSide();
     expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
@@ -233,6 +258,61 @@ describe("POST /pao/v1/mandates", () => {
     shiftMs = 8 * 86_400_000;
     const res = await post(a, A, cart(p.id, { valid_to: new Date(Date.now() + 9 * 86_400_000).toISOString() }));
     expect([res.statusCode, res.json().code]).toEqual([409, "MANDATE_EXPIRED"]);
+  });
+
+  // РП33 доп. (`/audit` К1.3 № 2): id мандата от (агент, ключ) — повтор после сбоя находит записанный мандат.
+  const heads = async (id: string) => {
+    const row = (await store.getMandate(id))!;
+    return (await store.journal(row.chain).all()).filter((e) => e.ref === id && e.kind === "MANDATE_REQUESTED");
+  };
+  const keyHash = (k: string) => createHash("sha256").update(k, "utf8").digest("hex");
+
+  it("сбой отметки DONE: повтор тем же ключом — 201, тот же мандат, в журнале одна запись", async () => {
+    const key = randomUUID();
+    failDone = true;
+    const r1 = await post(a, A, intent(), key);
+    expect([r1.statusCode, r1.json().code]).toEqual([503, "UPSTREAM_UNAVAILABLE"]);
+    const id = mandateIdFor(A, keyHash(key));
+    expect(await heads(id)).toHaveLength(1);
+    const r2 = await post(a, A, intent(), key);
+    expect(r2.statusCode).toBe(201);
+    expect(r2.json().id).toBe(id);
+    expect(await heads(id)).toHaveLength(1);
+  });
+
+  it("ключ после срока памяти ядра: тот же запрос — тот же мандат (201), другой — 409 IDEMPOTENCY_CONFLICT", async () => {
+    const key = randomUUID();
+    const m = (await post(a, A, intent(), key)).json();
+    idem = paoIdempotency({ ttlSec: 86_400 });
+    const same = await post(a, A, intent(), key);
+    expect([same.statusCode, same.json().id]).toEqual([201, m.id]);
+    idem = paoIdempotency({ ttlSec: 86_400 });
+    const other = await post(a, A, intent({ amount_limit: 1 }), key);
+    expect([other.statusCode, other.json().code]).toEqual([409, "IDEMPOTENCY_CONFLICT"]);
+    expect(other.body).not.toContain(m.id);
+    expect(await heads(m.id)).toHaveLength(1);
+  });
+
+  it("предел обработчика исчерпан до записи — 503, после предела не пишется; повтор — 201, одна запись", async () => {
+    // Последняя запись — не позже предела + худшей команды базы, раньше конца аренды; иначе шлюз не запускается.
+    expect(() => assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS)).not.toThrow();
+    expect(() => assertHandlerBudget(56_000, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS)).toThrow(/аренды/);
+    const insert = store.insertMandate.bind(store);
+    let slow = true;
+    store.insertMandate = async (row) => {
+      await insert(row);
+      if (slow) clockMs += PAO_HANDLER_BUDGET_MS + 1;
+    };
+    const key = randomUUID();
+    const r1 = await post(a, A, intent(), key);
+    expect([r1.statusCode, r1.json().code]).toEqual([503, "UPSTREAM_UNAVAILABLE"]);
+    const id = mandateIdFor(A, keyHash(key));
+    expect(await store.getMandate(id)).toBeDefined();
+    expect(await store.getSubject(id)).toBeUndefined();
+    slow = false;
+    const r2 = await post(a, A, intent(), key);
+    expect([r2.statusCode, r2.json().id]).toEqual([201, id]);
+    expect(await heads(id)).toHaveLength(1);
   });
 
   it("FIELD_INVALID сохраняется под ключом: повтор — тот же 400, другое тело — IDEMPOTENCY_CONFLICT (РП33 п. 1)", async () => {

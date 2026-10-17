@@ -1,5 +1,5 @@
 // П2 Журнал согласий: записи мандата и статус как свёртка записей (PS-06 К1.2; A7 п. 4, 9; инварианты 5, 6).
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { canonicalJson, sha256Hex, type JournalEntry } from "@kuzin4u/agentic-core";
 import type { Mandate, MandateRequest } from "../shared/pao.js";
 
@@ -34,9 +34,29 @@ export type MandateTerms = Omit<MandateRequest, "subject" | "cart"> & { readonly
 /** payload записи MANDATE_REQUESTED: открытые реквизиты и хэш-обязательство предмета. */
 export type MandateRequestedPayload = MandateTerms & { readonly subject_commitment: string };
 
-/** id мандата присваивает Платформа: `mnd_` + UUIDv4. */
-export const newMandateId = (): string => `mnd_${randomUUID()}`;
-export const MANDATE_ID = /^mnd_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+/** Метка области хэша id мандата (РП33 доп.): другая область — другой id при тех же агенте и ключе. */
+export const MANDATE_ID_DOMAIN = "pao:mandate-id:v1";
+
+/**
+ * id мандата присваивает Платформа (РП33 доп.): `mnd_` + UUID версии 8 (RFC 9562 §5.8) из
+ * SHA-256(`pao:mandate-id:v1\n` + agent_code + `\n` + SHA-256 от Idempotency-Key). Вычисляемый, а не случайный:
+ * повтор того же запроса после сбоя находит записанный мандат, второй не пишется (`/audit` К1.3 № 2).
+ * Сырой ключ агента в id не попадает — только его хэш, как в хранилище идемпотентности (РП30 доп.).
+ */
+export function mandateIdFor(agent_code: string, idempotencyKeyHash: string): string {
+  if (agent_code === "" || agent_code.includes("\n")) throw new Error("mandateIdFor: agent_code");
+  if (!/^[0-9a-f]{64}$/.test(idempotencyKeyHash)) throw new Error("mandateIdFor: хэш ключа — SHA-256 hex");
+  const b = createHash("sha256")
+    .update(`${MANDATE_ID_DOMAIN}\n${agent_code}\n${idempotencyKeyHash}`, "utf8")
+    .digest()
+    .subarray(0, 16);
+  b[6] = (b[6]! & 0x0f) | 0x80; // версия 8
+  b[8] = (b[8]! & 0x3f) | 0x80; // вариант RFC 9562
+  const h = b.toString("hex");
+  return `mnd_${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+/** Версии 4 (записанные до РП33 доп., случайные) и 8 (вычисляемые). */
+export const MANDATE_ID = /^mnd_[0-9a-f]{8}-[0-9a-f]{4}-[48][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /** Цепочка журнала — одна на корневой мандат; CART с parent_id пишется в цепочку родителя. */
 export const consentChain = (rootMandateId: string): string => `consent:${rootMandateId}`;
@@ -52,6 +72,16 @@ export const subjectCommitment = (salt: string, s: MandateSubject): string =>
 export class ConsentStateUnknown extends Error {
   constructor(readonly mandateId: string, reason: string) {
     super(`CONSENT_STATE_UNKNOWN: ${mandateId}: ${reason}`);
+  }
+}
+
+/**
+ * Тот же Idempotency-Key — другой запрос (РП33 доп.): мандат по ключу записан или начат с другими реквизитами.
+ * Бессрочно, и после срока хранения ключа в ядре: id вычисляется из ключа, второго мандата под ним не бывает.
+ */
+export class ConsentKeyReused extends Error {
+  constructor(readonly mandateId: string) {
+    super(`CONSENT_KEY_REUSED: ${mandateId}`);
   }
 }
 

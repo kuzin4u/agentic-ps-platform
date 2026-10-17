@@ -12,7 +12,17 @@ import type { AgentSelf } from "../shared/pao.js";
 import { keyRegistrationBody, mandateRequestBody } from "./body.js";
 import { consentErrorReply } from "./consent-errors.js";
 import { paoError, type PaoErrorReply } from "./errors.js";
-import { idempotencyKeyHash, type PaoIdempotency, type PaoReply } from "./idempotency.js";
+import {
+  assertHandlerBudget,
+  handlerDeadline,
+  idempotencyKeyHash,
+  PAO_HANDLER_BUDGET_MS,
+  PAO_IDEMPOTENCY_LEASE_MS,
+  type PaoIdempotency,
+  PaoHandlerDeadline,
+  type PaoReply,
+} from "./idempotency.js";
+import { PAO_DB_TIMEOUT_MS } from "./stores.js";
 import type { PaoRequestVerifier } from "./verify.js";
 
 export interface PaoDeps {
@@ -22,6 +32,14 @@ export interface PaoDeps {
   /** Журнал согласий (П2): запрос мандата по ПАО. */
   readonly consent: ConsentJournal;
   readonly params: Pick<Params, "unavailable_retry_after_sec" | "pao_rate_limit_per_30s">;
+  /** Монотонные часы предела обработчика (РП33 доп.); по умолчанию performance.now — в тестах подменяются. */
+  readonly clock?: () => number;
+}
+
+/** Под ключом обработчику передаются хэш ключа и проверка предела времени перед записью (РП33 доп.). */
+interface MutatingCtx {
+  readonly keyHash: string;
+  readonly beforeWrite: () => void;
 }
 
 /** Окно грубого лимита (РП32 п. 2, 4): 30 с — Retry-After не больше maxRetryAfterSec клиента ядра (РП24). */
@@ -54,6 +72,9 @@ function target(req: FastifyRequest): { path: string; query: string } {
 }
 
 export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<void> {
+  // Предел обработчика с таймаутом базы — меньше аренды ключа (РП33 доп. п. 8).
+  assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS);
+  const clock = deps.clock ?? (() => performance.now());
   const limit = deps.params.pao_rate_limit_per_30s;
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("pao_rate_limit_per_30s — целое ≥ 1");
   // Первый слой лимита (РП32): по адресу, хук onRequest — до проверки обращения и до чтения тела; неподписанный поток
@@ -125,7 +146,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     req: FastifyRequest,
     reply: FastifyReply,
     parse: (raw: string) => T | undefined,
-    handler: (agent: AgentRecord, input: T) => PaoReply | Promise<PaoReply>,
+    handler: (agent: AgentRecord, input: T, ctx: MutatingCtx) => PaoReply | Promise<PaoReply>,
   ): Promise<FastifyReply> {
     const agent = req.paoAgent as AgentRecord;
     const key = req.headers["idempotency-key"];
@@ -134,14 +155,16 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     const input = parse(raw);
     if (input === undefined) return send(reply, paoError("REQUEST_INVALID"));
     const { path, query } = target(req);
+    const keyHash = idempotencyKeyHash(key);
     let r: PaoReply;
     try {
       r = (
         await deps.idempotency(agent.agent_code).run(
-          idempotencyKeyHash(key),
+          keyHash,
           { method: req.method, path, query, body: raw },
           async () => {
-            const out = await handler(agent, input);
+            // Предел — от захвата ключа: аренда отсчитывается от него же.
+            const out = await handler(agent, input, { keyHash, beforeWrite: handlerDeadline(PAO_HANDLER_BUDGET_MS, clock) });
             // 5xx не сохраняется (РП30 п. 3): исключение снимает захват, повтор исполняется заново; ответ — как вернул обработчик.
             if (out.status >= 500) throw new UnstoredReply({ http: out.status, body: out.body as PaoErrorReply["body"] });
             return out;
@@ -151,8 +174,10 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     } catch (err) {
       if (err instanceof IdempotencyConflict) return send(reply, paoError("IDEMPOTENCY_CONFLICT"));
       if (err instanceof UnstoredReply) return send(reply, err.reply);
-      // Тот же ключ ещё выполняется — 503 same_key (РП30 п. 3); сбой хранилища или обработчика — 503 и журнал процесса.
-      if (!(err instanceof IdempotencyInProgress)) req.log.error({ err }, "ПАО: сбой хранилища идемпотентности или обработчика");
+      // Тот же ключ ещё выполняется — 503 same_key (РП30 п. 3); предел обработчика исчерпан (РП33 доп. п. 8) — 503,
+      // предупреждение; сбой хранилища или обработчика — 503 и ошибка в журнале процесса.
+      if (err instanceof PaoHandlerDeadline) req.log.warn({ agent_code: agent.agent_code }, err.message);
+      else if (!(err instanceof IdempotencyInProgress)) req.log.error({ err }, "ПАО: сбой хранилища идемпотентности или обработчика");
       return send(reply, paoError("UPSTREAM_UNAVAILABLE"));
     }
     return reply.code(r.status).send(r.body);
@@ -183,11 +208,11 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   );
 
   // Запрос мандата (ПАО §3, A7 п. 1–3; РП33): PENDING_SIGNATURE, подпись — у принципала в банке. agent_code — из
-  // проверенного обращения (инвариант 5). Отказ журнала — код ПАО по РП33 п. 1; причина (поле) — только в журнал процесса.
+  // проверенного обращения (инвариант 5). id — от (агент, ключ): повтор находит записанный мандат (РП33 доп.). Отказ журнала — код ПАО по РП33 п. 1; причина (поле) — только в журнал процесса.
   app.post("/pao/v1/mandates", async (req, reply) =>
-    mutating(req, reply, mandateRequestBody, async (agent, input) => {
+    mutating(req, reply, mandateRequestBody, async (agent, input, ctx) => {
       try {
-        return { status: 201, body: await deps.consent.request(agent.agent_code, input) };
+        return { status: 201, body: await deps.consent.request(agent.agent_code, ctx.keyHash, input, ctx.beforeWrite) };
       } catch (err) {
         const e = consentErrorReply(err);
         if (!e) throw err;

@@ -15,6 +15,8 @@ export interface MandateIndexRow {
   readonly chain: string;
   readonly agent_code: string;
   readonly created_at: string;
+  /** sha256(canonicalJson(реквизиты перечня)), hex: сверка прерванной записи с повтором (РП33 доп. п. 7). Предмета нет. */
+  readonly terms_hash: string;
 }
 
 export interface MandateSubjectRow {
@@ -73,16 +75,15 @@ export class PgConsentStore implements ConsentStore {
   constructor(private readonly client: SqlClient) {}
 
   async insertMandate(r: MandateIndexRow): Promise<void> {
-    await this.insert(r.id, "INSERT INTO consent_mandates (id, chain, agent_code, created_at) VALUES ($1, $2, $3, $4)", [
+    await this.insert(
       r.id,
-      r.chain,
-      r.agent_code,
-      r.created_at,
-    ]);
+      "INSERT INTO consent_mandates (id, chain, agent_code, created_at, terms_hash) VALUES ($1, $2, $3, $4, $5)",
+      [r.id, r.chain, r.agent_code, r.created_at, r.terms_hash],
+    );
   }
   async getMandate(id: string): Promise<MandateIndexRow | undefined> {
-    const r = await this.client.query<{ id: string; chain: string; agent_code: string; created_at: string }>(
-      "SELECT id, chain, agent_code, created_at FROM consent_mandates WHERE id = $1",
+    const r = await this.client.query<MandateIndexRow & Record<string, unknown>>(
+      "SELECT id, chain, agent_code, created_at, terms_hash FROM consent_mandates WHERE id = $1",
       [id],
     );
     return r.rows[0];

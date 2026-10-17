@@ -30,11 +30,15 @@ export function paoNonceStore(o: PaoNonceStoreOptions): AsyncNonceStore {
  */
 export const PAO_DB_TIMEOUT_MS = 2000;
 
-/** Пул рабочих обращений: таймаут соединения и запроса на стороне клиента pg. Миграции — отдельным пулом без них. */
+/**
+ * Пул рабочих обращений: таймаут соединения и запроса на стороне клиента pg и statement_timeout на сервере — запрос,
+ * брошенный клиентом по таймауту, не исполнится на сервере позже (РП33 доп. п. 8). Миграции — отдельным пулом без них.
+ */
 export const paoPoolConfig = (connectionString: string, timeoutMs: number = PAO_DB_TIMEOUT_MS): PoolConfig => ({
   connectionString,
   connectionTimeoutMillis: timeoutMs,
   query_timeout: timeoutMs,
+  statement_timeout: timeoutMs,
 });
 
 /**

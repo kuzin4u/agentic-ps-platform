@@ -1,5 +1,5 @@
 // П9 Отказы журнала согласий → коды ПАО (РП33 п. 1–2): новых кодов нет, причина в поле агенту не раскрывается.
-import { ConsentIntegrityError, ConsentStateUnknown } from "../consent/model.js";
+import { ConsentIntegrityError, ConsentKeyReused, ConsentStateUnknown } from "../consent/model.js";
 import { ConsentRequestRejected } from "../consent/terms.js";
 import { paoError, type PaoErrorReply } from "./errors.js";
 
@@ -11,6 +11,8 @@ export function consentErrorReply(err: unknown): PaoErrorReply | undefined {
   if (err instanceof ConsentIntegrityError || err instanceof ConsentStateUnknown) {
     return paoError("STATE_UNAVAILABLE", "A7 п. 4");
   }
+  // Тот же ключ — другой запрос, в любой срок (РП33 доп.).
+  if (err instanceof ConsentKeyReused) return paoError("IDEMPOTENCY_CONFLICT");
   if (!(err instanceof ConsentRequestRejected)) return undefined;
   switch (err.reason) {
     case "FIELD_INVALID":

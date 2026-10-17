@@ -41,7 +41,8 @@ const isText = (v: unknown, max = 1024): v is string => typeof v === "string" &&
 const oneOf = <T extends string>(v: unknown, xs: readonly T[]): v is T => typeof v === "string" && (xs as readonly string[]).includes(v);
 
 /** Открытые реквизиты — явным перечнем; поля тела сверх перечня (signature_type, status, pan…) не попадают в запись. */
-export function pickTerms(agent_code: string, req: MandateRequest, now: Date): MandateTerms {
+/** now = null — без проверки срока: сверка повтора с записанным мандатом в любой срок (РП33 доп.). */
+export function pickTerms(agent_code: string, req: MandateRequest, now: Date | null): MandateTerms {
   const r = req as Partial<Record<keyof MandateRequest, unknown>>;
   if (!oneOf(r.type, ["INTENT", "CART"] as const)) reject("FIELD_INVALID", "type");
   const parent_id = (r.parent_id ?? null) as string | null;
@@ -51,7 +52,7 @@ export function pickTerms(agent_code: string, req: MandateRequest, now: Date): M
   if (!isPositiveInt(r.amount_limit)) reject("FIELD_INVALID", "amount_limit");
   if (typeof r.currency !== "string" || !/^[A-Z]{3}$/.test(r.currency)) reject("FIELD_INVALID", "currency");
   const validTo = parseRfc3339(r.valid_to);
-  if (Number.isNaN(validTo) || validTo <= now.getTime()) reject("FIELD_INVALID", "valid_to");
+  if (Number.isNaN(validTo) || (now !== null && validTo <= now.getTime())) reject("FIELD_INVALID", "valid_to");
   if (!Array.isArray(r.merchant_scope) || !r.merchant_scope.every((m) => isText(m, 64))) {
     reject("FIELD_INVALID", "merchant_scope");
   }
