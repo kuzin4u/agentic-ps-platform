@@ -314,8 +314,9 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         };
         const form = checkSubscriptionUrl(input.url, deps.params.event_subscription_allow_hosts);
         if (!form.ok) return refuse(form.reason, form.host);
-        const addrs = await resolveGlobal(form.host, resolveHost);
-        if (!addrs.ok) return refuse(addrs.reason, form.host);
+        // ПОЛОМКА К1.3б′ (временно): адреса имени не проверяются — ожидается красный CI на «подмене DNS».
+        void resolveGlobal;
+        void resolveHost;
         ctx.beforeWrite();
         return { status: 200, body: subscriptions.set(agent.agent_code, { url: form.url, events: input.events }) };
       }),
