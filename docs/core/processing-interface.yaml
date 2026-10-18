@@ -380,9 +380,79 @@ paths:
           description: "`QUALIFIED_SIGNATURE_REQUIRED` — A7 п. 3.2: сумма или срок выше порогов `qualified_signature_above_*` или валюта не RUB, а подпись простая"
         '503':
           description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After"
+  /participants/v1/mandates/{id}/revoke:
+    post:
+      summary: ПИ-8 Отзыв мандата клиентом (РП38)
+      description: "Одна подпись Ed25519 ключом банка над canonicalJson записи {context, participant_code, kid, mandate_id, mandate_hash, revocation_ref, revoked_at}; context = pao:participant-mandate-revocation:v1. Запись MANDATE_REVOKED при PENDING_SIGNATURE или ACTIVE (у CART — вместе с родителем); REVOKED, REJECTED, EXPIRED — 200 с текущим статусом без записи"
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - participant_code
+              - kid
+              - mandate_hash
+              - revocation_ref
+              - revoked_at
+              - signature
+              properties:
+                participant_code:
+                  type: string
+                kid:
+                  type: string
+                mandate_hash:
+                  type: string
+                  pattern: ^[0-9a-f]{64}$
+                revocation_ref:
+                  type: string
+                revoked_at:
+                  type: string
+                  format: date-time
+                signature:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{86}$
+                  description: Ed25519 (64 байта), base64url без дополнения
+      responses:
+        '200':
+          description: Отзыв записан, или полномочий уже нет — текущий статус без записи
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - mandate_id
+                - status
+                properties:
+                  mandate_id:
+                    type: string
+                  status:
+                    type: string
+                    enum:
+                    - REJECTED
+                    - REVOKED
+                    - EXPIRED
+        '400':
+          description: "`REQUEST_INVALID` — тело не по схеме или id не по маске; тело ошибки — `{code}`"
+        '401':
+          description: "`SIGNATURE_INVALID` — подпись не проверена: неизвестный участник или ключ, неверная подпись, иная метка контекста (в том числе метка решения)"
+        '404':
+          description: "`MANDATE_NOT_FOUND` — после проверки подписи"
+        '409':
+          description: "`MANDATE_HASH_MISMATCH` — хэш не равен Mandate.hash"
+        '503':
+          description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After"
   /participants/v1/principals/{ref}/revoke-all:
     post:
-      summary: ПИ-8 Прекращение полномочий одним действием
+      summary: ПИ-8 Прекращение полномочий одним действием (PS-20, РП38 п. 2)
       parameters:
       - name: ref
         in: path

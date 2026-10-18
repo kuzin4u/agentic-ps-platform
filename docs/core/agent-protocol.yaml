@@ -341,6 +341,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Mandate'
+        records:
+          type: array
+          description: "Записи цепочки журнала согласий целиком, с первой (РП38 п. 7): по ним пересчитываются хэши и Mandate.hash, подпись банка в payload решения и отзыва проверяется его открытым ключом. Предмета нет — только subject_commitment"
+          items:
+            $ref: '#/components/schemas/JournalRecord'
         operations:
           type: array
           items:
@@ -350,6 +355,36 @@ components:
           enum:
           - OK
           - BROKEN
+    JournalRecord:
+      type: object
+      required:
+      - seq
+      - kind
+      - ref
+      - parent_ref
+      - at
+      - payload
+      - prev_hash
+      - hash
+      properties:
+        seq:
+          type: integer
+        kind:
+          type: string
+        ref:
+          type: string
+        parent_ref:
+          type: string
+          nullable: true
+        at:
+          type: string
+          format: date-time
+        payload:
+          type: object
+        prev_hash:
+          type: string
+        hash:
+          type: string
     Aoi:
       type: object
       required:
@@ -847,6 +882,7 @@ paths:
   /pao/v1/mandates/{id}/verify:
     get:
       summary: Проверка и остаток
+      description: "Ровно {outcome, amount_left, valid_to, as_of}, без предмета (A7 п. 9.2, РП38 п. 6). CONFIRMED — только ACTIVE; OUT_OF_SCOPE — остальные статусы; STATE_UNKNOWN — с П3 (PS-09). До PS-09 amount_left = amount_limit у ACTIVE, 0 у остальных"
       parameters:
       - name: id
         in: path
@@ -870,6 +906,7 @@ paths:
   /pao/v1/mandates/{id}/relinquish:
     post:
       summary: Отказ агента от полномочий
+      description: "Тело пустое. Запись MANDATE_RELINQUISHED при PENDING_SIGNATURE или ACTIVE; уже REVOKED, REJECTED или EXPIRED — 200 с текущим статусом без записи. Отказ от INTENT отзывает его CART (РП35, РП38 п. 3–4)"
       parameters:
       - name: id
         in: path
@@ -893,6 +930,7 @@ paths:
   /pao/v1/mandates/{id}/evidence:
     get:
       summary: Выписка из журнала согласий
+      description: "mandate_chain (у CART — родитель и CART), records — вся цепочка журнала, operations — с PS-16/PS-22; нарушенная цепочка — 200 с integrity BROKEN и пустыми массивами. Соль предмета не раскрывается (РП38 п. 7)"
       parameters:
       - name: id
         in: path
