@@ -4,7 +4,9 @@
 import { createHash } from "node:crypto";
 import {
   AsyncMemoryIdempotencyStore,
+  canonicalJson,
   PgIdempotencyStore,
+  sha256Hex,
   type AsyncIdempotencyStore,
   type SqlClient,
 } from "@kuzin4u/agentic-core";
@@ -70,7 +72,32 @@ export interface PaoIdempotencyOptions {
 export function paoIdempotency(o: PaoIdempotencyOptions): PaoIdempotency {
   const opts = { ttlMs: o.ttlSec * 1000, leaseMs: PAO_IDEMPOTENCY_LEASE_MS, ...(o.now ? { now: o.now } : {}) };
   const client = o.client;
-  if (client) return (agent_code) => new PgIdempotencyStore<PaoReply>(client, idempotencyScope(agent_code), opts);
+  // ВРЕМЕННАЯ ПОЛОМКА К3.2а (откатывается следующим коммитом): проверка и захват ключа — двумя командами.
+  if (client) {
+    return (agent_code) => {
+      const scope = idempotencyScope(agent_code);
+      const real = new PgIdempotencyStore<PaoReply>(client, scope, opts);
+      const now = o.now ?? Date.now;
+      return {
+        async run(key, body, fn) {
+          const r = await client.query("SELECT 1 AS x FROM core_idempotency WHERE scope = $1 AND key = $2", [scope, key]);
+          if (r.rows.length > 0) return real.run(key, body, fn);
+          const bodyHash = sha256Hex(canonicalJson(body));
+          await client.query(
+            "INSERT INTO core_idempotency (scope, key, body_hash, state, token, at) VALUES ($1, $2, $3, 'RUNNING', 'broken', $4::bigint) ON CONFLICT (scope, key) DO NOTHING",
+            [scope, key, bodyHash, now()],
+          );
+          const result = await fn();
+          await client.query("UPDATE core_idempotency SET state = 'DONE', result = $3 WHERE scope = $1 AND key = $2", [
+            scope,
+            key,
+            canonicalJson(result ?? null),
+          ]);
+          return { result, replayed: false };
+        },
+      };
+    };
+  }
   // Память: одно хранилище на область, живёт с процессом.
   const stores = new Map<string, AsyncIdempotencyStore<PaoReply>>();
   return (agent_code) => {
