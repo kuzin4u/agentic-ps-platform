@@ -7,7 +7,7 @@ import type { FastifyInstance } from "fastify";
 import { ConsentJournal, MemoryConsentStore } from "../consent/index.js";
 import type { MandateDecisionPayload } from "../consent/model.js";
 import { createIssuerEmulator } from "../env/issuer/index.js";
-import { TrustedParticipants } from "../participants/trusted.js";
+import { TrustedParticipants, type TrustedParticipantKey } from "../participants/trusted.js";
 import { paoIdempotency } from "../pao/idempotency.js";
 import { PaoRequestVerifier } from "../pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore, type AdmissionDecision } from "../registry/index.js";
@@ -24,6 +24,8 @@ export interface IssuerSignOptions {
 /** Эмулятор эмитента стенда (РП36 п. 4): подписывает тестовым ключом и шлёт тот же POST /participants/v1/mandates/{id}/sign. */
 export interface StandIssuer {
   readonly participant_code: string;
+  /** Открытый ключ банка стенда: проверка подписей банка в выписке без Платформы (РП38 п. 7). */
+  readonly trustedKey: TrustedParticipantKey;
   /** Ответ шлюза участников: 200 `{mandate_id, status}` или `{code}`; неизвестный мандат — 404 без обращения. */
   sign(mandateId: string, opts?: IssuerSignOptions): Promise<{ readonly statusCode: number; readonly body: unknown }>;
   /** Отзыв мандата клиентом в приложении банка (РП38): ответ шлюза участников, неизвестный — 404 без обращения. */
@@ -75,6 +77,7 @@ export function createStand(): Stand {
   });
   const issuer: StandIssuer = {
     participant_code: emulator.participant_code,
+    trustedKey: emulator.trustedKey,
     async sign(mandateId, opts = {}) {
       // Экран мандата: хэш записи из журнала — тот же, что в Mandate.hash (РП36 п. 3).
       const view = await consent.signingView(mandateId);

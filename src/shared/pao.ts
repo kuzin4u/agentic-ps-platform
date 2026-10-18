@@ -14,6 +14,21 @@ export {
  */
 export type MandateV14 = import("@kuzin4u/agentic-core/pao").Mandate & { readonly revocation_order?: string };
 
+/** Запись цепочки журнала согласий в выписке ПАО 1.4.0 (РП38 п. 7): по ней пересчитываются хэши без Платформы. */
+export interface JournalRecordV14 {
+  readonly seq: number;
+  readonly kind: string;
+  readonly ref: string;
+  readonly parent_ref: string | null;
+  readonly at: string;
+  readonly payload: unknown;
+  readonly prev_hash: string;
+  readonly hash: string;
+}
+
+/** Evidence ПАО 1.4.0 (РП38): `records` — до выпуска типов ядра из 1.4.0 (К16 ядра). */
+export type EvidenceV14 = import("@kuzin4u/agentic-core/pao").Evidence & { readonly records?: readonly JournalRecordV14[] };
+
 // Сборка падает, если набор кодов ошибок в core разойдётся с x-pao-errors Платформы.
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 export const ERROR_CODES_MATCH_CORE: Same<CoreErrorCode, PaoErrorCode> = true;

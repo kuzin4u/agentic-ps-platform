@@ -1,8 +1,9 @@
 // П2 Журнал согласий над журналом ядра (РП14): запрос мандата и чтение со статусом-свёрткой (PS-06 К1.2).
 // Проверка запроса по схеме ПАО, идемпотентность и HTTP — К1.3; id от (агент, ключ) и повтор — К2.1 (РП33 доп.);
-// подпись принципала по подписи участника — К2.4 (РП36); отзыв клиентом и отказ агента — К2.6 (РП38).
+// подпись принципала по подписи участника — К2.4 (РП36); отзыв клиентом и отказ агента — К2.6, verify — К2.7,
+// выписка — К2.8 (РП38).
 import { AsyncHashChainJournal, canonicalJson, sha256Hex, type AsyncJournalStore, type JournalEntry } from "@kuzin4u/agentic-core";
-import type { Mandate, MandateRequest } from "../shared/pao.js";
+import type { EvidenceV14, Mandate, MandateRequest, MandateVerify } from "../shared/pao.js";
 import {
   ConsentIntegrityError,
   ConsentKeyReused,
@@ -368,6 +369,64 @@ export class ConsentJournal {
       valid_to: t.valid_to,
       subject: m.subj.subject,
       cart: m.subj.cart,
+    };
+  }
+
+  /**
+   * Проверка мандата этого агента без предмета (A7 п. 9.2, РП38 п. 6): ровно {outcome, amount_left, valid_to, as_of}.
+   * Статус — свёрткой load (у CART — вместе с родителем, РП35 п. 2). Чужой или неизвестный — undefined.
+   * До П3 (PS-09) amount_left = amount_limit у ACTIVE (расходования нет), 0 у остальных; STATE_UNKNOWN — с П3.
+   */
+  async verify(id: string, agent_code: string): Promise<MandateVerify | undefined> {
+    const m = await this.load(id, agent_code);
+    if (!m) return undefined;
+    const t = m.head.payload as MandateRequestedPayload;
+    const confirmed = m.status === "ACTIVE";
+    return {
+      outcome: confirmed ? "CONFIRMED" : "OUT_OF_SCOPE",
+      amount_left: confirmed ? t.amount_limit : 0,
+      valid_to: t.valid_to,
+      as_of: this.now().toISOString(),
+    };
+  }
+
+  /**
+   * Выписка по мандату этого агента (A7 п. 9.3, РП38 п. 7): mandate_chain (у CART — родитель и CART) и records — вся
+   * цепочка журнала, по ней хэши, Mandate.hash и подписи банка проверяются без Платформы. Соли предмета нет (только
+   * обязательство в записи) — раскрытие предмета только клиенту через банк. Нарушенная цепочка или предмет не сходится
+   * с обязательством — integrity BROKEN с пустыми массивами; неопределимый статус при цельной цепочке — исключение (503).
+   */
+  async evidence(id: string, agent_code: string): Promise<EvidenceV14 | undefined> {
+    const row = await this.store.getMandate(id);
+    if (!row || row.agent_code !== agent_code) return undefined;
+    let m: LoadedMandate | undefined;
+    let parent: Mandate | undefined;
+    try {
+      m = await this.load(id, agent_code);
+      if (m?.head.parent_ref) {
+        parent = await this.get(m.head.parent_ref, agent_code);
+        if (!parent) throw new ConsentIntegrityError(id, "родитель CART не читается");
+      }
+    } catch (err) {
+      if (!(err instanceof ConsentIntegrityError)) throw err;
+      return { mandate_chain: [], records: [], operations: [], integrity: "BROKEN" };
+    }
+    if (!m) return undefined;
+    const entries = await this.store.journal(row.chain).all();
+    return {
+      mandate_chain: [...(parent ? [parent] : []), this.toMandate(id, m.head, m.subj, m.status)],
+      records: entries.map(({ seq, kind, ref, parent_ref, at, payload, prev_hash, hash }) => ({
+        seq,
+        kind,
+        ref,
+        parent_ref,
+        at,
+        payload,
+        prev_hash,
+        hash,
+      })),
+      operations: [],
+      integrity: "OK",
     };
   }
 

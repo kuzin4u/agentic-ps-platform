@@ -250,24 +250,39 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   // Мандат этого агента (ПАО §3, A7; PS-06 К2.2): статус — свёртка записей на момент чтения, а не сохранённый ответ
   // запроса. Чужой, неизвестный и не по форме id — один ответ 404 MANDATE_NOT_FOUND: чужой неотличим от неизвестного.
   // Цепочка нарушена или состояние не определяется — 503 STATE_UNAVAILABLE (инвариант 3); сбой хранилища — 503 UPSTREAM_UNAVAILABLE.
-  app.get<{ Params: { id: string } }>("/pao/v1/mandates/:id", async (req, reply) => {
-    const agent = req.paoAgent as AgentRecord;
-    const id = req.params.id;
-    if (!MANDATE_ID.test(id)) return send(reply, paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
-    try {
-      const m = await deps.consent.get(id, agent.agent_code);
-      if (!m) return send(reply, paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
-      return reply.code(200).send(m);
-    } catch (err) {
-      const e = consentErrorReply(err);
-      if (e) {
-        req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
-        return send(reply, e);
+  const readMandate =
+    (read: (id: string, agent_code: string) => Promise<object | undefined>) =>
+    async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply): Promise<FastifyReply> => {
+      const agent = req.paoAgent as AgentRecord;
+      const id = req.params.id;
+      if (!MANDATE_ID.test(id)) return send(reply, paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+      try {
+        const m = await read(id, agent.agent_code);
+        if (!m) return send(reply, paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+        return reply.code(200).send(m);
+      } catch (err) {
+        const e = consentErrorReply(err);
+        if (e) {
+          req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
+          return send(reply, e);
+        }
+        req.log.error({ err }, "ПАО: сбой журнала согласий при чтении мандата");
+        return send(reply, paoError("UPSTREAM_UNAVAILABLE"));
       }
-      req.log.error({ err }, "ПАО: сбой журнала согласий при чтении мандата");
-      return send(reply, paoError("UPSTREAM_UNAVAILABLE"));
-    }
-  });
+    };
+  app.get<{ Params: { id: string } }>("/pao/v1/mandates/:id", readMandate((id, code) => deps.consent.get(id, code)));
+
+  // Проверка без предмета (ПАО §3, A7 п. 9.2; РП38 п. 6): {outcome, amount_left, valid_to, as_of}; остаток до PS-09 — предел.
+  app.get<{ Params: { id: string } }>("/pao/v1/mandates/:id/verify", readMandate((id, code) => deps.consent.verify(id, code)));
+
+  // Выписка (ПАО §3, A7 п. 9.3; РП38 п. 7): цепочка журнала для проверки без Платформы; нарушенная — 200 integrity BROKEN.
+  app.get<{ Params: { id: string } }>("/pao/v1/mandates/:id/evidence", async (req, reply) =>
+    readMandate(async (id, code) => {
+      const ev = await deps.consent.evidence(id, code);
+      if (ev?.integrity === "BROKEN") req.log.error({ agent_code: code, mandate_id: id }, "ПАО: выписка — цепочка журнала согласий нарушена");
+      return ev;
+    })(req, reply),
+  );
 }
 
 /** Тело отказа агента от полномочий — пустое (РП38 п. 3). */
