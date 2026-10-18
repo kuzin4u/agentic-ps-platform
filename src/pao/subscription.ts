@@ -44,6 +44,7 @@ export type SubscriptionUrlReason =
   | "ip_literal"
   | "host_not_allowed"
   | "address_not_global"
+  | "name_not_found"
   | "resolve_failed";
 
 export type UrlCheck =
@@ -172,17 +173,25 @@ export const systemResolver: HostResolver = async (host) =>
 
 export type ResolveCheck =
   | { readonly ok: true; readonly addresses: readonly string[] }
-  | { readonly ok: false; readonly reason: "address_not_global" | "resolve_failed" };
+  | { readonly ok: false; readonly reason: "address_not_global" | "name_not_found" | "resolve_failed" };
 
-/** Разрешение имени и проверка всех адресов (РП40 п. 2, 4): хоть один не глобальный, ни одного или сбой — отказ. */
+/** Ответ DNS «имени нет» или «адресов нет» — отказ самого адреса, а не временный сбой. */
+const NAME_NOT_FOUND = new Set(["ENOTFOUND", "ENODATA"]);
+
+/**
+ * Разрешение имени и проверка всех адресов (РП40 п. 2, 4; дополнение п. 3): хоть один не глобальный — `address_not_global`;
+ * имени или адресов нет — `name_not_found` (отказ адреса); иной сбой и таймаут — `resolve_failed` (временный сбой).
+ * Все три — без соединения (fail-closed).
+ */
 export async function resolveGlobal(host: string, resolve: HostResolver): Promise<ResolveCheck> {
   let addresses: readonly string[];
   try {
     addresses = await resolve(host);
-  } catch {
-    return { ok: false, reason: "resolve_failed" };
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    return { ok: false, reason: typeof code === "string" && NAME_NOT_FOUND.has(code) ? "name_not_found" : "resolve_failed" };
   }
-  if (addresses.length === 0) return { ok: false, reason: "resolve_failed" };
+  if (addresses.length === 0) return { ok: false, reason: "name_not_found" };
   if (!addresses.every(isGlobalAddress)) return { ok: false, reason: "address_not_global" };
   return { ok: true, addresses: [...addresses] };
 }

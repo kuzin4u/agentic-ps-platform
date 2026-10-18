@@ -27,7 +27,8 @@ export function createStandDns(): StandDns {
   let table = initial();
   const resolve: HostResolver = async (host) => {
     const a = table.get(host);
-    if (!a || a.length === 0) throw new Error(`стенд: имя не разрешается: ${host}`);
+    // Как системный lookup: имени нет — ENOTFOUND (отказ адреса, а не временный сбой).
+    if (!a || a.length === 0) throw Object.assign(new Error(`стенд: имя не разрешается: ${host}`), { code: "ENOTFOUND" });
     return [...a];
   };
   // Метка стендового порта: шлюз без stand: true его не принимает (РП40 п. 8).

@@ -175,13 +175,22 @@ describe("разрешение имени (РП40 п. 2, 4)", () => {
     expect(await resolveGlobal(HOST, fixed(["8.8.8.8", "127.0.0.1"]))).toEqual({ ok: false, reason: "address_not_global" });
   });
 
-  it("ни одного адреса или сбой разрешения — отказ", async () => {
-    expect(await resolveGlobal(HOST, fixed([]))).toEqual({ ok: false, reason: "resolve_failed" });
-    expect(
-      await resolveGlobal(HOST, async () => {
-        throw new Error("ENOTFOUND");
-      }),
-    ).toEqual({ ok: false, reason: "resolve_failed" });
+  const failing =
+    (code?: string): HostResolver =>
+    async () => {
+      throw Object.assign(new Error("dns"), code === undefined ? {} : { code });
+    };
+
+  it("имени или адресов нет — отказ адреса name_not_found (дополнение РП40 п. 3)", async () => {
+    expect(await resolveGlobal(HOST, fixed([]))).toEqual({ ok: false, reason: "name_not_found" });
+    expect(await resolveGlobal(HOST, failing("ENOTFOUND"))).toEqual({ ok: false, reason: "name_not_found" });
+    expect(await resolveGlobal(HOST, failing("ENODATA"))).toEqual({ ok: false, reason: "name_not_found" });
+  });
+
+  it("иной сбой разрешения — временный resolve_failed", async () => {
+    for (const code of ["EAI_AGAIN", "ETIMEOUT", "ESERVFAIL", undefined]) {
+      expect(await resolveGlobal(HOST, failing(code)), String(code)).toEqual({ ok: false, reason: "resolve_failed" });
+    }
   });
 });
 
@@ -327,12 +336,12 @@ describe("шлюз подписки: журнал процесса, таймау
       }),
     );
     await app.ready();
-    const put = (u: string) =>
+    const put = (u: string, key = randomUUID()) =>
       signedInject(app, side, code, {
         method: "PUT",
         path: "/pao/v1/subscription",
         body: JSON.stringify({ url: u, events: [] }),
-        headers: { "idempotency-key": randomUUID() },
+        headers: { "idempotency-key": key },
       });
     return { app, lines, put, registry };
   }
@@ -354,14 +363,38 @@ describe("шлюз подписки: журнал процесса, таймау
     await g.app.close();
   });
 
-  it("разрешение имени зависло — 400 не позже предела шлюза, подписка не записана (инвариант 3)", async () => {
-    const g = await gateway(() => new Promise<readonly string[]>(() => undefined));
+  it("разрешение имени зависло — 503 STATE_UNAVAILABLE не позже предела шлюза, не под ключом: повтор тем же ключом — 200 (инвариант 3, дополнение РП40 п. 3)", async () => {
+    let hang = true;
+    const g = await gateway(async () => (hang ? new Promise<readonly string[]>(() => undefined) : [STAND_AGENT_EMULATOR_ADDRESS]));
+    const key = randomUUID();
     const t0 = performance.now();
+    const res = await g.put(url, key);
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ code: "STATE_UNAVAILABLE", retry: "same_key" });
+    expect(res.headers["retry-after"]).toBeDefined();
+    expect(performance.now() - t0).toBeLessThan(PAO_DB_TIMEOUT_MS + 1000);
+    expect(refusals(g.lines)).toEqual([]);
+    expect(g.lines.filter((l) => String(l.msg).includes("сбой разрешения имени")).map((l) => l.host)).toEqual([STAND_AGENT_EMULATOR_HOST]);
+    expect(JSON.stringify(g.lines)).not.toMatch(/secret-path|t0p/);
+    expect(g.registry.subscription(code)).toBeUndefined();
+    hang = false;
+    const again = await g.put(url, key);
+    expect(again.statusCode).toBe(200);
+    expect(g.registry.subscription(code)).toMatchObject({ events: [] });
+    await g.app.close();
+  });
+
+  it("временный сбой DNS (EAI_AGAIN) — 503 STATE_UNAVAILABLE; имени нет (ENOTFOUND) — 400 REQUEST_INVALID", async () => {
+    let code: string = "EAI_AGAIN";
+    const g = await gateway(async () => {
+      throw Object.assign(new Error("dns"), { code });
+    });
+    expect((await g.put(url)).json()).toMatchObject({ code: "STATE_UNAVAILABLE" });
+    code = "ENOTFOUND";
     const res = await g.put(url);
     expect(res.statusCode).toBe(400);
-    expect(performance.now() - t0).toBeLessThan(PAO_DB_TIMEOUT_MS + 1000);
-    expect(refusals(g.lines).map((l) => l.reason)).toEqual(["resolve_failed"]);
-    expect(g.registry.subscription(code)).toBeUndefined();
+    expect(res.json()).toMatchObject({ code: "REQUEST_INVALID" });
+    expect(refusals(g.lines).map((l) => l.reason)).toEqual(["name_not_found"]);
     await g.app.close();
   });
 

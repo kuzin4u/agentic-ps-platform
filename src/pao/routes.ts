@@ -299,7 +299,8 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
 
   // Подписка на события (ПАО §5; РП40 п. 1–3): адрес — https, порт 443, имя из списка разрешённых, все адреса имени
   // глобальные; иначе 400 REQUEST_INVALID, причина — в журнал процесса (только хост, без пути: путь может нести секрет
-  // агента). Подписка заменяется целиком и действует на события после неё. SUSPENDED/EXCLUDED — 403 до обработчика (п. 6–7).
+  // агента). Временный сбой и таймаут DNS — 503 STATE_UNAVAILABLE: не сохраняется под ключом, повтор тем же ключом
+  // (дополнение РП40 п. 3). Подписка заменяется целиком и действует на события после неё. SUSPENDED/EXCLUDED — 403 до обработчика (п. 6–7).
   if (deps.resolveHost && STAND_PORT in deps.resolveHost && deps.stand !== true) {
     throw new Error("ПАО: стендовое разрешение имени в рабочем сервере — отказ запуска (РП40 п. 8)");
   }
@@ -315,6 +316,11 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         const form = checkSubscriptionUrl(input.url, deps.params.event_subscription_allow_hosts);
         if (!form.ok) return refuse(form.reason, form.host);
         const addrs = await resolveGlobal(form.host, resolveHost);
+        if (!addrs.ok && addrs.reason === "resolve_failed") {
+          req.log.warn({ agent_code: agent.agent_code, host: form.host }, "ПАО: адрес подписки не проверен — сбой разрешения имени");
+          const e = paoError("STATE_UNAVAILABLE", "ПАО §5");
+          return { status: e.http, body: e.body };
+        }
         if (!addrs.ok) return refuse(addrs.reason, form.host);
         ctx.beforeWrite();
         return { status: 200, body: subscriptions.set(agent.agent_code, { url: form.url, events: input.events }) };
