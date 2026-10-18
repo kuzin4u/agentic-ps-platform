@@ -6,6 +6,7 @@ import { ED25519, parseKey } from "../../registry/keys.js";
 import {
   participantSigningInput,
   STAND_ISSUER_CODE,
+  STAND_REVOCATION_ORDER,
   type ParticipantSignedRecord,
   type TrustedParticipantKey,
 } from "../../participants/trusted.js";
@@ -28,7 +29,13 @@ export function createIssuerEmulator(): IssuerEmulator {
   const secret: KeyObject = privateKey;
   return {
     participant_code: STAND_ISSUER_CODE,
-    trustedKey: { participant_code: STAND_ISSUER_CODE, kid: parsed.kid, alg: "ed25519", public_key },
+    trustedKey: {
+      participant_code: STAND_ISSUER_CODE,
+      kid: parsed.kid,
+      alg: "ed25519",
+      public_key,
+      revocation_order: STAND_REVOCATION_ORDER,
+    },
     signRecord: (record) => sign(null, participantSigningInput(record), secret).toString("base64url"),
   };
 }

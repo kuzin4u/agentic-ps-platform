@@ -51,11 +51,13 @@ const verifier = new PaoRequestVerifier(
   { skewSec: params.signature_skew_sec, nonces },
 );
 
-// Журнал согласий (П2): PostgreSQL при DATABASE_URL, иначе (dev) — память ядра.
-const consent = new ConsentJournal(pool ? new PgConsentStore(pool) : new MemoryConsentStore());
-
 // Доверенные ключи участников до PS-20 (РП36 п. 4): ключ эмулятора стенда и второй боевой участник — отказ запуска.
 const trusted = loadTrustedParticipants(process.env.PARTICIPANT_KEYS_PATH, { stand: false });
+
+// Журнал согласий (П2): PostgreSQL при DATABASE_URL, иначе (dev) — память ядра. Порядок отзыва — из записи участника (РП37).
+const consent = new ConsentJournal(pool ? new PgConsentStore(pool) : new MemoryConsentStore(), {
+  revocationOrder: () => trusted.revocationOrder(),
+});
 
 const app = buildServer({
   env,

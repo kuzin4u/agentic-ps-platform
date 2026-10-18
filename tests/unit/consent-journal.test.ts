@@ -84,7 +84,7 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
     let journal: ConsentJournal;
     beforeAll(async () => {
       ({ store } = await open());
-      journal = new ConsentJournal(store, { now: () => now });
+      journal = new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => now });
     });
 
     const signedIntent = async (over: Partial<MandateRequest> = {}) => {
@@ -113,6 +113,7 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
         id: "mnd_forged",
         hash: "f".repeat(64),
         pan: DIGITS16,
+        revocation_order: "agent:own",
       } as MandateRequest;
       (body.conditional as Record<string, unknown>).phone = "+79990000000";
       const m = await journal.request(A, key(), body);
@@ -128,6 +129,7 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
           "mode",
           "parent_id",
           "principal_ref",
+          "revocation_order",
           "settlement_mode",
           "subject_commitment",
           "type",
@@ -135,6 +137,8 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
         ].sort(),
       );
       expect(p.conditional).toEqual({ provider: "cx:nsvr", deal_ref: "deal-1" });
+      // Порядок отзыва — от Платформы, не из тела агента (РП37).
+      expect(p.revocation_order).toBe("bank:test:revocation:v1");
       const json = canonicalJson(p) + canonicalJson(await journal.get(m.id!, A));
       for (const leak of ["qualified", DIGITS16, "+79990000000", "mnd_forged"]) expect(json).not.toContain(leak);
       expect(m.status).toBe("PENDING_SIGNATURE");
@@ -304,7 +308,7 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
     it.each(["insertSubject", "journal"] as const)("сбой %s — повтор доделывает запись, одна запись", async (method) => {
       now = T0;
       const k = key();
-      const broken = new ConsentJournal(failingOnce(method), { now: () => now });
+      const broken = new ConsentJournal(failingOnce(method), { revocationOrder: () => "bank:test:revocation:v1", now: () => now });
       await expect(broken.request(A, k, intent())).rejects.toThrow(/сбой/);
       const id = mandateIdFor(A, k);
       expect(await journal.get(id, A)).toBeUndefined();
@@ -318,7 +322,7 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
       now = T0;
       for (const method of ["insertSubject", "journal"] as const) {
         const k = key();
-        const broken = new ConsentJournal(failingOnce(method), { now: () => now });
+        const broken = new ConsentJournal(failingOnce(method), { revocationOrder: () => "bank:test:revocation:v1", now: () => now });
         await expect(broken.request(A, k, intent())).rejects.toThrow(/сбой/);
         // После индекса предмета нет — расходится цепочка (другой родитель); после предмета — и сам предмет.
         const other = method === "journal" ? intent({ subject: "хлеб" }) : cart(mandateIdFor(A, key()));
@@ -332,7 +336,7 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
       const parent = await signedIntent();
       for (const method of ["insertSubject", "journal"] as const) {
         const k = key();
-        const broken = new ConsentJournal(failingOnce(method), { now: () => now });
+        const broken = new ConsentJournal(failingOnce(method), { revocationOrder: () => "bank:test:revocation:v1", now: () => now });
         await expect(broken.request(A, k, intent())).rejects.toThrow(/сбой/);
         for (const other of [intent({ amount_limit: 100_000 }), cart(parent.id!), intent({ currency: "rub" })]) {
           await expect(journal.request(A, k, other)).rejects.toBeInstanceOf(ConsentKeyReused);
@@ -366,7 +370,7 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
         insertSubject: (r) => store.insertSubject(r),
         journal: (chain) => store.journal(chain),
       };
-      const again = await new ConsentJournal(racing, { now: () => now }).request(A, k, intent());
+      const again = await new ConsentJournal(racing, { revocationOrder: () => "bank:test:revocation:v1", now: () => now }).request(A, k, intent());
       expect(again.id).toBe(m.id);
       expect(await heads(m.id!)).toHaveLength(1);
     });
@@ -394,7 +398,7 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
       const k = key();
       const c = await journal.request(A, k, cart(p.id!));
       const k2 = key();
-      const broken = new ConsentJournal(failingOnce("journal"), { now: () => now });
+      const broken = new ConsentJournal(failingOnce("journal"), { revocationOrder: () => "bank:test:revocation:v1", now: () => now });
       await expect(broken.request(A, k2, cart(p.id!))).rejects.toThrow(/сбой/);
       const row = (await store.getMandate(p.id!))!;
       await new AsyncHashChainJournal(store.journal(row.chain), () => T0.toISOString()).append("MANDATE_REVOKED", `${p.id}:revoked`, {}, p.id);
@@ -466,7 +470,7 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
           };
         },
       };
-      const c = await new ConsentJournal(racing, { now: () => now }).request(A, k, cart(p.id!));
+      const c = await new ConsentJournal(racing, { revocationOrder: () => "bank:test:revocation:v1", now: () => now }).request(A, k, cart(p.id!));
       expect(injected).toBe(true);
       expect(c.status).toBe("REVOKED");
       const rows = await store.journal(consentChain(p.id!)).all();
@@ -518,7 +522,7 @@ describe("id мандата — UUID v8 от (агент, хэш Idempotency-Key
 });
 
 describe("реквизиты до записи — отказ FIELD_INVALID, запись не пишется (журнал неизменяем)", () => {
-  const j = new ConsentJournal(new MemoryConsentStore(), { now: () => T0 });
+  const j = new ConsentJournal(new MemoryConsentStore(), { revocationOrder: () => "bank:test:revocation:v1", now: () => T0 });
   const C = { merchant_id: "MER-1042", items: [{ sku: "a", qty: 1, price: 100 }], total: 100 };
   it.each([
     ["principal_ref — телефон", { principal_ref: "79990000000" }, "principal_ref"],
@@ -561,7 +565,7 @@ describe.skipIf(!DATABASE_URL)("журнал согласий — PostgreSQL", (
   it.each(["consent_mandates", "consent_subjects", "core_journal"])(
     "%s: UPDATE, DELETE, TRUNCATE отвергаются (инвариант 6)",
     async (table) => {
-      const j = new ConsentJournal(new PgConsentStore(db.pool), { now: () => T0 });
+      const j = new ConsentJournal(new PgConsentStore(db.pool), { revocationOrder: () => "bank:test:revocation:v1", now: () => T0 });
       await j.request(A, key(), intent());
       const col = table === "consent_subjects" ? "salt" : table === "core_journal" ? "kind" : "agent_code";
       await expect(db.pool.query(`UPDATE ${table} SET ${col} = ${col}`)).rejects.toThrow(/только добавление/);
@@ -581,7 +585,7 @@ describe.skipIf(!DATABASE_URL)("журнал согласий — PostgreSQL", (
 
   it("подменённый предмет (вставка в обход журнала) — ConsentIntegrityError", async () => {
     const store = new PgConsentStore(db.pool);
-    const j = new ConsentJournal(store, { now: () => T0 });
+    const j = new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => T0 });
     const id = "mnd_22222222-2222-4222-8222-222222222222";
     const chain = consentChain(id);
     await store.insertMandate({ id, chain, agent_code: A, created_at: T0.toISOString(), terms_hash: "0".repeat(64) });
@@ -596,6 +600,7 @@ describe.skipIf(!DATABASE_URL)("журнал согласий — PostgreSQL", (
       mode: "IMMEDIATE",
       parent_id: null,
       agent_code: A,
+      revocation_order: "bank:test:revocation:v1",
       subject_commitment: subjectCommitment("A".repeat(43), { subject: "молоко", cart: null }),
     };
     await new AsyncHashChainJournal(store.journal(chain), () => T0.toISOString()).append("MANDATE_REQUESTED", id, payload);
@@ -604,7 +609,7 @@ describe.skipIf(!DATABASE_URL)("журнал согласий — PostgreSQL", (
 
   it("одновременные CART к одному родителю: цепочка не раздваивается, у каждого записанного свой seq", async () => {
     const store = new PgConsentStore(db.pool);
-    const j = new ConsentJournal(store, { now: () => T0 });
+    const j = new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => T0 });
     const p = await j.request(A, key(), intent());
     await sign(store, p.id!);
     const results = await Promise.allSettled(Array.from({ length: 8 }, () => j.request(A, key(), cart(p.id!))));
@@ -623,7 +628,7 @@ describe.skipIf(!DATABASE_URL)("журнал согласий — PostgreSQL", (
 describe("подмена записи журнала и предмета — ConsentIntegrityError (память)", () => {
   it("изменённый payload в хранилище — цепочка не проходит verify", async () => {
     const store = new MemoryConsentStore();
-    const j = new ConsentJournal(store, { now: () => T0 });
+    const j = new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => T0 });
     const m = await j.request(A, key(), intent());
     const rows = (await store.journal(consentChain(m.id!)).all()) as JournalEntry[];
     // Подставная поломка: замороженная запись подменяется целиком в массиве хранилища.
@@ -633,7 +638,7 @@ describe("подмена записи журнала и предмета — Con
 
   it("предмет не читается как JSON — ConsentIntegrityError, а не SyntaxError", async () => {
     const store = new MemoryConsentStore();
-    const j = new ConsentJournal(store, { now: () => T0 });
+    const j = new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => T0 });
     const id = "mnd_55555555-5555-4555-8555-555555555555";
     await store.insertMandate({ id, chain: consentChain(id), agent_code: A, created_at: T0.toISOString(), terms_hash: "0".repeat(64) });
     await store.insertSubject({ mandate_id: id, salt: "A".repeat(43), subject_json: "{не json" });

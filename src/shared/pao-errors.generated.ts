@@ -1,8 +1,8 @@
 // Сгенерировано scripts/gen-shared.mjs из docs/core/agent-protocol.yaml (x-pao-errors) — не править вручную (РП16).
-// Протокол агентских операций (ПАО) 1.3.0, sha-256 4569a86b94a8e2590e799ebc83b24a329ed083f68edb01c8a9dfab77d28eeca4
+// Протокол агентских операций (ПАО) 1.4.0, sha-256 32d2c7b271969fae1cadc412878b5957d8b570fcf22d7da5024ee15510a82df2
 
-export const PAO_SPEC_VERSION = "1.3.0";
-export const PAO_SPEC_SHA256 = "4569a86b94a8e2590e799ebc83b24a329ed083f68edb01c8a9dfab77d28eeca4";
+export const PAO_SPEC_VERSION = "1.4.0";
+export const PAO_SPEC_SHA256 = "32d2c7b271969fae1cadc412878b5957d8b570fcf22d7da5024ee15510a82df2";
 export const PAO_RETRY_VALUES = ["never","after_fix","same_key","new_key","after_human"] as const;
 export const PAO_ERROR_CODES = ["AGENT_UNKNOWN","AGENT_SUSPENDED","AGENT_KEY_REVOKED","SIGNATURE_INVALID","MANDATE_NOT_FOUND","MANDATE_EXPIRED","MANDATE_REVOKED","MANDATE_SCOPE","PRINCIPAL_SIGNATURE_PENDING","LIMIT_EXCEEDED","STATE_UNAVAILABLE","CONFIRMATION_REQUIRED","CREDENTIAL_INVALID","CREDENTIALS_FORBIDDEN","IDEMPOTENCY_REQUIRED","IDEMPOTENCY_CONFLICT","RATE_LIMITED","UPSTREAM_UNAVAILABLE","REQUEST_INVALID","KEY_INVALID"] as const;
 

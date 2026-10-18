@@ -47,7 +47,14 @@ export interface MandateSubject {
  * merchant_scope открыт осознанно: по нему ADP проверяет продавца (SPEC §5 п. 6, MANDATE_SCOPE).
  * principal_ref — только непрозрачный идентификатор клиента, не телефон, не ФИО, не номер карты (инвариант 1).
  */
-export type MandateTerms = Omit<MandateRequest, "subject" | "cart"> & { readonly agent_code: string };
+export type MandateTerms = Omit<MandateRequest, "subject" | "cart"> & {
+  readonly agent_code: string;
+  /**
+   * Порядок отзыва (A7 п. 2.1–2.2, РП37): ссылка на соглашение банка с клиентом, например
+   * `bank:<participant_code>:revocation:v1`. Задаёт Платформа из записи участника, не агент; входит в Mandate.hash.
+   */
+  readonly revocation_order: string;
+};
 
 /** payload записи MANDATE_REQUESTED: открытые реквизиты и хэш-обязательство предмета. */
 export type MandateRequestedPayload = MandateTerms & { readonly subject_commitment: string };

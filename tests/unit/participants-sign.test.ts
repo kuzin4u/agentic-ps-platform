@@ -9,11 +9,12 @@ import { AsyncHashChainJournal, canonicalJson } from "@kuzin4u/agentic-core";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ConsentJournal } from "../../src/consent/journal.js";
-import type { MandateDecisionPayload } from "../../src/consent/model.js";
+import { mandateIdFor, type MandateDecisionPayload } from "../../src/consent/model.js";
 import { MemoryConsentStore, PgConsentStore, type ConsentStore } from "../../src/consent/store.js";
 import { createIssuerEmulator, type IssuerEmulator } from "../../src/env/issuer/index.js";
 import {
   loadTrustedParticipants,
+  STAND_REVOCATION_ORDER,
   PARTICIPANT_SIGNATURE_CONTEXT,
   participantSigningInput,
   STAND_ISSUER_CODE,
@@ -24,7 +25,7 @@ import {
 import { jwkThumbprint } from "../../src/registry/keys.js";
 import { buildServer } from "../../src/server.js";
 import { createStand } from "../../src/stand/index.js";
-import type { MandateRequest } from "../../src/shared/pao.js";
+import type { MandateRequest, MandateV14 } from "../../src/shared/pao.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 import { signedInject } from "../support/signed-inject.js";
@@ -61,7 +62,7 @@ function liveKey(code: string): { key: TrustedParticipantKey; sign: (r: Particip
   const public_key = publicKey.export({ type: "spki", format: "der" }).toString("base64");
   const { crv, kty, x } = publicKey.export({ format: "jwk" }) as { crv: string; kty: string; x: string };
   return {
-    key: { participant_code: code, kid: jwkThumbprint({ crv, kty, x }), alg: "ed25519", public_key },
+    key: { participant_code: code, kid: jwkThumbprint({ crv, kty, x }), alg: "ed25519", public_key, revocation_order: `bank:${code}:revocation:v1` },
     sign: (r) => edSign(null, participantSigningInput(r), privateKey).toString("base64url"),
   };
 }
@@ -74,7 +75,7 @@ interface Ctx {
 }
 
 function setup(store: ConsentStore): Ctx {
-  const consent = new ConsentJournal(store, { now: () => T0 });
+  const consent = new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => T0 });
   const emu = createIssuerEmulator();
   const trusted = new TrustedParticipants([emu.trustedKey], { stand: true });
   const app = buildServer({ env: "dev", participants: { trusted, consent, params: POLICY } });
@@ -239,7 +240,13 @@ function suite(open: () => Promise<ConsentStore>) {
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     const pk = publicKey.export({ type: "spki", format: "der" }).toString("base64");
     const { crv, kty, x } = publicKey.export({ format: "jwk" }) as { crv: string; kty: string; x: string };
-    const k: TrustedParticipantKey = { participant_code: "bank-test", kid: jwkThumbprint({ crv, kty, x }), alg: "ed25519", public_key: pk };
+    const k: TrustedParticipantKey = {
+      participant_code: "bank-test",
+      kid: jwkThumbprint({ crv, kty, x }),
+      alg: "ed25519",
+      public_key: pk,
+      revocation_order: "bank:bank-test:revocation:v1",
+    };
     const t2 = new TrustedParticipants([k], { stand: false });
     const rec = { ...r, participant_code: "bank-test", kid: k.kid };
     const sigOf = (obj: unknown) => edSign(null, Buffer.from(canonicalJson(obj), "utf8"), privateKey).toString("base64url");
@@ -254,7 +261,9 @@ function suite(open: () => Promise<ConsentStore>) {
     expect((await post(c, m.id, body(r, own.sign(r)))).status).toBe(401);
     expect((await post(c, m.id, body({ ...r, token_consent: false }, sigEmu))).status).toBe(401);
     expect((await post(c, m.id, body({ ...r, kid: own.key.kid }, sigEmu))).status).toBe(401);
-    expect((await post(c, m.id, body(r, sigEmu.slice(0, -2) + "AA"))).status).toBe(401);
+    // Испорченная подпись: другой знак в середине (не в хвосте — там лишние биты base64url).
+    const flipped = sigEmu.slice(0, 10) + (sigEmu[10] === "A" ? "B" : "A") + sigEmu.slice(11);
+    expect((await post(c, m.id, body(r, flipped))).status).toBe(401);
     expect(await decisions(c, m.id)).toEqual([]);
   });
 
@@ -309,6 +318,92 @@ describe.skipIf(!DATABASE_URL)("подпись принципала — PostgreS
   suite(async () => new PgConsentStore(db.pool));
 });
 
+describe("порядок отзыва в мандате (РП37, № 22)", () => {
+  it("задаёт Платформа из записи участника: в ответе, в записи журнала и в Mandate.hash; поле от агента игнорируется", async () => {
+    const c = setup(new MemoryConsentStore());
+    const consent = new ConsentJournal(new MemoryConsentStore(), {
+      now: () => T0,
+      revocationOrder: () => new TrustedParticipants([c.emu.trustedKey], { stand: true }).revocationOrder(),
+    });
+    const m: MandateV14 = await consent.request(A, key(), { ...intent(), revocation_order: "agent:own" } as MandateRequest);
+    expect(m.revocation_order).toBe(STAND_REVOCATION_ORDER);
+    expect(m.agent_code).toBe(A);
+    // Хэш записи покрывает порядок отзыва: банк подписывает мандат вместе с ним.
+    const other = await new ConsentJournal(new MemoryConsentStore(), { now: () => T0, revocationOrder: () => "bank:x:revocation:v1" }).request(
+      A,
+      createHash("sha256").update("k").digest("hex"),
+      intent(),
+    );
+    const same = await new ConsentJournal(new MemoryConsentStore(), { now: () => T0, revocationOrder: () => STAND_REVOCATION_ORDER }).request(
+      A,
+      createHash("sha256").update("k").digest("hex"),
+      intent(),
+    );
+    expect(other.id).toBe(same.id);
+    expect(other.hash).not.toBe(same.hash);
+  });
+
+  it("порядок отзыва не задан — мандат не пишется (ConsentStateUnknown → 503), индекса нет", async () => {
+    const store = new MemoryConsentStore();
+    const j = new ConsentJournal(store, { now: () => T0, revocationOrder: () => undefined });
+    const k = key();
+    await expect(j.request(A, k, intent())).rejects.toThrow(/порядок отзыва/);
+    expect(await store.getMandate(mandateIdFor(A, k))).toBeUndefined();
+  });
+
+  it("повтор записанного мандата после смены порядка у участника — тот же мандат с записанным порядком (ПАО §2)", async () => {
+    let ro = "bank:a:revocation:v1";
+    const j = new ConsentJournal(new MemoryConsentStore(), { now: () => T0, revocationOrder: () => ro });
+    const k = key();
+    const first = await j.request(A, k, intent());
+    ro = "bank:a:revocation:v2";
+    const again: MandateV14 = await j.request(A, k, intent());
+    expect(again.id).toBe(first.id);
+    expect(again.hash).toBe(first.hash);
+    expect(again.revocation_order).toBe("bank:a:revocation:v1");
+  });
+
+  it("CART наследует порядок отзыва родителя, даже если у участника он сменился (РП37 п. 6)", async () => {
+    let ro = "bank:a:revocation:v1";
+    const store = new MemoryConsentStore();
+    const j = new ConsentJournal(store, { now: () => T0, revocationOrder: () => ro });
+    const p = await j.request(A, key(), intent());
+    const row = (await store.getMandate(p.id!))!;
+    await new AsyncHashChainJournal(store.journal(row.chain), () => T0.toISOString()).append("MANDATE_SIGNED", p.id!, {}, p.id!);
+    ro = "bank:a:revocation:v2";
+    const c: MandateV14 = await j.request(A, key(), cart(p.id!));
+    expect(c.revocation_order).toBe("bank:a:revocation:v1");
+  });
+
+  it("запись мандата без порядка отзыва (до РП37) не читается как действующая — ConsentStateUnknown (A7 п. 2.2)", async () => {
+    const store = new MemoryConsentStore();
+    const j = new ConsentJournal(store, { now: () => T0, revocationOrder: () => STAND_REVOCATION_ORDER });
+    const m = await j.request(A, key(), intent());
+    const row = (await store.getMandate(m.id!))!;
+    // Та же цепочка, но запись с payload без revocation_order — как записанная до РП37.
+    const legacyStore = new MemoryConsentStore();
+    await legacyStore.insertMandate(row);
+    const subj = (await store.getSubject(m.id!))!;
+    await legacyStore.insertSubject(subj);
+    const head = (await store.journal(row.chain).all())[0]!;
+    const { revocation_order: _ro, ...legacy } = head.payload as Record<string, unknown>;
+    void _ro;
+    await new AsyncHashChainJournal(legacyStore.journal(row.chain), () => head.at).append("MANDATE_REQUESTED", m.id!, legacy, null);
+    const lj = new ConsentJournal(legacyStore, { now: () => T0, revocationOrder: () => STAND_REVOCATION_ORDER });
+    await expect(lj.get(m.id!, A)).rejects.toThrow(/порядка отзыва/);
+  });
+
+  it("TrustedParticipants: боевой участник важнее эмулятора; пусто — undefined; разные порядки у одного участника и неверная форма — ошибка запуска", () => {
+    const a = liveKey("bank-a");
+    expect(new TrustedParticipants([], { stand: false }).revocationOrder()).toBeUndefined();
+    expect(new TrustedParticipants([createIssuerEmulator().trustedKey], { stand: true }).revocationOrder()).toBe(STAND_REVOCATION_ORDER);
+    expect(new TrustedParticipants([createIssuerEmulator().trustedKey, a.key], { stand: true }).revocationOrder()).toBe("bank:bank-a:revocation:v1");
+    const a2 = liveKey("bank-a");
+    expect(() => new TrustedParticipants([a.key, { ...a2.key, revocation_order: "bank:bank-a:revocation:v2" }], { stand: false })).toThrow(/разные revocation_order/);
+    expect(() => new TrustedParticipants([{ ...a.key, revocation_order: "" }], { stand: false })).toThrow(/revocation_order/);
+  });
+});
+
 describe("доверенные участники до PS-20 (РП36 п. 4, доп.)", () => {
   const dir = mkdtempSync(join(tmpdir(), "participants-"));
   const file = (name: string, doc: unknown): string => {
@@ -356,6 +451,9 @@ describe("доверенные участники до PS-20 (РП36 п. 4, до
     expect(() => loadTrustedParticipants(join(dir, "bad.json"), { stand: false })).toThrow(/не JSON/);
     expect(() => loadTrustedParticipants(file("extra.json", { participants: [{ ...a.key, private_key: "x" }] }), { stand: false })).toThrow();
     expect(() => loadTrustedParticipants(file("top.json", { participants: [a.key], more: 1 }), { stand: false })).toThrow();
+    const { revocation_order: _r, ...noOrder } = a.key;
+    void _r;
+    expect(() => loadTrustedParticipants(file("noorder.json", { participants: [noOrder] }), { stand: false })).toThrow(/revocation_order/);
     expect(() => new TrustedParticipants([{ ...a.key, kid: "x" }], { stand: false })).toThrow(/kid/);
     // Нейтраль Ed25519 (точка малого порядка) в DER SPKI.
     const weak = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from("01" + "00".repeat(31), "hex")]).toString("base64");

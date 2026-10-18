@@ -62,10 +62,10 @@ export function createStand(): Stand {
   // Идемпотентность — память ядра (РП30 п. 6): стенд живёт в процессе теста агента.
   const idempotency = paoIdempotency({ ttlSec: params.idempotency_ttl_sec, now: () => now().getTime() });
   // Журнал согласий — память ядра (РП30 п. 6), часы стенда.
-  const consent = new ConsentJournal(new MemoryConsentStore(), { now });
   // Банк стенда — эмулятор эмитента с ключом в памяти; другого доверенного участника на стенде нет (РП36 доп.).
   const emulator = createIssuerEmulator();
   const trusted = new TrustedParticipants([emulator.trustedKey], { stand: true });
+  const consent = new ConsentJournal(new MemoryConsentStore(), { now, revocationOrder: () => trusted.revocationOrder() });
   const app = buildServer({
     env: "dev",
     pao: { verifier, keys, idempotency, params, consent },

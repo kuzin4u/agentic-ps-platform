@@ -42,7 +42,7 @@ const oneOf = <T extends string>(v: unknown, xs: readonly T[]): v is T => typeof
 
 /** Открытые реквизиты — явным перечнем; поля тела сверх перечня (signature_type, status, pan…) не попадают в запись. */
 /** now = null — без проверки срока: сверка повтора с записанным мандатом в любой срок (РП33 доп.). */
-export function pickTerms(agent_code: string, req: MandateRequest, now: Date | null): MandateTerms {
+export function pickTerms(agent_code: string, req: MandateRequest, now: Date | null, revocation_order: string): MandateTerms {
   const r = req as Partial<Record<keyof MandateRequest, unknown>>;
   if (!oneOf(r.type, ["INTENT", "CART"] as const)) reject("FIELD_INVALID", "type");
   const parent_id = (r.parent_id ?? null) as string | null;
@@ -75,6 +75,8 @@ export function pickTerms(agent_code: string, req: MandateRequest, now: Date | n
     type: r.type as MandateTerms["type"],
     parent_id,
     agent_code,
+    // От Платформы (РП37): поле с тем же именем в теле агента сюда не попадает.
+    revocation_order,
     amount_limit: r.amount_limit as number,
     currency: r.currency as string,
     ...(r.period !== undefined ? { period: r.period as string } : {}),

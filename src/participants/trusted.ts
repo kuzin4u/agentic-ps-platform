@@ -27,7 +27,14 @@ export interface TrustedParticipantKey {
   readonly alg: string;
   /** DER SPKI, каноническая запись base64 (как у агентов, РП23 доп. 6). */
   readonly public_key: string;
+  /** Порядок отзыва — ссылка на соглашение банка с клиентом (РП37); у всех ключей участника одна. */
+  readonly revocation_order: string;
 }
+
+/** Порядок отзыва на стенде (РП37 п. 5). */
+export const STAND_REVOCATION_ORDER = "bank:stand:issuer-emulator:revocation:v1";
+
+const REVOCATION_ORDER = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/;
 
 export interface TrustedParticipantsOptions {
   /** Стенд (РП25): разрешён ключ эмулятора эмитента. В рабочем сервере — false. */
@@ -36,6 +43,8 @@ export interface TrustedParticipantsOptions {
 
 export class TrustedParticipants {
   private readonly keys = new Map<string, KeyObject>();
+  /** Порядок отзыва по участнику (РП37). */
+  private readonly orders = new Map<string, string>();
 
   constructor(list: readonly TrustedParticipantKey[], opts: TrustedParticipantsOptions) {
     const live = new Set<string>();
@@ -50,6 +59,14 @@ export class TrustedParticipants {
       } else {
         live.add(k.participant_code);
       }
+      if (typeof k.revocation_order !== "string" || !REVOCATION_ORDER.test(k.revocation_order)) {
+        throw new Error(`Доверенные участники: недопустимый revocation_order у ${k.participant_code} (РП37)`);
+      }
+      const known = this.orders.get(k.participant_code);
+      if (known !== undefined && known !== k.revocation_order) {
+        throw new Error(`Доверенные участники: у ${k.participant_code} разные revocation_order в записях ключей (РП37)`);
+      }
+      this.orders.set(k.participant_code, k.revocation_order);
       // Тот же разбор, что у ключей агентов: каноническая запись, ed25519, слабые ключи — отказ.
       const parsed = parseKey([ED25519], k.alg, k.public_key);
       if (!parsed) throw new Error(`Доверенные участники: ключ ${k.participant_code}/${String(k.kid)} не принят (ed25519, DER SPKI base64)`);
@@ -64,6 +81,15 @@ export class TrustedParticipants {
           `(Б2, формат principal_ref) допустим не больше ${MAX_LIVE_PARTICIPANTS} (РП36 доп.); второй банк — решение владельца`,
       );
     }
+  }
+
+  /**
+   * Порядок отзыва для нового мандата (РП37): боевой участник (он один, РП36 доп. п. 8), иначе эмулятор стенда;
+   * участников нет — undefined, мандат не пишется (503).
+   */
+  revocationOrder(): string | undefined {
+    for (const [code, order] of this.orders) if (code !== STAND_ISSUER_CODE) return order;
+    return this.orders.get(STAND_ISSUER_CODE);
   }
 
   /** Подпись участника над записью; неизвестный участник или ключ — false, как неверная подпись. */
@@ -100,7 +126,7 @@ export const participantSigningInput = (r: ParticipantSignedRecord): Buffer =>
   );
 
 /**
- * Список доверенных ключей из файла PARTICIPANT_KEYS_PATH: `{"participants": [{participant_code, kid, alg, public_key}]}`.
+ * Список доверенных ключей из файла PARTICIPANT_KEYS_PATH: `{"participants": [{participant_code, kid, alg, public_key, revocation_order}]}`.
  * Пути нет — пустой список (подпись отклоняется всем). Файл не читается, не JSON, лишние поля — отказ запуска.
  */
 export function loadTrustedParticipants(path: string | undefined, opts: TrustedParticipantsOptions): TrustedParticipants {
@@ -117,8 +143,8 @@ export function loadTrustedParticipants(path: string | undefined, opts: TrustedP
   }
   for (const k of list) {
     const fields = k !== null && typeof k === "object" ? Object.keys(k).sort().join(",") : "";
-    if (fields !== "alg,kid,participant_code,public_key") {
-      throw new Error(`PARTICIPANT_KEYS_PATH=${path}: запись — ровно participant_code, kid, alg, public_key`);
+    if (fields !== "alg,kid,participant_code,public_key,revocation_order") {
+      throw new Error(`PARTICIPANT_KEYS_PATH=${path}: запись — ровно participant_code, kid, alg, public_key, revocation_order`);
     }
   }
   return new TrustedParticipants(list as TrustedParticipantKey[], opts);

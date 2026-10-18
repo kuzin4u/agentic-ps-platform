@@ -76,7 +76,7 @@ describe("POST /pao/v1/mandates", () => {
     shiftMs = 0;
     clockMs = 0;
     failDone = false;
-    const consent = new ConsentJournal(store, { now: () => new Date(Date.now() + shiftMs) });
+    const consent = new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => new Date(Date.now() + shiftMs) });
     idem = paoIdempotency({ ttlSec: params.idempotency_ttl_sec });
     // Сбой отметки DONE: обработчик исполнен, результат не сохранён — ядро снова отдаст ключ (аренда истекла).
     const idempotency: PaoIdempotency = (code) => ({

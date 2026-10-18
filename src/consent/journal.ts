@@ -65,6 +65,11 @@ const THRESHOLD_CURRENCY = "RUB";
 
 export interface ConsentJournalOptions {
   readonly now?: () => Date;
+  /**
+   * Порядок отзыва из записи участника (РП37; до PS-20 — PARTICIPANT_KEYS_PATH, TrustedParticipants.revocationOrder).
+   * undefined — мандат не пишется: ConsentStateUnknown → 503 STATE_UNAVAILABLE (fail-closed, инвариант 3).
+   */
+  readonly revocationOrder: () => string | undefined;
 }
 
 /** Мандат, прочитанный из журнала: цепочка проверена, предмет сверен с обязательством. */
@@ -77,14 +82,16 @@ interface LoadedMandate {
 
 export class ConsentJournal {
   private readonly now: () => Date;
+  private readonly revocationOrder: () => string | undefined;
   /** Запись решения по одному мандату — по очереди внутри процесса; между экземплярами — дубль терпит свёртка. */
   private readonly signing = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly store: ConsentStore,
-    opts: ConsentJournalOptions = {},
+    opts: ConsentJournalOptions,
   ) {
     this.now = opts.now ?? (() => new Date());
+    this.revocationOrder = opts.revocationOrder;
   }
 
   /** beforeWrite — перед каждой попыткой вставки: ядро повторяет вставку при гонке конца цепочки (РП33 доп. п. 8). */
@@ -122,7 +129,7 @@ export class ConsentJournal {
     const row = await this.store.getMandate(id);
     if (row) return this.resume(row, agent_code, req, beforeWrite);
     const now = this.now();
-    const terms = pickTerms(agent_code, req, now);
+    const terms = await this.withRevocationOrder(id, agent_code, pickTerms(agent_code, req, now, ""));
     const subj = pickSubject(req, terms.amount_limit);
     const chain = await this.chainFor(id, agent_code, terms, subj);
     beforeWrite();
@@ -154,7 +161,8 @@ export class ConsentJournal {
     let terms: MandateTerms;
     let subj: MandateSubject;
     try {
-      terms = pickTerms(agent_code, req, null);
+      // Порядок отзыва — не из тела агента: у записанного мандата — записанный, иначе — как у новой записи (РП37 п. 5).
+      terms = pickTerms(agent_code, req, null, "");
       subj = pickSubject(req, terms.amount_limit);
     } catch (err) {
       if (err instanceof ConsentRequestRejected) throw new ConsentKeyReused(row.id);
@@ -162,18 +170,36 @@ export class ConsentJournal {
     }
     const m = await this.load(row.id, agent_code);
     if (m) {
-      if (!sameTerms(m.head.payload as MandateRequestedPayload, terms) || canonicalJson(m.subj) !== canonicalJson(subj)) {
+      const recorded = m.head.payload as MandateRequestedPayload;
+      // Сверка — только реквизитов агента: смена конфигурации участника после записи повтор не ломает (ПАО §2).
+      terms = { ...terms, revocation_order: recorded.revocation_order };
+      if (!sameTerms(recorded, terms) || canonicalJson(m.subj) !== canonicalJson(subj)) {
         throw new ConsentKeyReused(row.id);
       }
       return this.toMandate(row.id, m.head, m.subj, m.status);
     }
+    terms = await this.withRevocationOrder(row.id, agent_code, terms);
     const expectedChain = terms.parent_id ? (await this.store.getMandate(terms.parent_id))?.chain : consentChain(row.id);
     if (row.chain !== expectedChain || row.terms_hash !== termsHash(terms)) throw new ConsentKeyReused(row.id);
     const s = await this.store.getSubject(row.id);
     if (s && s.subject_json !== canonicalJson(subj)) throw new ConsentKeyReused(row.id);
-    const fresh = pickTerms(agent_code, req, this.now());
+    const fresh = pickTerms(agent_code, req, this.now(), terms.revocation_order);
     await this.chainFor(row.id, agent_code, fresh, subj);
     return this.complete(row.id, row.chain, fresh, subj, s?.salt, beforeWrite);
+  }
+
+  /**
+   * Порядок отзыва новой записи (РП37): участника нет — мандат не пишется (503, и для CART). Корневой мандат — из записи
+   * участника; CART под INTENT — порядок родителя (тот же банк и то же соглашение, РП37 п. 6); родителя нет — значение
+   * участника, отказ даст chainFor. Прерванная запись, доделываемая после смены конфигурации, — ConsentKeyReused
+   * (хэш реквизитов индекса не совпадёт; РП37 п. 5).
+   */
+  private async withRevocationOrder(id: string, agent_code: string, terms: MandateTerms): Promise<MandateTerms> {
+    const ro = this.revocationOrder();
+    if (ro === undefined) throw new ConsentStateUnknown(id, "порядок отзыва участника не задан (РП37)");
+    const parent = terms.parent_id ? await this.load(terms.parent_id, agent_code) : undefined;
+    const inherited = parent ? (parent.head.payload as MandateRequestedPayload).revocation_order : ro;
+    return { ...terms, revocation_order: inherited };
   }
 
   /** Цепочка записи: своя у корневого мандата; у CART — родителя, после проверки родителя и сужения (A7 п. 5). */
@@ -321,6 +347,10 @@ export class ConsentJournal {
     }
     if (subjectCommitment(s.salt, subj) !== payload.subject_commitment) {
       throw new ConsentIntegrityError(id, "предмет не совпадает с обязательством");
+    }
+    // После проверок целостности. Без порядка отзыва мандат недействителен (A7 п. 2.2, РП37): запись до РП37 не читается как действующая.
+    if (typeof payload.revocation_order !== "string" || payload.revocation_order === "") {
+      throw new ConsentStateUnknown(id, "нет порядка отзыва в записи (РП37)");
     }
     const now = this.now();
     const own = deriveStatus(id, entries, now);

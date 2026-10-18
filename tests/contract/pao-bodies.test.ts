@@ -20,7 +20,7 @@ describe("тело POST /pao/v1/agent/keys — по схеме ПАО", () => {
     expect(Object.keys(schema.properties).sort()).toEqual([...KEY_REGISTRATION_REQUIRED].sort());
   });
 
-  // 403 AGENT_SUSPENDED метод отдаёт (РП23 п. 6.3), но в ответах YAML его нет — расхождение, к ПАО 1.4.0 (STATUS).
+  // 403 AGENT_SUSPENDED метод отдаёт (РП23 п. 6.3), но в ответах YAML его нет — расхождение, к ПАО 1.5.0 (РП37, STATUS).
   it("ответы метода — по РП31 п. 3: 201, 400, 401, 409, 422, 503", () => {
     expect(Object.keys(op.responses).sort()).toEqual(["201", "400", "401", "409", "422", "503"]);
     expect(pao.paths["/pao/v1/agent/keys"].post.parameters.map((p: { $ref?: string }) => p.$ref)).toContain(
