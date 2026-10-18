@@ -12,6 +12,7 @@
 | `revocation_propagation_max_ms` | 1 000 | Отзыв ключа или мандата до ADP и шлюза | прогон (A7 п. 6.3 «без задержки») |
 | `reservation_ttl_sec` | 7 дней | Жизнь резерва без клиринга | правила ПС о сроке авторизации |
 | `event_reorder_window_ms` / `event_retry_max` | 5 000 / 8 | Порядок событий и доставка агенту | прогон |
+| `event_page_max` | 100 | Не больше стольких событий в одном ответе ленты `GET /pao/v1/events` (РП39 п. 7); дальше — следующий запрос с `after` | прогон |
 | `cryptogram_ttl_sec` | 900 | Срок одноразовой криптограммы | прогон, токен-сервис |
 | `order_hold_sec` | 900 | Ожидание подтверждения | прогон (A7 п. 7.2) |
 | `confirm_above_kop` | 300 000 | Порог подтверждения | данные пилота (В2, Р6) |
@@ -33,7 +34,7 @@
 
 | Правило | Почему |
 |---|---|
-| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
+| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
 | Целые ≥ 0: `bypass_overhead_ms`, `event_reorder_window_ms`, `key_overlap_days` | ноль допустим |
 | `split_min_ops` ≥ 2 | дробление — от двух операций |
 | `aoi_rollout_phase` ∈ 1…3 | A1 п. 8.3 |
@@ -53,3 +54,4 @@
 | 13.10.2026 | `merchant_rate_limit_per_min` | — | 6 000 | PS-12, CodeQL №82 `js/missing-rate-limiting`; решение владельца (РП29) |
 | 15.10.2026 | `idempotency_ttl_sec` | — | 86 400 | PS-05, Ш16; решение владельца (РП30) |
 | 16.10.2026 | `pao_rate_limit_per_30s` | — | 3 000 | PS-05, CodeQL №81 `js/missing-rate-limiting`, Ш12; решение владельца (РП32) |
+| 18.10.2026 | `event_page_max` | — | 100 | PS-08 К1.2, лента `GET /pao/v1/events`; решение владельца (РП39 п. 7) |

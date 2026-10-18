@@ -5,6 +5,18 @@
 ставит владелец на коммит слияния в `main`. Версия ПАО — `info.version` в `docs/core/agent-protocol.yaml`, сверка копий —
 по `PAO_SPEC_SHA256` (`src/shared/pao-errors.generated.ts`). Записи до v0.4.0 — в описаниях PR и тегах.
 
+## Не выпущено
+
+PS-08 «Доставка событий агенту», PR #31. ПАО — по-прежнему 1.4.0, `PAO_SPEC_SHA256` не меняется (РП39 п. 8).
+
+- `GET /pao/v1/events?after=<event_id>` — лента событий агента: `mandate.signed`, `mandate.rejected`, `mandate.revoked`
+  (отзыв клиентом и `relinquish`), `data` — только `{mandate_id}`. Не больше `event_page_max` за ответ. Чужой,
+  неизвестный или не по форме `after` — 400 `REQUEST_INVALID` (в YAML — с ПАО 1.5.0).
+- События не подписаны до ПАО 1.5.0: событие — сигнал, статус берётся через `GET /pao/v1/mandates/{id}` (РП39 п. 6).
+- Новый параметр стенда `event_page_max` (100): `params.stand.json` без него не загружается — тем, кто подаёт свой
+  `PARAMS_PATH`, ключ нужно добавить.
+- Миграция `sql/101_events.sql` (таблица `pao_events`).
+
 ## v0.4.0 — 18.10.2026
 
 PS-06 «Журнал согласий (П2)», PR #30. ПАО 1.4.0, `PAO_SPEC_SHA256` =

@@ -12,6 +12,7 @@ import type { Params } from "../shared/config.js";
 import type { AgentSelf } from "../shared/pao.js";
 import { keyRegistrationBody, mandateRequestBody } from "./body.js";
 import { consentErrorReply } from "./consent-errors.js";
+import { EVENT_ID, EventCursorUnknown } from "./events.js";
 import { paoError, type PaoErrorReply } from "./errors.js";
 import {
   assertHandlerBudget,
@@ -32,7 +33,7 @@ export interface PaoDeps {
   readonly idempotency: PaoIdempotency;
   /** Журнал согласий (П2): запрос мандата по ПАО. */
   readonly consent: ConsentJournal;
-  readonly params: Pick<Params, "unavailable_retry_after_sec" | "pao_rate_limit_per_30s">;
+  readonly params: Pick<Params, "unavailable_retry_after_sec" | "pao_rate_limit_per_30s" | "event_page_max">;
   /** Монотонные часы предела обработчика (РП33 доп.); по умолчанию performance.now — в тестах подменяются. */
   readonly clock?: () => number;
 }
@@ -283,6 +284,24 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       return ev;
     })(req, reply),
   );
+
+  // Лента событий этого агента (ПАО §5; РП39 п. 7): после курсора after, по номеру, не больше event_page_max.
+  // after не по форме, пустой или повторённый — 400 REQUEST_INVALID, как и чужой или неизвестный (одинаково).
+  // Ответы 400/401/403/503 объявляются в ПАО 1.5.0 (РП39 п. 8, № 20). Событие — сигнал, статус — через GET мандата.
+  app.get<{ Querystring: Record<string, unknown> }>("/pao/v1/events", async (req, reply) => {
+    const agent = req.paoAgent as AgentRecord;
+    const after = req.query.after;
+    if (after !== undefined && (typeof after !== "string" || !EVENT_ID.test(after))) {
+      return send(reply, paoError("REQUEST_INVALID", "ПАО §5"));
+    }
+    try {
+      return reply.code(200).send(await deps.consent.events(agent.agent_code, after, deps.params.event_page_max));
+    } catch (err) {
+      if (err instanceof EventCursorUnknown) return send(reply, paoError("REQUEST_INVALID", "ПАО §5"));
+      req.log.error({ err }, "ПАО: сбой ленты событий");
+      return send(reply, paoError("UPSTREAM_UNAVAILABLE"));
+    }
+  });
 }
 
 /** Тело отказа агента от полномочий — пустое (РП38 п. 3). */

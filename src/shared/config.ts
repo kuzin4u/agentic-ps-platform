@@ -25,6 +25,8 @@ export interface Params {
   readonly reservation_ttl_sec: number;
   readonly event_reorder_window_ms: number;
   readonly event_retry_max: number;
+  /** Не больше стольких событий в ответе GET /pao/v1/events (РП39 п. 7). */
+  readonly event_page_max: number;
   readonly cryptogram_ttl_sec: number;
   readonly order_hold_sec: number;
   readonly confirm_above_kop: number;
@@ -88,6 +90,7 @@ const RULES: Record<keyof Params, Rule> = {
   reservation_ttl_sec: int(1),
   event_reorder_window_ms: int(0),
   event_retry_max: int(1),
+  event_page_max: int(1),
   cryptogram_ttl_sec: int(1),
   order_hold_sec: int(1),
   confirm_above_kop: int(1),

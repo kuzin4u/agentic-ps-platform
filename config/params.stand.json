@@ -8,6 +8,7 @@
   "reservation_ttl_sec": 604800,
   "event_reorder_window_ms": 5000,
   "event_retry_max": 8,
+  "event_page_max": 100,
   "cryptogram_ttl_sec": 900,
   "order_hold_sec": 900,
   "confirm_above_kop": 300000,
