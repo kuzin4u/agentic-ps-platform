@@ -5,17 +5,36 @@
 // (src/main.ts и его граф импортов) этот модуль не импортирует — проверяет tests/unit/stand-boundary.test.ts.
 import type { FastifyInstance } from "fastify";
 import { ConsentJournal, MemoryConsentStore } from "../consent/index.js";
+import type { MandateDecisionPayload } from "../consent/model.js";
+import { createIssuerEmulator } from "../env/issuer/index.js";
+import { TrustedParticipants } from "../participants/trusted.js";
 import { paoIdempotency } from "../pao/idempotency.js";
 import { PaoRequestVerifier } from "../pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore, type AdmissionDecision } from "../registry/index.js";
 import { buildServer } from "../server.js";
 import { loadParams, type Params } from "../shared/config.js";
 
+/** Решение клиента в приложении банка стенда; по умолчанию — подпись простой ЭП с согласием на токен (РП12). */
+export interface IssuerSignOptions {
+  readonly decision?: MandateDecisionPayload["decision"];
+  readonly signature_type?: MandateDecisionPayload["signature_type"];
+  readonly token_consent?: boolean;
+}
+
+/** Эмулятор эмитента стенда (РП36 п. 4): подписывает тестовым ключом и шлёт тот же POST /participants/v1/mandates/{id}/sign. */
+export interface StandIssuer {
+  readonly participant_code: string;
+  /** Ответ шлюза участников: 200 `{mandate_id, status}` или `{code}`; неизвестный мандат — 404 без обращения. */
+  sign(mandateId: string, opts?: IssuerSignOptions): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+}
+
 export interface Stand {
   readonly params: Params;
   readonly registry: AgentRegistry;
   readonly keys: AgentKeys;
   readonly app: FastifyInstance;
+  /** Приложение банка: подпись мандата клиентом (РП12, РП36). */
+  readonly issuer: StandIssuer;
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
   setClock(d: Date | undefined): void;
   /** Текущее время стенда — те же часы, что у реестра и эмуляторов. */
@@ -44,12 +63,43 @@ export function createStand(): Stand {
   const idempotency = paoIdempotency({ ttlSec: params.idempotency_ttl_sec, now: () => now().getTime() });
   // Журнал согласий — память ядра (РП30 п. 6), часы стенда.
   const consent = new ConsentJournal(new MemoryConsentStore(), { now });
-  const app = buildServer({ env: "dev", pao: { verifier, keys, idempotency, params, consent } });
+  // Банк стенда — эмулятор эмитента с ключом в памяти; другого доверенного участника на стенде нет (РП36 доп.).
+  const emulator = createIssuerEmulator();
+  const trusted = new TrustedParticipants([emulator.trustedKey], { stand: true });
+  const app = buildServer({
+    env: "dev",
+    pao: { verifier, keys, idempotency, params, consent },
+    participants: { trusted, consent, params },
+  });
+  const issuer: StandIssuer = {
+    participant_code: emulator.participant_code,
+    async sign(mandateId, opts = {}) {
+      // Экран мандата: хэш записи из журнала — тот же, что в Mandate.hash (РП36 п. 3).
+      const view = await consent.signingView(mandateId);
+      if (!view) return { statusCode: 404, body: { code: "MANDATE_NOT_FOUND" } };
+      const record = {
+        participant_code: emulator.participant_code,
+        kid: emulator.trustedKey.kid,
+        mandate_id: mandateId,
+        mandate_hash: view.hash,
+        decision: opts.decision ?? "SIGN",
+        signature_type: opts.signature_type ?? "simple",
+        signature_ref: `emu-sig-${mandateId}`,
+        token_consent: opts.token_consent ?? true,
+        signed_at: now().toISOString(),
+      } as const;
+      const { mandate_id: _id, ...body } = { ...record, signature: emulator.signRecord(record) };
+      void _id;
+      const res = await app.inject({ method: "POST", url: `/participants/v1/mandates/${mandateId}/sign`, payload: body });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+  };
   return {
     params,
     registry,
     keys,
     app,
+    issuer,
     setClock: (d) => (clock = d),
     now,
     admit: (application, operator) => registry.admit(application, { contour: "sandbox", operator }),

@@ -698,6 +698,12 @@ describe("deriveStatus — свёртка записей (A7 п. 4; инвари
     expect(deriveStatus(id, [head, child, e("MANDATE_SIGNED")], T0)).toBe("ACTIVE");
   });
 
+  it("точный дубль записанного решения (та же запись участника) пропускается — РП36 доп.", () => {
+    expect(deriveStatus(id, [head, e("MANDATE_SIGNED"), e("MANDATE_SIGNED")], T0)).toBe("ACTIVE");
+    expect(deriveStatus(id, [head, e("MANDATE_REJECTED"), e("MANDATE_REJECTED")], T0)).toBe("REJECTED");
+    expect(deriveStatus(id, [head, e("MANDATE_SIGNED"), e("MANDATE_REVOKED"), e("MANDATE_SIGNED")], T0)).toBe("REVOKED");
+  });
+
   it("REVOKED и REJECTED после valid_to не становятся EXPIRED; ACTIVE — становится", () => {
     const late = new Date("2026-10-25T00:00:00Z");
     expect(deriveStatus(id, [head, e("MANDATE_REVOKED")], late)).toBe("REVOKED");
@@ -708,7 +714,8 @@ describe("deriveStatus — свёртка записей (A7 п. 4; инвари
   it.each([
     ["неизвестный вид записи", [head, e("MANDATE_EXTENDED")]],
     ["повтор головной записи", [head, e("MANDATE_REQUESTED", id, null)]],
-    ["вторая подпись", [head, e("MANDATE_SIGNED"), e("MANDATE_SIGNED")]],
+    ["вторая подпись с другой записью", [head, e("MANDATE_SIGNED"), { ...e("MANDATE_SIGNED"), payload: { signature: "другая" } }]],
+    ["отказ после подписи", [head, e("MANDATE_SIGNED"), e("MANDATE_REJECTED")]],
     ["подпись после отзыва", [head, e("MANDATE_REVOKED"), e("MANDATE_SIGNED")]],
     ["подпись после отказа", [head, e("MANDATE_REJECTED"), e("MANDATE_SIGNED")]],
     ["нет записи мандата первой", [e("MANDATE_SIGNED")]],

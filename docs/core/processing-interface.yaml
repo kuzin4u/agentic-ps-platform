@@ -291,6 +291,7 @@ paths:
   /participants/v1/mandates/{id}/sign:
     post:
       summary: ПИ-8 Подпись мандата клиентом
+      description: "Решение клиента в приложении банка (РП12, РП36). Клиент подписывает мандат простой ЭП по договору с банком; банк присылает запись о решении, подписанную своим ключом Ed25519 над хэшем мандата (`mandate_hash` = `Mandate.hash`, хэш записи журнала). Подписываемая строка — canonicalJson записи с полем `context` = `pao:participant-mandate-signature:v1` и `mandate_id` из пути; в теле `context` и `mandate_id` нет. Ключ — из доверенных ключей участников (до PS-20 — конфигурация). Без подписи точки нет. Запись — только при `PENDING_SIGNATURE`; повтор той же подписи — 200 с текущим статусом, второй записи нет."
       parameters:
       - name: id
         in: path
@@ -303,11 +304,27 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
+              - participant_code
+              - kid
+              - mandate_hash
               - decision
               - signature_type
               - signature_ref
+              - token_consent
+              - signed_at
+              - signature
               properties:
+                participant_code:
+                  type: string
+                kid:
+                  type: string
+                  description: отпечаток JWK ключа участника по RFC 7638
+                mandate_hash:
+                  type: string
+                  pattern: ^[0-9a-f]{64}$
+                  description: Mandate.hash — SHA-256 hex записи MANDATE_REQUESTED
                 decision:
                   type: string
                   enum:
@@ -323,9 +340,46 @@ paths:
                   type: string
                 token_consent:
                   type: boolean
+                signed_at:
+                  type: string
+                  format: date-time
+                signature:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{86}$
+                  description: Ed25519 (64 байта), base64url без дополнения
       responses:
         '200':
-          description: OK
+          description: Решение записано или уже было записано этой подписью
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - mandate_id
+                - status
+                properties:
+                  mandate_id:
+                    type: string
+                  status:
+                    type: string
+                    enum:
+                    - PENDING_SIGNATURE
+                    - ACTIVE
+                    - REJECTED
+                    - REVOKED
+                    - EXPIRED
+        '400':
+          description: "`REQUEST_INVALID` — тело не по схеме или id не по маске. Тело любой ошибки ПИ-8 подписи — `{code}`, причина — только в журнале процесса"
+        '401':
+          description: "`SIGNATURE_INVALID` — подпись не проверена: неизвестный участник или ключ, неверная подпись, иная метка контекста"
+        '404':
+          description: "`MANDATE_NOT_FOUND` — после проверки подписи"
+        '409':
+          description: "`MANDATE_HASH_MISMATCH` — хэш не равен Mandate.hash; `MANDATE_NOT_PENDING` — решение уже записано другой подписью, мандат отозван, истёк или CART под не-ACTIVE родителем"
+        '422':
+          description: "`QUALIFIED_SIGNATURE_REQUIRED` — A7 п. 3.2: сумма или срок выше порогов `qualified_signature_above_*` или валюта не RUB, а подпись простая"
+        '503':
+          description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After"
   /participants/v1/principals/{ref}/revoke-all:
     post:
       summary: ПИ-8 Прекращение полномочий одним действием

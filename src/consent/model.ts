@@ -5,7 +5,8 @@ import type { Mandate, MandateRequest } from "../shared/pao.js";
 
 /**
  * Виды записей журнала согласий. Изменение мандата — только новой записью с parent_ref = id мандата (A7 п. 4.1).
- * MANDATE_REQUESTED пишет К1.3; подпись, отказ, отзыв и отказ агента — часть 2 PS-06.
+ * MANDATE_REQUESTED пишет К1.3; MANDATE_SIGNED и MANDATE_REJECTED — К2.4 по подписи участника (РП36); отзыв и отказ
+ * агента — К2.6.
  */
 export const MANDATE_KINDS = [
   "MANDATE_REQUESTED",
@@ -17,6 +18,23 @@ export const MANDATE_KINDS = [
 export type MandateKind = (typeof MANDATE_KINDS)[number];
 
 export type MandateStatus = NonNullable<Mandate["status"]>;
+
+/**
+ * payload записи MANDATE_SIGNED / MANDATE_REJECTED (РП36 доп.): запись участника о решении клиента и подпись участника
+ * над ней (base64url) — доказательство, проверяемое без банка. Ключей и данных входа клиента в записи нет.
+ */
+export interface MandateDecisionPayload {
+  readonly participant_code: string;
+  readonly kid: string;
+  readonly mandate_id: string;
+  readonly mandate_hash: string;
+  readonly decision: "SIGN" | "REJECT";
+  readonly signature_type: "simple" | "qualified" | "gov_id";
+  readonly signature_ref: string;
+  readonly token_consent: boolean;
+  readonly signed_at: string;
+  readonly signature: string;
+}
 
 /** Предмет мандата — под обязательством, в журнале не раскрывается (A7 п. 9.2). */
 export interface MandateSubject {
@@ -114,13 +132,18 @@ export function deriveStatus(mandateId: string, entries: readonly JournalEntry[]
     throw new ConsentStateUnknown(mandateId, "нет записи MANDATE_REQUESTED первой");
   }
   let status: MandateStatus = "PENDING_SIGNATURE";
+  let decision: JournalEntry | undefined;
   for (const e of own.slice(1)) {
     if (!isKind(e.kind)) throw new ConsentStateUnknown(mandateId, `вид записи ${e.kind}`);
     // Дочерний мандат (CART с parent_id) — своя запись MANDATE_REQUESTED, на статус родителя не влияет.
     // Повтор головной записи (ref = id) — не пропуск, а отказ.
     if (e.kind === "MANDATE_REQUESTED" && e.ref !== mandateId) continue;
+    // Точный дубль записанного решения (та же подпись участника, одновременный повтор на двух экземплярах, РП36 доп.) —
+    // нового не говорит и пропускается. Другое решение после записанного — отказ (инвариант 3).
+    if (decision && e.kind === decision.kind && canonicalJson(e.payload) === canonicalJson(decision.payload)) continue;
     if (status === "PENDING_SIGNATURE" && (e.kind === "MANDATE_SIGNED" || e.kind === "MANDATE_REJECTED")) {
       status = e.kind === "MANDATE_SIGNED" ? "ACTIVE" : "REJECTED";
+      decision = e;
     } else if (
       (status === "PENDING_SIGNATURE" || status === "ACTIVE") &&
       (e.kind === "MANDATE_REVOKED" || e.kind === "MANDATE_RELINQUISHED")

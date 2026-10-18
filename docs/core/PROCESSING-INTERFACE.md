@@ -165,7 +165,7 @@
 
 **Эмитент:**
 - `PUT/GET /participants/v1/instruments/{funding_ref}/limits` — ограничения клиента; расширение только с подтверждением клиента, сужение сразу;
-- `POST /participants/v1/mandates/{id}/sign` — подпись мандата клиентом в приложении (возврат результата в П2);
+- `POST /participants/v1/mandates/{id}/sign` — подпись мандата клиентом в приложении (возврат результата в П2): запись о решении, подписанная ключом банка над `Mandate.hash` (РП36, доп.); без подписи точки нет;
 - `POST /participants/v1/principals/{ref}/revoke-all` — прекращение полномочий одним действием;
 - `POST /participants/v1/confirmations/{id}` — подтверждение в приложении;
 - `POST /participants/v1/state/reserve|commit|release` — режим «сам эмитент»;

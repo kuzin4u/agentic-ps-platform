@@ -1,6 +1,6 @@
 // П2 Журнал согласий над журналом ядра (РП14): запрос мандата и чтение со статусом-свёрткой (PS-06 К1.2).
 // Проверка запроса по схеме ПАО, идемпотентность и HTTP — К1.3; id от (агент, ключ) и повтор — К2.1 (РП33 доп.);
-// подпись, отзыв, verify, выписка — часть 2.
+// подпись принципала по подписи участника — К2.4 (РП36); отзыв, verify, выписка — часть 2.
 import { AsyncHashChainJournal, canonicalJson, sha256Hex, type AsyncJournalStore, type JournalEntry } from "@kuzin4u/agentic-core";
 import type { Mandate, MandateRequest } from "../shared/pao.js";
 import {
@@ -13,6 +13,7 @@ import {
   subjectCommitment,
   withParentStatus,
   ConsentStateUnknown,
+  type MandateDecisionPayload,
   type MandateRequestedPayload,
   type MandateStatus,
   type MandateSubject,
@@ -20,6 +21,47 @@ import {
 } from "./model.js";
 import { ConsentRowConflict, type ConsentStore, type MandateIndexRow } from "./store.js";
 import { assertNarrows, ConsentRequestRejected, pickSubject, pickTerms } from "./terms.js";
+import type { Params } from "../shared/config.js";
+
+/** Пороги усиленной подписи (A7 п. 3.2) — стендовые параметры, не константы (PARAMS.md). */
+export type SignaturePolicy = Pick<Params, "qualified_signature_above_kop" | "qualified_signature_above_days">;
+
+/** Основания отказа в записи решения клиента (РП36 доп.). */
+export type SignRejectReason =
+  | "SIGNATURE_INVALID"
+  | "MANDATE_NOT_FOUND"
+  | "MANDATE_HASH_MISMATCH"
+  | "MANDATE_NOT_PENDING"
+  | "QUALIFIED_SIGNATURE_REQUIRED";
+
+/** Решение клиента не записано: запись журнала не пишется. status — статус мандата на момент проверки, если он известен. */
+export class ConsentSignRejected extends Error {
+  constructor(
+    readonly reason: SignRejectReason,
+    readonly mandateId: string,
+    readonly status?: MandateStatus,
+  ) {
+    super(`CONSENT_SIGN_REJECTED: ${reason}: ${mandateId}${status ? ` (${status})` : ""}`);
+  }
+}
+
+/** Что видит банк на экране мандата (РП36 п. 3): хэш записи — тот же, что в журнале и в Mandate.hash. */
+export interface MandateSigningView {
+  readonly id: string;
+  readonly hash: string;
+  readonly status: MandateStatus;
+  readonly principal_ref: string;
+  readonly amount_limit: number;
+  readonly currency: string;
+  readonly valid_to: string;
+  readonly subject: string;
+  readonly cart: MandateSubject["cart"];
+}
+
+const DAY_MS = 86_400_000;
+
+/** Порог в копейках задан для рублей; другая валюта — только усиленная подпись (fail-closed, РП36 доп.). */
+const THRESHOLD_CURRENCY = "RUB";
 
 export interface ConsentJournalOptions {
   readonly now?: () => Date;
@@ -35,6 +77,8 @@ interface LoadedMandate {
 
 export class ConsentJournal {
   private readonly now: () => Date;
+  /** Запись решения по одному мандату — по очереди внутри процесса; между экземплярами — дубль терпит свёртка. */
+  private readonly signing = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly store: ConsentStore,
@@ -169,6 +213,83 @@ export class ConsentJournal {
   }
 
   /**
+   * Решение клиента по мандату — запись MANDATE_SIGNED / MANDATE_REJECTED (РП12, РП36). Порядок: подпись участника над
+   * записью (verifySignature; без неё ничего не читается) → мандат по id (агент — из индекса) → mandate_hash = hash
+   * записи MANDATE_REQUESTED → статус PENDING_SIGNATURE по свёртке load (у CART — вместе с родителем, РП35 п. 2) →
+   * порог усиленной подписи (A7 п. 3.2) → запись. Повтор той же подписи после записи — текущий мандат, второй записи нет.
+   */
+  async sign(
+    d: MandateDecisionPayload,
+    verifySignature: (d: MandateDecisionPayload) => boolean,
+    policy: SignaturePolicy,
+  ): Promise<{ readonly id: string; readonly status: MandateStatus; readonly replayed: boolean }> {
+    if (!verifySignature(d)) throw new ConsentSignRejected("SIGNATURE_INVALID", d.mandate_id);
+    const prev = this.signing.get(d.mandate_id) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(() => this.signLocked(d, policy));
+    this.signing.set(d.mandate_id, run);
+    try {
+      return await run;
+    } finally {
+      if (this.signing.get(d.mandate_id) === run) this.signing.delete(d.mandate_id);
+    }
+  }
+
+  private async signLocked(
+    d: MandateDecisionPayload,
+    policy: SignaturePolicy,
+  ): Promise<{ id: string; status: MandateStatus; replayed: boolean }> {
+    const id = d.mandate_id;
+    const row = await this.store.getMandate(id);
+    const m = row && (await this.load(id, row.agent_code));
+    if (!row || !m) throw new ConsentSignRejected("MANDATE_NOT_FOUND", id);
+    if (d.mandate_hash !== m.head.hash) throw new ConsentSignRejected("MANDATE_HASH_MISMATCH", id);
+    if (m.status !== "PENDING_SIGNATURE") {
+      // Повтор той же подписи — решение уже записано: текущий статус, без записи.
+      const entries = await this.store.journal(row.chain).all();
+      const same = entries.some(
+        (e) =>
+          e.ref === id &&
+          (e.kind === "MANDATE_SIGNED" || e.kind === "MANDATE_REJECTED") &&
+          canonicalJson(e.payload) === canonicalJson(d),
+      );
+      if (same) return { id, status: m.status, replayed: true };
+      throw new ConsentSignRejected("MANDATE_NOT_PENDING", id, m.status);
+    }
+    if (d.decision === "SIGN" && d.signature_type === "simple" && needsQualified(m.head.payload as MandateRequestedPayload, m.head.at, policy)) {
+      throw new ConsentSignRejected("QUALIFIED_SIGNATURE_REQUIRED", id, m.status);
+    }
+    // Отзыв (К2.6), записанный между проверкой статуса и вставкой, даёт REQUESTED, REVOKED, SIGNED — свёртка
+    // ConsentStateUnknown, мандат 503 (fail-closed). Внутри процесса К2.6 берёт тот же лок signing (РП36 доп. п. 4).
+    const kind = d.decision === "SIGN" ? "MANDATE_SIGNED" : "MANDATE_REJECTED";
+    await this.chainJournal(row.chain).append(kind, id, d, id);
+    const after = await this.load(id, row.agent_code);
+    if (!after) throw new ConsentStateUnknown(id, "мандат после записи решения не читается");
+    return { id, status: after.status, replayed: false };
+  }
+
+  /**
+   * Экран мандата для банка (стенд — эмулятор эмитента; ПИ-8 — PS-20): хэш записи и предмет. Неизвестный — undefined.
+   * Предмет раскрывается: в боевом контуре — только аутентифицированному участнику (PS-20), никогда агенту (A7 п. 9.2).
+   */
+  async signingView(id: string): Promise<MandateSigningView | undefined> {
+    const row = await this.store.getMandate(id);
+    const m = row && (await this.load(id, row.agent_code));
+    if (!m) return undefined;
+    const t = m.head.payload as MandateRequestedPayload;
+    return {
+      id,
+      hash: m.head.hash,
+      status: m.status,
+      principal_ref: t.principal_ref,
+      amount_limit: t.amount_limit,
+      currency: t.currency,
+      valid_to: t.valid_to,
+      subject: m.subj.subject,
+      cart: m.subj.cart,
+    };
+  }
+
+  /**
    * Мандат этого агента со статусом на момент чтения. Чужой или неизвестный id — undefined (как неизвестный).
    * Цепочка проверяется целиком, предмет — по обязательству: расхождение — ConsentIntegrityError (инвариант 6).
    */
@@ -234,3 +355,14 @@ function sameTerms(recorded: MandateRequestedPayload, terms: MandateTerms): bool
 
 /** Хэш реквизитов перечня для индекса (РП33 доп. п. 7): реквизиты открыты и в записи журнала, предмета в них нет. */
 const termsHash = (terms: MandateTerms): string => sha256Hex(canonicalJson(terms));
+
+/**
+ * Усиленная подпись обязательна (A7 п. 3.2): предельная сумма выше qualified_signature_above_kop или срок от записи
+ * мандата до valid_to дольше qualified_signature_above_days; порог — в копейках рублей, другая валюта — всегда.
+ */
+function needsQualified(t: MandateRequestedPayload, recordedAt: string, policy: SignaturePolicy): boolean {
+  if (t.currency !== THRESHOLD_CURRENCY) return true;
+  if (t.amount_limit > policy.qualified_signature_above_kop) return true;
+  const days = (Date.parse(t.valid_to) - Date.parse(recordedAt)) / DAY_MS;
+  return !(days <= policy.qualified_signature_above_days);
+}
