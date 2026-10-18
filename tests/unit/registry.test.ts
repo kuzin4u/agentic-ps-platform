@@ -412,6 +412,8 @@ describe("статус допуска (РП21 п. 4)", () => {
       keysOf: () => [],
       addKey: () => false,
       revokeKey: () => undefined,
+      subscriptionOf: () => undefined,
+      setSubscription: () => false,
     };
     expect(() =>
       new AgentRegistry(stale, opts).changeStatus(CODE, { to: "EXCLUDED", ground: "WITHDRAWN" }),

@@ -98,7 +98,8 @@ describe("РП25: граница «стенд ≠ рабочий сервер»"
   });
 
   it("обход видит стенд, если он импортирован (контроль самой проверки)", () => {
-    expect([...importGraph("tests/support/stand.ts").files].filter(inStand)).toEqual([
+    expect([...importGraph("tests/support/stand.ts").files].filter(inStand).sort()).toEqual([
+      "src/stand/dns.ts",
       "src/stand/index.ts",
       "src/stand/merchants.ts",
     ]);

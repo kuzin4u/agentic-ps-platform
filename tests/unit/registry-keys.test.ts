@@ -79,6 +79,8 @@ const wrap = (store: AgentRegistryStore, over: Partial<AgentRegistryStore>): Age
   keysOf: (c) => store.keysOf(c),
   addKey: (k, e, sh, v) => store.addKey(k, e, sh, v),
   revokeKey: (kid, v, at) => store.revokeKey(kid, v, at),
+  subscriptionOf: (c) => store.subscriptionOf(c),
+  setSubscription: (c, s) => store.setSubscription(c, s),
   ...over,
 });
 

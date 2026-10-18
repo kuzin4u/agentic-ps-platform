@@ -63,6 +63,12 @@ export interface AgentRecord {
   readonly row_version: number;
 }
 
+/** Подписка на события в записи агента (РП40 п. 1, SECURITY С6): заменяется целиком; пустой events — push выключен. */
+export interface AgentSubscription {
+  readonly url: string;
+  readonly events: readonly NonNullable<import("../shared/pao.js").Event["type"]>[];
+}
+
 // Сборка падает, если перечни разойдутся с ПАО.
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 export const CLASSES_MATCH_PAO: Same<AgentClass, NonNullable<AgentSelf["class"]>> = true;

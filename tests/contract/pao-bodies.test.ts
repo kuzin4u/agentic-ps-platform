@@ -3,7 +3,8 @@
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
-import { KEY_REGISTRATION_REQUIRED, MANDATE_REQUEST_REQUIRED, mandateRequestBody } from "../../src/pao/index.js";
+import { KEY_REGISTRATION_REQUIRED, MANDATE_REQUEST_REQUIRED, mandateRequestBody, SUBSCRIPTION_REQUIRED } from "../../src/pao/index.js";
+import { EVENT_TYPES } from "../../src/pao/subscription.js";
 
 const pao = parse(readFileSync("docs/core/agent-protocol.yaml", "utf8"), { maxAliasCount: -1 });
 
@@ -113,5 +114,26 @@ describe("GET /pao/v1/events — по схеме Event (PS-08 К1.2, РП39)", (
     for (const t of ["mandate.signed", "mandate.rejected", "mandate.revoked"]) expect(event.properties.type.enum).toContain(t);
     expect(event.properties.data.type).toBe("object");
     expect(event.properties.at.format).toBe("date-time");
+  });
+});
+
+describe("тело PUT /pao/v1/subscription — по схеме Subscription (PS-08 К1.3б, РП40 п. 1)", () => {
+  const schema = pao.components.schemas.Subscription;
+  const op = pao.paths["/pao/v1/subscription"].put;
+
+  it("обязательные поля совпадают с required схемы; url — строка, events — массив строк", () => {
+    expect([...SUBSCRIPTION_REQUIRED].sort()).toEqual([...schema.required].sort());
+    expect(schema.properties.url.type).toBe("string");
+    expect(schema.properties.events).toMatchObject({ type: "array", items: { type: "string" } });
+  });
+
+  it("типы событий подписки — перечень Event.type ПАО", () => {
+    expect([...EVENT_TYPES].sort()).toEqual([...pao.components.schemas.Event.properties.type.enum].sort());
+  });
+
+  // 400 и 403 метод отдаёт (РП40 п. 2, 6–7), в YAML — только 200: объявляются в ПАО 1.5.0 (РП39 п. 8, № 24).
+  it("ответы метода в ПАО 1.4.0 — только 200; Idempotency-Key — в параметрах", () => {
+    expect(Object.keys(op.responses)).toEqual(["200"]);
+    expect(op.parameters.map((p: { $ref?: string }) => p.$ref)).toContain("#/components/parameters/IdempotencyKey");
   });
 });

@@ -13,6 +13,7 @@ import { PaoRequestVerifier } from "../pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore, type AdmissionDecision } from "../registry/index.js";
 import { buildServer } from "../server.js";
 import { loadParams, type Params } from "../shared/config.js";
+import { createStandDns, type StandDns } from "./dns.js";
 
 /** Решение клиента в приложении банка стенда; по умолчанию — подпись простой ЭП с согласием на токен (РП12). */
 export interface IssuerSignOptions {
@@ -37,6 +38,8 @@ export interface Stand {
   readonly registry: AgentRegistry;
   readonly keys: AgentKeys;
   readonly app: FastifyInstance;
+  /** Разрешение имени стенда для адреса подписки (РП40 п. 8): подмена DNS в тестах. */
+  readonly dns: StandDns;
   /** Приложение банка: подпись и отзыв мандата клиентом (РП12, РП36, РП38). */
   readonly issuer: StandIssuer;
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
@@ -70,9 +73,12 @@ export function createStand(): Stand {
   const emulator = createIssuerEmulator();
   const trusted = new TrustedParticipants([emulator.trustedKey], { stand: true });
   const consent = new ConsentJournal(new MemoryConsentStore(), { now, revocationOrder: () => trusted.revocationOrder() });
+  // Подписка — в записи агента (РП40 п. 1); разрешение имени — стендовое, проверка адреса та же, что в рабочем сервере (п. 8).
+  const dns = createStandDns();
+  const subscriptions = { set: registry.subscribe.bind(registry) };
   const app = buildServer({
     env: "dev",
-    pao: { verifier, keys, idempotency, params, consent },
+    pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
     participants: { trusted, consent, params },
   });
   const issuer: StandIssuer = {
@@ -120,6 +126,7 @@ export function createStand(): Stand {
     registry,
     keys,
     app,
+    dns,
     issuer,
     setClock: (d) => (clock = d),
     now,

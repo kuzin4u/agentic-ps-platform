@@ -1,7 +1,7 @@
 // Хранилище реестра: порт и реализация в памяти. PostgreSQL — за тем же портом вместе с журналом согласий (PS-06).
 // Записи агентов и их ключи — в одном порту: допуск неделим, запись и первый ключ вместе (РП23 п. 2).
 import type { AgentKey } from "./keys.js";
-import type { AgentRecord } from "./model.js";
+import type { AgentRecord, AgentSubscription } from "./model.js";
 
 export class AgentCodeTakenError extends Error {
   constructor(readonly agent_code: string) {
@@ -48,6 +48,11 @@ export interface AgentRegistryStore {
   ): boolean;
   /** Отзыв при совпадении row_version; не совпала — undefined. */
   revokeKey(kid: string, expectedRowVersion: number, revoked_at: string): AgentKey | undefined;
+
+  /** Подписка агента на события (РП40 п. 1); нет подписки — undefined. */
+  subscriptionOf(agent_code: string): AgentSubscription | undefined;
+  /** Замена подписки целиком; агента нет — false. Статус не проверяется: push проверяет его перед каждой отправкой (РП40 п. 6). */
+  setSubscription(agent_code: string, subscription: AgentSubscription): boolean;
 }
 
 export class InMemoryAgentRegistryStore implements AgentRegistryStore {
@@ -55,6 +60,7 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
   readonly #owners = new Map<string, string>();
   readonly #keys = new Map<string, AgentKey>();
   readonly #keysByAgent = new Map<string, string[]>();
+  readonly #subscriptions = new Map<string, AgentSubscription>();
 
   get(agent_code: string): AgentRecord | undefined {
     return this.#byCode.get(agent_code);
@@ -132,5 +138,15 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
     const next = Object.freeze({ ...cur, revoked_at, row_version: cur.row_version + 1 });
     this.#keys.set(kid, next);
     return next;
+  }
+
+  subscriptionOf(agent_code: string): AgentSubscription | undefined {
+    return this.#subscriptions.get(agent_code);
+  }
+
+  setSubscription(agent_code: string, subscription: AgentSubscription): boolean {
+    if (!this.#byCode.has(agent_code)) return false;
+    this.#subscriptions.set(agent_code, Object.freeze({ url: subscription.url, events: Object.freeze([...subscription.events]) }));
+    return true;
   }
 }

@@ -3,6 +3,8 @@
 // Лишние поля игнорируются (ПАО §7): класс и уровень в теле не читаются, они — только из реестра (инвариант 5).
 import { parseRfc3339 } from "../consent/model.js";
 import type { MandateRequest } from "../shared/pao.js";
+import type { AgentSubscription } from "../registry/model.js";
+import { EVENT_TYPES } from "./subscription.js";
 
 /** Обязательные поля тела `POST /pao/v1/agent/keys` — строки (ПАО 1.3.0). */
 export const KEY_REGISTRATION_REQUIRED = ["alg", "public_key"] as const;
@@ -122,4 +124,27 @@ export function mandateRequestBody(raw: string): MandateRequest | undefined {
     ...(settlement !== undefined ? { settlement_mode: settlement } : {}),
     ...(conditional !== undefined ? { conditional } : {}),
   };
+}
+
+/** Обязательные поля `Subscription` (ПАО 1.4.0); сверка с YAML — tests/contract/pao-bodies.test.ts. */
+export const SUBSCRIPTION_REQUIRED = ["url", "events"] as const;
+
+/**
+ * Тело `PUT /pao/v1/subscription` или undefined — тогда REQUEST_INVALID (РП40 п. 1): `url` — строка, `events` — типы
+ * Event.type без повторов (пустой — push выключен). Форма адреса и его адреса — checkSubscriptionUrl и resolveGlobal.
+ */
+export function subscriptionBody(raw: string): AgentSubscription | undefined {
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (!isObj(v)) return undefined;
+  const url = own(v, "url");
+  const events = own(v, "events");
+  if (typeof url !== "string" || !Array.isArray(events)) return undefined;
+  if (!events.every((e) => (EVENT_TYPES as readonly unknown[]).includes(e))) return undefined;
+  if (new Set(events).size !== events.length) return undefined;
+  return { url, events: events as AgentSubscription["events"] };
 }

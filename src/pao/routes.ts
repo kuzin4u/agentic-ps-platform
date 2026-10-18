@@ -7,10 +7,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, type AgentKeys } from "../registry/agent-keys.js";
 import type { ConsentJournal } from "../consent/journal.js";
 import { MANDATE_ID } from "../consent/model.js";
-import type { AgentRecord } from "../registry/model.js";
+import type { AgentRecord, AgentSubscription } from "../registry/model.js";
 import type { Params } from "../shared/config.js";
 import type { AgentSelf } from "../shared/pao.js";
-import { keyRegistrationBody, mandateRequestBody } from "./body.js";
+import { keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
 import { consentErrorReply } from "./consent-errors.js";
 import { EVENT_ID, EventCursorUnknown } from "./events.js";
 import { paoError, type PaoErrorReply } from "./errors.js";
@@ -25,6 +25,7 @@ import {
   type PaoReply,
 } from "./idempotency.js";
 import { PAO_DB_TIMEOUT_MS } from "./stores.js";
+import { checkSubscriptionUrl, resolveGlobal, STAND_PORT, systemResolver, type HostResolver } from "./subscription.js";
 import type { PaoRequestVerifier } from "./verify.js";
 
 export interface PaoDeps {
@@ -33,7 +34,18 @@ export interface PaoDeps {
   readonly idempotency: PaoIdempotency;
   /** Журнал согласий (П2): запрос мандата по ПАО. */
   readonly consent: ConsentJournal;
-  readonly params: Pick<Params, "unavailable_retry_after_sec" | "pao_rate_limit_per_30s" | "event_page_max">;
+  readonly params: Pick<
+    Params,
+    "unavailable_retry_after_sec" | "pao_rate_limit_per_30s" | "event_page_max" | "event_subscription_allow_hosts"
+  >;
+  /** Подписка в записи агента (РП40 п. 1, С6); без неё PUT /pao/v1/subscription не регистрируется. */
+  readonly subscriptions?: {
+    readonly set: (agent_code: string, subscription: AgentSubscription) => AgentSubscription;
+  };
+  /** Разрешение имени адреса подписки (РП40 п. 2–4); по умолчанию — системное, на стенде — стендовое (п. 8). */
+  readonly resolveHost?: HostResolver;
+  /** Стенд (РП40 п. 8): только он принимает стендовые порты; в рабочем сервере стендовый порт — отказ запуска. */
+  readonly stand?: boolean;
   /** Монотонные часы предела обработчика (РП33 доп.); по умолчанию performance.now — в тестах подменяются. */
   readonly clock?: () => number;
 }
@@ -285,6 +297,31 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     })(req, reply),
   );
 
+  // Подписка на события (ПАО §5; РП40 п. 1–3): адрес — https, порт 443, имя из списка разрешённых, все адреса имени
+  // глобальные; иначе 400 REQUEST_INVALID, причина — в журнал процесса (только хост, без пути: путь может нести секрет
+  // агента). Подписка заменяется целиком и действует на события после неё. SUSPENDED/EXCLUDED — 403 до обработчика (п. 6–7).
+  if (deps.resolveHost && STAND_PORT in deps.resolveHost && deps.stand !== true) {
+    throw new Error("ПАО: стендовое разрешение имени в рабочем сервере — отказ запуска (РП40 п. 8)");
+  }
+  const subscriptions = deps.subscriptions;
+  const resolveHost = withTimeout(deps.resolveHost ?? systemResolver, PAO_DB_TIMEOUT_MS);
+  if (subscriptions) {
+    app.put("/pao/v1/subscription", async (req, reply) =>
+      mutating(req, reply, subscriptionBody, async (agent, input, ctx) => {
+        const refuse = (reason: string, host: string | undefined): PaoReply => {
+          req.log.info({ agent_code: agent.agent_code, reason, host }, "ПАО: адрес подписки не принят (РП40 п. 2)");
+          return reply4xx(paoError("REQUEST_INVALID", "ПАО §5"));
+        };
+        const form = checkSubscriptionUrl(input.url, deps.params.event_subscription_allow_hosts);
+        if (!form.ok) return refuse(form.reason, form.host);
+        const addrs = await resolveGlobal(form.host, resolveHost);
+        if (!addrs.ok) return refuse(addrs.reason, form.host);
+        ctx.beforeWrite();
+        return { status: 200, body: subscriptions.set(agent.agent_code, { url: form.url, events: input.events }) };
+      }),
+    );
+  }
+
   // Лента событий этого агента (ПАО §5; РП39 п. 7): после курсора after, по номеру, не больше event_page_max.
   // after не по форме, пустой или повторённый — 400 REQUEST_INVALID, как и чужой или неизвестный (одинаково).
   // Ответы 400/401/403/503 объявляются в ПАО 1.5.0 (РП39 п. 8, № 20). Событие — сигнал, статус — через GET мандата.
@@ -303,6 +340,18 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     }
   });
 }
+
+/** Разрешение имени не дольше ms (инвариант 3: таймаут — отказ): зависший DNS не держит обработчик под ключом. */
+const withTimeout =
+  (resolve: HostResolver, ms: number): HostResolver =>
+  (host) =>
+    new Promise((ok, fail) => {
+      const t = setTimeout(() => fail(new Error("разрешение имени: таймаут")), ms);
+      resolve(host).then(
+        (a) => (clearTimeout(t), ok(a)),
+        (e: unknown) => (clearTimeout(t), fail(e)),
+      );
+    });
 
 /** Тело отказа агента от полномочий — пустое (РП38 п. 3). */
 const emptyBody = (raw: string): true | undefined => (raw === "" ? true : undefined);

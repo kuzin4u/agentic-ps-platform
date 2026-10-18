@@ -5,7 +5,7 @@ import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import type { AgentSide } from "./agent.js";
 
 export interface SignedCall {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT";
   path?: string;
   query?: string;
   body?: string;

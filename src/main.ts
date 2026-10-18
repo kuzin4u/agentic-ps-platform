@@ -63,7 +63,8 @@ const app = buildServer({
   env,
   logger: true,
   trustedProxies,
-  pao: { verifier, keys, idempotency, params, consent },
+  // Подписка — в записи агента (РП40 п. 1); разрешение имени — системное (стендового порта здесь нет, РП40 п. 8).
+  pao: { verifier, keys, idempotency, params, consent, subscriptions: { set: registry.subscribe.bind(registry) } },
   participants: { trusted, consent, params },
 });
 app.log.info({ params }, "стендовые параметры загружены");
