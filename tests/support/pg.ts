@@ -1,7 +1,7 @@
-// PostgreSQL для тестов (РП30 п. 7): своя схема на файл тестов, миграции ядра — applyMigrations.
+// PostgreSQL для тестов (РП30 п. 7): своя схема на файл тестов, миграции ядра и Платформы — applyPlatformMigrations.
 // Без DATABASE_URL PG-тесты пропускаются (локально базы нет — решение владельца 15.10.2026); в CI пропуск ловит
 // страж в tests/unit/pg.test.ts.
-import { applyMigrations } from "@kuzin4u/agentic-core";
+import { applyPlatformMigrations } from "../../src/shared/migrations.js";
 import pg from "pg";
 
 export const DATABASE_URL = process.env.DATABASE_URL;
@@ -16,7 +16,7 @@ export interface TestDb {
   close(): Promise<void>;
 }
 
-/** Схема `t_<pid>_<время>_<метка>` с миграциями 001–004 ядра; close() удаляет её. */
+/** Схема `t_<pid>_<время>_<метка>` с миграциями 001–004 ядра и 100 Платформы; close() удаляет её. */
 export async function openTestDb(label: string): Promise<TestDb> {
   if (!DATABASE_URL) throw new Error("нет DATABASE_URL");
   const schema = `t_${process.pid}_${Date.now()}_${label.replace(/[^a-z0-9_]/g, "")}`;
@@ -30,7 +30,7 @@ export async function openTestDb(label: string): Promise<TestDb> {
     return p;
   };
   const pool = open();
-  await applyMigrations(pool);
+  await applyPlatformMigrations(pool);
   return {
     pool,
     reopen: open,

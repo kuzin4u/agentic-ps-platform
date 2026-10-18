@@ -1,11 +1,13 @@
 openapi: 3.0.3
 info:
   title: Протокол агентских операций (ПАО)
-  version: 1.3.0
+  version: 1.4.0
   description: 'Интерфейс агентов покупателя с Платформой платёжной системы. Описание — AGENT-PROTOCOL.md. Авторизацию платежа
     агент не инициирует (РП2). Номера карт и персональные данные принципала не передаются никогда. Суммы — копейки, время
     — UTC. v1.1.0 — совместимое расширение: условное исполнение (CONDITIONAL-EXECUTION.md, РП13). v1.2.0 — совместимо:
-    смысл retry, x-pao-errors, digest пустого тела (РП16). v1.3.0 — совместимо (AGENT-PROTOCOL §7, РП31): коды REQUEST_INVALID и KEY_INVALID с retry after_fix.'
+    смысл retry, x-pao-errors, digest пустого тела (РП16). v1.3.0 — совместимо (AGENT-PROTOCOL §7, РП31): коды REQUEST_INVALID и KEY_INVALID с retry after_fix.
+    v1.4.0 — совместимо (AGENT-PROTOCOL §7, РП37): Mandate.revocation_order (порядок отзыва от Платформы), Mandate.agent_code
+    обязательное в ответе.'
 servers:
 - url: https://sandbox.platform.local
   description: песочница
@@ -279,11 +281,16 @@ components:
       allOf:
       - $ref: '#/components/schemas/MandateRequest'
       - type: object
+        required:
+        - agent_code
         properties:
           id:
             type: string
           agent_code:
             type: string
+          revocation_order:
+            type: string
+            description: "Порядок отзыва (A7 п. 2.1–2.2, РП37, v1.4.0): ссылка на соглашение банка с клиентом, например `bank:<participant_code>:revocation:v1`. Задаёт Платформа из записи участника, не агент; входит в `hash` записи и подписывается банком вместе с мандатом. Текст для человека — у банка. В ответах Платформы есть всегда."
           status:
             type: string
             enum:
@@ -334,6 +341,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Mandate'
+        records:
+          type: array
+          description: "Записи цепочки журнала согласий целиком, с первой (РП38 п. 7): по ним пересчитываются хэши и Mandate.hash, подпись банка в payload решения и отзыва проверяется его открытым ключом. Предмета нет — только subject_commitment"
+          items:
+            $ref: '#/components/schemas/JournalRecord'
         operations:
           type: array
           items:
@@ -343,6 +355,36 @@ components:
           enum:
           - OK
           - BROKEN
+    JournalRecord:
+      type: object
+      required:
+      - seq
+      - kind
+      - ref
+      - parent_ref
+      - at
+      - payload
+      - prev_hash
+      - hash
+      properties:
+        seq:
+          type: integer
+        kind:
+          type: string
+        ref:
+          type: string
+        parent_ref:
+          type: string
+          nullable: true
+        at:
+          type: string
+          format: date-time
+        payload:
+          type: object
+        prev_hash:
+          type: string
+        hash:
+          type: string
     Aoi:
       type: object
       required:
@@ -801,13 +843,17 @@ paths:
               $ref: '#/components/schemas/MandateRequest'
       responses:
         '201':
-          description: Создан, PENDING_SIGNATURE
+          description: 'Создан, PENDING_SIGNATURE; CART при отзыве или истечении родителя — REVOKED или EXPIRED (РП35), проверять status'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Mandate'
         '400': *id001
+        '401': *id001
+        '403': *id001
+        '404': *id001
         '409': *id001
+        '503': *id001
   /pao/v1/mandates/{id}:
     get:
       summary: Мандат этого агента
@@ -829,10 +875,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Mandate'
+        '401': *id001
+        '403': *id001
         '404': *id001
+        '503': *id001
   /pao/v1/mandates/{id}/verify:
     get:
       summary: Проверка и остаток
+      description: "Ровно {outcome, amount_left, valid_to, as_of}, без предмета (A7 п. 9.2, РП38 п. 6). CONFIRMED — только ACTIVE; OUT_OF_SCOPE — остальные статусы; STATE_UNKNOWN — с П3 (PS-09). До PS-09 amount_left = amount_limit у ACTIVE, 0 у остальных"
       parameters:
       - name: id
         in: path
@@ -856,6 +906,7 @@ paths:
   /pao/v1/mandates/{id}/relinquish:
     post:
       summary: Отказ агента от полномочий
+      description: "Тело пустое. Запись MANDATE_RELINQUISHED при PENDING_SIGNATURE или ACTIVE; уже REVOKED, REJECTED или EXPIRED — 200 с текущим статусом без записи. Отказ от INTENT отзывает его CART (РП35, РП38 п. 3–4)"
       parameters:
       - name: id
         in: path
@@ -879,6 +930,7 @@ paths:
   /pao/v1/mandates/{id}/evidence:
     get:
       summary: Выписка из журнала согласий
+      description: "mandate_chain (у CART — родитель и CART), records — вся цепочка журнала, operations — с PS-16/PS-22; нарушенная цепочка — 200 с integrity BROKEN и пустыми массивами. Соль предмета не раскрывается (РП38 п. 7). Статус по records — свёрткой РП38 п. 5: после MANDATE_REVOKED или MANDATE_RELINQUISHED записи решения, отзыва и отказа не меняют статус (REVOKED), после MANDATE_REJECTED — записи отзыва и отказа; точный дубль записанного решения пропускается; у CART — вместе с родителем (РП35)"
       parameters:
       - name: id
         in: path
