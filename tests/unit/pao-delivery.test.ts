@@ -233,6 +233,7 @@ describe("обработчик доставки: попытки, статус, �
     const eventId = await signed(store, T0);
     const receiver = createAgentReceiver();
     let t = T0.getTime();
+    const logged: unknown[] = [];
     const d = new EventDeliverer({
       store,
       agent: () => {
@@ -244,13 +245,58 @@ describe("обработчик доставки: попытки, статус, �
       params,
       now: () => t,
       stand: true,
+      log: (level, fields) => logged.push([level, fields]),
+    });
+    // Задержка растёт по номеру взятия, попытка не тратится, причина — в журнале процесса (дополнение РП40 п. 16).
+    for (let claim = 1; claim <= params.event_retry_max + 2; claim++) {
+      expect(await d.runOnce(), `взятие ${claim}`).toBe(1);
+      expect(await store.delivery(eventId)).toMatchObject({
+        state: "PENDING",
+        attempts: 0,
+        claims: claim,
+        last_reason: "status_unavailable",
+        next_at_ms: t + nextAttemptDelayMs(claim),
+      });
+      t += nextAttemptDelayMs(claim) - 1;
+      expect(await d.runOnce()).toBe(0);
+      t += 1;
+    }
+    expect(receiver.received).toEqual([]);
+    expect(logged).toHaveLength(params.event_retry_max + 2);
+    expect(logged[0]).toEqual(["warn", { agent_code: A, event_id: eventId, attempt: 1, reason: "status_unavailable" }]);
+  });
+
+  it("строку взяли снова после последней попытки (сбой до итога) — EXHAUSTED без отправки (дополнение РП40 п. 15)", async () => {
+    const store = new MemoryConsentStore();
+    const eventId = await signed(store, T0);
+    const receiver = createAgentReceiver();
+    let t = T0.getTime();
+    // event_retry_max попыток засчитано, итога ни одной нет: обработчик падал после отправки.
+    for (let n = 1; n <= params.event_retry_max; n++) {
+      const [d] = await store.claimDue(t, t + 10_000, 1);
+      expect(d).toMatchObject({ attempts: n });
+      t += 10_000;
+    }
+    const logged: unknown[] = [];
+    const d = new EventDeliverer({
+      store,
+      agent: () => active,
+      subscription: () => sub,
+      resolveHost: createStandDns().resolve,
+      transport: receiver.transport,
+      params,
+      now: () => t,
+      stand: true,
+      log: (level, fields) => logged.push([level, fields]),
     });
     expect(await d.runOnce()).toBe(1);
-    expect(await store.delivery(eventId)).toMatchObject({ state: "PENDING", attempts: 0, last_reason: "status_unavailable" });
     expect(receiver.received).toEqual([]);
-    t += nextAttemptDelayMs(1);
-    expect(await d.runOnce()).toBe(1);
-    expect(await store.delivery(eventId)).toMatchObject({ state: "PENDING", attempts: 0 });
+    expect(await store.delivery(eventId)).toMatchObject({ state: "EXHAUSTED", last_reason: "lease_expired" });
+    expect(logged).toEqual([
+      ["warn", { agent_code: A, event_id: eventId, attempt: params.event_retry_max + 1, reason: "lease_expired" }],
+    ]);
+    t += 3_600_000;
+    expect(await d.runOnce()).toBe(0);
   });
 
   it("попытка взята и не завершена (сбой обработчика) — повтор того же event_id после аренды", async () => {

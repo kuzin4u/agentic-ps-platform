@@ -149,14 +149,23 @@ export class EventDeliverer {
   private async attempt(d: DueDelivery): Promise<DeliveryOutcome> {
     const { event, attempts } = d;
     const code = event.agent_code;
+    const fields = { agent_code: code, event_id: event.event_id, attempt: attempts };
+    // Строку взяли снова после аренды, а последняя засчитанная попытка уже ушла: отправок не больше event_retry_max
+    // (дополнение РП40 п. 15).
+    if (attempts > this.deps.params.event_retry_max) {
+      this.deps.log?.("warn", { ...fields, reason: "lease_expired" }, "ПАО: доставка события исчерпана — событие только в ленте");
+      return { state: "EXHAUSTED", reason: "lease_expired" };
+    }
     let agent: AgentRecord | undefined;
     let sub: AgentSubscription | undefined;
     try {
       agent = this.deps.agent(code);
       sub = this.deps.subscription(code);
     } catch {
-      // Статус не прочитан — не отправлять и не тратить попытку (инвариант 3).
-      return this.pending(attempts, "status_unavailable", true);
+      // Статус не прочитан — не отправлять и не тратить попытку (инвариант 3); срок — от номера взятия: при долгом сбое
+      // реестра строка берётся всё реже (дополнение РП40 п. 16).
+      this.deps.log?.("warn", { ...fields, reason: "status_unavailable" }, "ПАО: статус агента не прочитан — попытка отложена");
+      return { state: "PENDING", next_at_ms: this.now() + nextAttemptDelayMs(d.claim), reason: "status_unavailable", refund: true };
     }
     // Приостановлен или исключён — push не выполняется и не догоняет: событие в ленте (РП40 п. 6–7).
     if (!agent || agent.status !== "ACTIVE") return this.skip(event, "agent_not_active");
@@ -188,11 +197,6 @@ export class EventDeliverer {
     return this.failed(event, attempts, status >= 300 && status < 400 ? "redirect" : `http_${status}`, form.host);
   }
 
-  private pending(attempts: number, reason: string, refund = false): DeliveryOutcome {
-    const n = refund ? Math.max(1, attempts - 1) : attempts;
-    return { state: "PENDING", next_at_ms: this.now() + nextAttemptDelayMs(n), reason, ...(refund ? { refund } : {}) };
-  }
-
   private skip(event: StoredEvent, reason: string): DeliveryOutcome {
     this.deps.log?.("info", { agent_code: event.agent_code, event_id: event.event_id, reason }, "ПАО: push не выполняется — событие в ленте");
     return { state: "SKIPPED", reason };
@@ -206,7 +210,7 @@ export class EventDeliverer {
       return { state: "EXHAUSTED", reason };
     }
     this.deps.log?.("info", fields, "ПАО: доставка события не удалась — повтор");
-    return this.pending(attempts, reason);
+    return { state: "PENDING", next_at_ms: this.now() + nextAttemptDelayMs(attempts), reason };
   }
 }
 
