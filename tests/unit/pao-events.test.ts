@@ -264,6 +264,7 @@ describe.skipIf(!DATABASE_URL)("лента событий — PostgreSQL", () =>
     const hooks: PgConsentStoreHooks = {
       inTx: async (step, draft: EventDraft) => {
         const who = draft.data.mandate_id === first.id ? "first" : "second";
+        if (step === "journal") return; // запись журнала — до блокировки, порядок номеров её не касается
         steps.push(`${who}:${step}`);
         if (who === "first" && step === "commit") {
           firstHolding();
@@ -278,10 +279,15 @@ describe.skipIf(!DATABASE_URL)("лента событий — PostgreSQL", () =>
     // Пока первая транзакция держит номер, вторая стоит именно на блокировке агента (ожидание advisory в базе) и до
     // события не доходит, а лента не видит ни одного события: курсор не проскочит незафиксированный номер.
     // Без блокировки ожидания advisory не будет — тест красный здесь (`/audit` К1.2 № 2: не по таймеру).
-    await waitAdvisoryWaiter(eventSeqLockKey(agent));
-    expect(steps).toEqual(["first:event", "first:commit"]);
-    expect(await plain.events(agent, undefined, 10)).toEqual([]);
-    release();
+    try {
+      await waitAdvisoryWaiter(eventSeqLockKey(agent));
+      expect(steps).toEqual(["first:event", "first:commit"]);
+      expect(await plain.events(agent, undefined, 10)).toEqual([]);
+    } finally {
+      // Иначе упавшая проверка оставит обе транзакции висеть и займёт соединения пула для следующих тестов.
+      release();
+      await Promise.allSettled([a, b]);
+    }
     await Promise.all([a, b]);
     expect(steps).toEqual(["first:event", "first:commit", "second:event", "second:commit"]);
     expect(await seqs(agent)).toEqual([
