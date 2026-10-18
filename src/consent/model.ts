@@ -5,8 +5,8 @@ import type { Mandate, MandateRequest } from "../shared/pao.js";
 
 /**
  * Виды записей журнала согласий. Изменение мандата — только новой записью с parent_ref = id мандата (A7 п. 4.1).
- * MANDATE_REQUESTED пишет К1.3; MANDATE_SIGNED и MANDATE_REJECTED — К2.4 по подписи участника (РП36); отзыв и отказ
- * агента — К2.6.
+ * MANDATE_REQUESTED пишет К1.3; MANDATE_SIGNED и MANDATE_REJECTED — К2.4 по подписи участника (РП36); MANDATE_REVOKED —
+ * по подписи участника, MANDATE_RELINQUISHED — по обращению агента (К2.6, РП38).
  */
 export const MANDATE_KINDS = [
   "MANDATE_REQUESTED",
@@ -34,6 +34,26 @@ export interface MandateDecisionPayload {
   readonly token_consent: boolean;
   readonly signed_at: string;
   readonly signature: string;
+}
+
+/**
+ * payload записи MANDATE_REVOKED (РП38 п. 1): запись участника об отзыве клиентом и подпись участника над ней (base64url)
+ * с меткой pao:participant-mandate-revocation:v1 — в выписке видно, кто отозвал и чем удостоверено.
+ */
+export interface MandateRevocationPayload {
+  readonly participant_code: string;
+  readonly kid: string;
+  readonly mandate_id: string;
+  readonly mandate_hash: string;
+  readonly revocation_ref: string;
+  readonly revoked_at: string;
+  readonly signature: string;
+}
+
+/** payload записи MANDATE_RELINQUISHED (РП38 п. 3): агент и ключ — из проверенного обращения (инвариант 5). */
+export interface MandateRelinquishPayload {
+  readonly agent_code: string;
+  readonly kid: string;
 }
 
 /** Предмет мандата — под обязательством, в журнале не раскрывается (A7 п. 9.2). */
@@ -129,8 +149,9 @@ export const parseRfc3339 = (v: unknown): number => (typeof v === "string" && RF
  * Статус мандата — свёртка его записей (запись мандата и записи с parent_ref = id) на момент now.
  * PENDING_SIGNATURE → ACTIVE (подписан) или REJECTED; ACTIVE или PENDING_SIGNATURE → REVOKED (отзыв клиентом или
  * отказ агента); не отозванный и не отклонённый с наступившим valid_to — EXPIRED (записи не нужно).
- * EXHAUSTED — из сервиса состояния (П3, PS-09), не из журнала. Неизвестный вид записи, вторая подпись, запись после
- * отзыва — ConsentStateUnknown: догадки нет (инвариант 3).
+ * EXHAUSTED — из сервиса состояния (П3, PS-09), не из журнала. Неизвестный вид записи, вторая подпись — ConsentStateUnknown:
+ * догадки нет (инвариант 3). После REVOKED записи отзыва, отказа и решения банка, после REJECTED — записи отзыва и отказа
+ * пропускаются (РП38 п. 5): отзыв — подтверждённая запись, последующая полномочий не возвращает.
  */
 export function deriveStatus(mandateId: string, entries: readonly JournalEntry[], now: Date): MandateStatus {
   const own = entries.filter((e) => e.ref === mandateId || e.parent_ref === mandateId);
@@ -148,6 +169,9 @@ export function deriveStatus(mandateId: string, entries: readonly JournalEntry[]
     // Точный дубль записанного решения (та же подпись участника, одновременный повтор на двух экземплярах, РП36 доп.) —
     // нового не говорит и пропускается. Другое решение после записанного — отказ (инвариант 3).
     if (decision && e.kind === decision.kind && canonicalJson(e.payload) === canonicalJson(decision.payload)) continue;
+    // Гонки на двух экземплярах (РП38 п. 5): второй отзыв, решение банка после отзыва, отзыв после отказа клиента.
+    if (status === "REVOKED" && e.kind !== "MANDATE_REQUESTED") continue;
+    if (status === "REJECTED" && (e.kind === "MANDATE_REVOKED" || e.kind === "MANDATE_RELINQUISHED")) continue;
     if (status === "PENDING_SIGNATURE" && (e.kind === "MANDATE_SIGNED" || e.kind === "MANDATE_REJECTED")) {
       status = e.kind === "MANDATE_SIGNED" ? "ACTIVE" : "REJECTED";
       decision = e;

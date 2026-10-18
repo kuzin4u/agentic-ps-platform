@@ -4,11 +4,14 @@
 import { createPublicKey, verify, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { canonicalJson } from "@kuzin4u/agentic-core";
-import type { MandateDecisionPayload } from "../consent/model.js";
+import type { MandateDecisionPayload, MandateRevocationPayload } from "../consent/model.js";
 import { ED25519, parseKey } from "../registry/keys.js";
 
 /** Метка контекста подписи участника (РП36 доп.): подпись банка пригодна только для подписи мандата этой версии. */
 export const PARTICIPANT_SIGNATURE_CONTEXT = "pao:participant-mandate-signature:v1";
+
+/** Метка контекста отзыва (РП38 п. 1): своя — подпись решения не годится как отзыв, и наоборот. */
+export const PARTICIPANT_REVOCATION_CONTEXT = "pao:participant-mandate-revocation:v1";
 
 /** Код эмулятора эмитента стенда: ключ создаётся при старте стенда и только в памяти; в рабочем сервере — отказ запуска. */
 export const STAND_ISSUER_CODE = "stand:issuer-emulator";
@@ -92,13 +95,22 @@ export class TrustedParticipants {
     return this.orders.get(STAND_ISSUER_CODE);
   }
 
-  /** Подпись участника над записью; неизвестный участник или ключ — false, как неверная подпись. */
+  /** Подпись участника над записью о решении; неизвестный участник или ключ — false, как неверная подпись. */
   verify(participant_code: string, kid: string, record: ParticipantSignedRecord, signature: string): boolean {
+    return this.verifyInput(participant_code, kid, participantSigningInput(record), signature);
+  }
+
+  /** Подпись участника над записью об отзыве (РП38): метка отзыва, подпись решения не подходит. */
+  verifyRevocation(record: ParticipantRevocationRecord, signature: string): boolean {
+    return this.verifyInput(record.participant_code, record.kid, participantRevocationSigningInput(record), signature);
+  }
+
+  private verifyInput(participant_code: string, kid: string, input: Buffer, signature: string): boolean {
     const key = this.keys.get(keyId(participant_code, kid));
     if (!key) return false;
     const sig = Buffer.from(signature, "base64url");
     if (sig.length !== 64 || sig.toString("base64url") !== signature) return false;
-    return verify(null, participantSigningInput(record), key, sig);
+    return verify(null, input, key, sig);
   }
 }
 
@@ -121,6 +133,24 @@ export const participantSigningInput = (r: ParticipantSignedRecord): Buffer =>
       signature_ref: r.signature_ref,
       token_consent: r.token_consent,
       signed_at: r.signed_at,
+    }),
+    "utf8",
+  );
+
+/** Подписываемая участником запись об отзыве клиентом (РП38 п. 1); метка контекста добавляется при подписи. */
+export type ParticipantRevocationRecord = Omit<MandateRevocationPayload, "signature">;
+
+/** Байты подписи отзыва: canonicalJson записи с меткой отзыва, UTF-8. */
+export const participantRevocationSigningInput = (r: ParticipantRevocationRecord): Buffer =>
+  Buffer.from(
+    canonicalJson({
+      context: PARTICIPANT_REVOCATION_CONTEXT,
+      participant_code: r.participant_code,
+      kid: r.kid,
+      mandate_id: r.mandate_id,
+      mandate_hash: r.mandate_hash,
+      revocation_ref: r.revocation_ref,
+      revoked_at: r.revoked_at,
     }),
     "utf8",
   );

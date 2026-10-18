@@ -1,7 +1,7 @@
-// П10 Шлюз участников, ПИ-8 (PROCESSING-INTERFACE §11): подпись мандата клиентом в приложении банка (РП12, РП36).
-// Неаутентифицированной точки нет, в том числе на стенде: каждое решение — запись участника с его подписью Ed25519
-// над хэшем мандата (РП36 п. 3–4). Подпись запроса по RFC 9421 и реестр участников — PS-20 (STATUS «Открыто»).
-import type { FastifyInstance } from "fastify";
+// П10 Шлюз участников, ПИ-8 (PROCESSING-INTERFACE §11): подпись мандата клиентом в приложении банка (РП12, РП36) и
+// отзыв мандата клиентом (РП38). Неаутентифицированной точки нет, в том числе на стенде: каждое решение и каждый отзыв —
+// запись участника с его подписью Ed25519 над хэшем мандата (РП36 п. 3–4). Подпись запроса по RFC 9421 и реестр участников — PS-20 (STATUS «Открыто»).
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ConsentSignRejected, type ConsentJournal, type SignaturePolicy } from "../consent/journal.js";
 import {
   ConsentIntegrityError,
@@ -9,6 +9,7 @@ import {
   MANDATE_ID,
   parseRfc3339,
   type MandateDecisionPayload,
+  type MandateRevocationPayload,
 } from "../consent/model.js";
 import type { Params } from "../shared/config.js";
 import type { TrustedParticipants } from "./trusted.js";
@@ -70,6 +71,27 @@ function signBody(mandate_id: string, v: unknown): MandateDecisionPayload | unde
   };
 }
 
+const REVOKE_FIELDS = ["kid", "mandate_hash", "participant_code", "revocation_ref", "revoked_at", "signature"].join(",");
+
+/** Тело отзыва: ровно поля записи и подпись (РП38 п. 1). */
+function revokeBody(mandate_id: string, v: unknown): MandateRevocationPayload | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  if (Object.keys(o).sort().join(",") !== REVOKE_FIELDS) return undefined;
+  const str = (k: string) => typeof o[k] === "string" && (o[k] as string).length > 0 && (o[k] as string).length <= 256;
+  if (!["participant_code", "kid", "mandate_hash", "revocation_ref", "revoked_at", "signature"].every(str)) return undefined;
+  if (Number.isNaN(parseRfc3339(o.revoked_at)) || !/^[0-9a-f]{64}$/.test(o.mandate_hash as string)) return undefined;
+  return {
+    participant_code: o.participant_code as string,
+    kid: o.kid as string,
+    mandate_id,
+    mandate_hash: o.mandate_hash as string,
+    revocation_ref: o.revocation_ref as string,
+    revoked_at: o.revoked_at as string,
+    signature: o.signature as string,
+  };
+}
+
 export async function participantRoutes(app: FastifyInstance, deps: ParticipantDeps): Promise<void> {
   // Неразборный JSON и иные отказы Fastify до обработчика — тело ПИ-8 `{code}`, а не тело Fastify (как в ПАО).
   app.setErrorHandler((err: { statusCode?: number }, _req, reply) => {
@@ -78,26 +100,29 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
     if (http >= 400 && http < 500) return reply.code(400).send({ code: "REQUEST_INVALID" });
     return reply.code(503).header("retry-after", String(deps.params.unavailable_retry_after_sec)).send({ code: "UPSTREAM_UNAVAILABLE" });
   });
-  app.post<{ Params: { id: string } }>("/participants/v1/mandates/:id/sign", async (req, reply) => {
+  /** Запись участника по мандату: тело → журнал → `{mandate_id, status}`; отказы — `{code}`, причина — в журнал процесса. */
+  async function participantWrite<D extends { participant_code: string }>(
+    req: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+    parse: (id: string, v: unknown) => D | undefined,
+    write: (d: D) => Promise<{ id: string; status: string; replayed: boolean }>,
+    log: { done: string; replayed: string; rejected: string },
+  ): Promise<FastifyReply> {
     const fail = (code: keyof typeof HTTP) => {
       const http = HTTP[code]!;
       if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
       return reply.code(http).send({ code });
     };
     const id = req.params.id;
-    const d = MANDATE_ID.test(id) ? signBody(id, req.body) : undefined;
+    const d = MANDATE_ID.test(id) ? parse(id, req.body) : undefined;
     if (!d) return fail("REQUEST_INVALID");
     try {
-      const { signature, ...record } = d;
-      const r = await deps.consent.sign(d, () => deps.trusted.verify(d.participant_code, d.kid, record, signature), deps.params);
-      req.log.info(
-        { participant_code: d.participant_code, mandate_id: id, decision: d.decision, status: r.status },
-        r.replayed ? "ПИ-8: повтор той же подписи — решение уже записано, записи нет" : "ПИ-8: решение клиента записано",
-      );
+      const r = await write(d);
+      req.log.info({ participant_code: d.participant_code, mandate_id: id, status: r.status }, r.replayed ? log.replayed : log.done);
       return reply.code(200).send({ mandate_id: r.id, status: r.status });
     } catch (err) {
       if (err instanceof ConsentSignRejected) {
-        req.log.info({ participant_code: d.participant_code, mandate_id: id, reason: err.reason, status: err.status }, "ПИ-8: решение не записано");
+        req.log.info({ participant_code: d.participant_code, mandate_id: id, reason: err.reason, status: err.status }, log.rejected);
         return fail(err.reason);
       }
       if (err instanceof ConsentIntegrityError || err instanceof ConsentStateUnknown) {
@@ -107,5 +132,40 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       req.log.error({ err, mandate_id: id }, "ПИ-8: сбой журнала согласий");
       return fail("UPSTREAM_UNAVAILABLE");
     }
-  });
+  }
+
+  app.post<{ Params: { id: string } }>("/participants/v1/mandates/:id/sign", async (req, reply) =>
+    participantWrite(
+      req,
+      reply,
+      signBody,
+      (d) => {
+        const { signature, ...record } = d;
+        return deps.consent.sign(d, () => deps.trusted.verify(d.participant_code, d.kid, record, signature), deps.params);
+      },
+      {
+        done: "ПИ-8: решение клиента записано",
+        replayed: "ПИ-8: повтор той же подписи — решение уже записано, записи нет",
+        rejected: "ПИ-8: решение не записано",
+      },
+    ),
+  );
+
+  // Отзыв клиентом (РП38 п. 1, 4): своя метка подписи; полномочий уже нет — текущий статус без записи.
+  app.post<{ Params: { id: string } }>("/participants/v1/mandates/:id/revoke", async (req, reply) =>
+    participantWrite(
+      req,
+      reply,
+      revokeBody,
+      (d) => {
+        const { signature, ...record } = d;
+        return deps.consent.revoke(d, () => deps.trusted.verifyRevocation(record, signature));
+      },
+      {
+        done: "ПИ-8: отзыв клиентом записан",
+        replayed: "ПИ-8: отзыв — полномочий уже нет, записи нет",
+        rejected: "ПИ-8: отзыв не записан",
+      },
+    ),
+  );
 }

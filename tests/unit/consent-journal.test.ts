@@ -709,6 +709,17 @@ describe("deriveStatus — свёртка записей (A7 п. 4; инвари
     expect(deriveStatus(id, [head, e("MANDATE_SIGNED"), e("MANDATE_REVOKED"), e("MANDATE_SIGNED")], T0)).toBe("REVOKED");
   });
 
+  it.each([
+    ["второй отзыв", ["MANDATE_REVOKED", "MANDATE_REVOKED"], "REVOKED"],
+    ["отзыв клиентом и отказ агента", ["MANDATE_SIGNED", "MANDATE_RELINQUISHED", "MANDATE_REVOKED"], "REVOKED"],
+    ["подпись после отзыва", ["MANDATE_REVOKED", "MANDATE_SIGNED"], "REVOKED"],
+    ["отказ клиента после отзыва", ["MANDATE_RELINQUISHED", "MANDATE_REJECTED"], "REVOKED"],
+    ["отзыв после отказа клиента", ["MANDATE_REJECTED", "MANDATE_REVOKED"], "REJECTED"],
+    ["отказ агента после отказа клиента", ["MANDATE_REJECTED", "MANDATE_RELINQUISHED"], "REJECTED"],
+  ])("РП38 п. 5: %s — %s без ConsentStateUnknown", (_name, kinds, status) => {
+    expect(deriveStatus(id, [head, ...kinds.map((k) => e(k))], T0)).toBe(status);
+  });
+
   it("REVOKED и REJECTED после valid_to не становятся EXPIRED; ACTIVE — становится", () => {
     const late = new Date("2026-10-25T00:00:00Z");
     expect(deriveStatus(id, [head, e("MANDATE_REVOKED")], late)).toBe("REVOKED");
@@ -721,7 +732,8 @@ describe("deriveStatus — свёртка записей (A7 п. 4; инвари
     ["повтор головной записи", [head, e("MANDATE_REQUESTED", id, null)]],
     ["вторая подпись с другой записью", [head, e("MANDATE_SIGNED"), { ...e("MANDATE_SIGNED"), payload: { signature: "другая" } }]],
     ["отказ после подписи", [head, e("MANDATE_SIGNED"), e("MANDATE_REJECTED")]],
-    ["подпись после отзыва", [head, e("MANDATE_REVOKED"), e("MANDATE_SIGNED")]],
+    ["повтор головной записи после отзыва", [head, e("MANDATE_REVOKED"), e("MANDATE_REQUESTED", id, null)]],
+    ["неизвестный вид записи после отзыва", [head, e("MANDATE_REVOKED"), e("MANDATE_EXTENDED")]],
     ["подпись после отказа", [head, e("MANDATE_REJECTED"), e("MANDATE_SIGNED")]],
     ["нет записи мандата первой", [e("MANDATE_SIGNED")]],
     ["valid_to не читается", [{ ...head, payload: { valid_to: "не дата" } }]],

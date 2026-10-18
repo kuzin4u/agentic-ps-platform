@@ -26,6 +26,8 @@ export interface StandIssuer {
   readonly participant_code: string;
   /** Ответ шлюза участников: 200 `{mandate_id, status}` или `{code}`; неизвестный мандат — 404 без обращения. */
   sign(mandateId: string, opts?: IssuerSignOptions): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /** Отзыв мандата клиентом в приложении банка (РП38): ответ шлюза участников, неизвестный — 404 без обращения. */
+  revoke(mandateId: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
 }
 
 export interface Stand {
@@ -33,7 +35,7 @@ export interface Stand {
   readonly registry: AgentRegistry;
   readonly keys: AgentKeys;
   readonly app: FastifyInstance;
-  /** Приложение банка: подпись мандата клиентом (РП12, РП36). */
+  /** Приложение банка: подпись и отзыв мандата клиентом (РП12, РП36, РП38). */
   readonly issuer: StandIssuer;
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
   setClock(d: Date | undefined): void;
@@ -91,6 +93,22 @@ export function createStand(): Stand {
       const { mandate_id: _id, ...body } = { ...record, signature: emulator.signRecord(record) };
       void _id;
       const res = await app.inject({ method: "POST", url: `/participants/v1/mandates/${mandateId}/sign`, payload: body });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    async revoke(mandateId) {
+      const view = await consent.signingView(mandateId);
+      if (!view) return { statusCode: 404, body: { code: "MANDATE_NOT_FOUND" } };
+      const record = {
+        participant_code: emulator.participant_code,
+        kid: emulator.trustedKey.kid,
+        mandate_id: mandateId,
+        mandate_hash: view.hash,
+        revocation_ref: `emu-rev-${mandateId}`,
+        revoked_at: now().toISOString(),
+      };
+      const { mandate_id: _id, ...body } = { ...record, signature: emulator.signRevocation(record) };
+      void _id;
+      const res = await app.inject({ method: "POST", url: `/participants/v1/mandates/${mandateId}/revoke`, payload: body });
       return { statusCode: res.statusCode, body: res.json() };
     },
   };

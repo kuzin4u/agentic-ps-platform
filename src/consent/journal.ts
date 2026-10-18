@@ -1,6 +1,6 @@
 // П2 Журнал согласий над журналом ядра (РП14): запрос мандата и чтение со статусом-свёрткой (PS-06 К1.2).
 // Проверка запроса по схеме ПАО, идемпотентность и HTTP — К1.3; id от (агент, ключ) и повтор — К2.1 (РП33 доп.);
-// подпись принципала по подписи участника — К2.4 (РП36); отзыв, verify, выписка — часть 2.
+// подпись принципала по подписи участника — К2.4 (РП36); отзыв клиентом и отказ агента — К2.6 (РП38).
 import { AsyncHashChainJournal, canonicalJson, sha256Hex, type AsyncJournalStore, type JournalEntry } from "@kuzin4u/agentic-core";
 import type { Mandate, MandateRequest } from "../shared/pao.js";
 import {
@@ -14,7 +14,9 @@ import {
   withParentStatus,
   ConsentStateUnknown,
   type MandateDecisionPayload,
+  type MandateRelinquishPayload,
   type MandateRequestedPayload,
+  type MandateRevocationPayload,
   type MandateStatus,
   type MandateSubject,
   type MandateTerms,
@@ -34,7 +36,10 @@ export type SignRejectReason =
   | "MANDATE_NOT_PENDING"
   | "QUALIFIED_SIGNATURE_REQUIRED";
 
-/** Решение клиента не записано: запись журнала не пишется. status — статус мандата на момент проверки, если он известен. */
+/**
+ * Запись участника (решение клиента, РП36; отзыв, РП38) не принята: запись журнала не пишется. status — статус мандата
+ * на момент проверки, если он известен.
+ */
 export class ConsentSignRejected extends Error {
   constructor(
     readonly reason: SignRejectReason,
@@ -83,8 +88,11 @@ interface LoadedMandate {
 export class ConsentJournal {
   private readonly now: () => Date;
   private readonly revocationOrder: () => string | undefined;
-  /** Запись решения по одному мандату — по очереди внутри процесса; между экземплярами — дубль терпит свёртка. */
-  private readonly signing = new Map<string, Promise<unknown>>();
+  /**
+   * Лок записи по мандату: решение банка, отзыв клиентом и отказ агента по одному мандату — по очереди внутри процесса
+   * (РП36 доп. п. 4, РП38 п. 4); между экземплярами — дубль решения и записи после отзыва терпит свёртка (РП38 п. 5).
+   */
+  private readonly writing = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly store: ConsentStore,
@@ -250,13 +258,18 @@ export class ConsentJournal {
     policy: SignaturePolicy,
   ): Promise<{ readonly id: string; readonly status: MandateStatus; readonly replayed: boolean }> {
     if (!verifySignature(d)) throw new ConsentSignRejected("SIGNATURE_INVALID", d.mandate_id);
-    const prev = this.signing.get(d.mandate_id) ?? Promise.resolve();
-    const run = prev.catch(() => {}).then(() => this.signLocked(d, policy));
-    this.signing.set(d.mandate_id, run);
+    return this.locked(d.mandate_id, () => this.signLocked(d, policy));
+  }
+
+  /** Запись по мандату под локом записи: следующая начинается после окончания предыдущей, в том числе неудачной. */
+  private async locked<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.writing.get(id) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    this.writing.set(id, run);
     try {
       return await run;
     } finally {
-      if (this.signing.get(d.mandate_id) === run) this.signing.delete(d.mandate_id);
+      if (this.writing.get(id) === run) this.writing.delete(id);
     }
   }
 
@@ -284,13 +297,56 @@ export class ConsentJournal {
     if (d.decision === "SIGN" && d.signature_type === "simple" && needsQualified(m.head.payload as MandateRequestedPayload, m.head.at, policy)) {
       throw new ConsentSignRejected("QUALIFIED_SIGNATURE_REQUIRED", id, m.status);
     }
-    // Отзыв (К2.6), записанный между проверкой статуса и вставкой, даёт REQUESTED, REVOKED, SIGNED — свёртка
-    // ConsentStateUnknown, мандат 503 (fail-closed). Внутри процесса К2.6 берёт тот же лок signing (РП36 доп. п. 4).
+    // Отзыв с другого экземпляра, записанный между проверкой статуса и вставкой, даёт REQUESTED, REVOKED, SIGNED —
+    // свёртка пропускает решение, мандат REVOKED (РП38 п. 5). Внутри процесса отзыв ждёт лок записи: решения после отзыва нет.
     const kind = d.decision === "SIGN" ? "MANDATE_SIGNED" : "MANDATE_REJECTED";
     await this.chainJournal(row.chain).append(kind, id, d, id);
-    const after = await this.load(id, row.agent_code);
-    if (!after) throw new ConsentStateUnknown(id, "мандат после записи решения не читается");
-    return { id, status: after.status, replayed: false };
+    return { id, status: await this.statusAfterWrite(id, row.agent_code), replayed: false };
+  }
+
+  /**
+   * Отзыв клиентом через банк — запись MANDATE_REVOKED (РП38 п. 1, 4; A7 п. 6). Порядок, как у sign: подпись участника
+   * над записью отзыва → мандат по id → mandate_hash = Mandate.hash → статус по свёртке load (у CART — вместе с
+   * родителем). Запись — только при PENDING_SIGNATURE или ACTIVE; иначе полномочий уже нет: текущий статус без записи.
+   */
+  async revoke(
+    d: MandateRevocationPayload,
+    verifySignature: (d: MandateRevocationPayload) => boolean,
+  ): Promise<{ readonly id: string; readonly status: MandateStatus; readonly replayed: boolean }> {
+    if (!verifySignature(d)) throw new ConsentSignRejected("SIGNATURE_INVALID", d.mandate_id);
+    return this.locked(d.mandate_id, async () => {
+      const id = d.mandate_id;
+      const row = await this.store.getMandate(id);
+      const m = row && (await this.load(id, row.agent_code));
+      if (!row || !m) throw new ConsentSignRejected("MANDATE_NOT_FOUND", id);
+      if (d.mandate_hash !== m.head.hash) throw new ConsentSignRejected("MANDATE_HASH_MISMATCH", id);
+      if (!revocable(m.status)) return { id, status: m.status, replayed: true };
+      await this.chainJournal(row.chain).append("MANDATE_REVOKED", id, d, id);
+      return { id, status: await this.statusAfterWrite(id, row.agent_code), replayed: false };
+    });
+  }
+
+  /**
+   * Отказ агента от полномочий — запись MANDATE_RELINQUISHED (РП38 п. 3–4; A7 п. 6). Только свой мандат: чужой и
+   * неизвестный — undefined (404). Запись — только при PENDING_SIGNATURE или ACTIVE; иначе — текущий мандат без записи.
+   */
+  async relinquish(id: string, agent_code: string, kid: string): Promise<Mandate | undefined> {
+    return this.locked(id, async () => {
+      const m = await this.load(id, agent_code);
+      if (!m) return undefined;
+      if (!revocable(m.status)) return this.toMandate(id, m.head, m.subj, m.status);
+      const payload: MandateRelinquishPayload = { agent_code, kid };
+      await this.chainJournal(m.row.chain).append("MANDATE_RELINQUISHED", id, payload, id);
+      const after = await this.load(id, agent_code);
+      if (!after) throw new ConsentStateUnknown(id, "мандат после отказа агента не читается");
+      return this.toMandate(id, after.head, after.subj, after.status);
+    });
+  }
+
+  private async statusAfterWrite(id: string, agent_code: string): Promise<MandateStatus> {
+    const after = await this.load(id, agent_code);
+    if (!after) throw new ConsentStateUnknown(id, "мандат после записи не читается");
+    return after.status;
   }
 
   /**
@@ -375,6 +431,9 @@ export class ConsentJournal {
     };
   }
 }
+
+/** Отзыв и отказ пишутся только пока полномочия есть или ожидаются (РП38 п. 4). */
+const revocable = (status: MandateStatus): boolean => status === "PENDING_SIGNATURE" || status === "ACTIVE";
 
 /** Реквизиты записи и повтора совпадают: сравнение канонических строк без обязательства предмета. */
 function sameTerms(recorded: MandateRequestedPayload, terms: MandateTerms): boolean {

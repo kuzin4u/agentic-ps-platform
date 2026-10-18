@@ -62,6 +62,8 @@ declare module "fastify" {
   interface FastifyRequest {
     /** Агент из реестра после проверки обращения; класс и уровень — только отсюда (инвариант 5). */
     paoAgent?: AgentRecord;
+    /** Ключ, которым подписано обращение (РП23): в запись отказа агента от полномочий (РП38 п. 3). */
+    paoKid?: string;
   }
 }
 
@@ -122,6 +124,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       return send(reply, paoError(r.code, r.norm));
     }
     req.paoAgent = r.agent;
+    req.paoKid = r.kid;
   });
 
   // Свой статус, класс, уровень, действующие ключи — из реестра (ПАО §3, A2, ПС01). rate_limit_per_min — в PS-05.
@@ -224,6 +227,26 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     }),
   );
 
+  // Отказ агента от полномочий (ПАО §3, A7 п. 6; РП38 п. 3–4): только свой мандат, под ключом идемпотентности; запись
+  // MANDATE_RELINQUISHED — при PENDING_SIGNATURE или ACTIVE, иначе текущий мандат без записи. Отказ от INTENT отзывает его CART (РП35).
+  app.post<{ Params: { id: string } }>("/pao/v1/mandates/:id/relinquish", async (req, reply) => {
+    const id = req.params.id;
+    return mutating(req, reply, emptyBody, async (agent) => {
+      if (!MANDATE_ID.test(id)) return reply4xx(paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+      try {
+        const m = await deps.consent.relinquish(id, agent.agent_code, req.paoKid as string);
+        if (!m) return reply4xx(paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+        req.log.info({ agent_code: agent.agent_code, mandate_id: id, status: m.status }, "ПАО: отказ агента от полномочий");
+        return { status: 200, body: m };
+      } catch (err) {
+        const e = consentErrorReply(err);
+        if (!e) throw err;
+        req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
+        return reply4xx(e);
+      }
+    });
+  });
+
   // Мандат этого агента (ПАО §3, A7; PS-06 К2.2): статус — свёртка записей на момент чтения, а не сохранённый ответ
   // запроса. Чужой, неизвестный и не по форме id — один ответ 404 MANDATE_NOT_FOUND: чужой неотличим от неизвестного.
   // Цепочка нарушена или состояние не определяется — 503 STATE_UNAVAILABLE (инвариант 3); сбой хранилища — 503 UPSTREAM_UNAVAILABLE.
@@ -246,6 +269,9 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     }
   });
 }
+
+/** Тело отказа агента от полномочий — пустое (РП38 п. 3). */
+const emptyBody = (raw: string): true | undefined => (raw === "" ? true : undefined);
 
 const reply4xx = (e: PaoErrorReply): PaoReply => ({ status: e.http, body: e.body });
 
