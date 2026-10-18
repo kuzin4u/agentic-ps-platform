@@ -271,7 +271,7 @@ export class PgConsentStore implements ConsentStore {
     const r = await this.client.query<EventRow & { attempts: number }>(
       `WITH c AS (
          SELECT event_id FROM pao_event_deliveries
-         WHERE state = 'PENDING' AND next_at_ms <= $1 ORDER BY next_at_ms LIMIT $3 FOR UPDATE /* ПОЛОМКА К1.3в′: без SKIP LOCKED */
+         WHERE state = 'PENDING' AND next_at_ms <= $1 ORDER BY next_at_ms LIMIT $3 FOR UPDATE SKIP LOCKED
        ), u AS (
          UPDATE pao_event_deliveries d SET attempts = d.attempts + 1, claims = d.claims + 1, next_at_ms = $2
          FROM c WHERE d.event_id = c.event_id RETURNING d.event_id, d.attempts, d.claims
