@@ -195,3 +195,18 @@ export async function resolveGlobal(host: string, resolve: HostResolver): Promis
   if (!addresses.every(isGlobalAddress)) return { ok: false, reason: "address_not_global" };
   return { ok: true, addresses: [...addresses] };
 }
+
+/**
+ * Разрешение имени не дольше ms (инвариант 3: таймаут — отказ): зависший DNS не держит обработчик под ключом (PUT) и
+ * не держит попытку доставки дольше её тайм-аута. Таймаут — сбой без кода: временный (`resolve_failed`).
+ */
+export const withTimeout =
+  (resolve: HostResolver, ms: number): HostResolver =>
+  (host) =>
+    new Promise((ok, fail) => {
+      const t = setTimeout(() => fail(new Error("разрешение имени: таймаут")), ms);
+      resolve(host).then(
+        (a) => (clearTimeout(t), ok(a)),
+        (e: unknown) => (clearTimeout(t), fail(e)),
+      );
+    });

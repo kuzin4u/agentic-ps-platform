@@ -12,6 +12,7 @@ import {
   type JournalEntry,
   type SqlClient,
 } from "@kuzin4u/agentic-core";
+import type { DeliveryOutcome, DeliveryRow, DueDelivery, EventDeliveryStore } from "../pao/delivery.js";
 import { EventCursorUnknown, eventIdFor, eventSeqLockKey, type EventDraft, type PaoEventType, type StoredEvent } from "../pao/events.js";
 
 export interface MandateIndexRow {
@@ -37,7 +38,7 @@ export class ConsentRowConflict extends Error {
   }
 }
 
-export interface ConsentStore {
+export interface ConsentStore extends EventDeliveryStore {
   insertMandate(row: MandateIndexRow): Promise<void>;
   getMandate(id: string): Promise<MandateIndexRow | undefined>;
   insertSubject(row: MandateSubjectRow): Promise<void>;
@@ -46,7 +47,8 @@ export interface ConsentStore {
   journal(chain: string): AsyncJournalStore;
   /**
    * То же хранилище, но каждая вставка записи пишет и событие агенту — атомарно (РП39 п. 1): записи без события и
-   * события без записи нет. Повтор вставки ядром при гонке конца цепочки — новая попытка целиком.
+   * события без записи нет. Повтор вставки ядром при гонке конца цепочки — новая попытка целиком. draft.push — и строка
+   * попытки push-доставки в той же транзакции (РП40 п. 5).
    */
   journalWithEvent(chain: string, draft: EventDraft): AsyncJournalStore;
   /**
@@ -74,6 +76,8 @@ export class MemoryConsentStore implements ConsentStore {
   private readonly subjects = new Map<string, MandateSubjectRow>();
   private readonly chains = new Map<string, AsyncJournalStore>();
   private readonly events = new Map<string, StoredEvent[]>();
+  private readonly byEventId = new Map<string, StoredEvent>();
+  private readonly deliveries = new Map<string, DeliveryRow>();
 
   async insertMandate(row: MandateIndexRow): Promise<void> {
     if (this.mandates.has(row.id)) throw new ConsentRowConflict(row.id);
@@ -105,10 +109,32 @@ export class MemoryConsentStore implements ConsentStore {
         await inner.append(e);
         // Без await между вставкой записи и события: в одном процессе другая запись между ними не встанет.
         const own = this.events.get(draft.agent_code) ?? [];
-        own.push(eventOf(draft, chain, e, own.length + 1));
+        const ev = eventOf(draft, chain, e, own.length + 1);
+        own.push(ev);
         this.events.set(draft.agent_code, own);
+        this.byEventId.set(ev.event_id, ev);
+        if (draft.push) this.deliveries.set(ev.event_id, newDelivery(ev));
       },
     };
+  }
+  async claimDue(nowMs: number, leaseUntilMs: number, limit: number): Promise<readonly DueDelivery[]> {
+    const due = [...this.deliveries.values()]
+      .filter((d) => d.state === "PENDING" && d.next_at_ms <= nowMs)
+      .sort((a, b) => a.next_at_ms - b.next_at_ms)
+      .slice(0, limit);
+    return due.map((d) => {
+      const next = Object.freeze({ ...d, attempts: d.attempts + 1, claims: d.claims + 1, next_at_ms: leaseUntilMs });
+      this.deliveries.set(d.event_id, next);
+      return { event: this.byEventId.get(d.event_id) as StoredEvent, attempts: next.attempts, claim: next.claims };
+    });
+  }
+  async finish(event_id: string, claim: number, outcome: DeliveryOutcome): Promise<void> {
+    const cur = this.deliveries.get(event_id);
+    if (!cur || cur.state !== "PENDING" || cur.claims !== claim) return;
+    this.deliveries.set(event_id, finished(cur, outcome));
+  }
+  async delivery(event_id: string): Promise<DeliveryRow | undefined> {
+    return this.deliveries.get(event_id);
   }
   async listEvents(agent_code: string, after: string | undefined, limit: number): Promise<readonly StoredEvent[]> {
     const own = this.events.get(agent_code) ?? [];
@@ -202,6 +228,12 @@ export class PgConsentStore implements ConsentStore {
            SELECT $1, COALESCE(MAX(seq), 0) + 1, $2, $3, $4, $5, $6, $7 FROM pao_events WHERE agent_code = $1`,
           [ev.agent_code, ev.event_id, ev.type, ev.at, canonicalJson(ev.data), ev.journal_chain, ev.journal_seq],
         );
+        if (draft.push) {
+          await tx.query(
+            "INSERT INTO pao_event_deliveries (event_id, agent_code, state, attempts, next_at_ms) VALUES ($1, $2, 'PENDING', 0, $3)",
+            [ev.event_id, ev.agent_code, Date.parse(ev.at)],
+          );
+        }
         await this.hooks.inTx?.("commit", draft);
         await tx.query("COMMIT");
       } catch (err) {
@@ -231,18 +263,68 @@ export class PgConsentStore implements ConsentStore {
        WHERE agent_code = $1 AND seq > $2 ORDER BY seq LIMIT $3`,
       [agent_code, from, limit],
     );
-    return r.rows.map((x) =>
-      Object.freeze({
-        agent_code: x.agent_code,
-        type: x.type as PaoEventType,
-        data: Object.freeze(JSON.parse(x.data) as EventDraft["data"]),
-        seq: Number(x.seq),
-        event_id: x.event_id,
-        at: x.at,
-        journal_chain: x.journal_chain,
-        journal_seq: Number(x.journal_seq),
-      }),
+    return r.rows.map(eventFromRow);
+  }
+
+  /** Одна команда: выбор готовых строк FOR UPDATE SKIP LOCKED, attempts + 1 и аренда, событие из ленты (РП40 п. 5). */
+  async claimDue(nowMs: number, leaseUntilMs: number, limit: number): Promise<readonly DueDelivery[]> {
+    const r = await this.client.query<EventRow & { attempts: number }>(
+      `WITH c AS (
+         SELECT event_id FROM pao_event_deliveries
+         WHERE state = 'PENDING' AND next_at_ms <= $1 ORDER BY next_at_ms LIMIT $3 FOR UPDATE SKIP LOCKED
+       ), u AS (
+         UPDATE pao_event_deliveries d SET attempts = d.attempts + 1, claims = d.claims + 1, next_at_ms = $2
+         FROM c WHERE d.event_id = c.event_id RETURNING d.event_id, d.attempts, d.claims
+       )
+       SELECT e.agent_code, e.seq, e.event_id, e.type, e.at, e.data, e.journal_chain, e.journal_seq, u.attempts, u.claims
+       FROM u JOIN pao_events e ON e.event_id = u.event_id`,
+      [nowMs, leaseUntilMs, limit],
     );
+    return r.rows.map((x) => ({ event: eventFromRow(x), attempts: Number(x.attempts), claim: Number(x.claims) }));
+  }
+  /**
+   * Итог — одной командой при совпадении номера взятия и PENDING. Попытки: возврат (refund, SKIPPED) — attempts − 1;
+   * срок следующей попытки — только у PENDING, у конечных состояний остаётся как был.
+   */
+  async finish(event_id: string, claim: number, outcome: DeliveryOutcome): Promise<void> {
+    const refund = outcome.state === "SKIPPED" || (outcome.state === "PENDING" && outcome.refund === true);
+    await this.client.query(
+      `UPDATE pao_event_deliveries
+       SET state = $3, attempts = GREATEST(0, attempts - $4), next_at_ms = COALESCE($5, next_at_ms), last_reason = $6
+       WHERE event_id = $1 AND claims = $2 AND state = 'PENDING'`,
+      [
+        event_id,
+        claim,
+        outcome.state,
+        refund ? 1 : 0,
+        outcome.state === "PENDING" ? outcome.next_at_ms : null,
+        outcome.state === "DELIVERED" ? null : outcome.reason,
+      ],
+    );
+  }
+  async delivery(event_id: string): Promise<DeliveryRow | undefined> {
+    const r = await this.client.query<{
+      event_id: string;
+      agent_code: string;
+      state: string;
+      attempts: number;
+      claims: number;
+      next_at_ms: string;
+      last_reason: string | null;
+    }>(
+      "SELECT event_id, agent_code, state, attempts, claims, next_at_ms, last_reason FROM pao_event_deliveries WHERE event_id = $1",
+      [event_id],
+    );
+    const x = r.rows[0];
+    return x
+      ? {
+          ...x,
+          state: x.state as DeliveryRow["state"],
+          attempts: Number(x.attempts),
+          claims: Number(x.claims),
+          next_at_ms: Number(x.next_at_ms),
+        }
+      : undefined;
   }
 
   private async insert(id: string, sql: string, params: unknown[]): Promise<void> {
@@ -265,4 +347,40 @@ interface EventRow extends Record<string, unknown> {
   readonly data: string;
   readonly journal_chain: string;
   readonly journal_seq: string;
+}
+
+const eventFromRow = (x: EventRow): StoredEvent =>
+  Object.freeze({
+    agent_code: x.agent_code,
+    type: x.type as PaoEventType,
+    data: Object.freeze(JSON.parse(x.data) as EventDraft["data"]),
+    seq: Number(x.seq),
+    event_id: x.event_id,
+    at: x.at,
+    journal_chain: x.journal_chain,
+    journal_seq: Number(x.journal_seq),
+  });
+
+/** Новая строка попытки: можно брать с момента события. */
+const newDelivery = (ev: StoredEvent): DeliveryRow =>
+  Object.freeze({
+    event_id: ev.event_id,
+    agent_code: ev.agent_code,
+    state: "PENDING",
+    attempts: 0,
+    claims: 0,
+    next_at_ms: Date.parse(ev.at),
+    last_reason: null,
+  });
+
+/** Строка после итога попытки (в памяти; PostgreSQL — то же правило одной командой в finish). refund — попытка не потрачена. */
+function finished(cur: DeliveryRow, o: DeliveryOutcome): DeliveryRow {
+  if (o.state === "DELIVERED") return Object.freeze({ ...cur, state: "DELIVERED", last_reason: null });
+  if (o.state === "PENDING") {
+    const attempts = o.refund ? Math.max(0, cur.attempts - 1) : cur.attempts;
+    return Object.freeze({ ...cur, state: "PENDING", attempts, next_at_ms: o.next_at_ms, last_reason: o.reason });
+  }
+  // SKIPPED — без попытки (РП40 п. 6); EXHAUSTED — попытки исчерпаны, событие в ленте.
+  const attempts = o.state === "SKIPPED" ? Math.max(0, cur.attempts - 1) : cur.attempts;
+  return Object.freeze({ ...cur, state: o.state, attempts, last_reason: o.reason });
 }

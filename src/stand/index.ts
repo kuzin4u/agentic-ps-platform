@@ -6,7 +6,9 @@
 import type { FastifyInstance } from "fastify";
 import { ConsentJournal, MemoryConsentStore } from "../consent/index.js";
 import type { MandateDecisionPayload } from "../consent/model.js";
+import { createAgentReceiver, type AgentReceiver } from "../env/agent/index.js";
 import { createIssuerEmulator } from "../env/issuer/index.js";
+import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import { TrustedParticipants, type TrustedParticipantKey } from "../participants/trusted.js";
 import { paoIdempotency } from "../pao/idempotency.js";
 import { PaoRequestVerifier } from "../pao/verify.js";
@@ -40,6 +42,15 @@ export interface Stand {
   readonly app: FastifyInstance;
   /** Разрешение имени стенда для адреса подписки (РП40 п. 8): подмена DNS в тестах. */
   readonly dns: StandDns;
+  /** Эмулятор агента-получателя push-событий (ПС23): ответы по очереди, полученные и обработанные события. */
+  readonly agentReceiver: AgentReceiver;
+  /**
+   * Проход доставки по часам стенда (РП40 п. 5): все готовые попытки до пустой очереди; число попыток. Повтор
+   * наступает по nextAttemptDelayMs ядра — тест двигает часы стенда (setClock). Таймера на стенде нет.
+   */
+  deliverEvents(): Promise<number>;
+  /** Строка попытки push по событию (состояние, попытки, причина) — для тестов. */
+  delivery(event_id: string): Promise<DeliveryRow | undefined>;
   /** Приложение банка: подпись и отзыв мандата клиентом (РП12, РП36, РП38). */
   readonly issuer: StandIssuer;
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
@@ -72,10 +83,27 @@ export function createStand(): Stand {
   // Банк стенда — эмулятор эмитента с ключом в памяти; другого доверенного участника на стенде нет (РП36 доп.).
   const emulator = createIssuerEmulator();
   const trusted = new TrustedParticipants([emulator.trustedKey], { stand: true });
-  const consent = new ConsentJournal(new MemoryConsentStore(), { now, revocationOrder: () => trusted.revocationOrder() });
+  // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6).
+  const consentStore = new MemoryConsentStore();
+  const consent = new ConsentJournal(consentStore, {
+    now,
+    revocationOrder: () => trusted.revocationOrder(),
+    pushFor: (code, type) => registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false),
+  });
   // Подписка — в записи агента (РП40 п. 1); разрешение имени — стендовое, проверка адреса та же, что в рабочем сервере (п. 8).
   const dns = createStandDns();
   const subscriptions = { set: registry.subscribe.bind(registry) };
+  const agentReceiver = createAgentReceiver();
+  const deliverer = new EventDeliverer({
+    store: consentStore,
+    agent: (c) => registry.get(c),
+    subscription: (c) => registry.subscription(c),
+    resolveHost: dns.resolve,
+    transport: agentReceiver.transport,
+    params,
+    now: () => now().getTime(),
+    stand: true,
+  });
   const app = buildServer({
     env: "dev",
     pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
@@ -127,6 +155,13 @@ export function createStand(): Stand {
     keys,
     app,
     dns,
+    agentReceiver,
+    async deliverEvents() {
+      let total = 0;
+      for (let n = await deliverer.runOnce(); n > 0; n = await deliverer.runOnce()) total += n;
+      return total;
+    },
+    delivery: (id) => consentStore.delivery(id),
     issuer,
     setClock: (d) => (clock = d),
     now,

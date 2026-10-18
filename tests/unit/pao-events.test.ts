@@ -251,7 +251,8 @@ describe.skipIf(!DATABASE_URL)("лента событий — PostgreSQL", () =>
     await j.sign(decision(m.id, m.hash), yes, POLICY);
     await expect(db.pool.query("UPDATE pao_events SET type = type")).rejects.toThrow(/только добавление/);
     await expect(db.pool.query("DELETE FROM pao_events")).rejects.toThrow(/только добавление/);
-    await expect(db.pool.query("TRUNCATE pao_events")).rejects.toThrow(/только добавление/);
+    // CASCADE: без него отказывает внешний ключ pao_event_deliveries (sql/102) раньше триггера.
+    await expect(db.pool.query("TRUNCATE pao_events CASCADE")).rejects.toThrow(/только добавление/);
   });
 
   it("барьер: номер выдан раньше, фиксация позже — второй ждёт блокировку агента, номера = порядку фиксации (РП39 п. 2)", async () => {

@@ -25,7 +25,7 @@ import {
   type PaoReply,
 } from "./idempotency.js";
 import { PAO_DB_TIMEOUT_MS } from "./stores.js";
-import { checkSubscriptionUrl, resolveGlobal, STAND_PORT, systemResolver, type HostResolver } from "./subscription.js";
+import { checkSubscriptionUrl, resolveGlobal, STAND_PORT, systemResolver, withTimeout, type HostResolver } from "./subscription.js";
 import type { PaoRequestVerifier } from "./verify.js";
 
 export interface PaoDeps {
@@ -346,18 +346,6 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     }
   });
 }
-
-/** Разрешение имени не дольше ms (инвариант 3: таймаут — отказ): зависший DNS не держит обработчик под ключом. */
-const withTimeout =
-  (resolve: HostResolver, ms: number): HostResolver =>
-  (host) =>
-    new Promise((ok, fail) => {
-      const t = setTimeout(() => fail(new Error("разрешение имени: таймаут")), ms);
-      resolve(host).then(
-        (a) => (clearTimeout(t), ok(a)),
-        (e: unknown) => (clearTimeout(t), fail(e)),
-      );
-    });
 
 /** Тело отказа агента от полномочий — пустое (РП38 п. 3). */
 const emptyBody = (raw: string): true | undefined => (raw === "" ? true : undefined);

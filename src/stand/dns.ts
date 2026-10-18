@@ -2,16 +2,10 @@
 // разрешения имени. Эмулятор агента-получателя живёт в процессе под именем STAND_AGENT_EMULATOR_HOST; стенд соединений
 // не открывает (доставка стенда — в процессе), поэтому адрес-заглушка нужен только для проверки «адрес глобальный».
 // Рабочий сервер этот модуль не импортирует (tests/unit/stand-boundary.test.ts): у него — системное разрешение имени.
+import { STAND_AGENT_EMULATOR_ADDRESS, STAND_AGENT_EMULATOR_HOST } from "../env/agent/index.js";
 import { STAND_PORT, type HostResolver } from "../pao/subscription.js";
 
-/** Имя эмулятора агента-получателя на стенде — то же, что в `event_subscription_allow_hosts` стенда. */
-export const STAND_AGENT_EMULATOR_HOST = "agent-emulator.stand";
-
-/**
- * Адрес-заглушка эмулятора: глобальный одноадресный (адреса TEST-NET не глобальные и отвергаются, РП40 п. 3),
- * из блока IANA 192.0.32.0/20. Стенд по нему не соединяется.
- */
-export const STAND_AGENT_EMULATOR_ADDRESS = "192.0.32.10";
+export { STAND_AGENT_EMULATOR_ADDRESS, STAND_AGENT_EMULATOR_HOST };
 
 /** Таблица имён стенда: тест подменяет адреса имени (подмена DNS) и возвращает исходные. */
 export interface StandDns {

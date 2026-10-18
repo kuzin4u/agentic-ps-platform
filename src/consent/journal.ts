@@ -86,6 +86,11 @@ export interface ConsentJournalOptions {
    * undefined — мандат не пишется: ConsentStateUnknown → 503 STATE_UNAVAILABLE (fail-closed, инвариант 3).
    */
   readonly revocationOrder: () => string | undefined;
+  /**
+   * Нужна ли push-доставка события (РП40 п. 5–7): агент ACTIVE и подписан на тип — решается при записи, строка попытки
+   * пишется в той же транзакции. Не задано — push нет (только лента).
+   */
+  readonly pushFor?: (agent_code: string, type: PaoEventType) => boolean;
 }
 
 /** Мандат, прочитанный из журнала: цепочка проверена, предмет сверен с обязательством. */
@@ -99,6 +104,7 @@ interface LoadedMandate {
 export class ConsentJournal {
   private readonly now: () => Date;
   private readonly revocationOrder: () => string | undefined;
+  private readonly pushFor: (agent_code: string, type: PaoEventType) => boolean;
   /**
    * Лок записи по мандату: решение банка, отзыв клиентом и отказ агента по одному мандату — по очереди внутри процесса
    * (РП36 доп. п. 4, РП38 п. 4); между экземплярами — дубль решения и записи после отзыва терпит свёртка (РП38 п. 5).
@@ -111,6 +117,7 @@ export class ConsentJournal {
   ) {
     this.now = opts.now ?? (() => new Date());
     this.revocationOrder = opts.revocationOrder;
+    this.pushFor = opts.pushFor ?? (() => false);
   }
 
   /**
@@ -118,7 +125,9 @@ export class ConsentJournal {
    * event — запись пишется вместе с событием агенту, атомарно (РП39 п. 1).
    */
   private chainJournal(chain: string, beforeWrite?: () => void, event?: EventDraft): AsyncHashChainJournal {
-    const inner = event ? this.store.journalWithEvent(chain, event) : this.store.journal(chain);
+    const inner = event
+      ? this.store.journalWithEvent(chain, { ...event, push: this.pushFor(event.agent_code, event.type) })
+      : this.store.journal(chain);
     const store: AsyncJournalStore = beforeWrite
       ? {
           ...(inner.genesis !== undefined ? { genesis: inner.genesis } : {}),

@@ -11,10 +11,12 @@ export interface EventDraft {
   readonly type: PaoEventType;
   /** Только ссылки, без предмета, сумм и статуса (A7 п. 8.3, РП39 п. 5). */
   readonly data: { readonly mandate_id: string };
+  /** Строка попытки push в той же транзакции (РП40 п. 5): агент ACTIVE и подписан на тип — на момент записи. */
+  readonly push?: boolean;
 }
 
 /** Строка ленты: событие и запись журнала, от которой оно (внешний ключ в PostgreSQL). */
-export interface StoredEvent extends EventDraft {
+export interface StoredEvent extends Omit<EventDraft, "push"> {
   readonly seq: number;
   readonly event_id: string;
   readonly at: string;
