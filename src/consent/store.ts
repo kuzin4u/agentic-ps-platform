@@ -194,7 +194,7 @@ export class PgConsentStore implements ConsentStore {
         await tx.query("BEGIN");
         await this.hooks.inTx?.("journal", draft);
         await new PgJournalStore(tx, chain).append(e);
-        void eventSeqLockKey; // К1.2а ПОЛОМКА: номер события без блокировки агента — откат в К1.2б
+        await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(draft.agent_code)]);
         await this.hooks.inTx?.("event", draft);
         const ev = eventOf(draft, chain, e, 0);
         await tx.query(
