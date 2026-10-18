@@ -930,7 +930,7 @@ paths:
   /pao/v1/mandates/{id}/evidence:
     get:
       summary: Выписка из журнала согласий
-      description: "mandate_chain (у CART — родитель и CART), records — вся цепочка журнала, operations — с PS-16/PS-22; нарушенная цепочка — 200 с integrity BROKEN и пустыми массивами. Соль предмета не раскрывается (РП38 п. 7)"
+      description: "mandate_chain (у CART — родитель и CART), records — вся цепочка журнала, operations — с PS-16/PS-22; нарушенная цепочка — 200 с integrity BROKEN и пустыми массивами. Соль предмета не раскрывается (РП38 п. 7). Статус по records — свёрткой РП38 п. 5: после MANDATE_REVOKED или MANDATE_RELINQUISHED записи решения, отзыва и отказа не меняют статус (REVOKED), после MANDATE_REJECTED — записи отзыва и отказа; точный дубль записанного решения пропускается; у CART — вместе с родителем (РП35)"
       parameters:
       - name: id
         in: path

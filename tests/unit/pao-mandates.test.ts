@@ -382,6 +382,20 @@ describe("POST /pao/v1/mandates", () => {
     expect(down.body).not.toContain("secret-host");
   });
 
+  it("evidence и verify: цепочка нарушена — evidence 200 integrity BROKEN с пустыми массивами, verify 503 (РП38 п. 6–7; `/audit` К2.6 № 5)", async () => {
+    const m = (await post(a, A, intent())).json();
+    const rows = (await store.journal((await store.getMandate(m.id))!.chain).all()) as JournalEntry[];
+    const original = rows[0]!;
+    rows[0] = { ...original, payload: { ...(original.payload as object), amount_limit: 99_999_999 } };
+    const ev = await signedInject(app, a, A, { method: "GET", path: `${PATH}/${m.id}/evidence`, body: "" });
+    expect([ev.statusCode, ev.json()]).toEqual([200, { mandate_chain: [], records: [], operations: [], integrity: "BROKEN" }]);
+    const v = await signedInject(app, a, A, { method: "GET", path: `${PATH}/${m.id}/verify`, body: "" });
+    expect([v.statusCode, v.json().code]).toEqual([503, "STATE_UNAVAILABLE"]);
+    rows[0] = original;
+    const ok = await signedInject(app, a, A, { method: "GET", path: `${PATH}/${m.id}/evidence`, body: "" });
+    expect([ok.statusCode, ok.json().integrity]).toEqual([200, "OK"]);
+  });
+
   it("РП35: CART при отзыве родителя — GET REVOKED; гонка «отзыв между проверкой и записью» — 201 со статусом REVOKED", async () => {
     const p = (await post(a, A, intent())).json();
     await sign(p.id);

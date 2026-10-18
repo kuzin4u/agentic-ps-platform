@@ -2,7 +2,15 @@
 // Проверка запроса по схеме ПАО, идемпотентность и HTTP — К1.3; id от (агент, ключ) и повтор — К2.1 (РП33 доп.);
 // подпись принципала по подписи участника — К2.4 (РП36); отзыв клиентом и отказ агента — К2.6, verify — К2.7,
 // выписка — К2.8 (РП38).
-import { AsyncHashChainJournal, canonicalJson, sha256Hex, type AsyncJournalStore, type JournalEntry } from "@kuzin4u/agentic-core";
+import {
+  AsyncHashChainJournal,
+  canonicalJson,
+  entryHash,
+  GENESIS_HASH,
+  sha256Hex,
+  type AsyncJournalStore,
+  type JournalEntry,
+} from "@kuzin4u/agentic-core";
 import type { EvidenceV14, Mandate, MandateRequest, MandateVerify } from "../shared/pao.js";
 import {
   ConsentIntegrityError,
@@ -399,12 +407,16 @@ export class ConsentJournal {
   async evidence(id: string, agent_code: string): Promise<EvidenceV14 | undefined> {
     const row = await this.store.getMandate(id);
     if (!row || row.agent_code !== agent_code) return undefined;
+    // Один снимок цепочки (РП35): проверка хэшей, статусы мандата и родителя и records — по одному и тому же массиву.
+    let entries: readonly JournalEntry[];
     let m: LoadedMandate | undefined;
-    let parent: Mandate | undefined;
+    let parent: LoadedMandate | undefined;
     try {
-      m = await this.load(id, agent_code);
+      entries = await this.snapshot(id, row.chain);
+      m = await this.loadFrom(row, entries, agent_code);
+      const parentRow = m?.head.parent_ref ? await this.store.getMandate(m.head.parent_ref) : undefined;
       if (m?.head.parent_ref) {
-        parent = await this.get(m.head.parent_ref, agent_code);
+        parent = parentRow && (await this.loadFrom(parentRow, entries, agent_code));
         if (!parent) throw new ConsentIntegrityError(id, "родитель CART не читается");
       }
     } catch (err) {
@@ -412,9 +424,9 @@ export class ConsentJournal {
       return { mandate_chain: [], records: [], operations: [], integrity: "BROKEN" };
     }
     if (!m) return undefined;
-    const entries = await this.store.journal(row.chain).all();
+    const chain = parent ? [parent, m] : [m];
     return {
-      mandate_chain: [...(parent ? [parent] : []), this.toMandate(id, m.head, m.subj, m.status)],
+      mandate_chain: chain.map((x) => this.toMandate(x.row.id, x.head, x.subj, x.status)),
       records: entries.map(({ seq, kind, ref, parent_ref, at, payload, prev_hash, hash }) => ({
         seq,
         kind,
@@ -442,11 +454,30 @@ export class ConsentJournal {
   private async load(id: string, agent_code: string): Promise<LoadedMandate | undefined> {
     const row = await this.store.getMandate(id);
     if (!row || row.agent_code !== agent_code) return undefined;
-    const journal = this.chainJournal(row.chain);
-    const check = await journal.verify();
-    if (!check.ok) throw new ConsentIntegrityError(id, `цепочка ${row.chain} нарушена на seq ${check.brokenAt}`);
-    // Один снимок цепочки: статус мандата и, у CART, статус родителя — по одним и тем же записям (РП35).
-    const entries = await this.store.journal(row.chain).all();
+    return this.loadFrom(row, await this.snapshot(id, row.chain), agent_code);
+  }
+
+  /**
+   * Снимок цепочки — одно чтение, хэши проверены по этому же массиву (как verify() ядра: от начала цепочки, entryHash,
+   * связи prev_hash). Записи, добавленные после чтения, в снимок не входят непроверенными (`/audit` К2.3 № 3, К2.6 № 1).
+   */
+  private async snapshot(id: string, chain: string): Promise<readonly JournalEntry[]> {
+    const store = this.store.journal(chain);
+    // Копия: хранилище в памяти отдаёт живой массив — запись, добавленная после чтения, в проверенный снимок не попадает.
+    const entries = [...(await store.all())];
+    let prev = store.genesis ?? GENESIS_HASH;
+    for (const e of entries) {
+      const { hash, ...rest } = e;
+      if (e.prev_hash !== prev || entryHash(rest) !== hash) throw new ConsentIntegrityError(id, `цепочка ${chain} нарушена на seq ${e.seq}`);
+      prev = hash;
+    }
+    return entries;
+  }
+
+  /** Мандат по снимку цепочки: статус мандата и, у CART, статус родителя — по одним и тем же записям (РП35). */
+  private async loadFrom(row: MandateIndexRow, entries: readonly JournalEntry[], agent_code: string): Promise<LoadedMandate | undefined> {
+    const id = row.id;
+    if (row.agent_code !== agent_code) return undefined;
     const head = entries.find((e) => e.ref === id && e.kind === "MANDATE_REQUESTED");
     // Индекс без записи журнала — запись не завершилась: мандата нет.
     if (!head) return undefined;

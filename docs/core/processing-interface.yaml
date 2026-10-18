@@ -338,6 +338,8 @@ paths:
                   - gov_id
                 signature_ref:
                   type: string
+                  pattern: ^[A-Za-z0-9_-]{1,64}$
+                  description: "Непрозрачная ссылка банка без ПДн клиента: семь и более цифр подряд — отказ (не проходят СНИЛС, ЕСИА, телефон); уходит агенту в выписке (РП38 п. 7). Тело не по маске — 400 REQUEST_INVALID"
                 token_consent:
                   type: boolean
                 signed_at:
@@ -414,6 +416,8 @@ paths:
                   pattern: ^[0-9a-f]{64}$
                 revocation_ref:
                   type: string
+                  pattern: ^[A-Za-z0-9_-]{1,64}$
+                  description: "Непрозрачная ссылка банка без ПДн клиента: семь и более цифр подряд — отказ (не проходят СНИЛС, ЕСИА, телефон); уходит агенту в выписке (РП38 п. 7). Тело не по маске — 400 REQUEST_INVALID"
                 revoked_at:
                   type: string
                   format: date-time

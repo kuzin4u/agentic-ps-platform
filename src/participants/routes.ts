@@ -11,6 +11,7 @@ import {
   type MandateDecisionPayload,
   type MandateRevocationPayload,
 } from "../consent/model.js";
+import { isOpaquePrincipalRef } from "../consent/terms.js";
 import type { Params } from "../shared/config.js";
 import type { TrustedParticipants } from "./trusted.js";
 
@@ -46,6 +47,12 @@ const SIGN_FIELDS = [
   "token_consent",
 ].join(",");
 
+/**
+ * Ссылки банка signature_ref и revocation_ref уходят агенту в выписке (РП38 п. 7): только непрозрачная ссылка — маска
+ * principal_ref (без `@`, `+`, пробела и семи цифр подряд: не проходят СНИЛС, ЕСИА, телефон). ПДн в них банк не кладёт (ПИ-8).
+ */
+const isOpaqueRef = isOpaquePrincipalRef;
+
 /** Тело подписи: ровно поля записи и подпись (лишнее поле не подписано — отказ, а не пропуск). */
 function signBody(mandate_id: string, v: unknown): MandateDecisionPayload | undefined {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
@@ -56,7 +63,7 @@ function signBody(mandate_id: string, v: unknown): MandateDecisionPayload | unde
   if (!(DECISIONS as readonly unknown[]).includes(o.decision)) return undefined;
   if (!(SIGNATURE_TYPES as readonly unknown[]).includes(o.signature_type)) return undefined;
   if (typeof o.token_consent !== "boolean" || Number.isNaN(parseRfc3339(o.signed_at))) return undefined;
-  if (!/^[0-9a-f]{64}$/.test(o.mandate_hash as string)) return undefined;
+  if (!/^[0-9a-f]{64}$/.test(o.mandate_hash as string) || !isOpaqueRef(o.signature_ref)) return undefined;
   return {
     participant_code: o.participant_code as string,
     kid: o.kid as string,
@@ -81,6 +88,7 @@ function revokeBody(mandate_id: string, v: unknown): MandateRevocationPayload | 
   const str = (k: string) => typeof o[k] === "string" && (o[k] as string).length > 0 && (o[k] as string).length <= 256;
   if (!["participant_code", "kid", "mandate_hash", "revocation_ref", "revoked_at", "signature"].every(str)) return undefined;
   if (Number.isNaN(parseRfc3339(o.revoked_at)) || !/^[0-9a-f]{64}$/.test(o.mandate_hash as string)) return undefined;
+  if (!isOpaqueRef(o.revocation_ref)) return undefined;
   return {
     participant_code: o.participant_code as string,
     kid: o.kid as string,

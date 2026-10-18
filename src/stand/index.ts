@@ -89,7 +89,7 @@ export function createStand(): Stand {
         mandate_hash: view.hash,
         decision: opts.decision ?? "SIGN",
         signature_type: opts.signature_type ?? "simple",
-        signature_ref: `emu-sig-${mandateId}`,
+        signature_ref: `emu-sig-${mandateId.slice(-6)}`,
         token_consent: opts.token_consent ?? true,
         signed_at: now().toISOString(),
       } as const;
@@ -106,7 +106,7 @@ export function createStand(): Stand {
         kid: emulator.trustedKey.kid,
         mandate_id: mandateId,
         mandate_hash: view.hash,
-        revocation_ref: `emu-rev-${mandateId}`,
+        revocation_ref: `emu-rev-${mandateId.slice(-6)}`,
         revoked_at: now().toISOString(),
       };
       const { mandate_id: _id, ...body } = { ...record, signature: emulator.signRevocation(record) };

@@ -164,3 +164,58 @@ describe("evidence: нарушенная цепочка — integrity BROKEN, 50
     expect(await consent.evidence(m.id!, "nspk:agent:other:v1")).toBeUndefined();
   });
 });
+
+describe("evidence: один снимок цепочки (РП35; `/audit` К2.6 № 1)", () => {
+  it("отзыв родителя записан сразу после чтения цепочки — mandate_chain и records из одного снимка, без противоречия", async () => {
+    const store = new MemoryConsentStore();
+    const consent = new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1" });
+    const agent = "nspk:agent:snapshot:v1";
+    const valid_to = new Date(Date.now() + 86_400_000).toISOString();
+    const p = await consent.request(agent, "b".repeat(64), intent(valid_to));
+    const signOk = (id: string, hash: string) =>
+      consent.sign(
+        { participant_code: "p", kid: "k", mandate_id: id, mandate_hash: hash, decision: "SIGN", signature_type: "simple", signature_ref: "s", token_consent: true, signed_at: valid_to, signature: "x" },
+        () => true,
+        { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30 },
+      );
+    await signOk(p.id!, p.hash!);
+    const k = await consent.request(agent, "c".repeat(64), intent(valid_to, {
+      type: "CART",
+      parent_id: p.id!,
+      amount_limit: 1_000,
+      cart: { merchant_id: "MER-1042", items: [{ sku: "milk", qty: 1, price: 1_000 }], total: 1_000 },
+    }));
+    await signOk(k.id!, k.hash!);
+    // Одновременный отзыв: запись в цепочку сразу после первого чтения выписки.
+    const chain = (await store.getMandate(p.id!))!.chain;
+    const inner = store.journal(chain);
+    let armed = true;
+    const orig = store.journal.bind(store);
+    store.journal = (c: string) =>
+      c !== chain
+        ? orig(c)
+        : {
+            genesis: inner.genesis,
+            last: () => inner.last(),
+            append: (e) => inner.append(e),
+            all: async () => {
+              // Снимок — копией, как у PostgreSQL; отзыв другого обработчика пишется сразу после чтения.
+              const rows = [...(await inner.all())];
+              if (armed) {
+                armed = false;
+                await new AsyncHashChainJournal(inner).append("MANDATE_REVOKED", p.id!, {}, p.id!);
+              }
+              return rows;
+            },
+          };
+    const ev = (await consent.evidence(k.id!, agent))!;
+    expect(ev.integrity).toBe("OK");
+    const revokedInRecords = ev.records!.some((r) => r.kind === "MANDATE_REVOKED");
+    expect(ev.mandate_chain!.map((m) => m.status)).toEqual(revokedInRecords ? ["REVOKED", "REVOKED"] : ["ACTIVE", "ACTIVE"]);
+    expect(revokedInRecords).toBe(false);
+    // Следующее чтение видит отзыв в обоих местах.
+    const after = (await consent.evidence(k.id!, agent))!;
+    expect(after.mandate_chain!.map((m) => m.status)).toEqual(["REVOKED", "REVOKED"]);
+    expect(after.records!.some((r) => r.kind === "MANDATE_REVOKED")).toBe(true);
+  });
+});

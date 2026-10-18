@@ -90,7 +90,7 @@ function record(c: Ctx, id: string, hash: string, over: Partial<ParticipantSigne
     mandate_hash: hash,
     decision: "SIGN",
     signature_type: "simple",
-    signature_ref: `sig-${id}`,
+    signature_ref: `sig-${id.slice(-6)}`,
     token_consent: true,
     signed_at: T0.toISOString(),
     ...over,
@@ -148,7 +148,7 @@ function suite(open: () => Promise<ConsentStore>) {
   it("REJECT → REJECTED; затем SIGN — 409 MANDATE_NOT_PENDING, записи нет", async () => {
     const { m, r, sig } = await signed(c, intent(), { decision: "REJECT" });
     expect((await post(c, m.id, body(r, sig))).body).toEqual({ mandate_id: m.id, status: "REJECTED" });
-    const s2 = record(c, m.id, m.hash, { signature_ref: "другая" });
+    const s2 = record(c, m.id, m.hash, { signature_ref: "sig-other" });
     expect(await post(c, m.id, body(s2, c.emu.signRecord(s2)))).toEqual({ status: 409, body: { code: "MANDATE_NOT_PENDING" } });
     expect(await decisions(c, m.id)).toEqual(["MANDATE_REJECTED"]);
   });

@@ -63,7 +63,7 @@ const revocation = (c: Ctx, id: string, hash: string, over: Partial<ParticipantR
   kid: c.emu.trustedKey.kid,
   mandate_id: id,
   mandate_hash: hash,
-  revocation_ref: `rev-${id}`,
+  revocation_ref: `rev-${id.slice(-6)}`,
   revoked_at: T0.toISOString(),
   ...over,
 });
@@ -75,7 +75,7 @@ const decision = (c: Ctx, id: string, hash: string): ParticipantSignedRecord => 
   mandate_hash: hash,
   decision: "SIGN",
   signature_type: "simple",
-  signature_ref: `sig-${id}`,
+  signature_ref: `sig-${id.slice(-6)}`,
   token_consent: true,
   signed_at: T0.toISOString(),
 });
@@ -170,13 +170,24 @@ function suite(open: () => Promise<ConsentStore>): void {
     const other = createIssuerEmulator();
     expect(await call(c, "revoke", m.id, body(r, other.signRevocation(r)))).toEqual({ status: 401, body: { code: "SIGNATURE_INVALID" } });
     const sig = c.emu.signRevocation(r);
-    const changed = { ...body(r, sig), revocation_ref: "другая" };
+    const changed = { ...body(r, sig), revocation_ref: "rev-other" };
     expect(await call(c, "revoke", m.id, changed)).toEqual({ status: 401, body: { code: "SIGNATURE_INVALID" } });
     // Подпись отзыва другого мандата — mandate_id из пути входит в подписанную запись.
     const n = await mk(c, intent());
     expect(await call(c, "revoke", n.id, body(r, sig))).toEqual({ status: 401, body: { code: "SIGNATURE_INVALID" } });
     expect(await kinds(c, m.id)).toEqual([]);
     expect((await c.consent.get(m.id, A))?.status).toBe("PENDING_SIGNATURE");
+  });
+
+  it("ссылки банка — только непрозрачные: СНИЛС, ЕСИА, телефон, адрес в revocation_ref или signature_ref — 400, записи нет (`/audit` К2.6 № 2)", async () => {
+    const m = await mk(c, intent());
+    for (const ref of ["123-456-789 01", "esia1234567", "+79161234567", "client@bank.ru", "Иванов"]) {
+      const r = revocation(c, m.id, m.hash, { revocation_ref: ref });
+      expect(await call(c, "revoke", m.id, body(r, c.emu.signRevocation(r)))).toEqual({ status: 400, body: { code: "REQUEST_INVALID" } });
+      const d = { ...decision(c, m.id, m.hash), signature_ref: ref };
+      expect(await call(c, "sign", m.id, body(d, c.emu.signRecord(d)))).toEqual({ status: 400, body: { code: "REQUEST_INVALID" } });
+    }
+    expect(await kinds(c, m.id)).toEqual([]);
   });
 
   it("хэш не тот — 409 MANDATE_HASH_MISMATCH; неизвестный — 404; лишнее поле или id не по маске — 400", async () => {
@@ -237,6 +248,13 @@ function suite(open: () => Promise<ConsentStore>): void {
     const all = await Promise.all(Array.from({ length: 10 }, () => revoke(c, m.id, m.hash)));
     expect(all.every((x) => x.status === 200 && x.body.status === "REVOKED")).toBe(true);
     expect(await kinds(c, m.id)).toEqual(["MANDATE_SIGNED", "MANDATE_REVOKED"]);
+  });
+
+  it("10 одновременных relinquish в журнале — одна запись (лок записи, `/audit` К2.6 № 6)", async () => {
+    const m = await mk(c, intent());
+    const all = await Promise.all(Array.from({ length: 10 }, () => c.consent.relinquish(m.id, A, "kid-a")));
+    expect(all.every((x) => x?.status === "REVOKED")).toBe(true);
+    expect(await kinds(c, m.id)).toEqual(["MANDATE_RELINQUISHED"]);
   });
 
   it("relinquish: свой — запись {agent_code, kid}; чужой и неизвестный — undefined, записи нет", async () => {
@@ -312,6 +330,13 @@ describe("ПАО relinquish и отзыв клиентом на стенде (Р
     expect(await status(k)).toBe("REVOKED");
     expect((await relinquish(p, side, code, idem)).json()).toEqual(res.json());
     expect((await relinquish(p)).json()).toMatchObject({ status: "REVOKED" });
+    // Запись отказа — агент и ключ проверенного обращения (инвариант 5, `/audit` К2.6 № 4); повтор записи не дал.
+    const ev = (await signedInject(stand.app, side, code, { method: "GET", path: `/pao/v1/mandates/${p}/evidence` })).json() as {
+      records: { kind: string; ref: string; payload: unknown }[];
+    };
+    expect(ev.records.filter((r) => r.kind === "MANDATE_RELINQUISHED").map((r) => [r.ref, r.payload])).toEqual([
+      [p, { agent_code: code, kid: side.kid }],
+    ]);
   });
 
   it("чужой, неизвестный, не по форме id — 404 MANDATE_NOT_FOUND; тело не пустое — 400; без ключа — 400", async () => {
