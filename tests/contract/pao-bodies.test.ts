@@ -92,3 +92,26 @@ describe("ответы GET /pao/v1/mandates/{id} — по РП34 п. 4", () => {
     expect(op.responses["200"].content["application/json"].schema.$ref).toBe("#/components/schemas/Mandate");
   });
 });
+
+// Ответы 400/401/403/503 лента отдаёт, а в YAML их нет — объявить в ПАО 1.5.0 (РП39 п. 8, № 20): тогда тест покраснеет.
+describe("GET /pao/v1/events — по схеме Event (PS-08 К1.2, РП39)", () => {
+  const op = pao.paths["/pao/v1/events"].get;
+  const event = pao.components.schemas.Event;
+
+  it("параметр after — строка в запросе; ответ 200 — массив Event; других ответов в 1.4.0 нет", () => {
+    expect(op.parameters.find((p: { name?: string }) => p.name === "after")).toMatchObject({ in: "query", schema: { type: "string" } });
+    expect(Object.keys(op.responses)).toEqual(["200"]);
+    expect(op.responses["200"].content["application/json"].schema).toEqual({
+      type: "array",
+      items: { $ref: "#/components/schemas/Event" },
+    });
+  });
+
+  it("событие ленты — ровно required схемы; типы событий мандата — из перечня; data — объект", () => {
+    expect([...event.required].sort()).toEqual(["at", "data", "event_id", "type"]);
+    expect(Object.keys(event.properties).sort()).toEqual([...event.required].sort());
+    for (const t of ["mandate.signed", "mandate.rejected", "mandate.revoked"]) expect(event.properties.type.enum).toContain(t);
+    expect(event.properties.data.type).toBe("object");
+    expect(event.properties.at.format).toBe("date-time");
+  });
+});

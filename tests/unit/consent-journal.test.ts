@@ -251,6 +251,8 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
       };
       return {
         insertMandate: (r) => store.insertMandate(r),
+        journalWithEvent: (c, d) => store.journalWithEvent(c, d),
+        listEvents: (a, after, n) => store.listEvents(a, after, n),
         getMandate: (id) => store.getMandate(id),
         getSubject: (id) => store.getSubject(id),
         insertSubject: async (r) => {
@@ -359,6 +361,8 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
       let hidden = true;
       const racing: ConsentStore = {
         insertMandate: (r) => store.insertMandate(r),
+        journalWithEvent: (c, d) => store.journalWithEvent(c, d),
+        listEvents: (a, after, n) => store.listEvents(a, after, n),
         getMandate: async (id) => {
           if (id === m.id && hidden) {
             hidden = false;
@@ -451,6 +455,8 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
       let injected = false;
       const racing: ConsentStore = {
         insertMandate: (r) => store.insertMandate(r),
+        journalWithEvent: (c, d) => store.journalWithEvent(c, d),
+        listEvents: (a, after, n) => store.listEvents(a, after, n),
         getMandate: (id) => store.getMandate(id),
         getSubject: (id) => store.getSubject(id),
         insertSubject: (r) => store.insertSubject(r),

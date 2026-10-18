@@ -382,6 +382,16 @@ describe("POST /pao/v1/mandates", () => {
     expect(down.body).not.toContain("secret-host");
   });
 
+  it("GET /pao/v1/events: сбой хранилища — 503 UPSTREAM_UNAVAILABLE с Retry-After, без подробностей (РП39 п. 7)", async () => {
+    store.listEvents = async () => {
+      throw new Error("db down: secret-host:5432");
+    };
+    const down = await signedInject(app, a, A, { method: "GET", path: "/pao/v1/events" });
+    expect([down.statusCode, down.json().code]).toEqual([503, "UPSTREAM_UNAVAILABLE"]);
+    expect(down.headers["retry-after"]).toBeDefined();
+    expect(down.body).not.toContain("secret-host");
+  });
+
   it("evidence и verify: цепочка нарушена — evidence 200 integrity BROKEN с пустыми массивами, verify 503 (РП38 п. 6–7; `/audit` К2.6 № 5)", async () => {
     const m = (await post(a, A, intent())).json();
     const rows = (await store.journal((await store.getMandate(m.id))!.chain).all()) as JournalEntry[];

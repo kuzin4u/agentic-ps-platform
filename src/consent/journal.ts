@@ -1,7 +1,7 @@
 // П2 Журнал согласий над журналом ядра (РП14): запрос мандата и чтение со статусом-свёрткой (PS-06 К1.2).
 // Проверка запроса по схеме ПАО, идемпотентность и HTTP — К1.3; id от (агент, ключ) и повтор — К2.1 (РП33 доп.);
 // подпись принципала по подписи участника — К2.4 (РП36); отзыв клиентом и отказ агента — К2.6, verify — К2.7,
-// выписка — К2.8 (РП38).
+// выписка — К2.8 (РП38). События агенту о записях решения, отзыва и отказа — в той же транзакции (РП39, PS-08 К1.2).
 import {
   AsyncHashChainJournal,
   canonicalJson,
@@ -33,6 +33,8 @@ import {
 import { ConsentRowConflict, type ConsentStore, type MandateIndexRow } from "./store.js";
 import { assertNarrows, ConsentRequestRejected, pickSubject, pickTerms } from "./terms.js";
 import type { Params } from "../shared/config.js";
+import { toPaoEvent, type EventDraft, type PaoEventType } from "../pao/events.js";
+import type { Event } from "../shared/pao.js";
 
 /** Пороги усиленной подписи (A7 п. 3.2) — стендовые параметры, не константы (PARAMS.md). */
 export type SignaturePolicy = Pick<Params, "qualified_signature_above_kop" | "qualified_signature_above_days">;
@@ -111,9 +113,12 @@ export class ConsentJournal {
     this.revocationOrder = opts.revocationOrder;
   }
 
-  /** beforeWrite — перед каждой попыткой вставки: ядро повторяет вставку при гонке конца цепочки (РП33 доп. п. 8). */
-  private chainJournal(chain: string, beforeWrite?: () => void): AsyncHashChainJournal {
-    const inner = this.store.journal(chain);
+  /**
+   * beforeWrite — перед каждой попыткой вставки: ядро повторяет вставку при гонке конца цепочки (РП33 доп. п. 8).
+   * event — запись пишется вместе с событием агенту, атомарно (РП39 п. 1).
+   */
+  private chainJournal(chain: string, beforeWrite?: () => void, event?: EventDraft): AsyncHashChainJournal {
+    const inner = event ? this.store.journalWithEvent(chain, event) : this.store.journal(chain);
     const store: AsyncJournalStore = beforeWrite
       ? {
           ...(inner.genesis !== undefined ? { genesis: inner.genesis } : {}),
@@ -309,7 +314,7 @@ export class ConsentJournal {
     // Отзыв с другого экземпляра, записанный между проверкой статуса и вставкой, даёт REQUESTED, REVOKED, SIGNED —
     // свёртка пропускает решение, мандат REVOKED (РП38 п. 5). Внутри процесса отзыв ждёт лок записи: решения после отзыва нет.
     const kind = d.decision === "SIGN" ? "MANDATE_SIGNED" : "MANDATE_REJECTED";
-    await this.chainJournal(row.chain).append(kind, id, d, id);
+    await this.chainJournal(row.chain, undefined, mandateEvent(row.agent_code, kind, id)).append(kind, id, d, id);
     return { id, status: await this.statusAfterWrite(id, row.agent_code), replayed: false };
   }
 
@@ -330,7 +335,7 @@ export class ConsentJournal {
       if (!row || !m) throw new ConsentSignRejected("MANDATE_NOT_FOUND", id);
       if (d.mandate_hash !== m.head.hash) throw new ConsentSignRejected("MANDATE_HASH_MISMATCH", id);
       if (!revocable(m.status)) return { id, status: m.status, replayed: true };
-      await this.chainJournal(row.chain).append("MANDATE_REVOKED", id, d, id);
+      await this.chainJournal(row.chain, undefined, mandateEvent(row.agent_code, "MANDATE_REVOKED", id)).append("MANDATE_REVOKED", id, d, id);
       return { id, status: await this.statusAfterWrite(id, row.agent_code), replayed: false };
     });
   }
@@ -345,11 +350,20 @@ export class ConsentJournal {
       if (!m) return undefined;
       if (!revocable(m.status)) return this.toMandate(id, m.head, m.subj, m.status);
       const payload: MandateRelinquishPayload = { agent_code, kid };
-      await this.chainJournal(m.row.chain).append("MANDATE_RELINQUISHED", id, payload, id);
+      const event = mandateEvent(agent_code, "MANDATE_RELINQUISHED", id);
+      await this.chainJournal(m.row.chain, undefined, event).append("MANDATE_RELINQUISHED", id, payload, id);
       const after = await this.load(id, agent_code);
       if (!after) throw new ConsentStateUnknown(id, "мандат после отказа агента не читается");
       return this.toMandate(id, after.head, after.subj, after.status);
     });
+  }
+
+  /**
+   * Лента событий этого агента после курсора after (РП39 п. 7): по возрастанию номера, не больше limit. Чужой или
+   * неизвестный after — EventCursorUnknown (400). Событие — сигнал: статус мандата — через get (РП39 п. 6).
+   */
+  async events(agent_code: string, after: string | undefined, limit: number): Promise<Event[]> {
+    return (await this.store.listEvents(agent_code, after, limit)).map(toPaoEvent);
   }
 
   private async statusAfterWrite(id: string, agent_code: string): Promise<MandateStatus> {
@@ -521,6 +535,21 @@ export class ConsentJournal {
     };
   }
 }
+
+/** Записи с событием агенту (РП39 п. 3): у MANDATE_REQUESTED события нет — агент получил ответ на свой POST. */
+const MANDATE_EVENT = {
+  MANDATE_SIGNED: "mandate.signed",
+  MANDATE_REJECTED: "mandate.rejected",
+  MANDATE_REVOKED: "mandate.revoked",
+  MANDATE_RELINQUISHED: "mandate.revoked",
+} as const satisfies Record<string, PaoEventType>;
+
+/** Событие агенту мандата: в data — только id (A7 п. 8.3, РП39 п. 5). */
+const mandateEvent = (agent_code: string, kind: keyof typeof MANDATE_EVENT, mandate_id: string): EventDraft => ({
+  agent_code,
+  type: MANDATE_EVENT[kind],
+  data: { mandate_id },
+});
 
 /** Отзыв и отказ пишутся только пока полномочия есть или ожидаются (РП38 п. 4). */
 const revocable = (status: MandateStatus): boolean => status === "PENDING_SIGNATURE" || status === "ACTIVE";
