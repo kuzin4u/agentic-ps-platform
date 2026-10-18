@@ -26,7 +26,7 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 
     await db?.close();
   });
 
-  it("применены 001–004, 100_consent и 101_events, таблицы nonce, идемпотентности и согласий есть; повторный запуск ничего не применяет", async () => {
+  it("применены 001–004, 100_consent, 101_events и 102_event_deliveries, таблицы nonce, идемпотентности и согласий есть; повторный запуск ничего не применяет", async () => {
     const applied = (await db.pool.query<{ name: string }>("SELECT name FROM core_migrations ORDER BY name")).rows;
     expect(applied.map((r) => r.name)).toEqual([
       "001_journal.sql",
@@ -35,13 +35,14 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 
       "004_nonces.sql",
       "100_consent.sql",
       "101_events.sql",
+      "102_event_deliveries.sql",
     ]);
     const tables = (
       await db.pool.query<{ t: string }>(
         "SELECT table_name AS t FROM information_schema.tables WHERE table_schema = current_schema() ORDER BY 1",
       )
     ).rows.map((r) => r.t);
-    expect(tables).toEqual(expect.arrayContaining(["core_idempotency", "core_nonces", "consent_mandates", "consent_subjects", "pao_events"]));
+    expect(tables).toEqual(expect.arrayContaining(["core_idempotency", "core_nonces", "consent_mandates", "consent_subjects", "pao_events", "pao_event_deliveries"]));
     expect(await applyMigrations(db.pool, migrationsDir())).toEqual([]);
     expect(await applyPlatformMigrations(db.pool)).toEqual([]);
   });

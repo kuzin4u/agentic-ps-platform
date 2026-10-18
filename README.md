@@ -20,3 +20,17 @@ npm run dev                  # то же с перезапуском при из
 Среда — переменная `PLATFORM_ENV`: `dev` (по умолчанию, всё в памяти, без базы) или `sandbox`. Порт — `PORT`.
 
 Песочница: `docker compose up -d` поднимает PostgreSQL 16 (`postgres`/`postgres`, база `platform` — стендовые значения).
+
+Рабочий сервер доставляет события агентам по подписке (PS-08): хосты адресов подписки задаются
+`event_subscription_allow_hosts` в файле параметров (`PARAMS_PATH`); пустой список закрывает подписку всем.
+
+## Версии и стенд для агента
+
+Текущая версия — **v0.5.0** (лента событий, подписка и push-доставка, PS-08). Что изменилось и что ломает — в
+[`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
+
+```
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.5.0"
+```
+
+`createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.

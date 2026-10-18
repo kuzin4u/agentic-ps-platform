@@ -7,6 +7,7 @@ import {
   isOneOf,
   type AdmissionRefusal,
   type AgentRecord,
+  type AgentSubscription,
   type Contour,
 } from "./model.js";
 import { DEFAULT_KEY_ALGORITHMS, newAgentKey, parseKey, type AgentKey, type KeyAlgorithm, type KeyPolicy } from "./keys.js";
@@ -217,6 +218,17 @@ export class AgentRegistry {
 
   get(agent_code: string): AgentRecord | undefined {
     return this.store.get(agent_code);
+  }
+
+  /** Подписка агента на события (РП40 п. 1). */
+  subscription(agent_code: string): AgentSubscription | undefined {
+    return this.store.subscriptionOf(agent_code);
+  }
+
+  /** Замена подписки: адрес уже проверен шлюзом (РП40 п. 2). Нет агента — исключение. */
+  subscribe(agent_code: string, subscription: AgentSubscription): AgentSubscription {
+    if (!this.store.setSubscription(agent_code, subscription)) throw new AgentNotFoundError(agent_code);
+    return this.store.subscriptionOf(agent_code) as AgentSubscription;
   }
 
   /** Переход статуса по РП21 п. 4. Нет агента, недопустимый переход или конкурентное изменение — исключение. */

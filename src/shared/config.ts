@@ -27,6 +27,10 @@ export interface Params {
   readonly event_retry_max: number;
   /** Не больше стольких событий в ответе GET /pao/v1/events (РП39 п. 7). */
   readonly event_page_max: number;
+  /** Тайм-аут одной попытки push-доставки события, мс (РП40 п. 4). */
+  readonly event_delivery_timeout_ms: number;
+  /** Разрешённые хосты адреса подписки; пустой — подписка запрещена всем (РП40 п. 2). */
+  readonly event_subscription_allow_hosts: readonly string[];
   readonly cryptogram_ttl_sec: number;
   readonly order_hold_sec: number;
   readonly confirm_above_kop: number;
@@ -74,6 +78,20 @@ const oneOf =
     return v;
   };
 
+const DNS_NAME = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(?:\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/;
+const IPV4_LIKE = /^[0-9.]+$/;
+
+const hostList: Rule = (v) => {
+  if (!Array.isArray(v)) throw new Error("ожидается массив имён хостов");
+  for (const h of v) {
+    if (typeof h !== "string" || !DNS_NAME.test(h) || IPV4_LIKE.test(h)) {
+      throw new Error(`ожидается имя DNS в нижнем регистре, не IP: ${String(h)}`);
+    }
+  }
+  if (new Set(v).size !== v.length) throw new Error("имена хостов повторяются");
+  return Object.freeze([...v]);
+};
+
 const percent: Rule = (v) => {
   const m = typeof v === "string" ? /^(\d{1,3}(?:\.\d+)?)%$/.exec(v) : null;
   const n = m ? Number(m[1]) : NaN;
@@ -91,6 +109,8 @@ const RULES: Record<keyof Params, Rule> = {
   event_reorder_window_ms: int(0),
   event_retry_max: int(1),
   event_page_max: int(1),
+  event_delivery_timeout_ms: int(1),
+  event_subscription_allow_hosts: hostList,
   cryptogram_ttl_sec: int(1),
   order_hold_sec: int(1),
   confirm_above_kop: int(1),

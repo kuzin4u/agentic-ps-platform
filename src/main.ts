@@ -2,8 +2,10 @@ import pg from "pg";
 import { buildServer, parseEnv, parseTrustedProxies } from "./server.js";
 import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
 import { loadTrustedParticipants } from "./participants/trusted.js";
+import { EventDeliverer, httpsTransport, startEventDelivery } from "./pao/delivery.js";
 import { paoIdempotency } from "./pao/idempotency.js";
 import { paoNonceStore, paoPoolConfig, requireDatabaseUrl, startNoncePurge } from "./pao/stores.js";
+import { systemResolver } from "./pao/subscription.js";
 import { PaoRequestVerifier } from "./pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "./registry/index.js";
 import { loadParams } from "./shared/config.js";
@@ -55,15 +57,33 @@ const verifier = new PaoRequestVerifier(
 const trusted = loadTrustedParticipants(process.env.PARTICIPANT_KEYS_PATH, { stand: false });
 
 // Журнал согласий (П2): PostgreSQL при DATABASE_URL, иначе (dev) — память ядра. Порядок отзыва — из записи участника (РП37).
-const consent = new ConsentJournal(pool ? new PgConsentStore(pool) : new MemoryConsentStore(), {
+// Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6).
+const consentStore = pool ? new PgConsentStore(pool) : new MemoryConsentStore();
+const consent = new ConsentJournal(consentStore, {
   revocationOrder: () => trusted.revocationOrder(),
+  pushFor: (code, type) => registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false),
+});
+
+/** Проход доставки событий раз в секунду: меньше первой задержки повтора ядра (1 с). */
+const EVENT_DELIVERY_EVERY_MS = 1000;
+
+// Push-доставка с повтором (РП40 п. 4–5): системное разрешение имени и HTTPS с проверенным IP; стендовых портов нет.
+const deliverer = new EventDeliverer({
+  store: consentStore,
+  agent: (c) => registry.get(c),
+  subscription: (c) => registry.subscription(c),
+  resolveHost: systemResolver,
+  transport: httpsTransport,
+  params,
+  log: (level, fields, msg) => app.log[level](fields, msg),
 });
 
 const app = buildServer({
   env,
   logger: true,
   trustedProxies,
-  pao: { verifier, keys, idempotency, params, consent },
+  // Подписка — в записи агента (РП40 п. 1); разрешение имени — системное (стендового порта здесь нет, РП40 п. 8).
+  pao: { verifier, keys, idempotency, params, consent, subscriptions: { set: registry.subscribe.bind(registry) } },
   participants: { trusted, consent, params },
 });
 app.log.info({ params }, "стендовые параметры загружены");
@@ -71,8 +91,12 @@ if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce, идемпо
 const stopPurge = startNoncePurge(nonces, params.signature_skew_sec * 1000, (err) =>
   app.log.error({ err }, "ПАО: сбой очистки nonce"),
 );
+const stopDelivery = startEventDelivery(deliverer, EVENT_DELIVERY_EVERY_MS, (err) =>
+  app.log.error({ err }, "ПАО: сбой прохода доставки событий"),
+);
 app.addHook("onClose", async () => {
   await stopPurge();
+  await stopDelivery();
   await pool?.end();
 });
 // Штатная остановка: сервер, очистка nonce и пул закрываются вместе (РП30 п. 4).
