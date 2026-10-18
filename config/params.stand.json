@@ -9,6 +9,8 @@
   "event_reorder_window_ms": 5000,
   "event_retry_max": 8,
   "event_page_max": 100,
+  "event_delivery_timeout_ms": 5000,
+  "event_subscription_allow_hosts": ["agent-emulator.stand"],
   "cryptogram_ttl_sec": 900,
   "order_hold_sec": 900,
   "confirm_above_kop": 300000,

@@ -93,6 +93,30 @@ describe("стендовые параметры", () => {
     expect(() => parseParams({ ...stand(), [k]: v })).toThrow(msg);
   });
 
+  it("event_subscription_allow_hosts: имена DNS в нижнем регистре, пустой допустим, массив заморожен (РП40 п. 2)", () => {
+    expect(parseParams({ ...stand(), event_subscription_allow_hosts: [] }).event_subscription_allow_hosts).toEqual([]);
+    const p = parseParams({ ...stand(), event_subscription_allow_hosts: ["agent.example", "a-1.b.example"] });
+    expect(p.event_subscription_allow_hosts).toEqual(["agent.example", "a-1.b.example"]);
+    expect(Object.isFrozen(p.event_subscription_allow_hosts)).toBe(true);
+    for (const v of [
+      "agent.example",
+      ["Agent.example"],
+      ["10.0.0.1"],
+      ["[::1]"],
+      ["*.example"],
+      ["-a.example"],
+      ["a..example"],
+      ["agent.example:443"],
+      [""],
+      [1],
+      ["a.example", "a.example"],
+    ]) {
+      expect(() => parseParams({ ...stand(), event_subscription_allow_hosts: v }), JSON.stringify(v)).toThrow(
+        /event_subscription_allow_hosts:/,
+      );
+    }
+  });
+
   it("unavailable_retry_after_sec: 0 и 30 принимаются, 31 — отказ (РП24: не больше maxRetryAfterSec клиента core)", () => {
     for (const v of [0, 30]) expect(parseParams({ ...stand(), unavailable_retry_after_sec: v }).unavailable_retry_after_sec).toBe(v);
     for (const v of [31, -1, 1.5, "1"]) {

@@ -13,6 +13,8 @@
 | `reservation_ttl_sec` | 7 дней | Жизнь резерва без клиринга | правила ПС о сроке авторизации |
 | `event_reorder_window_ms` / `event_retry_max` | 5 000 / 8 | Порядок событий и доставка агенту | прогон |
 | `event_page_max` | 100 | Не больше стольких событий в одном ответе ленты `GET /pao/v1/events` (РП39 п. 7); дальше — следующий запрос с `after` | прогон |
+| `event_delivery_timeout_ms` | 5 000 | Тайм-аут одной попытки push-доставки события: соединение, отправка, статус ответа; тело ответа не читается (РП40 п. 4) | прогон |
+| `event_subscription_allow_hosts` | `["agent-emulator.stand"]` | Разрешённые хосты адреса подписки `PUT /pao/v1/subscription` — точное имя DNS, без масок. Пустой список — подписка запрещена всем (РП40 п. 2); в бою — из соглашения участника (PS-20) | соглашение участника |
 | `cryptogram_ttl_sec` | 900 | Срок одноразовой криптограммы | прогон, токен-сервис |
 | `order_hold_sec` | 900 | Ожидание подтверждения | прогон (A7 п. 7.2) |
 | `confirm_above_kop` | 300 000 | Порог подтверждения | данные пилота (В2, Р6) |
@@ -34,7 +36,7 @@
 
 | Правило | Почему |
 |---|---|
-| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
+| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
 | Целые ≥ 0: `bypass_overhead_ms`, `event_reorder_window_ms`, `key_overlap_days` | ноль допустим |
 | `split_min_ops` ≥ 2 | дробление — от двух операций |
 | `aoi_rollout_phase` ∈ 1…3 | A1 п. 8.3 |
@@ -44,6 +46,7 @@
 | `key_overlap_days` < `key_ttl_days` | перекрытие ключей короче их жизни |
 | `idempotency_ttl_sec` — целое ≥ 60 | не меньше аренды захвата ключа ядра (60 с, условие К6 agentic-core: аренда ≤ ttl; РП30 п. 3) |
 | `unavailable_retry_after_sec` — целое 0…30 | 0 — «повторить сразу» (ПАО `minimum: 0`); верхняя граница — `maxRetryAfterSec` клиента ПАО agentic-core (30): больший `Retry-After` эталонный клиент отвергает (РП24) |
+| `event_subscription_allow_hosts` — массив имён DNS в нижнем регистре (метки `a-z0-9-`, не IP), без повторов; пустой допустим | пустой — fail-closed: подписка запрещена всем (РП40 п. 2) |
 
 ## Журнал изменений
 
@@ -55,3 +58,5 @@
 | 15.10.2026 | `idempotency_ttl_sec` | — | 86 400 | PS-05, Ш16; решение владельца (РП30) |
 | 16.10.2026 | `pao_rate_limit_per_30s` | — | 3 000 | PS-05, CodeQL №81 `js/missing-rate-limiting`, Ш12; решение владельца (РП32) |
 | 18.10.2026 | `event_page_max` | — | 100 | PS-08 К1.2, лента `GET /pao/v1/events`; решение владельца (РП39 п. 7) |
+| 18.10.2026 | `event_delivery_timeout_ms` | — | 5 000 | PS-08 К1.3а, push-доставка событий; решение владельца (РП40 п. 4) |
+| 18.10.2026 | `event_subscription_allow_hosts` | — | `["agent-emulator.stand"]` | PS-08 К1.3а, SSRF адреса подписки; решение владельца (РП40 п. 2, 8) |
