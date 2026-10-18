@@ -184,11 +184,14 @@ describe.skipIf(!DATABASE_URL)("лента событий — PostgreSQL", () =>
 
   suite(async () => new PgConsentStore(db.pool));
 
-  /** Ждать, пока в базе появится сессия, ожидающая advisory-блокировку агента; нет за 5 с — отказ теста. */
+  /**
+   * Ждать, пока в базе появится сессия, ожидающая advisory-блокировку агента; нет за 3 с — отказ теста своим
+   * сообщением. Предел меньше таймаута теста vitest (5 с), иначе поломка видна только как таймаут (К1.2а, CI 39134465644).
+   */
   const waitAdvisoryWaiter = async (lockKey: string): Promise<void> => {
     const k = BigInt.asUintN(64, BigInt(lockKey));
     const [classid, objid] = [String(k >> 32n), String(k & 0xffffffffn)];
-    for (const t0 = Date.now(); Date.now() - t0 < 5_000; await new Promise((r) => setTimeout(r, 20))) {
+    for (const t0 = Date.now(); Date.now() - t0 < 3_000; await new Promise((r) => setTimeout(r, 20))) {
       const r = await db.pool.query(
         "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND classid::text = $1 AND objid::text = $2",
         [classid, objid],
