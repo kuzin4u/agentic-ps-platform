@@ -446,20 +446,39 @@ export class ConsentJournal {
   /**
    * Проверка мандата этого агента без предмета (A7 п. 9.2, РП38 п. 6): ровно {outcome, amount_left, valid_to, as_of}.
    * Статус — свёрткой load (у CART — вместе с родителем, РП35 п. 2). Чужой или неизвестный — undefined.
-   * amount_left у ACTIVE — остаток счёта мандата в П3 (РП41 п. 10); бюджет не подтверждён — STATE_UNKNOWN с 0
+   * amount_left у ACTIVE — остаток счёта мандата в П3 (РП41 п. 10), у CART — меньшее из CART и родителя (РП43 п. 6);
+   * бюджет не подтверждён — STATE_UNKNOWN с 0
    * (A7 п. 8.6); у остальных статусов, включая EXHAUSTED, — OUT_OF_SCOPE с 0. Чтение не пишет.
    */
   async verify(id: string, agent_code: string): Promise<MandateVerify | undefined> {
     const m = await this.load(id, agent_code);
     if (!m) return undefined;
     const t = m.head.payload as MandateRequestedPayload;
-    const left = m.status === "ACTIVE" ? await this.amountLeft(id, t.amount_limit) : 0;
+    const left = m.status === "ACTIVE" ? await this.leftWithParent(id, t, m.head.parent_ref, agent_code) : 0;
     return {
       outcome: m.status !== "ACTIVE" ? "OUT_OF_SCOPE" : left === undefined ? "STATE_UNKNOWN" : "CONFIRMED",
       amount_left: left ?? 0,
       valid_to: t.valid_to,
       as_of: this.now().toISOString(),
     };
+  }
+
+  /**
+   * Остаток для verify: у CART — меньшее из остатков CART и родителя INTENT (РП43 п. 6), у INTENT — свой. Родитель не
+   * прочитан или его записи нет — undefined (STATE_UNKNOWN, A7 п. 8.6).
+   */
+  private async leftWithParent(
+    id: string,
+    t: MandateRequestedPayload,
+    parent_ref: string | null | undefined,
+    agent_code: string,
+  ): Promise<number | undefined> {
+    const own = await this.amountLeft(id, t.amount_limit);
+    if (!parent_ref || own === undefined) return own;
+    const parent = await this.load(parent_ref, agent_code);
+    if (!parent) return undefined;
+    const p = await this.amountLeft(parent_ref, (parent.head.payload as MandateRequestedPayload).amount_limit);
+    return p === undefined ? undefined : Math.min(own, p);
   }
 
   /**

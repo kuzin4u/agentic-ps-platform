@@ -4,6 +4,7 @@
 // Оператор при допуске — от вызывающего: обход расхождения №9 допустим только здесь. Рабочий сервер
 // (src/main.ts и его граф импортов) этот модуль не импортирует — проверяет tests/unit/stand-boundary.test.ts.
 import type { FastifyInstance } from "fastify";
+import { Adp, MemoryOperationStore } from "../adp/index.js";
 import { ConsentJournal, MemoryConsentStore } from "../consent/index.js";
 import type { MandateDecisionPayload } from "../consent/model.js";
 import { createAgentReceiver, type AgentReceiver } from "../env/agent/index.js";
@@ -116,6 +117,8 @@ export function createStand(): Stand {
     env: "dev",
     pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
     participants: { trusted, consent, params, state },
+    // ADP стенда (ПИ-1, РП43): реестр, журнал и П3 стенда, записи операций в памяти; только 127.0.0.1 (доп. РП43 п. 21).
+    adp: { adp: new Adp({ agents: registry, mandates: consent, state, operations: new MemoryOperationStore(), params }) },
   });
   const issuer: StandIssuer = {
     participant_code: emulator.participant_code,

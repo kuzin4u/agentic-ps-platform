@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import Fastify, { type FastifyInstance } from "fastify";
+import { adpRoutes, type AdpDeps } from "./adp/routes.js";
 import { participantRoutes, type ParticipantDeps } from "./participants/routes.js";
 import { paoRoutes, type PaoDeps } from "./pao/routes.js";
 
@@ -24,6 +25,24 @@ export interface ServerOptions {
   participants?: ParticipantDeps;
   /** Доверенные адреса прокси (РП32 п. 5); без них X-Forwarded-For не читается, ключ лимита — адрес соединения. */
   trustedProxies?: readonly string[];
+  /**
+   * Точка решения ADP (ПИ-1, РП43); без неё маршрута /adp нет. До SEC-1 — только стенд и тесты, main.ts её не
+   * подключает (доп. РП43 п. 21): открытого порта с правом создавать резервы нет.
+   */
+  adp?: AdpDeps;
+  /**
+   * Режим «только BYPASS» (РП43 п. 8): самопроверка при старте не прошла. Неагентским — BYPASS, агентским — 503 без
+   * решения; ПАО, П10 и точка решения не регистрируются; /health — 200 с mode и кодами непрошедших проверок; при входе
+   * в режим — запись «тревога». В main.ts — вместе с маршрутом ADP (SEC-1, доп. РП43 п. 21–22).
+   */
+  bypassOnly?: BypassOnly;
+}
+
+export interface BypassOnly {
+  /** Непрошедшие проверки самопроверки — только имя и код реестра PLATFORM_DIAG, без текста исключений (РП42 доп. п. 12). */
+  readonly failures: readonly { readonly check: string; readonly code: string }[];
+  /** Запись «тревога» в журнал процесса; по умолчанию — журнал Fastify уровня fatal. */
+  readonly alarm?: (fields: Record<string, unknown>, msg: string) => void;
 }
 
 /** Минимальная длина префикса доверенного прокси (РП32, дополнение п. 2); шире — отдельным решением. */
@@ -56,6 +75,17 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   const proxies = opts.trustedProxies ?? [];
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: proxies.length > 0 ? [...proxies] : false });
 
+  const bypass = opts.bypassOnly;
+  if (bypass) {
+    const failures = bypass.failures.map(({ check, code }) => ({ check, code }));
+    // 200, а не 503: оркестратор не перезапускает процесс, и неагентские не теряют BYPASS (решение владельца, РП43 п. 8).
+    app.get("/health", async () => ({ status: "ok", env: opts.env, mode: "bypass_only", failures }));
+    void app.register(async (scope) => adpRoutes(scope, {}));
+    const alarm = bypass.alarm ?? ((fields, msg) => app.log.fatal(fields, msg));
+    alarm({ alarm: true, mode: "bypass_only", failures }, "Платформа: самопроверка не прошла — режим «только BYPASS», агентские операции не принимаются");
+    return app;
+  }
+
   // Живость процесса; к базе не обращается.
   app.get("/health", async () => ({ status: "ok", env: opts.env }));
 
@@ -65,6 +95,9 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   // Шлюз участников — своим контекстом: проверка обращения ПАО к нему не относится, подпись — в теле (РП36 п. 4).
   const participants = opts.participants;
   if (participants) void app.register(async (scope) => participantRoutes(scope, participants));
+  // ADP — своим контекстом: обращение процессинга, не агента; проверки ПАО к нему не относятся.
+  const adp = opts.adp;
+  if (adp) void app.register(async (scope) => adpRoutes(scope, adp));
 
   return app;
 }
