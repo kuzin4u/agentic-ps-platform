@@ -169,7 +169,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
         confirm_above_kop: p.threshold ?? 1_000_000,
         split_window_sec: 600,
         // ПС10 проверяет одно решение — бюджет: правило доли вне залпа (21 > 20 операций; РП44 доп. п. 1).
-        split_min_ops: p.splitMinOps ?? 21,
+        split_min_ops: p.splitMinOps ?? 21, client_limit_period_tz: "Europe/Moscow",
       },
     });
   let a1: Adp;
@@ -278,7 +278,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
       mandates,
       state: new StateService(new PgHoldLedger(db.pool), mandates, { reservationTtlSec: 600 }),
       operations: new PgOperationStore(db.pool, { lockTimeoutMs: 150 }),
-      params: { aoi_rollout_phase: 3, confirm_above_kop: 300_000, split_window_sec: 600, split_min_ops: 2 },
+      params: { aoi_rollout_phase: 3, confirm_above_kop: 300_000, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
       now: () => new Date(ms),
     });
     expect((await a.decide(auth(M, "OPKC-PS12-PG-1", 170_000))).decision).toBe("APPROVE");

@@ -34,7 +34,7 @@ function server() {
     mandates: c.consent,
     state: c.state,
     operations: new MemoryOperationStore(),
-    params: { aoi_rollout_phase: 3, confirm_above_kop: 1_000_000, split_window_sec: 600, split_min_ops: 2 },
+    params: { aoi_rollout_phase: 3, confirm_above_kop: 1_000_000, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
   });
   return { c, adp, app: buildServer({ env: "dev", adp: { adp } }) };
 }

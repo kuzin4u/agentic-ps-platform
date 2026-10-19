@@ -15,7 +15,7 @@ import {
   type AdpAgents,
   type AdpMandate,
   type AdpMandates,
-  type ClientThresholds,
+  type ClientLimitsSource,
 } from "../../src/adp/index.js";
 import { ConsentIntegrityError, type MandateStatus } from "../../src/consent/model.js";
 import type { AgentStatus } from "../../src/registry/model.js";
@@ -28,6 +28,8 @@ const OTHER = "nspk:agent:other-02:v1";
 const M = "mnd_00000000-0000-4000-8000-000000000001";
 const LIMIT = 300_000;
 const THRESHOLD = 1_000_000;
+/** Клиент мандата из журнала (РП45 п. 1): банк подписи корня и principal_ref. */
+const CLIENT = { participant_code: "bank:a", principal_ref: "prn_7f3c9a" } as const;
 
 const msg = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
   op_ref: "OPKC-20261019-000001",
@@ -79,6 +81,7 @@ class Journal implements AdpMandates, MandateBudgetSource {
       merchant_scope: ["MER-1042"],
       currency: "RUB",
       amount_limit: LIMIT,
+      client: CLIENT,
       ...over,
     });
     return this;
@@ -116,7 +119,7 @@ function spy<T extends object>(inner: T, broken: Set<string>, count: { n: number
 }
 
 function setup(
-  opts: { phase?: 1 | 2 | 3; client?: ClientThresholds; threshold?: number; splitMinOps?: number; now?: () => Date } = {},
+  opts: { phase?: 1 | 2 | 3; client?: ClientLimitsSource; threshold?: number; splitMinOps?: number; now?: () => Date } = {},
 ) {
   const agents = new Agents();
   const journal = new Journal().set(M);
@@ -133,9 +136,9 @@ function setup(
     operations,
     params: { aoi_rollout_phase: opts.phase ?? 3, confirm_above_kop: opts.threshold ?? THRESHOLD,
       split_window_sec: 600,
-      split_min_ops: opts.splitMinOps ?? 2,
+      split_min_ops: opts.splitMinOps ?? 2, client_limit_period_tz: "Europe/Moscow",
     },
-    ...(opts.client ? { clientThresholds: opts.client } : {}),
+    ...(opts.client ? { clientLimits: opts.client } : {}),
     ...(opts.now ? { now: opts.now } : {}),
     log: (_l, fields, m) => logs.push({ fields, msg: m }),
   });
@@ -356,7 +359,7 @@ describe("мандат и область (SPEC §6 п. 5–6, РП43 п. 2–3)"
 });
 
 describe("меньшее из порогов (SPEC §6 п. 10, РП44 п. 5, A3 п. 7.2)", () => {
-  const client = (v: unknown | (() => never)): ClientThresholds & { calls: number } => {
+  const client = (v: unknown | (() => never)): ClientLimitsSource & { calls: number } => {
     const port = {
       calls: 0,
       async get() {
@@ -368,21 +371,21 @@ describe("меньшее из порогов (SPEC §6 п. 10, РП44 п. 5, A3 
   };
 
   it("клиентский ниже рыночного — действует клиентский: CONFIRMATION_REQUIRED без резерва", async () => {
-    const { adp, available } = setup({ client: client({ amount: 100_000, currency: "RUB" }) });
+    const { adp, available } = setup({ client: client({ confirm_above: 100_000, currency: "RUB" }) });
     const d = await adp.decide(msg());
     expect([pair(d).reason, d.split_detected]).toEqual(["CONFIRMATION_REQUIRED", false]);
     await expect(available()).rejects.toThrow();
   });
 
   it("клиентский выше рыночного — действует рыночный", async () => {
-    const { adp, journal } = setup({ client: client({ amount: 5 * THRESHOLD, currency: "RUB" }) });
+    const { adp, journal } = setup({ client: client({ confirm_above: 5 * THRESHOLD, currency: "RUB" }) });
     journal.set(M, { amount_limit: 2 * THRESHOLD });
     expect(await reasonOf(adp, msg({ op_ref: "a", amount: THRESHOLD + 1 }))).toBe("CONFIRMATION_REQUIRED");
     expect(pair(await adp.decide(msg({ op_ref: "b", amount: THRESHOLD }))).decision).toBe("APPROVE");
   });
 
   it("клиентский 0 — подтверждение любой суммы; не задан — рыночный", async () => {
-    expect(await reasonOf(setup({ client: client({ amount: 0, currency: "RUB" }) }).adp, msg())).toBe("CONFIRMATION_REQUIRED");
+    expect(await reasonOf(setup({ client: client({ confirm_above: 0, currency: "RUB" }) }).adp, msg())).toBe("CONFIRMATION_REQUIRED");
     expect(pair(await setup({ client: client(undefined) }).adp.decide(msg())).decision).toBe("APPROVE");
   });
 
@@ -397,14 +400,15 @@ describe("меньшее из порогов (SPEC §6 п. 10, РП44 п. 5, A3 
   });
 
   it.each([
-    ["отрицательный", { amount: -1, currency: "RUB" }],
-    ["дробный", { amount: 1.5, currency: "RUB" }],
-    ["валюта не ISO 4217", { amount: 100, currency: "rub" }],
-    ["без валюты", { amount: 100 }],
-    ["число вместо пары", 100],
+    ["отрицательный", { confirm_above: -1, currency: "RUB" }],
+    ["дробный", { confirm_above: 1.5, currency: "RUB" }],
+    ["валюта не ISO 4217", { confirm_above: 100, currency: "rub" }],
+    ["без валюты", { confirm_above: 100 }],
+    ["число вместо записи", 100],
     ["null", null],
-    ["в другой валюте", { amount: 100, currency: "USD" }],
-  ])("ответ порта не по форме (%s) — STATE_UNAVAILABLE", async (_n, v) => {
+    ["в другой валюте", { confirm_above: 100, currency: "USD" }],
+    ["неизвестное поле", { confirm_above: 100, currency: "RUB", per_week: 1 }],
+  ])("запись лимитов не по форме (%s) — STATE_UNAVAILABLE", async (_n, v) => {
     expect(await reasonOf(setup({ client: client(v) }).adp, msg())).toBe("STATE_UNAVAILABLE");
   });
 
@@ -415,7 +419,7 @@ describe("меньшее из порогов (SPEC §6 п. 10, РП44 п. 5, A3 
   });
 
   it("неагентская — порт порога не вызывается (инвариант 2)", async () => {
-    const port = client({ amount: 0, currency: "RUB" });
+    const port = client({ confirm_above: 0, currency: "RUB" });
     expect(pair(await setup({ client: port }).adp.decide(plain())).decision).toBe("BYPASS");
     expect(port.calls).toBe(0);
   });
@@ -673,7 +677,7 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
       mandates: journal,
       state,
       operations: new MemoryOperationStore(),
-      params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2 },
+      params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
       log: (_l, fields, m) => logs.push({ fields, msg: m }),
     });
     expect(await reasonOf(fresh, msg())).toBe("STATE_UNAVAILABLE");
@@ -731,7 +735,7 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
       mandates: journal,
       state: new StateService(ledger, journal, { reservationTtlSec: 600 }),
       operations,
-      params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2 },
+      params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
     });
     expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
     expect(journal.calls).toBe(0);
@@ -786,5 +790,99 @@ describe("П3 на пути ADP — дописывание MANDATE_EXHAUSTED б�
 describe("AdpRequestInvalid", () => {
   it("— ошибка с именем поля", () => {
     expect(new AdpRequestInvalid("amount")).toMatchObject({ name: "AdpRequestInvalid", field: "amount" });
+  });
+});
+
+describe("лимиты клиента в ADP (SPEC §6 п. 6–7, 10–11; РП45 п. 1–2; A3 п. 7.2)", () => {
+  const M2 = "mnd_00000000-0000-4000-8000-000000000002";
+  /** Хранилище лимитов: запись по клиенту; reads — число чтений; failing — исключение на любое чтение. */
+  const limitsOf = (rec: unknown) => {
+    const src = {
+      reads: 0,
+      failing: false,
+      rec,
+      async get(c: { participant_code: string; principal_ref: string }) {
+        src.reads++;
+        if (src.failing) throw new Error("хранилище лимитов недоступно");
+        return c.participant_code === CLIENT.participant_code && c.principal_ref === CLIENT.principal_ref ? src.rec : undefined;
+      },
+    };
+    return src;
+  };
+  const DAY = { per_period: 300_000, period: "DAY", currency: "RUB" };
+
+  it("страж инварианта 2: хранилище лимитов бросает на любое чтение — неагентская всё равно BYPASS, чтений нет", async () => {
+    const src = limitsOf(DAY);
+    src.failing = true;
+    const { adp } = setup({ client: src });
+    expect(pair(await adp.decide(plain()))).toEqual({ decision: "BYPASS", reason: null });
+    expect(pair(await adp.decide(msg({ aoi: null as unknown as undefined })))).toEqual({ decision: "BYPASS", reason: null });
+    expect(src.reads).toBe(0);
+    // Агентская при том же сбое — не BYPASS и не APPROVE: не подтверждено (A3 п. 4.5).
+    expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
+  });
+
+  it("одно чтение лимитов на решение: MCC, per_operation, порог и per_period — из одной записи", async () => {
+    const src = limitsOf({ ...DAY, per_operation: 200_000, confirm_above: 250_000, merchant_categories: ["5462"] });
+    const { adp } = setup({ client: src });
+    expect(pair(await adp.decide(msg())).decision).toBe("APPROVE");
+    expect(src.reads).toBe(1);
+  });
+
+  it("per_operation: сумма выше — LIMIT_EXCEEDED до резерва; равна — APPROVE", async () => {
+    const { adp, available } = setup({ client: limitsOf({ per_operation: 189_000 - 1, currency: "RUB" }) });
+    expect(await reasonOf(adp, msg())).toBe("LIMIT_EXCEEDED");
+    await expect(available()).rejects.toThrow();
+    const ok = setup({ client: limitsOf({ per_operation: 189_000, currency: "RUB" }) });
+    expect(pair(await ok.adp.decide(msg())).decision).toBe("APPROVE");
+  });
+
+  it("merchant_categories: MCC вне списка или без MCC — MANDATE_SCOPE до резерва; в списке — APPROVE", async () => {
+    const { adp, available } = setup({ client: limitsOf({ merchant_categories: ["5411"] }) });
+    expect(await reasonOf(adp, msg())).toBe("MANDATE_SCOPE");
+    expect(await reasonOf(adp, msg({ op_ref: "no-mcc", merchant: { id: "MER-1042" } }))).toBe("MANDATE_SCOPE");
+    await expect(available()).rejects.toThrow();
+    expect(pair(await setup({ client: limitsOf({ merchant_categories: ["5411", "5462"] }) }).adp.decide(msg())).decision).toBe("APPROVE");
+  });
+
+  it("per_period — второй счёт тем же op_ref по всем мандатам клиента; отказ — резерв мандата освобождён", async () => {
+    const { adp, journal, ledger, available } = setup({ client: limitsOf({ ...DAY, per_period: 300_000 }) });
+    journal.set(M2);
+    const d1 = await adp.decide(msg({ op_ref: "p1", amount: 200_000 }));
+    expect(pair(d1).decision).toBe("APPROVE");
+    // reservation_id — удержание мандата; удержание клиента — в записи операции следом.
+    expect((await ledger.get(d1.reservation_id!)).account).toBe(accountId(M));
+    const d2 = await adp.decide(msg({ op_ref: "p2", amount: 200_000, aoi: { indicator: true, agent_code: AGENT, mandate_id: M2 } }));
+    expect(pair(d2).reason).toBe("LIMIT_EXCEEDED");
+    expect(await available(M2)).toBe(LIMIT);
+    const d3 = await adp.decide(msg({ op_ref: "p3", amount: 100_000, aoi: { indicator: true, agent_code: AGENT, mandate_id: M2 } }));
+    expect(pair(d3).decision).toBe("APPROVE");
+    expect(d3.mandate_left_after).toBe(0);
+  });
+
+  it("повтор op_ref по освобождённому удержанию клиента — STATE_UNAVAILABLE, не прежний APPROVE (инвариант 4)", async () => {
+    const { adp, ledger } = setup({ client: limitsOf(DAY) });
+    const m = msg({ op_ref: "rep", amount: 1_000 });
+    expect(pair(await adp.decide(m)).decision).toBe("APPROVE");
+    const clientHold = (await ledger.expire(Number.MAX_SAFE_INTEGER)).find((h) => h.account.startsWith("client:"));
+    expect(clientHold).toBeDefined();
+    expect(await reasonOf(adp, m)).toBe("STATE_UNAVAILABLE");
+  });
+
+  it("подтверждение без резерва — остаток с учётом лимита клиента: выше порога и выше остатка клиента — LIMIT_EXCEEDED", async () => {
+    const { adp } = setup({ client: limitsOf({ ...DAY, per_period: 50_000, confirm_above: 10_000 }) });
+    expect(await reasonOf(adp, msg({ amount: 60_000 }))).toBe("LIMIT_EXCEEDED");
+    expect(await reasonOf(adp, msg({ op_ref: "c2", amount: 40_000 }))).toBe("CONFIRMATION_REQUIRED");
+  });
+
+  it("записи нет — только предел мандата; не прочитана, мандат без клиента, валюта ≠ операции — STATE_UNAVAILABLE", async () => {
+    expect(pair(await setup({ client: limitsOf(undefined) }).adp.decide(msg())).decision).toBe("APPROVE");
+    const down = limitsOf(DAY);
+    down.failing = true;
+    expect(await reasonOf(setup({ client: down }).adp, msg())).toBe("STATE_UNAVAILABLE");
+    const orphan = setup({ client: limitsOf(DAY) });
+    orphan.journal.set(M, { client: null });
+    expect(await reasonOf(orphan.adp, msg())).toBe("STATE_UNAVAILABLE");
+    expect(await reasonOf(setup({ client: limitsOf({ ...DAY, currency: "USD" }) }).adp, msg())).toBe("STATE_UNAVAILABLE");
   });
 });

@@ -1,7 +1,8 @@
 // П4 Порог подтверждения (SPEC §6 п. 10, РП44 п. 5): меньшее из рыночного confirm_above_kop и клиентского
-// Limits.confirm_above (A3 п. 7.2). Порог — пара «сумма + валюта» (правило совместимости 2); рыночный — в рублях.
+// Limits.confirm_above (A3 п. 7.2) — из записи лимитов клиента (РП45 п. 2). Порог — пара «сумма + валюта» (правило
+// совместимости 2); рыночный — в рублях.
 import { isCurrencyCode } from "@kuzin4u/agentic-core";
-import type { CanonicalMessage } from "../shared/canonical.generated.js";
+import type { ClientLimits, ClientRef } from "../participants/limits.js";
 
 export interface Threshold {
   readonly amount: number;
@@ -12,15 +13,17 @@ export interface Threshold {
 export const MARKET_THRESHOLD_CURRENCY = "RUB";
 
 /**
- * Клиентский порог эмитента (ПИ-8 Limits.confirm_above, PS-20): не задан — undefined; сбой — исключение
- * (→ STATE_UNAVAILABLE). Ответ проверяет ADP: не по форме — тоже не подтверждено.
+ * Лимиты клиента мандата (ПИ-8 Limits, РП45 п. 1–2): действующая запись банка — одно чтение на решение; из неё же
+ * клиентский порог (ClientThresholds РП44 п. 5), per_operation, merchant_categories и per_period. Записи нет —
+ * undefined; сбой — исключение (→ STATE_UNAVAILABLE). Запись проверяет ADP: не по форме — тоже не подтверждено.
  */
-export interface ClientThresholds {
-  get(msg: CanonicalMessage, mandate_id: string): Promise<unknown>;
+export interface ClientLimitsSource {
+  get(client: ClientRef): Promise<unknown>;
 }
 
-/** До PS-20 порт не подключён: «не задан» — действует рыночный порог (РП44 п. 5; как ClientLimitCheck, SPEC §5). */
-export const CLIENT_THRESHOLDS_NOT_CONNECTED: ClientThresholds = Object.freeze({ get: async () => undefined });
+/** Клиентский порог из записи лимитов: confirm_above парой с currency записи; не задан — undefined (рыночный). */
+export const clientThreshold = (l: ClientLimits): unknown =>
+  l.confirm_above === undefined ? undefined : { amount: l.confirm_above, currency: l.currency };
 
 /** Ответ порта по форме: целое ≥ 0 и валюта ISO 4217; иначе undefined (не подтверждено, не догадка). */
 export function parseClientThreshold(v: unknown): Threshold | undefined {

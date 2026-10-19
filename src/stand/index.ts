@@ -126,7 +126,17 @@ export function createStand(): Stand {
     pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
     participants: { trusted, consent, params, state, limits, now },
     // ADP стенда (ПИ-1, РП43): реестр, журнал и П3 стенда, записи операций в памяти; только 127.0.0.1 (доп. РП43 п. 21).
-    adp: { adp: new Adp({ agents: registry, mandates: consent, state, operations: new MemoryOperationStore(), params }) },
+    // Мандат — с клиентом из журнала, лимиты клиента — из записей банка стенда (РП45 п. 1–2).
+    adp: {
+      adp: new Adp({
+        agents: registry,
+        mandates: { get: (id, agent_code) => consent.adpMandate(id, agent_code) },
+        state,
+        operations: new MemoryOperationStore(),
+        params,
+        clientLimits: { get: async (c) => (await limits.current(c))?.limits },
+      }),
+    },
   });
   const issuer: StandIssuer = {
     participant_code: emulator.participant_code,
