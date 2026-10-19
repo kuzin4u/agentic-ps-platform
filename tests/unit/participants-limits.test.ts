@@ -15,7 +15,7 @@ import { parseParams } from "../../src/shared/config.js";
 import { createStand } from "../../src/stand/index.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
-const LIMITS = { per_operation: 100_000, per_period: 300_000, period: "DAY", confirm_above: 150_000, currency: "RUB" };
+const LIMITS = { per_operation: 100_000, per_period: 300_000, period: "DAY", confirm_above: 150_000, currency: "RUB" } as const;
 
 describe("Limits ПИ-8 по форме (РП45 п. 3)", () => {
   it("принимается запись с суммами и валютой; запись — как прислал банк", () => {

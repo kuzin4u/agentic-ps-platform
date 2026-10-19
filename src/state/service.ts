@@ -37,20 +37,24 @@ export interface MandateBudgetSource {
   budget(mandate_id: string): Promise<MandateBudget | undefined>;
 }
 
-/** Лимит клиента или инструмента — «меньшее из пределов» до резерва (A3 п. 7.2, РП41 п. 9). Подключение — PS-20. */
-export interface ClientLimitCheck {
-  allows(mandate_id: string, money: Money): Promise<boolean>;
+/**
+ * Счёт лимита клиента за календарный период (РП45 п. 1): клиент мандата — банк и principal_ref из журнала, предел —
+ * {per_period, currency} действующей записи лимитов. «Меньшее из пределов» (A3 п. 7.2) — второй счёт удержаний ядра.
+ */
+export interface ClientAccount {
+  readonly participant_code: string;
+  readonly principal_ref: string;
+  readonly period: string;
+  /** Начало периода в client_limit_period_tz: DAY — YYYY-MM-DD, MONTH — YYYY-MM. */
+  readonly period_start: string;
+  readonly limit: Money;
 }
-
-/** До PS-20 лимит клиента не подключён: действует только предел мандата (РП41 п. 9, STATUS «Открыто» (г)). */
-export const NO_CLIENT_LIMIT: ClientLimitCheck = { allows: async () => true };
 
 export type StateLog = (level: "info" | "warn", fields: Record<string, unknown>, msg: string) => void;
 
 export interface StateServiceOptions {
   readonly reservationTtlSec: number;
   readonly now?: () => Date;
-  readonly clientLimit?: ClientLimitCheck;
   readonly log?: StateLog;
   /**
    * Запись MANDATE_EXHAUSTED с событием (журнал согласий, РП41 п. 11): после закрепления всего предела и при отказе в
@@ -69,6 +73,15 @@ const mandateOf = (h: Hold): string | undefined =>
 
 /** ref глобален в журнале удержаний: мандат + ключ операции (РП41 п. 4). */
 export const holdRef = (mandate_id: string, op_key: string): string => `mandate:${mandate_id}:op:${op_key}`;
+
+/**
+ * Счёт и ref лимита клиента (РП45 п. 1). В principal_ref, периоде и его начале «:» нет, поэтому разбор с конца
+ * однозначен при любом participant_code.
+ */
+export const clientAccountId = (a: Omit<ClientAccount, "limit">): string =>
+  `client:${a.participant_code}:${a.principal_ref}:${a.period}:${a.period_start}`;
+export const clientHoldRef = (a: Pick<ClientAccount, "participant_code" | "principal_ref">, op_key: string): string =>
+  `client:${a.participant_code}:${a.principal_ref}:op:${op_key}`;
 
 /**
  * Мандат не ACTIVE — код по статусу, резерва нет (РП41 п. 5). REJECTED — MANDATE_REVOKED: в ПАО «отозван или отклонён»,
@@ -94,7 +107,6 @@ const holdCode = (e: unknown): HoldError["code"] | undefined => (e instanceof Ho
 
 export class StateService {
   private readonly now: () => Date;
-  private readonly clientLimit: ClientLimitCheck;
   private readonly log: StateLog;
 
   constructor(
@@ -103,7 +115,6 @@ export class StateService {
     private readonly opts: StateServiceOptions,
   ) {
     this.now = opts.now ?? (() => new Date());
-    this.clientLimit = opts.clientLimit ?? NO_CLIENT_LIMIT;
     this.log = opts.log ?? (() => {});
   }
 
@@ -129,7 +140,8 @@ export class StateService {
   }
 
   /**
-   * Резерв (РП41 п. 4): статус по свёртке → валюта → лимит клиента → reserve ядра со сроком reservation_ttl_sec.
+   * Резерв (РП41 п. 4): статус по свёртке → валюта → reserve ядра со сроком reservation_ttl_sec. Лимит клиента — свой
+   * счёт, reserveClient тем же op_key после счетов мандата (РП45 п. 1).
    * Повтор с тем же op_key, суммой и валютой — прежнее удержание. hold.id хранит вызывающий (запись операции, РП43 п. 5).
    * waitExhausted: false — путь ADP: дописывание MANDATE_EXHAUSTED при INSUFFICIENT без ожидания лока журнала (РП43 п. 9).
    */
@@ -152,11 +164,6 @@ export class StateService {
     // Статус вне перечня (данные, а не тип) — не подтверждено (инвариант 3), а не пара без кода.
     if (b.status !== "ACTIVE") return fail(STATUS_CODE[b.status] ?? "STATE_UNAVAILABLE");
     if (money.currency !== b.currency) return fail("MANDATE_SCOPE");
-    try {
-      if (!(await this.clientLimit.allows(mandate_id, money))) return fail("LIMIT_EXCEEDED");
-    } catch (e) {
-      return this.unavailable(e, { mandate_id }, "П3: лимит клиента не прочитан — резерва нет");
-    }
     const expires_at = this.now().getTime() + this.opts.reservationTtlSec * 1000;
     const ref = holdRef(mandate_id, op_key);
     try {
@@ -167,14 +174,67 @@ export class StateService {
         const marking = this.markExhausted(mandate_id);
         if (opts.waitExhausted !== false) await marking;
       }
-      if (holdCode(e) !== "UNKNOWN_ACCOUNT") return this.reserveFailed(e, mandate_id);
+      if (holdCode(e) !== "UNKNOWN_ACCOUNT") return this.reserveFailed(e, { mandate_id });
     }
     // Счёт не открылся после подписи — открыть из записи мандата и повторить один раз (РП41 п. 3).
     try {
       await this.openFrom(mandate_id, b);
       return reserved(await this.ledger.reserve(accountId(mandate_id), money, ref, expires_at));
     } catch (e) {
-      return this.reserveFailed(e, mandate_id);
+      return this.reserveFailed(e, { mandate_id });
+    }
+  }
+
+  /**
+   * Резерв лимита клиента за период (РП45 п. 1): второй счёт удержаний ядра, условие по остатку и изменение — одна
+   * операция ядра, поэтому и на двух экземплярах сумма одобрений по всем мандатам клиента не выше предела (инвариант 4).
+   * Счёт открывается пределом действующей записи; открыт с меньшим — расширение действует со следующего периода
+   * (setLimit ядра нет, agentic-core #36); с большим — сужение: до удержания сужения (часть 2) не подтверждено.
+   */
+  async reserveClient(a: ClientAccount, money: Money, op_key: string): Promise<StateResult> {
+    if (!isUnits(money.amount) || !isCurrencyCode(money.currency) || typeof op_key !== "string" || op_key === "") {
+      return fail("REQUEST_INVALID");
+    }
+    const fields = { participant_code: a.participant_code, principal_ref: a.principal_ref, period_start: a.period_start };
+    // Валюта записи лимитов ≠ валюте операции — не подтверждено, а не «лимита нет» (РП45 п. 1).
+    if (a.limit.currency !== money.currency) return this.unavailable(undefined, fields, "П3: валюта лимита клиента ≠ валюте операции");
+    if (a.limit.amount === 0) return fail("LIMIT_EXCEEDED");
+    const id = clientAccountId(a);
+    try {
+      await this.ledger.openAccount(id, a.limit);
+    } catch (e) {
+      if (holdCode(e) !== "ACCOUNT_CONFLICT") return this.unavailable(e, fields, "П3: счёт лимита клиента не открыт — резерва нет");
+      let acc;
+      try {
+        acc = await this.ledger.account(id);
+      } catch (e2) {
+        return this.unavailable(e2, fields, "П3: счёт лимита клиента не прочитан — резерва нет");
+      }
+      if (acc.currency !== a.limit.currency || acc.limit > a.limit.amount) {
+        // Сужение в периоде — удержанием сужения (РП45 п. 1, часть 2); до него — отказ, а не прежний предел.
+        return this.unavailable(undefined, { ...fields, limit: acc.limit, now: a.limit.amount }, "П3: лимит клиента сужен в периоде — до удержания сужения резерва нет");
+      }
+    }
+    const expires_at = this.now().getTime() + this.opts.reservationTtlSec * 1000;
+    try {
+      return reserved(await this.ledger.reserve(id, money, clientHoldRef(a, op_key), expires_at));
+    } catch (e) {
+      return this.reserveFailed(e, fields);
+    }
+  }
+
+  /**
+   * Остаток лимита клиента за период для ответа без резерва (подтверждение, РП44 п. 1): счёта ещё нет — предел;
+   * сбой — undefined (не подтверждено).
+   */
+  async clientLeft(a: ClientAccount): Promise<number | undefined> {
+    if (a.limit.amount === 0) return 0;
+    try {
+      return Math.max(0, (await this.ledger.available(clientAccountId(a))).amount);
+    } catch (e) {
+      if (holdCode(e) === "UNKNOWN_ACCOUNT") return a.limit.amount;
+      this.log("warn", { principal_ref: a.principal_ref, code: holdCode(e) ?? "storage" }, "П3: остаток лимита клиента не прочитан");
+      return undefined;
     }
   }
 
@@ -275,7 +335,7 @@ export class StateService {
     await this.ledger.openAccount(accountId(mandate_id), { amount: b.amount_limit, currency: b.currency });
   }
 
-  private reserveFailed(e: unknown, mandate_id: string): StateResult {
+  private reserveFailed(e: unknown, fields: Record<string, unknown>): StateResult {
     switch (holdCode(e)) {
       case "INSUFFICIENT":
         return fail("LIMIT_EXCEEDED");
@@ -288,7 +348,7 @@ export class StateService {
         return fail("REQUEST_INVALID");
       default:
         // ACCOUNT_CONFLICT — нарушение целостности; прочее — сбой хранилища или неизвестная ошибка: без догадки.
-        return this.unavailable(e, { mandate_id }, "П3: резерв не выполнен");
+        return this.unavailable(e, fields, "П3: резерв не выполнен");
     }
   }
 
