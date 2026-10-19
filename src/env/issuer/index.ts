@@ -13,6 +13,7 @@ import {
   type ParticipantSignedRecord,
   type TrustedParticipantKey,
 } from "../../participants/trusted.js";
+import { participantLimitsSigningInput, type LimitsRecord } from "../../participants/limits.js";
 
 export const component = "env/issuer";
 
@@ -24,6 +25,8 @@ export interface IssuerEmulator {
   signRecord(record: ParticipantSignedRecord): string;
   /** Подпись записи об отзыве клиентом (base64url, РП38). */
   signRevocation(record: ParticipantRevocationRecord): string;
+  /** Подпись записи лимитов клиента (base64url, РП45 п. 1). */
+  signLimits(record: LimitsRecord): string;
 }
 
 export function createIssuerEmulator(): IssuerEmulator {
@@ -43,5 +46,6 @@ export function createIssuerEmulator(): IssuerEmulator {
     },
     signRecord: (record) => sign(null, participantSigningInput(record), secret).toString("base64url"),
     signRevocation: (record) => sign(null, participantRevocationSigningInput(record), secret).toString("base64url"),
+    signLimits: (record) => sign(null, participantLimitsSigningInput(record), secret).toString("base64url"),
   };
 }

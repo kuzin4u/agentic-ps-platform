@@ -53,6 +53,8 @@ export interface Params {
   readonly protocol_overlap_days: number;
   readonly issuer_mode_default: IssuerMode;
   readonly cx_outcome_timeout_days: number;
+  /** Часовой пояс календарного периода лимита клиента DAY/MONTH (IANA, РП45 п. 1). */
+  readonly client_limit_period_tz: string;
 }
 
 type Rule = (v: unknown) => unknown;
@@ -90,6 +92,17 @@ const hostList: Rule = (v) => {
   }
   if (new Set(v).size !== v.length) throw new Error("имена хостов повторяются");
   return Object.freeze([...v]);
+};
+
+/** Имя часового пояса IANA, известное Intl (РП45 п. 1): неизвестное — отказ запуска, а не UTC по умолчанию. */
+const timeZone: Rule = (v) => {
+  if (typeof v !== "string" || !/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*$/.test(v)) throw new Error("ожидается имя часового пояса IANA");
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: v });
+  } catch {
+    throw new Error(`неизвестный часовой пояс ${v}`);
+  }
+  return v;
 };
 
 const percent: Rule = (v) => {
@@ -130,6 +143,7 @@ const RULES: Record<keyof Params, Rule> = {
   protocol_overlap_days: int(1),
   issuer_mode_default: oneOf(ISSUER_MODES),
   cx_outcome_timeout_days: int(1),
+  client_limit_period_tz: timeZone,
 };
 
 /** Служебные ключи файла, не параметры. */

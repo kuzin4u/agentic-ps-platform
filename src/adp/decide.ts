@@ -13,11 +13,20 @@ import type { StateService } from "../state/index.js";
 import { STATE_TO_PI, STATUS_TO_PI } from "./codes.js";
 import type { OperationRecord, OperationStore, WindowResult } from "./operations.js";
 import {
-  CLIENT_THRESHOLDS_NOT_CONNECTED,
+  effectivePeriodLimit,
+  parseLimits,
+  periodStart,
+  type ClientLimits,
+  type ClientRef,
+  type PeriodLimit,
+} from "../participants/limits.js";
+import type { ClientAccount } from "../state/index.js";
+import {
+  clientThreshold,
   effectiveThreshold,
   MARKET_THRESHOLD_CURRENCY,
   parseClientThreshold,
-  type ClientThresholds,
+  type ClientLimitsSource,
 } from "./threshold.js";
 
 /** Реестр агентов (П1): неизвестный — undefined; сбой — исключение (→ STATE_UNAVAILABLE). */
@@ -25,7 +34,10 @@ export interface AdpAgents {
   get(agent_code: string): Pick<AgentRecord, "status" | "level"> | undefined;
 }
 
-export type AdpMandate = Pick<Mandate, "status" | "type" | "parent_id" | "merchant_scope" | "currency" | "amount_limit">;
+export type AdpMandate = Pick<Mandate, "status" | "type" | "parent_id" | "merchant_scope" | "currency" | "amount_limit"> & {
+  /** Клиент мандата из журнала (РП45 п. 1): банк подписи корня и principal_ref; null — подписи корня нет. */
+  readonly client: ClientRef | null;
+};
 
 /** Журнал согласий (П2): мандат агента со статусом по свёртке; чужой или неизвестный — undefined; сбой — исключение. */
 export interface AdpMandates {
@@ -37,11 +49,17 @@ export type AdpLog = (level: "info" | "warn", fields: Record<string, unknown>, m
 export interface AdpOptions {
   readonly agents: AdpAgents;
   readonly mandates: AdpMandates;
-  readonly state: Pick<StateService, "reserve" | "release" | "hold" | "amountLeft">;
+  readonly state: Pick<StateService, "reserve" | "reserveClient" | "release" | "hold" | "amountLeft" | "clientLeft">;
   readonly operations: OperationStore;
-  readonly params: Pick<Params, "aoi_rollout_phase" | "confirm_above_kop" | "split_window_sec" | "split_min_ops">;
-  /** Клиентский порог (ПИ-8, PS-20); не передан — не подключён, действует рыночный (РП44 п. 5). */
-  readonly clientThresholds?: ClientThresholds;
+  readonly params: Pick<
+    Params,
+    "aoi_rollout_phase" | "confirm_above_kop" | "split_window_sec" | "split_min_ops" | "client_limit_period_tz"
+  >;
+  /**
+   * Лимиты клиента (ПИ-8, РП45 п. 1–2) — обязательны (решение владельца по /audit): забытый порт — ошибка сборки, а не
+   * «проверки нет». У мандата без клиента (подписи корня нет) — STATE_UNAVAILABLE.
+   */
+  readonly clientLimits: ClientLimitsSource;
   readonly log?: AdpLog;
   readonly clock?: () => number;
   readonly now?: () => Date;
@@ -253,6 +271,18 @@ export class Adp {
     // Тип мандата вне перечня (данные, а не тип) — не подтверждено, а не «как INTENT» (инвариант 3, как доп. РП43 п. 19).
     if (m.type !== "INTENT" && m.type !== "CART") return no("STATE_UNAVAILABLE", mandate_id);
 
+    // Лимиты клиента мандата — одно чтение на решение (РП45 п. 1–2): MCC (п. 6), per_operation (п. 7), порог (п. 10),
+    // per_period (п. 11). Записи нет — только предел мандата; не прочитана, не по форме, другая валюта — не подтверждено.
+    const read = await this.clientLimits(msg, m, mandate_id);
+    if (read === "unavailable") return no("STATE_UNAVAILABLE", mandate_id);
+    const limits = read?.current;
+    if (limits?.merchant_categories !== undefined) {
+      const mcc = msg.merchant?.mcc;
+      if (mcc === undefined || !limits.merchant_categories.includes(mcc)) return no("MANDATE_SCOPE", mandate_id);
+    }
+    if (limits?.per_operation !== undefined && msg.amount > limits.per_operation) return no("LIMIT_EXCEEDED", mandate_id);
+    const client = read?.period && m.client ? this.clientAccount(m.client, read.period) : undefined;
+
     // Счета резерва: CART — свой и родителя INTENT, всегда в порядке «CART → родитель» (РП43 п. 6); INTENT — один.
     const accounts: { readonly id: string; readonly limit: number }[] = [{ id: mandate_id, limit: m.amount_limit }];
     if (m.type === "CART") {
@@ -264,9 +294,9 @@ export class Adp {
 
     // 10. Порог — меньшее из рыночного и клиентского (РП44 п. 5); не определён — не подтверждено. confirmation_ref до
     // PS-19 не проверяется: повтор получает тот же ответ (РП44 п. 6).
-    const threshold = await this.threshold(msg, mandate_id);
+    const threshold = this.threshold(msg, mandate_id, limits && clientThreshold(limits));
     if (threshold === undefined) return no("STATE_UNAVAILABLE", mandate_id);
-    if (msg.amount > threshold) return this.confirm(accounts, msg.amount, mandate_id, false);
+    if (msg.amount > threshold) return this.confirm(accounts, client, msg.amount, mandate_id, false);
 
     // 9. Дробление (РП44 п. 1–4): операция не выше порога — доля, если в окне по корневому INTENT (у CART — родитель)
     // вместе с ней ≥ split_min_ops одобрений и сумма выше порога. Доля в окно не входит; вход — до резерва, отказ резерва
@@ -288,7 +318,7 @@ export class Adp {
       // Телеметрия ПС12: сигнал, не инцидент; реквизитов инструмента нет (инвариант 1, РП44 п. 7).
       const fields = { op_ref: msg.op_ref, mandate_id, window_key, ops: w.ops, sum: w.sum, currency: msg.currency, split_detected: true };
       this.log("warn", fields, "ADP: дробление по мандату в окне");
-      return this.confirm(accounts, msg.amount, mandate_id, true);
+      return this.confirm(accounts, client, msg.amount, mandate_id, true);
     }
 
     // 7–8, 11. Резерв: разовая сумма и остаток — одно атомарное условие ядра на каждом счёте; op_key — op_ref (РП43 п. 5).
@@ -312,6 +342,21 @@ export class Adp {
       }
       holds.push(r.hold.id);
     }
+    // Лимит клиента за период — второй счёт ядра тем же op_key после счетов мандата (РП45 п. 1); отказ — освобождение
+    // резервов мандата и причина счёта клиента.
+    if (client) {
+      const r = await this.opts.state.reserveClient(client, money, msg.op_ref);
+      if (!r.ok) {
+        for (const h of holds) await this.release(h, msg.op_ref);
+        const reason = STATE_TO_PI[r.code];
+        if (reason === "INVALID") throw new AdpRequestInvalid("amount");
+        if (r.code === "IDEMPOTENCY_CONFLICT" || r.code === "RESERVATION_RELEASED") {
+          this.log("warn", { op_ref: msg.op_ref, mandate_id, incident: true }, "ADP: резерв лимита клиента по op_ref — повтор не того вида");
+        }
+        return no(reason, mandate_id);
+      }
+      holds.push(r.hold.id);
+    }
 
     // 12. Сверка статуса после резерва (РП43 п. 5): отзыв в окне между чтением и резервом — освобождение и отказ.
     // Момент авторизации для A3 п. 6.3 — это чтение; у CART статус свёрнут с родителем (РП35 п. 2).
@@ -321,7 +366,7 @@ export class Adp {
       for (const h of holds) await this.release(h, msg.op_ref);
       return no(late, mandate_id);
     }
-    const left = await this.leftOf(accounts);
+    const left = await this.leftOf(accounts, client);
     return {
       reason: null,
       mandate_id,
@@ -335,21 +380,82 @@ export class Adp {
    * Подтверждение вместо резерва (доп. РП43 п. 15, РП44 п. 1): остаток — чтением без резерва (проверки 7–8 идут раньше);
    * меньше суммы — LIMIT_EXCEEDED, не прочитан — STATE_UNAVAILABLE.
    */
-  private async confirm(accounts: readonly { readonly id: string; readonly limit: number }[], amount: number, mandate_id: string, split: boolean): Promise<Verdict> {
-    const left = await this.leftOf(accounts);
+  private async confirm(
+    accounts: readonly { readonly id: string; readonly limit: number }[],
+    client: ClientAccount | undefined,
+    amount: number,
+    mandate_id: string,
+    split: boolean,
+  ): Promise<Verdict> {
+    const left = await this.leftOf(accounts, client);
     if (left === undefined) return { reason: "STATE_UNAVAILABLE", mandate_id };
     return left < amount ? { reason: "LIMIT_EXCEEDED", mandate_id } : { reason: "CONFIRMATION_REQUIRED", mandate_id, split };
   }
 
-  /** Действующий порог в единицах валюты операции; сбой порта, ответ не по форме или другая валюта — undefined. */
-  private async threshold(msg: CanonicalMessage, mandate_id: string): Promise<number | undefined> {
+  /**
+   * Лимиты клиента мандата (РП45 п. 1): действующая запись и лимит за период по истории версий (расширение — со
+   * следующего периода). Записей нет — undefined (только предел мандата); мандат без клиента, сбой, версия не по форме,
+   * валюта действующей записи или лимита за период ≠ валюте операции — unavailable.
+   */
+  private async clientLimits(
+    msg: CanonicalMessage,
+    m: AdpMandate,
+    mandate_id: string,
+  ): Promise<{ readonly current: ClientLimits; readonly period: PeriodLimit | undefined } | undefined | "unavailable"> {
+    const fields = { op_ref: msg.op_ref, mandate_id };
+    if (!m.client) {
+      this.log("warn", fields, "ADP: клиент мандата не определён — нет подписи банка у корня");
+      return "unavailable";
+    }
     let raw: unknown;
     try {
-      raw = await (this.opts.clientThresholds ?? CLIENT_THRESHOLDS_NOT_CONNECTED).get(msg, mandate_id);
+      raw = await this.opts.clientLimits.get(m.client);
     } catch {
-      this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: клиентский порог не прочитан");
-      return undefined;
+      this.log("warn", fields, "ADP: лимиты клиента не прочитаны");
+      return "unavailable";
     }
+    if (!Array.isArray(raw)) {
+      this.log("warn", fields, "ADP: лимиты клиента не по форме");
+      return "unavailable";
+    }
+    const versions: { limits: ClientLimits; received_at: string }[] = [];
+    for (const v of raw as unknown[]) {
+      const o = (typeof v === "object" && v !== null ? v : {}) as Record<string, unknown>;
+      const p = parseLimits(o.limits);
+      if (!p.ok || typeof o.received_at !== "string" || Number.isNaN(Date.parse(o.received_at))) {
+        this.log("warn", fields, "ADP: запись лимитов клиента не по форме");
+        return "unavailable";
+      }
+      versions.push({ limits: p.limits, received_at: o.received_at });
+    }
+    const current = versions.at(-1)?.limits;
+    if (!current) return undefined;
+    let period: PeriodLimit | undefined;
+    try {
+      period = effectivePeriodLimit(versions, this.opts.params.client_limit_period_tz, this.now());
+    } catch {
+      this.log("warn", fields, "ADP: лимит клиента за период не вычислен");
+      return "unavailable";
+    }
+    if ((current.currency !== undefined && current.currency !== msg.currency) || (period && period.currency !== msg.currency)) {
+      this.log("warn", { ...fields, currency: msg.currency }, "ADP: валюта лимитов клиента ≠ валюте операции");
+      return "unavailable";
+    }
+    return { current, period };
+  }
+
+  /** Счёт лимита клиента за период (РП45 п. 1). Период — часы Платформы. */
+  private clientAccount(c: ClientRef, l: PeriodLimit): ClientAccount {
+    return {
+      ...c,
+      period: l.period,
+      period_start: periodStart(l.period, this.opts.params.client_limit_period_tz, this.now()),
+      limit: { amount: l.per_period, currency: l.currency },
+    };
+  }
+
+  /** Действующий порог в единицах валюты операции; клиентский не по форме или другая валюта — undefined. */
+  private threshold(msg: CanonicalMessage, mandate_id: string, raw: unknown): number | undefined {
     const client = raw === undefined ? undefined : parseClientThreshold(raw);
     if (raw !== undefined && client === undefined) {
       this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: клиентский порог не по форме");
@@ -361,13 +467,24 @@ export class Adp {
     return t;
   }
 
-  /** Остаток для ответа: меньшее по счетам (у CART — CART и родитель, РП43 п. 6); не прочитан хоть один — undefined. */
-  private async leftOf(accounts: readonly { readonly id: string; readonly limit: number }[]): Promise<number | undefined> {
+  /**
+   * Остаток для ответа: меньшее по счетам (у CART — CART и родитель, РП43 п. 6) и лимиту клиента за период (РП45 п. 1);
+   * не прочитан хоть один — undefined.
+   */
+  private async leftOf(
+    accounts: readonly { readonly id: string; readonly limit: number }[],
+    client?: ClientAccount,
+  ): Promise<number | undefined> {
     let min: number | undefined;
     for (const a of accounts) {
       const left = await this.opts.state.amountLeft(a.id, a.limit);
       if (left === undefined) return undefined;
       min = min === undefined ? left : Math.min(min, left);
+    }
+    if (client && min !== undefined) {
+      const left = await this.opts.state.clientLeft(client);
+      if (left === undefined) return undefined;
+      min = Math.min(min, left);
     }
     return min;
   }

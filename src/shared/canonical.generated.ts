@@ -1,9 +1,9 @@
 // Сгенерировано scripts/gen-shared.mjs из docs/core/processing-interface.yaml — не править вручную.
-// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 627d8775e363fd67192aac809d844b1e649a5c2b44424d8b00a613d359099ef0
+// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 46d5da85890b50a2068ceb15f7722f69092b38da0bff4140b7f85b98f0611513
 // Номера полей и кодов внешних форматов здесь нет: только каноническая модель [альбом] (РП6).
 
 export const PI_VERSION = "1.0.0-draft";
-export const PI_SPEC_SHA256 = "627d8775e363fd67192aac809d844b1e649a5c2b44424d8b00a613d359099ef0";
+export const PI_SPEC_SHA256 = "46d5da85890b50a2068ceb15f7722f69092b38da0bff4140b7f85b98f0611513";
 
 export interface Instrument {
   kind: "AGENT_TOKEN" | "ACCOUNT_LINK" | "CARD_TOKEN";
@@ -57,12 +57,25 @@ export interface Decision {
   decided_in_ms: number;
 }
 
+/** Лимиты клиента (РП45 п. 1, 3). Суммы — целые ≥ 0 в минимальных единицах, парой с currency (ISO 4217, обязательна при любом поле суммы); per_period и period — только вместе; period — календарный период в часовом поясе client_limit_period_tz. Неизвестное поле или period — 422 LIMITS_UNSUPPORTED. per_operation — сумма > per_operation → LIMIT_EXCEEDED; per_period — второй счёт удержаний ядра, резерв тем же op_key после мандата; merchant_categories — MCC вне списка → MANDATE_SCOPE; confirm_above — клиентский порог подтверждения (меньшее с рыночным, РП44 п. 5). */
 export interface Limits {
   per_operation?: number;
   per_period?: number;
-  period?: string;
+  period?: "DAY" | "MONTH";
   merchant_categories?: Array<string>;
   confirm_above?: number;
+  currency?: string;
+}
+
+/** Подписанная банком запись лимитов (РП45 п. 1). Подпись Ed25519 ключом банка над canonicalJson записи {context, participant_code, kid, principal_ref, version, limits, issued_at}; context = pao:participant-limits:v1, principal_ref — из пути. Только вставка; действует наибольшая version пары (participant_code, principal_ref). */
+export interface LimitsRecordBody {
+  participant_code: string;
+  kid: string;
+  version: number;
+  limits: Limits;
+  issued_at: string;
+  /** base64url, 64 байта */
+  signature: string;
 }
 
 export interface StateOp {
@@ -95,6 +108,7 @@ export const CANONICAL_MESSAGE_MSG_TYPE = ["AUTH_REQUEST","ISSUER_RESPONSE","REV
 export const CANONICAL_MESSAGE_CHANNEL = ["CARD","SBP"] as const;
 export const DECISION_DECISION = ["APPROVE","DECLINE","CONFIRMATION_REQUIRED","BYPASS"] as const;
 export const DECISION_REASON = ["AOI_MISSING","AOI_MISMATCH","AGENT_UNKNOWN","AGENT_SUSPENDED","CREDENTIAL_INVALID","MANDATE_NOT_FOUND","MANDATE_EXPIRED","MANDATE_REVOKED","MANDATE_SCOPE","LIMIT_EXCEEDED","STATE_UNAVAILABLE","CONFIRMATION_REQUIRED","ADP_UNAVAILABLE"] as const;
+export const LIMITS_PERIOD = ["DAY","MONTH"] as const;
 export const DEAL_VIEW_STATUS = ["AWAITING_FUNDING","FUNDED","RELEASED","RETURNED","PARTIAL","CANCELLED"] as const;
 export const DEAL_OUTCOME_OUTCOME = ["RELEASED","RETURNED","PARTIAL"] as const;
 
@@ -298,24 +312,75 @@ export const PI_SCHEMAS: Record<string, unknown> = {
   },
   "Limits": {
     "type": "object",
+    "description": "Лимиты клиента (РП45 п. 1, 3). Суммы — целые ≥ 0 в минимальных единицах, парой с currency (ISO 4217, обязательна при любом поле суммы); per_period и period — только вместе; period — календарный период в часовом поясе client_limit_period_tz. Неизвестное поле или period — 422 LIMITS_UNSUPPORTED. per_operation — сумма > per_operation → LIMIT_EXCEEDED; per_period — второй счёт удержаний ядра, резерв тем же op_key после мандата; merchant_categories — MCC вне списка → MANDATE_SCOPE; confirm_above — клиентский порог подтверждения (меньшее с рыночным, РП44 п. 5).",
+    "additionalProperties": false,
     "properties": {
       "per_operation": {
-        "type": "integer"
+        "type": "integer",
+        "minimum": 0
       },
       "per_period": {
-        "type": "integer"
+        "type": "integer",
+        "minimum": 0
       },
       "period": {
-        "type": "string"
+        "type": "string",
+        "enum": [
+          "DAY",
+          "MONTH"
+        ]
       },
       "merchant_categories": {
         "type": "array",
+        "maxItems": 1000,
         "items": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^[0-9]{4}$"
         }
       },
       "confirm_above": {
-        "type": "integer"
+        "type": "integer",
+        "minimum": 0
+      },
+      "currency": {
+        "type": "string",
+        "pattern": "^[A-Z]{3}$"
+      }
+    }
+  },
+  "LimitsRecordBody": {
+    "type": "object",
+    "description": "Подписанная банком запись лимитов (РП45 п. 1). Подпись Ed25519 ключом банка над canonicalJson записи {context, participant_code, kid, principal_ref, version, limits, issued_at}; context = pao:participant-limits:v1, principal_ref — из пути. Только вставка; действует наибольшая version пары (participant_code, principal_ref).",
+    "additionalProperties": false,
+    "required": [
+      "participant_code",
+      "kid",
+      "version",
+      "limits",
+      "issued_at",
+      "signature"
+    ],
+    "properties": {
+      "participant_code": {
+        "type": "string"
+      },
+      "kid": {
+        "type": "string"
+      },
+      "version": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "limits": {
+        "$ref": "#/components/schemas/Limits"
+      },
+      "issued_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "signature": {
+        "type": "string",
+        "description": "base64url, 64 байта"
       }
     }
   },

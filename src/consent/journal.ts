@@ -35,6 +35,7 @@ import {
 import { ConsentRowConflict, type ConsentStore, type MandateIndexRow } from "./store.js";
 import { assertNarrows, ConsentRequestRejected, pickSubject, pickTerms } from "./terms.js";
 import type { Params } from "../shared/config.js";
+import type { ClientRef } from "../participants/limits.js";
 import { toPaoEvent, type EventDraft, type PaoEventType } from "../pao/events.js";
 import type { Event } from "../shared/pao.js";
 
@@ -106,6 +107,8 @@ interface LoadedMandate {
   readonly head: JournalEntry;
   readonly subj: MandateSubject;
   readonly status: MandateStatus;
+  /** Проверенный снимок цепочки, по которому свёрнут статус. */
+  readonly entries: readonly JournalEntry[];
 }
 
 export class ConsentJournal {
@@ -326,6 +329,13 @@ export class ConsentJournal {
       if (same) return { id, status: m.status, replayed: true };
       throw new ConsentSignRejected("MANDATE_NOT_PENDING", id, m.status);
     }
+    // CART подписывает банк корневого INTENT (РП45 п. 1): клиент мандата для лимитов — по подписи корня; другой
+    // участник не вправе подписывать этот мандат — тот же отказ, что неизвестный ключ.
+    // Корень ещё не подписан — банк корня не определён: подписать CART не вправе никто (РП45 доп. п. 12).
+    const parentSigner = m.head.parent_ref ? signerOf(m.entries, m.head.parent_ref) : undefined;
+    if (d.decision === "SIGN" && m.head.parent_ref && parentSigner !== d.participant_code) {
+      throw new ConsentSignRejected("SIGNATURE_INVALID", id, m.status);
+    }
     if (d.decision === "SIGN" && d.signature_type === "simple" && needsQualified(m.head.payload as MandateRequestedPayload, m.head.at, policy)) {
       throw new ConsentSignRejected("QUALIFIED_SIGNATURE_REQUIRED", id, m.status);
     }
@@ -529,6 +539,18 @@ export class ConsentJournal {
   }
 
   /**
+   * Мандат для ADP (РП45 п. 1): то же, что get, и клиент мандата — банк, подписавший корневой мандат (у CART — INTENT),
+   * и principal_ref записи (инвариант 5). Подписи корня нет — client: null. Внутренний вызов, агенту не отдаётся.
+   */
+  async adpMandate(id: string, agent_code: string): Promise<(Mandate & { readonly client: ClientRef | null }) | undefined> {
+    const m = await this.load(id, agent_code);
+    if (!m) return undefined;
+    const participant_code = signerOf(m.entries, m.head.parent_ref ?? id);
+    const { principal_ref } = m.head.payload as MandateRequestedPayload;
+    return { ...this.toMandate(id, m.head, m.subj, m.status), client: participant_code ? { participant_code, principal_ref } : null };
+  }
+
+  /**
    * Мандат этого агента со статусом на момент чтения. Чужой или неизвестный id — undefined (как неизвестный).
    * Цепочка проверяется целиком, предмет — по обязательству: расхождение — ConsentIntegrityError (инвариант 6).
    */
@@ -587,9 +609,9 @@ export class ConsentJournal {
     const now = this.now();
     const own = deriveStatus(id, entries, now);
     // CART под INTENT — статус вместе с родителем, одним проходом по той же цепочке (РП35).
-    if (!head.parent_ref) return { row, head, subj, status: own };
+    if (!head.parent_ref) return { row, head, subj, status: own, entries };
     const parent = deriveStatus(head.parent_ref, entries, now);
-    return { row, head, subj, status: withParentStatus(own, parent) };
+    return { row, head, subj, status: withParentStatus(own, parent), entries };
   }
 
   private toMandate(id: string, head: JournalEntry, subj: MandateSubject, status: MandateStatus): Mandate {
@@ -623,6 +645,16 @@ const mandateEvent = (agent_code: string, kind: keyof typeof MANDATE_EVENT, mand
   type: MANDATE_EVENT[kind],
   data: { mandate_id },
 });
+
+/**
+ * Банк, подписавший мандат id: участник первой записи MANDATE_SIGNED по нему. Точный дубль свёртка пропускает, разные
+ * решения дают ConsentStateUnknown раньше (РП36 доп. п. 4); подписи нет — undefined.
+ */
+function signerOf(entries: readonly JournalEntry[], id: string): string | undefined {
+  const e = entries.find((x) => x.ref === id && x.kind === "MANDATE_SIGNED");
+  const p = e && objectPayload(e) ? e.payload.participant_code : undefined;
+  return typeof p === "string" && p !== "" ? p : undefined;
+}
 
 /** Отзыв и отказ пишутся только пока полномочия есть или ожидаются (РП38 п. 4). */
 const objectPayload = (e: JournalEntry): e is JournalEntry<Record<string, unknown>> =>

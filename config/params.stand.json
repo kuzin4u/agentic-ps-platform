@@ -29,5 +29,6 @@
   "aoi_rollout_phase": 3,
   "protocol_overlap_days": 180,
   "issuer_mode_default": "ON_BEHALF",
-  "cx_outcome_timeout_days": 30
+  "cx_outcome_timeout_days": 30,
+  "client_limit_period_tz": "Europe/Moscow"
 }

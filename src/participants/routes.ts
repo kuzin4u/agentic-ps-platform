@@ -14,6 +14,7 @@ import {
 import { isOpaquePrincipalRef } from "../consent/terms.js";
 import type { Params } from "../shared/config.js";
 import type { StateService } from "../state/service.js";
+import { limitsBody, type LimitsStore } from "./limits.js";
 import type { TrustedParticipants } from "./trusted.js";
 
 export interface ParticipantDeps {
@@ -22,6 +23,10 @@ export interface ParticipantDeps {
   readonly params: SignaturePolicy & Pick<Params, "unavailable_retry_after_sec">;
   /** П3: счёт бюджета открывается после MANDATE_SIGNED (РП41 п. 3); без П3 или при сбое — первым резервом. */
   readonly state?: Pick<StateService, "open">;
+  /** Лимиты клиента от банка (РП45 п. 1); без хранилища маршрута лимитов нет. */
+  readonly limits?: LimitsStore;
+  /** Часы Платформы для received_at записи лимитов. */
+  readonly now?: () => Date;
 }
 
 /** Коды ответа ПИ-8 подписи (processing-interface.yaml); тело ошибки — `{code}`, причина — в журнале процесса. */
@@ -31,6 +36,8 @@ const HTTP: Readonly<Record<string, number>> = {
   MANDATE_NOT_FOUND: 404,
   MANDATE_HASH_MISMATCH: 409,
   MANDATE_NOT_PENDING: 409,
+  LIMITS_VERSION_CONFLICT: 409,
+  LIMITS_UNSUPPORTED: 422,
   QUALIFIED_SIGNATURE_REQUIRED: 422,
   STATE_UNAVAILABLE: 503,
   UPSTREAM_UNAVAILABLE: 503,
@@ -182,4 +189,36 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       },
     ),
   );
+
+  const limits = deps.limits;
+  if (!limits) return;
+  // Лимиты клиента (РП45 п. 1, 3): тело → подпись банка (401 до хранилища) → только вставка с версией. GET того же пути —
+  // с подписью запроса участника (RFC 9421, PS-20 часть 2): без неё лимиты клиента отдавались бы любому.
+  app.put<{ Params: { ref: string } }>("/participants/v1/principals/:ref/limits", async (req, reply) => {
+    const fail = (code: keyof typeof HTTP) => {
+      const http = HTTP[code]!;
+      if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+      return reply.code(http).send({ code });
+    };
+    const b = limitsBody(req.params.ref, req.body);
+    if (!b.ok) return fail(b.code);
+    const { record, signature } = b;
+    if (!deps.trusted.verifyLimits(record, signature)) {
+      req.log.info({ participant_code: record.participant_code }, "ПИ-8: лимиты не записаны — подпись не проверена");
+      return fail("SIGNATURE_INVALID");
+    }
+    try {
+      const put = await limits.put({ ...record, signature, received_at: (deps.now ?? (() => new Date()))().toISOString() });
+      const fields = { participant_code: record.participant_code, principal_ref: record.principal_ref, version: record.version, put };
+      if (put === "conflict") {
+        req.log.info(fields, "ПИ-8: лимиты не записаны — версия не выше действующей или другая запись той же версии");
+        return fail("LIMITS_VERSION_CONFLICT");
+      }
+      req.log.info(fields, put === "replayed" ? "ПИ-8: повтор записи лимитов — записи нет" : "ПИ-8: лимиты клиента записаны");
+      return reply.code(200).send({ principal_ref: record.principal_ref, version: record.version });
+    } catch (err) {
+      req.log.error({ err, participant_code: record.participant_code }, "ПИ-8: сбой хранилища лимитов");
+      return fail("UPSTREAM_UNAVAILABLE");
+    }
+  });
 }
