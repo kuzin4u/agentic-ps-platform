@@ -52,7 +52,7 @@ describe("startPlatform: решение о запуске (РП42 п. 4)", () =>
     expect(r.log).toHaveBeenCalledWith("info", { selfcheck: r.decision.report }, expect.any(String));
   });
 
-  it("fail — порт не открывается, код 1; причина — в журнал отдельным полем, в отчёте только код", async () => {
+  it("fail — порт не открывается, код 1; в журнале — проверка и класс ошибки, без текста исключения", async () => {
     const r = await launch([ok("params"), boom("db.migrations", "STARTUP_DB_MIGRATIONS"), ok("participants")]);
     expect(r.exitCode).toBe(1);
     expect(r.listen).not.toHaveBeenCalled();
@@ -61,7 +61,8 @@ describe("startPlatform: решение о запуске (РП42 п. 4)", () =>
     // Остальные проверки выполняются: отчёт показывает всё, что не готово, а не только первое.
     expect(r.decision.report.checks).toContainEqual({ check: "participants", status: "ok" });
     expect(JSON.stringify(r.decision.report)).not.toContain("причина для журнала");
-    expect(r.decision.failures).toEqual([{ check: "db.migrations", code: "STARTUP_DB_MIGRATIONS", cause: "причина для журнала" }]);
+    expect(r.decision.failures).toEqual([{ check: "db.migrations", code: "STARTUP_DB_MIGRATIONS", error: "Error" }]);
+    expect(JSON.stringify(r.log.mock.calls)).not.toContain("причина для журнала");
     expect(r.log).toHaveBeenCalledWith(
       "error",
       { selfcheck: r.decision.report, problems: [], failures: r.decision.failures },
@@ -109,7 +110,7 @@ describe("startPlatform: решение о запуске (РП42 п. 4)", () =>
     const log = vi.fn();
     const r = await startPlatform([ok("params")], { version: "0.7.0", log, listen: () => Promise.reject(new Error("EADDRINUSE")), now: NOW });
     expect(r.exitCode).toBe(1);
-    expect(log).toHaveBeenLastCalledWith("error", { cause: "EADDRINUSE" }, expect.any(String));
+    expect(log).toHaveBeenLastCalledWith("error", { error: "Error" }, expect.any(String));
   });
 });
 
@@ -176,6 +177,21 @@ describe("src/main.ts: отказ запуска процессом (РП42 п. 
     });
     expect(code).toBe(1);
     expect(reportFrom(stderr).checks).toContainEqual({ check: "params", status: "fail", code: "STARTUP_PARAMS_INVALID" });
+  }, 30_000);
+
+  it("неверный DATABASE_URL с паролем — db.migrations fail, код 1, пароля в журнале нет (РП42 п. 12)", async () => {
+    const port = await freePort();
+    const secret = "Pa55-SECRET-in-url";
+    // Порт без сервера: соединение отклоняется, миграции не применяются.
+    const url = `postgres://platform:${secret}@127.0.0.1:${port}/platform`;
+    const { code, stdout, stderr } = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+      execFile(process.execPath, MAIN, { env: baseEnv({ PLATFORM_ENV: "sandbox", DATABASE_URL: url }), timeout: 20_000 }, (err, stdout, stderr) =>
+        resolve({ code: err ? ((err as { code?: number }).code ?? null) : 0, stdout, stderr }),
+      );
+    });
+    expect(code).toBe(1);
+    expect(reportFrom(stderr).checks).toContainEqual({ check: "db.migrations", status: "fail", code: "STARTUP_DB_MIGRATIONS" });
+    expect(stdout + stderr).not.toContain(secret);
   }, 30_000);
 
   it("dev без базы — warn STARTUP_DB_MEMORY, готов, порт открыт (/health 200)", async () => {

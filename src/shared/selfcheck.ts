@@ -30,11 +30,15 @@ export interface StartupCheck {
   readonly run: () => StartupOutcome | Promise<StartupOutcome>;
 }
 
-/** Причина отказа — в журнал процесса отдельным полем, не в отчёт (РП42 п. 4). */
+/**
+ * Отказ проверки — в журнал процесса отдельным полем, не в отчёт (РП42 п. 4). Только имя проверки и класс ошибки:
+ * текст исключения и значения параметров (строка подключения с паролем) в журнал не попадают (РП42 п. 12, условие владельца).
+ */
 export interface StartupFailure {
   readonly check: string;
   readonly code: StartupCode;
-  readonly cause: string;
+  /** Класс ошибки (`Error`, `TypeError`, `AggregateError`); не Error — `typeof` значения. */
+  readonly error: string;
 }
 
 export interface StartupDecision {
@@ -46,7 +50,7 @@ export interface StartupDecision {
   readonly start: boolean;
 }
 
-const causeOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+const errorClass = (err: unknown): string => (err instanceof Error ? err.constructor.name || "Error" : typeof err);
 
 /** Проверки по порядку; исключение — `fail` с кодом проверки, `skip` в отчёт не попадает. */
 export async function runSelfCheck(
@@ -61,7 +65,7 @@ export async function runSelfCheck(
       outcome = await c.run();
     } catch (err) {
       items.push({ check: c.check, status: "fail", code: c.fail });
-      failures.push({ check: c.check, code: c.fail, cause: causeOf(err) });
+      failures.push({ check: c.check, code: c.fail, error: errorClass(err) });
       continue;
     }
     if (outcome === "skip") continue;
@@ -92,7 +96,7 @@ export async function startPlatform(
   try {
     await opts.listen();
   } catch (err) {
-    opts.log("error", { cause: causeOf(err) }, "запуск: порт не открыт");
+    opts.log("error", { error: errorClass(err) }, "запуск: порт не открыт");
     return { exitCode: 1, decision };
   }
   return { exitCode: 0, decision };
