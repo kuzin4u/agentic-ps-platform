@@ -29,6 +29,9 @@ export function consentErrorReply(err: unknown): PaoErrorReply | undefined {
           return paoError("MANDATE_REVOKED", "A7 п. 3", PARENT_REJECTED_MESSAGE);
         case "REVOKED":
           return paoError("MANDATE_REVOKED", "A7 п. 6");
+        // Бюджет родителя закреплён целиком — состояние подтверждено и конечно, не 503 с повтором (РП41 доп. п. 20).
+        case "EXHAUSTED":
+          return paoError("LIMIT_EXCEEDED", "A3 п. 4");
         // Иной статус родителя — не догадка (инвариант 3).
         default:
           return paoError("STATE_UNAVAILABLE", "A7 п. 4");

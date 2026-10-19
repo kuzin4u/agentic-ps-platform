@@ -4,8 +4,10 @@
 // двойного освобождения. В CI (РП30 п. 7); локально без базы — пропуск.
 import { PgHoldLedger, type Money } from "@kuzin4u/agentic-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PgConsentStore } from "../../src/consent/store.js";
 import { accountId, StateService, type MandateBudget, type MandateBudgetSource } from "../../src/state/index.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
+import { A, decide, mk, setup } from "../support/state.js";
 
 const RUB = (amount: number): Money => ({ amount, currency: "RUB" });
 const TTL = 600;
@@ -121,5 +123,35 @@ describe.skipIf(!DATABASE_URL)("П3 на PostgreSQL: StateService + PgHoldLedger
     const dead = db.reopen();
     await dead.end();
     expect(await service(dead).reserve(M, RUB(1), "a")).toEqual({ ok: false, code: "STATE_UNAVAILABLE" });
+  });
+});
+
+describe.skipIf(!DATABASE_URL)("П3 → П2 на PostgreSQL: MANDATE_EXHAUSTED и mandate.exhausted в одной транзакции (РП41 п. 11, РП39 п. 1)", () => {
+  let db: TestDb;
+  beforeAll(async () => {
+    db = await openTestDb("exhaust");
+  });
+  afterAll(async () => {
+    await db?.close();
+  });
+
+  it("закрепление всего предела с двух экземпляров — одна запись в цепочке, одно событие в pao_events, статус EXHAUSTED", async () => {
+    const store = new PgConsentStore(db.pool);
+    const c1 = setup({ store, ledger: new PgHoldLedger(db.pool) });
+    const c2 = setup({ store: new PgConsentStore(db.reopen()), ledger: new PgHoldLedger(db.reopen()) });
+    const m = await mk(c1);
+    expect(await decide(c1, m)).toBe(200);
+    const r = await c1.state.reserve(m.id, RUB(50_000), "auth-1");
+    if (!r.ok) throw new Error(r.code);
+    await Promise.all([c1.state.commit(r.hold.id, RUB(50_000)), c1.state.commit(r.hold.id, RUB(50_000))]);
+    expect((await c1.consent.get(m.id, A))?.status).toBe("EXHAUSTED");
+    expect(await c2.state.reserve(m.id, RUB(1), "auth-2")).toEqual({ ok: false, code: "LIMIT_EXCEEDED" });
+    const row = (await store.getMandate(m.id))!;
+    const recs = (await store.journal(row.chain).all()).filter((e) => e.kind === "MANDATE_EXHAUSTED");
+    expect(recs).toHaveLength(1);
+    expect(recs[0]!.payload).toEqual({ committed: 50_000, currency: "RUB" });
+    const ev = (await c1.consent.events(A, undefined, 100)).filter((e) => e.type === "mandate.exhausted");
+    expect(ev.map((e) => e.data)).toEqual([{ mandate_id: m.id }]);
+    expect(await c1.consent.verify(m.id, A)).toMatchObject({ outcome: "OUT_OF_SCOPE", amount_left: 0 });
   });
 });

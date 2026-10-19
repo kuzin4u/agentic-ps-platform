@@ -43,17 +43,18 @@ export function setup(
     store?: ConsentStore;
     exhausted?: (id: string, p: MandateExhaustedPayload) => Promise<unknown>;
     log?: (msg: string) => void;
+    now?: () => Date;
   } = {},
 ): Ctx {
   const consent: ConsentJournal = new ConsentJournal(opts.store ?? new MemoryConsentStore(), {
     revocationOrder: () => "bank:test:revocation:v1",
-    now: () => T0,
+    now: opts.now ?? (() => T0),
     amountLeft: (id, limit) => state.amountLeft(id, limit),
   });
   const ledger = opts.ledger ?? new AsyncMemoryHoldLedger();
   const state: StateService = new StateService(ledger, consent, {
     reservationTtlSec: 600,
-    now: () => T0,
+    now: opts.now ?? (() => T0),
     exhausted: opts.exhausted ?? ((id, p) => consent.exhausted(id, p)),
     log: (_l, _f, msg) => opts.log?.(msg),
   });

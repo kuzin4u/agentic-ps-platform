@@ -3,7 +3,10 @@
 // свёртка (дубль, отзыв после исчерпания), CART при EXHAUSTED родителе, отзыв EXHAUSTED — без записи.
 import { AsyncHashChainJournal, AsyncMemoryHoldLedger, type AsyncHoldLedger } from "@kuzin4u/agentic-core";
 import { describe, expect, it } from "vitest";
+import { ConsentStateUnknown } from "../../src/consent/model.js";
 import { MemoryConsentStore } from "../../src/consent/store.js";
+import { ConsentRequestRejected } from "../../src/consent/terms.js";
+import { consentErrorReply } from "../../src/pao/consent-errors.js";
 import type { MandateRequest } from "../../src/shared/pao.js";
 import { A, decide, intent, mk, revoke, setup, T0, type Ctx } from "../support/state.js";
 
@@ -232,5 +235,80 @@ describe("MANDATE_EXHAUSTED и mandate.exhausted (РП41 п. 11)", () => {
     expect((await c.consent.get(cart2.id, A))?.status).toBe("EXHAUSTED");
     expect((await c.consent.get(p2.id, A))?.status).toBe("ACTIVE");
     expect(await exhaustedEvents(c, cart2.id)).toHaveLength(1);
+  });
+});
+
+describe("свёртка EXHAUSTED: срок, неопределимые сочетания, CART (/audit PS-09 № 2, 8, 9; РП41 доп. п. 20, 23)", () => {
+  const cartReq = (parent_id: string, valid_to = "2026-10-24T10:00:00Z"): MandateRequest =>
+    intent({
+      type: "CART",
+      parent_id,
+      subject: "корзина SHOP-1042",
+      amount_limit: 12_900,
+      valid_to,
+      cart: { merchant_id: "MER-1042", items: [{ sku: "milk-2l", qty: 1, price: 12_900 }], total: 12_900 },
+    });
+
+  async function exhaust(c: Ctx, id: string, amount: number): Promise<void> {
+    const r = await c.state.reserve(id, RUB(amount), `x-${id}`);
+    if (!r.ok) throw new Error(r.code);
+    await c.state.commit(r.hold.id, RUB(amount));
+  }
+
+  it("срок на EXHAUSTED не действует: после valid_to — EXHAUSTED, а не EXPIRED", async () => {
+    let now = T0;
+    const c = setup({ now: () => now });
+    const m = await active(c);
+    await exhaust(c, m.id, 50_000);
+    now = new Date("2026-10-25T00:00:00Z");
+    expect((await c.consent.get(m.id, A))?.status).toBe("EXHAUSTED");
+  });
+
+  it("собственный EXHAUSTED у CART сохраняется после истечения родителя", async () => {
+    let now = T0;
+    const c = setup({ now: () => now });
+    const p = await active(c, intent({ valid_to: "2026-10-20T10:00:00Z" }));
+    const cart = await active(c, cartReq(p.id, "2026-10-20T10:00:00Z"));
+    await exhaust(c, cart.id, 12_900);
+    now = new Date("2026-10-21T00:00:00Z");
+    expect((await c.consent.get(p.id, A))?.status).toBe("EXPIRED");
+    expect((await c.consent.get(cart.id, A))?.status).toBe("EXHAUSTED");
+  });
+
+  it("неподписанный CART под исчерпанным родителем — EXHAUSTED (как при отзыве родителя), подпись — 409", async () => {
+    const c = setup();
+    const p = await active(c);
+    const cart = await mk(c, cartReq(p.id));
+    await exhaust(c, p.id, 50_000);
+    expect((await c.consent.get(cart.id, A))?.status).toBe("EXHAUSTED");
+    expect(await decide(c, cart)).toBe(409);
+  });
+
+  it("новый CART под исчерпанным родителем — LIMIT_EXCEEDED 409 after_human, а не 503 с повтором (/audit № 2)", async () => {
+    const c = setup();
+    const p = await active(c);
+    await exhaust(c, p.id, 50_000);
+    const err = await c.consent.request(A, "e".repeat(64), cartReq(p.id)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConsentRequestRejected);
+    expect(err).toMatchObject({ reason: "PARENT_NOT_ACTIVE", parentStatus: "EXHAUSTED" });
+    expect(consentErrorReply(err)).toMatchObject({ http: 409, body: { code: "LIMIT_EXCEEDED", retry: "after_human" } });
+  });
+
+  it.each([
+    ["PENDING_SIGNATURE", false],
+    ["REJECTED", true],
+  ] as const)("MANDATE_EXHAUSTED при %s — неопределимый статус (503), не догадка", async (_status, reject) => {
+    const store = new MemoryConsentStore();
+    const c = setup({ store });
+    const m = await mk(c);
+    if (reject) await decide(c, m, "REJECT");
+    const row = (await store.getMandate(m.id))!;
+    await new AsyncHashChainJournal(store.journal(row.chain), () => T0.toISOString()).append(
+      "MANDATE_EXHAUSTED",
+      m.id,
+      { committed: 50_000, currency: "RUB" },
+      m.id,
+    );
+    await expect(c.consent.get(m.id, A)).rejects.toBeInstanceOf(ConsentStateUnknown);
   });
 });

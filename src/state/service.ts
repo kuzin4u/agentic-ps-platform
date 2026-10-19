@@ -1,7 +1,7 @@
 // П3 Бюджет мандата на удержаниях agentic-core (РП41, PS-09 К1.2): счёт = мандат, резерв → закрепление → освобождение.
 // Условие по остатку и изменение — одна операция ядра (PgHoldLedger / AsyncMemoryHoldLedger); своих реализаций и прямых
 // запросов к таблицам удержаний нет (РП41 п. 2). Любое неподтверждённое состояние — STATE_UNAVAILABLE (A3 п. 4.5).
-import { HoldError, type AsyncHoldLedger, type Hold, type Money } from "@kuzin4u/agentic-core";
+import { HoldError, isCurrencyCode, type AsyncHoldLedger, type Hold, type Money } from "@kuzin4u/agentic-core";
 import type { MandateExhaustedPayload, MandateStatus } from "../consent/model.js";
 
 /** Коды П3 (РП41 п. 5): внутренние, на границе их сопоставляет вызывающий (ADP — PS-10, П10 — PS-20). */
@@ -79,6 +79,12 @@ const STATUS_CODE: Record<Exclude<MandateStatus, "ACTIVE">, StateCode> = {
 
 const fail = (code: StateCode): StateResult => ({ ok: false, code });
 const isUnits = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 1;
+/**
+ * Итог reserve ядра. Повтор ref отдаёт прежнее удержание в любом состоянии: освобождённое без закрепления (реверсал,
+ * проход expire) бюджет не держит — RESERVATION_RELEASED, а не ok (РП41 доп. п. 19, /audit PS-09 № 1).
+ */
+const reserved = (hold: Hold): StateResult =>
+  hold.committed === 0 && hold.released === hold.amount ? fail("RESERVATION_RELEASED") : { ok: true, hold };
 const holdCode = (e: unknown): HoldError["code"] | undefined => (e instanceof HoldError ? e.code : undefined);
 
 export class StateService {
@@ -107,6 +113,11 @@ export class StateService {
       await this.openFrom(mandate_id, b);
       return true;
     } catch (e) {
+      if (holdCode(e) === "ACCOUNT_CONFLICT") {
+        // Счёт с другим пределом — нарушение целостности, а не сбой: резервы по нему — STATE_UNAVAILABLE (РП41 п. 3).
+        this.log("warn", { mandate_id, code: "ACCOUNT_CONFLICT", incident: true }, "П3: инцидент — счёт мандата с другим пределом");
+        return false;
+      }
       this.log("warn", { mandate_id, code: holdCode(e) }, "П3: счёт мандата не открыт — откроется при первом резерве");
       return false;
     }
@@ -117,7 +128,9 @@ export class StateService {
    * Повтор с тем же op_key, суммой и валютой — прежнее удержание. hold.id хранит вызывающий (запись операции, PS-10).
    */
   async reserve(mandate_id: string, money: Money, op_key: string): Promise<StateResult> {
-    if (!isUnits(money.amount) || typeof op_key !== "string" || op_key === "") return fail("REQUEST_INVALID");
+    if (!isUnits(money.amount) || !isCurrencyCode(money.currency) || typeof op_key !== "string" || op_key === "") {
+      return fail("REQUEST_INVALID");
+    }
     let b: MandateBudget | undefined;
     try {
       b = await this.source.budget(mandate_id);
@@ -135,7 +148,7 @@ export class StateService {
     const expires_at = this.now().getTime() + this.opts.reservationTtlSec * 1000;
     const ref = holdRef(mandate_id, op_key);
     try {
-      return { ok: true, hold: await this.ledger.reserve(accountId(mandate_id), money, ref, expires_at) };
+      return reserved(await this.ledger.reserve(accountId(mandate_id), money, ref, expires_at));
     } catch (e) {
       // Предел закреплён целиком, а записи нет (сбой после commit) — дописать; ответ тот же (доп. 1 к РП41 п. 11).
       if (holdCode(e) === "INSUFFICIENT") await this.markExhausted(mandate_id);
@@ -144,7 +157,7 @@ export class StateService {
     // Счёт не открылся после подписи — открыть из записи мандата и повторить один раз (РП41 п. 3).
     try {
       await this.openFrom(mandate_id, b);
-      return { ok: true, hold: await this.ledger.reserve(accountId(mandate_id), money, ref, expires_at) };
+      return reserved(await this.ledger.reserve(accountId(mandate_id), money, ref, expires_at));
     } catch (e) {
       return this.reserveFailed(e, mandate_id);
     }

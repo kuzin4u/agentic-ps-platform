@@ -79,6 +79,29 @@ describe("П3 резерв (РП41 п. 4–5)", () => {
     expect(await s.ledger.available(accountId(M))).toEqual(RUB(200_000));
   });
 
+  it("повтор ключа после освобождения или прохода expire — RESERVATION_RELEASED, не ok: бюджет не удержан (/audit № 1)", async () => {
+    const s = setup();
+    const r = await s.state.reserve(M, RUB(100_000), "auth-1");
+    if (!r.ok) throw new Error(r.code);
+    await s.state.release(r.hold.id);
+    expect(await s.state.reserve(M, RUB(100_000), "auth-1")).toEqual({ ok: false, code: "RESERVATION_RELEASED" });
+    const e = await s.state.reserve(M, RUB(100_000), "auth-2");
+    s.tick(TTL);
+    await s.state.expire();
+    expect(e.ok).toBe(true);
+    expect(await s.state.reserve(M, RUB(100_000), "auth-2")).toEqual({ ok: false, code: "RESERVATION_RELEASED" });
+    expect(await s.ledger.available(accountId(M))).toEqual(RUB(300_000));
+  });
+
+  it("повтор ключа после закрепления — прежнее удержание (операция уже исполнена, бюджет израсходован)", async () => {
+    const s = setup();
+    const r = await s.state.reserve(M, RUB(100_000), "auth-1");
+    if (!r.ok) throw new Error(r.code);
+    await s.state.commit(r.hold.id, RUB(40_000));
+    const again = await s.state.reserve(M, RUB(100_000), "auth-1");
+    expect(again.ok && again.hold).toMatchObject({ id: r.hold.id, state: "PARTIAL", committed: 40_000 });
+  });
+
   it("тот же ключ с другой суммой — IDEMPOTENCY_CONFLICT (REF_CONFLICT ядра)", async () => {
     const s = setup();
     await s.state.reserve(M, RUB(100_000), "auth-1");
@@ -109,6 +132,10 @@ describe("П3 резерв (РП41 п. 4–5)", () => {
   it.each([0, -1, 1.5, Number.NaN, 2 ** 53])("сумма %s — REQUEST_INVALID: только целые минимальные единицы ≥ 1", async (amount) => {
     const s = setup();
     expect(await s.state.reserve(M, RUB(amount), "a")).toEqual({ ok: false, code: "REQUEST_INVALID" });
+  });
+
+  it("валюта не по форме ISO 4217 — REQUEST_INVALID, а не MANDATE_SCOPE (/audit № 12)", async () => {
+    expect(await setup().state.reserve(M, { amount: 1, currency: "rub" }, "a")).toEqual({ ok: false, code: "REQUEST_INVALID" });
   });
 
   it("пустой ключ операции — REQUEST_INVALID", async () => {
@@ -142,6 +169,7 @@ describe("П3 резерв (РП41 п. 4–5)", () => {
     const s = setup();
     await s.ledger.openAccount(accountId(M), RUB(999));
     expect(await s.state.open(M)).toBe(false);
+    expect(s.logs).toContain("П3: инцидент — счёт мандата с другим пределом");
     const conflict = new StateService(
       { ...s.ledger, reserve: () => Promise.reject(new HoldError("ACCOUNT_CONFLICT")) } as unknown as AsyncHoldLedger,
       s.budgets,
