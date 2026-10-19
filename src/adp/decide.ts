@@ -337,11 +337,6 @@ export class Adp {
     // Лимит клиента за период — второй счёт ядра тем же op_key после счетов мандата (РП45 п. 1); отказ — освобождение
     // резервов мандата и причина счёта клиента.
     if (client) {
-      // ПОЛОМКА (К1.5а): «проверил — разрешил» вместо резерва — остаток клиента читается, но не потребляется.
-      const leftNow = await this.opts.state.clientLeft(client);
-      if (leftNow !== undefined && leftNow >= money.amount) {
-        return { reason: null, mandate_id, holds, agent_level: agent.level };
-      }
       const r = await this.opts.state.reserveClient(client, money, msg.op_ref);
       if (!r.ok) {
         for (const h of holds) await this.release(h, msg.op_ref);
