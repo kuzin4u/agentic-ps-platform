@@ -239,6 +239,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Decision'
+        '400':
+          description: 'Агентское сообщение некорректно (тело не объект, нет instrument, msg_type не AUTH_REQUEST, op_ref пуст, сумма не целое ≥ 1, валюта не ISO 4217); тело {}. Решения нет — процессинг ставит DECLINE / ADP_UNAVAILABLE агентской операции (РП43 п. 3, доп. п. 20). Неагентская с теми же дефектами — 200 BYPASS.'
+        '503':
+          description: 'Решения нет: режим «только BYPASS» при непрошедшей самопроверке, сбой точки решения или несогласованная пара; тело {}. Процессинг ставит DECLINE / ADP_UNAVAILABLE агентской операции (РП43 п. 8). Неагентская — 200 BYPASS и в этом режиме.'
   /adp/v1/events:
     post:
       summary: ПИ-3 События операции

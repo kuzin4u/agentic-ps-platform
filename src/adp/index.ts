@@ -3,3 +3,4 @@ export const component = "П4";
 export * from "./codes.js";
 export * from "./decide.js";
 export * from "./operations.js";
+export * from "./routes.js";

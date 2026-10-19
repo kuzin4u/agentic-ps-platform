@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import Fastify, { type FastifyInstance } from "fastify";
+import { adpRoutes, type AdpDeps } from "./adp/routes.js";
 import { participantRoutes, type ParticipantDeps } from "./participants/routes.js";
 import { paoRoutes, type PaoDeps } from "./pao/routes.js";
 
@@ -24,6 +25,11 @@ export interface ServerOptions {
   participants?: ParticipantDeps;
   /** Доверенные адреса прокси (РП32 п. 5); без них X-Forwarded-For не читается, ключ лимита — адрес соединения. */
   trustedProxies?: readonly string[];
+  /**
+   * Точка решения ADP (ПИ-1, РП43); без неё маршрута /adp нет. До SEC-1 — только стенд и тесты, main.ts её не
+   * подключает (доп. РП43 п. 21): открытого порта с правом создавать резервы нет.
+   */
+  adp?: AdpDeps;
 }
 
 /** Минимальная длина префикса доверенного прокси (РП32, дополнение п. 2); шире — отдельным решением. */
@@ -65,6 +71,9 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   // Шлюз участников — своим контекстом: проверка обращения ПАО к нему не относится, подпись — в теле (РП36 п. 4).
   const participants = opts.participants;
   if (participants) void app.register(async (scope) => participantRoutes(scope, participants));
+  // ADP — своим контекстом: обращение процессинга, не агента; проверки ПАО к нему не относятся.
+  const adp = opts.adp;
+  if (adp) void app.register(async (scope) => adpRoutes(scope, adp));
 
   return app;
 }
