@@ -49,8 +49,19 @@ export interface PaoAuthSources {
  */
 export const nonceValue = (agent_code: string, nonce: string): string => `${agent_code} ${nonce}`;
 
-/** Методы, доступные приостановленному и исключённому агенту: узнать свой статус (РП23 п. 6.3). */
+/** Метод, доступный приостановленному и исключённому агенту: узнать свой статус (РП23 п. 6.3). */
 const STATUS_EXEMPT = new Set(["GET /pao/v1/agent"]);
+
+/**
+ * Отказ от полномочий — и приостановленному (решение владельца 19.10.2026, #33; РП38 доп. п. 8): только снимает
+ * полномочия, расширить их нельзя. Исключённому — нет. Регистрация ключа приостановленным — 403 (РП23 п. 6.3, доп. 8).
+ */
+const SUSPENDED_RELINQUISH = /^\/pao\/v1\/mandates\/[^/]+\/relinquish$/;
+
+const statusAllows = (status: AgentRecord["status"], method: string, path: string): boolean =>
+  status === "ACTIVE" ||
+  STATUS_EXEMPT.has(`${method} ${path}`) ||
+  (status === "SUSPENDED" && method === "POST" && SUSPENDED_RELINQUISH.test(path));
 
 export interface PaoVerifierOptions {
   readonly skewSec: number;
@@ -148,7 +159,7 @@ export class PaoRequestVerifier {
     if (sourceFailure) return upstream(sourceFailure.cause);
     if (!result.ok) return fail(result.code);
 
-    if (agent.status !== "ACTIVE" && !STATUS_EXEMPT.has(`${req.method.toUpperCase()} ${req.path}`)) {
+    if (!statusAllows(agent.status, req.method.toUpperCase(), req.path)) {
       return { ok: false, code: "AGENT_SUSPENDED", norm: "A2 п. 7.1" };
     }
     return { ok: true, agent, kid: result.kid };

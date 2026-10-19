@@ -357,3 +357,69 @@ describe("ПАО relinquish и отзыв клиентом на стенде (Р
     expect((await stand.issuer.revoke("mnd_00000000-0000-4000-8000-000000000000")).statusCode).toBe(404);
   });
 });
+
+// #33 (решение владельца 19.10.2026; дополнение РП23 и РП38): приостановленный агент может отказаться от полномочий —
+// это только снимает их; регистрация ключа и прочие методы — 403 AGENT_SUSPENDED. Исключённому — 403 и на relinquish.
+describe("relinquish приостановленным агентом (#33)", () => {
+  const code = "nspk:agent:relinquish-s:v1";
+  const excluded = "nspk:agent:relinquish-x:v1";
+  let stand: Stand;
+  let side: AgentSide;
+  let ex: AgentSide;
+  const valid_to = new Date(Date.now() + 7 * 86_400_000).toISOString();
+
+  beforeAll(() => {
+    stand = createStand();
+    side = newAgentSide();
+    ex = newAgentSide();
+    expect(stand.admit(buyerApplication(code, side), "op").admitted).toBe(true);
+    expect(stand.admit(buyerApplication(excluded, ex), "op").admitted).toBe(true);
+  });
+  afterAll(async () => stand.close());
+
+  const call = (as: AgentSide, asCode: string, method: "GET" | "POST", path: string, body = "") =>
+    signedInject(stand.app, as, asCode, { method, path, body, headers: method === "POST" ? { "idempotency-key": randomUUID() } : {} });
+  const signedIntent = async (as: AgentSide, asCode: string): Promise<string> => {
+    const res = await call(as, asCode, "POST", "/pao/v1/mandates", JSON.stringify(intent({ valid_to })));
+    expect(res.statusCode).toBe(201);
+    const id = (res.json() as { id: string }).id;
+    expect((await stand.issuer.sign(id)).statusCode).toBe(200);
+    return id;
+  };
+
+  it("SUSPENDED: relinquish — 200 REVOKED, запись отказа; GET, новый мандат и регистрация ключа — 403 AGENT_SUSPENDED", async () => {
+    const p = await signedIntent(side, code);
+    stand.registry.changeStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+
+    const res = await call(side, code, "POST", `/pao/v1/mandates/${p}/relinquish`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: p, status: "REVOKED", agent_code: code });
+
+    for (const [method, path, body] of [
+      ["GET", `/pao/v1/mandates/${p}`, ""],
+      ["GET", `/pao/v1/mandates/${p}/verify`, ""],
+      ["POST", "/pao/v1/mandates", JSON.stringify(intent({ valid_to }))],
+      ["POST", "/pao/v1/agent/keys", JSON.stringify({ alg: "ed25519", public_key: newAgentSide().publicKey })],
+      ["GET", `/pao/v1/mandates/${p}/evidence`, ""],
+    ] as const) {
+      const r = await call(side, code, method, path, body);
+      expect([method, path, r.statusCode, (r.json() as { code?: string }).code]).toEqual([method, path, 403, "AGENT_SUSPENDED"]);
+    }
+
+    // После снятия приостановки: мандат отозван агентом, запись — агент и ключ проверенного обращения.
+    stand.registry.changeStatus(code, { to: "ACTIVE" });
+    const ev = (await call(side, code, "GET", `/pao/v1/mandates/${p}/evidence`)).json() as {
+      mandate_chain: { status: string }[];
+      records: { kind: string; payload: unknown }[];
+    };
+    expect(ev.mandate_chain.map((m) => m.status)).toEqual(["REVOKED"]);
+    expect(ev.records.filter((r) => r.kind === "MANDATE_RELINQUISHED").map((r) => r.payload)).toEqual([{ agent_code: code, kid: side.kid }]);
+  });
+
+  it("EXCLUDED: relinquish — 403 AGENT_SUSPENDED (решение касается только приостановленного)", async () => {
+    const p = await signedIntent(ex, excluded);
+    stand.registry.changeStatus(excluded, { to: "EXCLUDED", ground: "WITHDRAWN" });
+    const res = await call(ex, excluded, "POST", `/pao/v1/mandates/${p}/relinquish`);
+    expect([res.statusCode, (res.json() as { code: string }).code]).toEqual([403, "AGENT_SUSPENDED"]);
+  });
+});
