@@ -6,13 +6,16 @@ import { describe, expect, it } from "vitest";
 import {
   Adp,
   AdpRequestInvalid,
+  effectiveThreshold,
   isBypass,
+  parseClientThreshold,
   MemoryOperationStore,
   STATE_TO_PI,
   STATUS_TO_PI,
   type AdpAgents,
   type AdpMandate,
   type AdpMandates,
+  type ClientThresholds,
 } from "../../src/adp/index.js";
 import { ConsentIntegrityError, type MandateStatus } from "../../src/consent/model.js";
 import type { AgentStatus } from "../../src/registry/model.js";
@@ -112,7 +115,7 @@ function spy<T extends object>(inner: T, broken: Set<string>, count: { n: number
   });
 }
 
-function setup(opts: { phase?: 1 | 2 | 3 } = {}) {
+function setup(opts: { phase?: 1 | 2 | 3; client?: ClientThresholds } = {}) {
   const agents = new Agents();
   const journal = new Journal().set(M);
   const ledger = new AsyncMemoryHoldLedger();
@@ -127,6 +130,7 @@ function setup(opts: { phase?: 1 | 2 | 3 } = {}) {
     state,
     operations,
     params: { aoi_rollout_phase: opts.phase ?? 3, confirm_above_kop: THRESHOLD },
+    ...(opts.client ? { clientThresholds: opts.client } : {}),
     log: (_l, fields, m) => logs.push({ fields, msg: m }),
   });
   const available = async (id = M) => (await ledger.available(accountId(id))).amount;
@@ -321,22 +325,104 @@ describe("мандат и область (SPEC §6 п. 5–6, РП43 п. 2–3)"
     expect([await available(), await available(P)]).toEqual([200_000, LIMIT]);
   });
 
-  it("сумма выше confirm_above_kop до PS-13 — CONFIRMATION_REQUIRED / CONFIRMATION_REQUIRED, с confirmation_ref — то же", async () => {
+  it("сумма выше порога — CONFIRMATION_REQUIRED со split_detected: false; с confirmation_ref до PS-19 — то же (РП44 п. 6–7)", async () => {
     const { adp, journal } = setup();
     journal.set(M, { amount_limit: 2 * THRESHOLD });
-    expect(pair(await adp.decide(msg({ op_ref: "a", amount: THRESHOLD + 1 })))).toEqual({
-      decision: "CONFIRMATION_REQUIRED",
-      reason: "CONFIRMATION_REQUIRED",
-    });
-    expect(await reasonOf(adp, msg({ op_ref: "b", amount: THRESHOLD + 1, confirmation_ref: "cnf_1" }))).toBe(
-      "CONFIRMATION_REQUIRED",
-    );
+    const d = await adp.decide(msg({ op_ref: "a", amount: THRESHOLD + 1 }));
+    expect(pair(d)).toEqual({ decision: "CONFIRMATION_REQUIRED", reason: "CONFIRMATION_REQUIRED" });
+    expect(d.split_detected).toBe(false);
+    const r = await adp.decide(msg({ op_ref: "b", amount: THRESHOLD + 1, confirmation_ref: "cnf_1" }));
+    expect([pair(r).reason, r.split_detected]).toEqual(["CONFIRMATION_REQUIRED", false]);
+  });
+
+  it("у APPROVE и DECLINE поля split_detected нет (РП44 п. 7)", async () => {
+    const { adp, agents } = setup();
+    expect(await adp.decide(msg({ op_ref: "a" }))).not.toHaveProperty("split_detected");
+    agents.map.set(AGENT, "SUSPENDED");
+    expect(await adp.decide(msg({ op_ref: "b" }))).not.toHaveProperty("split_detected");
   });
 
   it("сумма выше порога и выше остатка — LIMIT_EXCEEDED (проверки 7–8 раньше 9–10), резерва нет", async () => {
     const { adp, available } = setup();
     expect(await reasonOf(adp, msg({ amount: THRESHOLD + 1 }))).toBe("LIMIT_EXCEEDED");
     await expect(available()).rejects.toThrow();
+  });
+});
+
+describe("меньшее из порогов (SPEC §6 п. 10, РП44 п. 5, A3 п. 7.2)", () => {
+  const client = (v: unknown | (() => never)): ClientThresholds & { calls: number } => {
+    const port = {
+      calls: 0,
+      async get() {
+        port.calls++;
+        return typeof v === "function" ? (v as () => never)() : v;
+      },
+    };
+    return port;
+  };
+
+  it("клиентский ниже рыночного — действует клиентский: CONFIRMATION_REQUIRED без резерва", async () => {
+    const { adp, available } = setup({ client: client({ amount: 100_000, currency: "RUB" }) });
+    const d = await adp.decide(msg());
+    expect([pair(d).reason, d.split_detected]).toEqual(["CONFIRMATION_REQUIRED", false]);
+    await expect(available()).rejects.toThrow();
+  });
+
+  it("клиентский выше рыночного — действует рыночный", async () => {
+    const { adp, journal } = setup({ client: client({ amount: 5 * THRESHOLD, currency: "RUB" }) });
+    journal.set(M, { amount_limit: 2 * THRESHOLD });
+    expect(await reasonOf(adp, msg({ op_ref: "a", amount: THRESHOLD + 1 }))).toBe("CONFIRMATION_REQUIRED");
+    expect(pair(await adp.decide(msg({ op_ref: "b", amount: THRESHOLD }))).decision).toBe("APPROVE");
+  });
+
+  it("клиентский 0 — подтверждение любой суммы; не задан — рыночный", async () => {
+    expect(await reasonOf(setup({ client: client({ amount: 0, currency: "RUB" }) }).adp, msg())).toBe("CONFIRMATION_REQUIRED");
+    expect(pair(await setup({ client: client(undefined) }).adp.decide(msg())).decision).toBe("APPROVE");
+  });
+
+  it("сбой порта — STATE_UNAVAILABLE без резерва (A3 п. 4.5)", async () => {
+    const { adp, available } = setup({
+      client: client(() => {
+        throw new Error("ECONNRESET");
+      }),
+    });
+    expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
+    await expect(available()).rejects.toThrow();
+  });
+
+  it.each([
+    ["отрицательный", { amount: -1, currency: "RUB" }],
+    ["дробный", { amount: 1.5, currency: "RUB" }],
+    ["валюта не ISO 4217", { amount: 100, currency: "rub" }],
+    ["без валюты", { amount: 100 }],
+    ["число вместо пары", 100],
+    ["null", null],
+    ["в другой валюте", { amount: 100, currency: "USD" }],
+  ])("ответ порта не по форме (%s) — STATE_UNAVAILABLE", async (_n, v) => {
+    expect(await reasonOf(setup({ client: client(v) }).adp, msg())).toBe("STATE_UNAVAILABLE");
+  });
+
+  it("операция не в RUB — порог не определён: STATE_UNAVAILABLE, не сравнение копеек с центами", async () => {
+    const { adp, journal } = setup();
+    journal.set(M, { currency: "USD" });
+    expect(await reasonOf(adp, msg({ currency: "USD" }))).toBe("STATE_UNAVAILABLE");
+  });
+
+  it("неагентская — порт порога не вызывается (инвариант 2)", async () => {
+    const port = client({ amount: 0, currency: "RUB" });
+    expect(pair(await setup({ client: port }).adp.decide(plain())).decision).toBe("BYPASS");
+    expect(port.calls).toBe(0);
+  });
+
+  it("effectiveThreshold и parseClientThreshold", () => {
+    const rub = (amount: number) => ({ amount, currency: "RUB" });
+    expect(effectiveThreshold(rub(300_000), undefined, "RUB")).toBe(300_000);
+    expect(effectiveThreshold(rub(300_000), rub(100_000), "RUB")).toBe(100_000);
+    expect(effectiveThreshold(rub(300_000), rub(500_000), "RUB")).toBe(300_000);
+    expect(effectiveThreshold(rub(300_000), undefined, "USD")).toBeUndefined();
+    expect(effectiveThreshold(rub(300_000), { amount: 1, currency: "USD" }, "RUB")).toBeUndefined();
+    expect(parseClientThreshold({ amount: 0, currency: "RUB" })).toEqual(rub(0));
+    expect(parseClientThreshold({ amount: Number.MAX_SAFE_INTEGER + 1, currency: "RUB" })).toBeUndefined();
   });
 });
 

@@ -12,6 +12,13 @@ import { ConsentIntegrityError } from "../consent/model.js";
 import type { StateService } from "../state/index.js";
 import { STATE_TO_PI, STATUS_TO_PI } from "./codes.js";
 import type { OperationRecord, OperationStore } from "./operations.js";
+import {
+  CLIENT_THRESHOLDS_NOT_CONNECTED,
+  effectiveThreshold,
+  MARKET_THRESHOLD_CURRENCY,
+  parseClientThreshold,
+  type ClientThresholds,
+} from "./threshold.js";
 
 /** Реестр агентов (П1): неизвестный — undefined; сбой — исключение (→ STATE_UNAVAILABLE). */
 export interface AdpAgents {
@@ -33,6 +40,8 @@ export interface AdpOptions {
   readonly state: Pick<StateService, "reserve" | "release" | "hold" | "amountLeft">;
   readonly operations: OperationStore;
   readonly params: Pick<Params, "aoi_rollout_phase" | "confirm_above_kop">;
+  /** Клиентский порог (ПИ-8, PS-20); не передан — не подключён, действует рыночный (РП44 п. 5). */
+  readonly clientThresholds?: ClientThresholds;
   readonly log?: AdpLog;
   readonly clock?: () => number;
   readonly now?: () => Date;
@@ -71,7 +80,7 @@ const BYPASS: Decision = Object.freeze({ decision: "BYPASS", reason: null, decid
 
 /** Итог проверок агентской операции: отказ с причиной или одобрение с удержаниями. */
 type Verdict =
-  | { readonly reason: DecisionReason; readonly mandate_id: string | null }
+  | { readonly reason: DecisionReason; readonly mandate_id: string | null; readonly split?: boolean }
   | {
       readonly reason: null;
       readonly mandate_id: string;
@@ -142,7 +151,13 @@ export class Adp {
             decided_in_ms: elapsed(),
           }
         : v.reason === "CONFIRMATION_REQUIRED"
-          ? { decision: "CONFIRMATION_REQUIRED", reason: "CONFIRMATION_REQUIRED", decided_in_ms: elapsed() }
+          ? {
+              decision: "CONFIRMATION_REQUIRED",
+              reason: "CONFIRMATION_REQUIRED",
+              // true — только доля (п. 9), по порогу одной операции — false (РП44 п. 7).
+              split_detected: v.split === true,
+              decided_in_ms: elapsed(),
+            }
           : decline(v.reason, elapsed());
     try {
       await this.opts.operations.finish({
@@ -247,13 +262,11 @@ export class Adp {
       accounts.push({ id: m.parent_id, limit: parent.amount_limit });
     }
 
-    // 9–10. Порог подтверждения до PS-13: подтверждение проверить нечем — CONFIRMATION_REQUIRED (РП43 п. 7). Резерв под
-    // такой ответ не держим; остаток (проверки 7–8, идут раньше) — чтением без резерва, не подтверждён — отказ.
-    if (msg.amount > this.opts.params.confirm_above_kop) {
-      const left = await this.leftOf(accounts);
-      if (left === undefined) return no("STATE_UNAVAILABLE", mandate_id);
-      return no(left < msg.amount ? "LIMIT_EXCEEDED" : "CONFIRMATION_REQUIRED", mandate_id);
-    }
+    // 10. Порог — меньшее из рыночного и клиентского (РП44 п. 5); не определён — не подтверждено. confirmation_ref до
+    // PS-19 не проверяется: повтор получает тот же ответ (РП44 п. 6).
+    const threshold = await this.threshold(msg, mandate_id);
+    if (threshold === undefined) return no("STATE_UNAVAILABLE", mandate_id);
+    if (msg.amount > threshold) return this.confirm(accounts, msg.amount, mandate_id, false);
 
     // 7–8, 11. Резерв: разовая сумма и остаток — одно атомарное условие ядра на каждом счёте; op_key — op_ref (РП43 п. 5).
     // Отказ на счёте родителя — освобождение резерва CART и причина родителя (РП43 п. 6).
@@ -293,6 +306,36 @@ export class Adp {
       agent_level: agent.level,
       ...(left === undefined ? {} : { left }),
     };
+  }
+
+  /**
+   * Подтверждение вместо резерва (доп. РП43 п. 15, РП44 п. 1): остаток — чтением без резерва (проверки 7–8 идут раньше);
+   * меньше суммы — LIMIT_EXCEEDED, не прочитан — STATE_UNAVAILABLE.
+   */
+  private async confirm(accounts: readonly { readonly id: string; readonly limit: number }[], amount: number, mandate_id: string, split: boolean): Promise<Verdict> {
+    const left = await this.leftOf(accounts);
+    if (left === undefined) return { reason: "STATE_UNAVAILABLE", mandate_id };
+    return left < amount ? { reason: "LIMIT_EXCEEDED", mandate_id } : { reason: "CONFIRMATION_REQUIRED", mandate_id, split };
+  }
+
+  /** Действующий порог в единицах валюты операции; сбой порта, ответ не по форме или другая валюта — undefined. */
+  private async threshold(msg: CanonicalMessage, mandate_id: string): Promise<number | undefined> {
+    let raw: unknown;
+    try {
+      raw = await (this.opts.clientThresholds ?? CLIENT_THRESHOLDS_NOT_CONNECTED).get(msg, mandate_id);
+    } catch {
+      this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: клиентский порог не прочитан");
+      return undefined;
+    }
+    const client = raw === undefined ? undefined : parseClientThreshold(raw);
+    if (raw !== undefined && client === undefined) {
+      this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: клиентский порог не по форме");
+      return undefined;
+    }
+    const market = { amount: this.opts.params.confirm_above_kop, currency: MARKET_THRESHOLD_CURRENCY };
+    const t = effectiveThreshold(market, client, msg.currency);
+    if (t === undefined) this.log("warn", { op_ref: msg.op_ref, mandate_id, currency: msg.currency }, "ADP: порог в валюте операции не определён");
+    return t;
   }
 
   /** Остаток для ответа: меньшее по счетам (у CART — CART и родитель, РП43 п. 6); не прочитан хоть один — undefined. */
