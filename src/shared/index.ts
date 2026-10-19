@@ -5,3 +5,4 @@ export * from "./canonical.generated.js";
 export * from "./pao-errors.generated.js";
 export * from "./codes.js";
 export * from "./config.js";
+export * from "./diag.js";

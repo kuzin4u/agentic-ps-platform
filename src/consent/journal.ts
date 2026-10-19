@@ -11,7 +11,7 @@ import {
   type AsyncJournalStore,
   type JournalEntry,
 } from "@kuzin4u/agentic-core";
-import type { EvidenceV14, Mandate, MandateRequest, MandateVerify } from "../shared/pao.js";
+import type { Evidence, Mandate, MandateRequest, MandateVerify } from "../shared/pao.js";
 import {
   ConsentIntegrityError,
   ConsentKeyReused,
@@ -468,15 +468,18 @@ export class ConsentJournal {
    * обязательство в записи) — раскрытие предмета только клиенту через банк. Нарушенная цепочка или предмет не сходится
    * с обязательством — integrity BROKEN с пустыми массивами; неопределимый статус при цельной цепочке — исключение (503).
    */
-  async evidence(id: string, agent_code: string): Promise<EvidenceV14 | undefined> {
+  async evidence(id: string, agent_code: string): Promise<Evidence | undefined> {
     const row = await this.store.getMandate(id);
     if (!row || row.agent_code !== agent_code) return undefined;
     // Один снимок цепочки (РП35): проверка хэшей, статусы мандата и родителя и records — по одному и тому же массиву.
-    let entries: readonly JournalEntry[];
+    let entries: readonly JournalEntry<Record<string, unknown>>[];
     let m: LoadedMandate | undefined;
     let parent: LoadedMandate | undefined;
     try {
-      entries = await this.snapshot(id, row.chain);
+      const snap = await this.snapshot(id, row.chain);
+      // payload записи в выписке — объект (JournalRecord ПАО 1.4.0); иное в цепочке — нарушение целостности, не приведение типа.
+      if (!snap.every(objectPayload)) throw new ConsentIntegrityError(id, "payload записи — не объект");
+      entries = snap;
       m = await this.loadFrom(row, entries, agent_code);
       const parentRow = m?.head.parent_ref ? await this.store.getMandate(m.head.parent_ref) : undefined;
       if (m?.head.parent_ref) {
@@ -603,6 +606,9 @@ const mandateEvent = (agent_code: string, kind: keyof typeof MANDATE_EVENT, mand
 });
 
 /** Отзыв и отказ пишутся только пока полномочия есть или ожидаются (РП38 п. 4). */
+const objectPayload = (e: JournalEntry): e is JournalEntry<Record<string, unknown>> =>
+  typeof e.payload === "object" && e.payload !== null && !Array.isArray(e.payload);
+
 const revocable = (status: MandateStatus): boolean => status === "PENDING_SIGNATURE" || status === "ACTIVE";
 
 /** Реквизиты записи и повтора совпадают: сравнение канонических строк без обязательства предмета. */

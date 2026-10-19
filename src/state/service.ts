@@ -4,19 +4,24 @@
 import { HoldError, isCurrencyCode, type AsyncHoldLedger, type Hold, type Money } from "@kuzin4u/agentic-core";
 import type { MandateExhaustedPayload, MandateStatus } from "../consent/model.js";
 
-/** Коды П3 (РП41 п. 5): внутренние, на границе их сопоставляет вызывающий (ADP — PS-10, П10 — PS-20). */
-export type StateCode =
-  | "LIMIT_EXCEEDED"
-  | "IDEMPOTENCY_CONFLICT"
-  | "MANDATE_SCOPE"
-  | "REQUEST_INVALID"
-  | "MANDATE_NOT_FOUND"
-  | "MANDATE_REVOKED"
-  | "MANDATE_EXPIRED"
-  | "PRINCIPAL_SIGNATURE_PENDING"
-  | "STATE_UNAVAILABLE"
-  | "RESERVATION_RELEASED"
-  | "COMMIT_CONFLICT";
+/**
+ * Коды П3 (РП41 п. 5): внутренние, на границе их сопоставляет вызывающий (ADP — PS-10, П10 — PS-20).
+ * Каждый — код ПАО или запись PLATFORM_DIAG (РП42 п. 3), полноту проверяет tests/unit/diag-registry.test.ts.
+ */
+export const STATE_CODES = [
+  "LIMIT_EXCEEDED",
+  "IDEMPOTENCY_CONFLICT",
+  "MANDATE_SCOPE",
+  "REQUEST_INVALID",
+  "MANDATE_NOT_FOUND",
+  "MANDATE_REVOKED",
+  "MANDATE_EXPIRED",
+  "PRINCIPAL_SIGNATURE_PENDING",
+  "STATE_UNAVAILABLE",
+  "RESERVATION_RELEASED",
+  "COMMIT_CONFLICT",
+] as const;
+export type StateCode = (typeof STATE_CODES)[number];
 
 export type StateResult = { readonly ok: true; readonly hold: Hold } | { readonly ok: false; readonly code: StateCode };
 

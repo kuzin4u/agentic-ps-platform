@@ -209,6 +209,22 @@ describe("порядок проверки и коды (РП23 п. 6)", () => {
     expect(code(await s.verifier.verify(signed(signer, A, { method: "POST", body: "{}" })))).toBe("AGENT_SUSPENDED");
   });
 
+  it("SUSPENDED: POST relinquish доступен (#33), EXCLUDED — AGENT_SUSPENDED; похожие пути и методы — AGENT_SUSPENDED", async () => {
+    const path = "/pao/v1/mandates/mnd_00000000-0000-4000-8000-000000000000/relinquish";
+    for (const to of ["SUSPENDED", "EXCLUDED"] as const) {
+      const s = stand();
+      const signer = s.admit(A);
+      s.registry.changeStatus(A, { to, ground: "KEY_COMPROMISE" });
+      const res = await s.verifier.verify(signed(signer, A, { method: "POST", path, body: "" }));
+      expect([to, code(res)]).toEqual([to, to === "SUSPENDED" ? "OK" : "AGENT_SUSPENDED"]);
+      if (to === "SUSPENDED") {
+        expect(code(await s.verifier.verify(signed(signer, A, { method: "POST", path: `${path}/`, body: "" })))).toBe("AGENT_SUSPENDED");
+        expect(code(await s.verifier.verify(signed(signer, A, { path })))).toBe("AGENT_SUSPENDED");
+        expect(code(await s.verifier.verify(signed(signer, A, { method: "POST", path: "/pao/v1/mandates/a/b/relinquish", body: "" })))).toBe("AGENT_SUSPENDED");
+      }
+    }
+  });
+
   it.each(["SUSPENDED", "EXCLUDED"] as const)("%s: GET /pao/v1/agent доступен — агент узнаёт свой статус", async (to) => {
     const s = stand();
     const signer = s.admit(A);

@@ -25,7 +25,7 @@ import {
 import { jwkThumbprint } from "../../src/registry/keys.js";
 import { buildServer } from "../../src/server.js";
 import { createStand } from "../../src/stand/index.js";
-import type { MandateRequest, MandateV14 } from "../../src/shared/pao.js";
+import type { Mandate, MandateRequest } from "../../src/shared/pao.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 import { signedInject } from "../support/signed-inject.js";
@@ -325,7 +325,7 @@ describe("порядок отзыва в мандате (РП37, № 22)", () =>
       now: () => T0,
       revocationOrder: () => new TrustedParticipants([c.emu.trustedKey], { stand: true }).revocationOrder(),
     });
-    const m: MandateV14 = await consent.request(A, key(), { ...intent(), revocation_order: "agent:own" } as MandateRequest);
+    const m: Mandate = await consent.request(A, key(), { ...intent(), revocation_order: "agent:own" } as MandateRequest);
     expect(m.revocation_order).toBe(STAND_REVOCATION_ORDER);
     expect(m.agent_code).toBe(A);
     // Хэш записи покрывает порядок отзыва: банк подписывает мандат вместе с ним.
@@ -357,7 +357,7 @@ describe("порядок отзыва в мандате (РП37, № 22)", () =>
     const k = key();
     const first = await j.request(A, k, intent());
     ro = "bank:a:revocation:v2";
-    const again: MandateV14 = await j.request(A, k, intent());
+    const again: Mandate = await j.request(A, k, intent());
     expect(again.id).toBe(first.id);
     expect(again.hash).toBe(first.hash);
     expect(again.revocation_order).toBe("bank:a:revocation:v1");
@@ -371,7 +371,7 @@ describe("порядок отзыва в мандате (РП37, № 22)", () =>
     const row = (await store.getMandate(p.id!))!;
     await new AsyncHashChainJournal(store.journal(row.chain), () => T0.toISOString()).append("MANDATE_SIGNED", p.id!, {}, p.id!);
     ro = "bank:a:revocation:v2";
-    const c: MandateV14 = await j.request(A, key(), cart(p.id!));
+    const c: Mandate = await j.request(A, key(), cart(p.id!));
     expect(c.revocation_order).toBe("bank:a:revocation:v1");
   });
 
