@@ -130,9 +130,15 @@ export class StateService {
 
   /**
    * Резерв (РП41 п. 4): статус по свёртке → валюта → лимит клиента → reserve ядра со сроком reservation_ttl_sec.
-   * Повтор с тем же op_key, суммой и валютой — прежнее удержание. hold.id хранит вызывающий (запись операции, PS-10).
+   * Повтор с тем же op_key, суммой и валютой — прежнее удержание. hold.id хранит вызывающий (запись операции, РП43 п. 5).
+   * waitExhausted: false — путь ADP: дописывание MANDATE_EXHAUSTED при INSUFFICIENT без ожидания лока журнала (РП43 п. 9).
    */
-  async reserve(mandate_id: string, money: Money, op_key: string): Promise<StateResult> {
+  async reserve(
+    mandate_id: string,
+    money: Money,
+    op_key: string,
+    opts: { readonly waitExhausted?: boolean } = {},
+  ): Promise<StateResult> {
     if (!isUnits(money.amount) || !isCurrencyCode(money.currency) || typeof op_key !== "string" || op_key === "") {
       return fail("REQUEST_INVALID");
     }
@@ -143,7 +149,8 @@ export class StateService {
       return this.unavailable(e, { mandate_id }, "П3: бюджет мандата не прочитан — резерва нет");
     }
     if (!b) return fail("MANDATE_NOT_FOUND");
-    if (b.status !== "ACTIVE") return fail(STATUS_CODE[b.status]);
+    // Статус вне перечня (данные, а не тип) — не подтверждено (инвариант 3), а не пара без кода.
+    if (b.status !== "ACTIVE") return fail(STATUS_CODE[b.status] ?? "STATE_UNAVAILABLE");
     if (money.currency !== b.currency) return fail("MANDATE_SCOPE");
     try {
       if (!(await this.clientLimit.allows(mandate_id, money))) return fail("LIMIT_EXCEEDED");
@@ -156,7 +163,10 @@ export class StateService {
       return reserved(await this.ledger.reserve(accountId(mandate_id), money, ref, expires_at));
     } catch (e) {
       // Предел закреплён целиком, а записи нет (сбой после commit) — дописать; ответ тот же (доп. 1 к РП41 п. 11).
-      if (holdCode(e) === "INSUFFICIENT") await this.markExhausted(mandate_id);
+      if (holdCode(e) === "INSUFFICIENT") {
+        const marking = this.markExhausted(mandate_id);
+        if (opts.waitExhausted !== false) await marking;
+      }
       if (holdCode(e) !== "UNKNOWN_ACCOUNT") return this.reserveFailed(e, mandate_id);
     }
     // Счёт не открылся после подписи — открыть из записи мандата и повторить один раз (РП41 п. 3).
@@ -200,6 +210,18 @@ export class StateService {
       return { ok: true, hold: h };
     }
     return fail("COMMIT_CONFLICT");
+  }
+
+  /**
+   * Удержание по hold_id — для повтора решения ADP по op_ref (РП43 п. 5): освобождённое без закрепления бюджет не держит —
+   * RESERVATION_RELEASED (как РП41 доп. п. 19); неизвестное или сбой чтения — STATE_UNAVAILABLE (доп. п. 15).
+   */
+  async hold(hold_id: string): Promise<StateResult> {
+    try {
+      return reserved(await this.ledger.get(hold_id));
+    } catch (e) {
+      return this.unavailable(e, { hold_id }, "П3: удержание не прочитано");
+    }
   }
 
   /** Освобождение открытой части (реверсал, отказ эмитента после ADP); идемпотентно в ядре. */
