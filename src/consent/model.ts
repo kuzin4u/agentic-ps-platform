@@ -6,7 +6,8 @@ import type { Mandate, MandateRequest } from "../shared/pao.js";
 /**
  * Виды записей журнала согласий. Изменение мандата — только новой записью с parent_ref = id мандата (A7 п. 4.1).
  * MANDATE_REQUESTED пишет К1.3; MANDATE_SIGNED и MANDATE_REJECTED — К2.4 по подписи участника (РП36); MANDATE_REVOKED —
- * по подписи участника, MANDATE_RELINQUISHED — по обращению агента (К2.6, РП38).
+ * по подписи участника, MANDATE_RELINQUISHED — по обращению агента (К2.6, РП38); MANDATE_EXHAUSTED — П3, когда закреплён
+ * весь предел (РП41 п. 11, PS-09 К1.5).
  */
 export const MANDATE_KINDS = [
   "MANDATE_REQUESTED",
@@ -14,10 +15,17 @@ export const MANDATE_KINDS = [
   "MANDATE_REJECTED",
   "MANDATE_REVOKED",
   "MANDATE_RELINQUISHED",
+  "MANDATE_EXHAUSTED",
 ] as const;
 export type MandateKind = (typeof MANDATE_KINDS)[number];
 
 export type MandateStatus = NonNullable<Mandate["status"]>;
+
+/** payload записи MANDATE_EXHAUSTED (РП41 п. 11): закреплено по счёту мандата в П3 — весь предел. */
+export interface MandateExhaustedPayload {
+  readonly committed: number;
+  readonly currency: string;
+}
 
 /**
  * payload записи MANDATE_SIGNED / MANDATE_REJECTED (РП36 доп.): запись участника о решении клиента и подпись участника
@@ -149,7 +157,8 @@ export const parseRfc3339 = (v: unknown): number => (typeof v === "string" && RF
  * Статус мандата — свёртка его записей (запись мандата и записи с parent_ref = id) на момент now.
  * PENDING_SIGNATURE → ACTIVE (подписан) или REJECTED; ACTIVE или PENDING_SIGNATURE → REVOKED (отзыв клиентом или
  * отказ агента); не отозванный и не отклонённый с наступившим valid_to — EXPIRED (записи не нужно).
- * EXHAUSTED — из сервиса состояния (П3, PS-09), не из журнала. Неизвестный вид записи, вторая подпись — ConsentStateUnknown:
+ * ACTIVE → EXHAUSTED — запись MANDATE_EXHAUSTED от П3 (РП41 п. 11); EXHAUSTED конечен, срок на него не действует; дубль
+ * записи пропускается, отзыв после неё (гонка двух экземпляров) — REVOKED. Неизвестный вид записи, вторая подпись — ConsentStateUnknown:
  * догадки нет (инвариант 3). После REVOKED записи отзыва, отказа и решения банка, после REJECTED — записи отзыва и отказа
  * пропускаются (РП38 п. 5): отзыв — подтверждённая запись, последующая полномочий не возвращает.
  */
@@ -172,14 +181,18 @@ export function deriveStatus(mandateId: string, entries: readonly JournalEntry[]
     // Гонки на двух экземплярах (РП38 п. 5): второй отзыв, решение банка после отзыва, отзыв после отказа клиента.
     if (status === "REVOKED" && e.kind !== "MANDATE_REQUESTED") continue;
     if (status === "REJECTED" && (e.kind === "MANDATE_REVOKED" || e.kind === "MANDATE_RELINQUISHED")) continue;
+    // Вторая запись исчерпания (два экземпляра, РП41 п. 11) нового не говорит.
+    if (status === "EXHAUSTED" && e.kind === "MANDATE_EXHAUSTED") continue;
     if (status === "PENDING_SIGNATURE" && (e.kind === "MANDATE_SIGNED" || e.kind === "MANDATE_REJECTED")) {
       status = e.kind === "MANDATE_SIGNED" ? "ACTIVE" : "REJECTED";
       decision = e;
     } else if (
-      (status === "PENDING_SIGNATURE" || status === "ACTIVE") &&
+      (status === "PENDING_SIGNATURE" || status === "ACTIVE" || status === "EXHAUSTED") &&
       (e.kind === "MANDATE_REVOKED" || e.kind === "MANDATE_RELINQUISHED")
     ) {
       status = "REVOKED";
+    } else if (status === "ACTIVE" && e.kind === "MANDATE_EXHAUSTED") {
+      status = "EXHAUSTED";
     } else {
       throw new ConsentStateUnknown(mandateId, `${e.kind} при статусе ${status}`);
     }
@@ -194,15 +207,18 @@ export function deriveStatus(mandateId: string, entries: readonly JournalEntry[]
 
 /**
  * Статус CART под INTENT — свёртка вместе со статусом родителя (РП35): собственные REVOKED и REJECTED сохраняются;
- * родитель REVOKED или REJECTED — CART REVOKED; родитель EXPIRED — CART EXPIRED; иначе — собственный статус.
+ * родитель REVOKED или REJECTED — CART REVOKED; родитель EXPIRED — CART EXPIRED; родитель EXHAUSTED — CART EXHAUSTED
+ * (РП41 п. 11, в том числе неподписанный — как при отзыве родителя); собственный EXHAUSTED конечен и сохраняется (срок
+ * и статус родителя на него не действуют, РП41 доп. п. 23); иначе — собственный статус.
  * Записей потомкам нет: отзыв родителя действует на CART с момента своей записи, в том числе на CART, записанный
  * в цепочку позже отзыва по гонке «проверка родителя → запись CART». Одно вычисление для GET, verify, подписи и ADP.
  * Ветки «родитель EXPIRED» и «родитель REJECTED» сейчас недостижимы (срок CART не позже родителя — assertNarrows;
  * CART пишется только под ACTIVE) и оставлены защитой на случай смены этих правил.
  */
 export function withParentStatus(own: MandateStatus, parent: MandateStatus): MandateStatus {
-  if (own === "REVOKED" || own === "REJECTED") return own;
+  if (own === "REVOKED" || own === "REJECTED" || own === "EXHAUSTED") return own;
   if (parent === "REVOKED" || parent === "REJECTED") return "REVOKED";
   if (parent === "EXPIRED") return "EXPIRED";
+  if (parent === "EXHAUSTED") return "EXHAUSTED";
   return own;
 }

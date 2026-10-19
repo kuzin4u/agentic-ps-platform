@@ -1,4 +1,4 @@
-// П2 verify и выписка (PS-06 К2.7, К2.8; РП38 п. 6–7, A7 п. 9.2–9.3): verify — без предмета, остаток до PS-09 — предел;
+// П2 verify и выписка (PS-06 К2.7, К2.8; РП38 п. 6–7, A7 п. 9.2–9.3): verify — без предмета, остаток — из П3 (РП41 п. 10; тесты остатка — state-exhausted.test.ts);
 // выписка — цепочка журнала, по которой хэши, Mandate.hash и подписи банка проверяются без Платформы; соли предмета нет.
 import { createPublicKey, randomUUID, verify as edVerify } from "node:crypto";
 import { readFileSync } from "node:fs";
