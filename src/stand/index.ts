@@ -15,6 +15,7 @@ import { PaoRequestVerifier } from "../pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore, type AdmissionDecision } from "../registry/index.js";
 import { buildServer } from "../server.js";
 import { loadParams, type Params } from "../shared/config.js";
+import { holdLedger, StateService } from "../state/index.js";
 import { createStandDns, type StandDns } from "./dns.js";
 
 /** Решение клиента в приложении банка стенда; по умолчанию — подпись простой ЭП с согласием на токен (РП12). */
@@ -90,6 +91,8 @@ export function createStand(): Stand {
     revocationOrder: () => trusted.revocationOrder(),
     pushFor: (code, type) => registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false),
   });
+  // Бюджет мандата (П3, РП41): удержания ядра в памяти, часы стенда; проход expire — без таймера (как доставка событий).
+  const state = new StateService(holdLedger(), consent, { reservationTtlSec: params.reservation_ttl_sec, now });
   // Подписка — в записи агента (РП40 п. 1); разрешение имени — стендовое, проверка адреса та же, что в рабочем сервере (п. 8).
   const dns = createStandDns();
   const subscriptions = { set: registry.subscribe.bind(registry) };
@@ -107,7 +110,7 @@ export function createStand(): Stand {
   const app = buildServer({
     env: "dev",
     pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
-    participants: { trusted, consent, params },
+    participants: { trusted, consent, params, state },
   });
   const issuer: StandIssuer = {
     participant_code: emulator.participant_code,

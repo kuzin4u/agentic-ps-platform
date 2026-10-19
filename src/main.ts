@@ -10,6 +10,7 @@ import { PaoRequestVerifier } from "./pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "./registry/index.js";
 import { loadParams } from "./shared/config.js";
 import { applyPlatformMigrations } from "./shared/migrations.js";
+import { holdLedger, RESERVATION_EXPIRE_EVERY_MS, startReservationExpiry, StateService } from "./state/index.js";
 
 const env = parseEnv(process.env.PLATFORM_ENV);
 // Неверные стендовые параметры — отказ запуска (fail-closed).
@@ -64,6 +65,12 @@ const consent = new ConsentJournal(consentStore, {
   pushFor: (code, type) => registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false),
 });
 
+// Бюджет мандата (П3, РП41): удержания ядра — PostgreSQL при DATABASE_URL, иначе (dev) память ядра; источник — журнал согласий.
+const state = new StateService(holdLedger(pool), consent, {
+  reservationTtlSec: params.reservation_ttl_sec,
+  log: (level, fields, msg) => app.log[level](fields, msg),
+});
+
 /** Проход доставки событий раз в секунду: меньше первой задержки повтора ядра (1 с). */
 const EVENT_DELIVERY_EVERY_MS = 1000;
 
@@ -84,19 +91,21 @@ const app = buildServer({
   trustedProxies,
   // Подписка — в записи агента (РП40 п. 1); разрешение имени — системное (стендового порта здесь нет, РП40 п. 8).
   pao: { verifier, keys, idempotency, params, consent, subscriptions: { set: registry.subscribe.bind(registry) } },
-  participants: { trusted, consent, params },
+  participants: { trusted, consent, params, state },
 });
 app.log.info({ params }, "стендовые параметры загружены");
-if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce, идемпотентность и журнал согласий в памяти — один процесс, повтор после перезапуска не ловится");
+if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce, идемпотентность, журнал согласий и удержания П3 в памяти — один процесс, повтор после перезапуска не ловится");
 const stopPurge = startNoncePurge(nonces, params.signature_skew_sec * 1000, (err) =>
   app.log.error({ err }, "ПАО: сбой очистки nonce"),
 );
 const stopDelivery = startEventDelivery(deliverer, EVENT_DELIVERY_EVERY_MS, (err) =>
   app.log.error({ err }, "ПАО: сбой прохода доставки событий"),
 );
+const stopExpiry = startReservationExpiry(state, RESERVATION_EXPIRE_EVERY_MS);
 app.addHook("onClose", async () => {
   await stopPurge();
   await stopDelivery();
+  await stopExpiry();
   await pool?.end();
 });
 // Штатная остановка: сервер, очистка nonce и пул закрываются вместе (РП30 п. 4).

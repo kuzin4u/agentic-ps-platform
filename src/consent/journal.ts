@@ -22,6 +22,7 @@ import {
   subjectCommitment,
   withParentStatus,
   ConsentStateUnknown,
+  MANDATE_ID,
   type MandateDecisionPayload,
   type MandateRelinquishPayload,
   type MandateRequestedPayload,
@@ -401,6 +402,20 @@ export class ConsentJournal {
       subject: m.subj.subject,
       cart: m.subj.cart,
     };
+  }
+
+  /**
+   * Бюджет мандата для П3 (РП41 п. 3–4): статус свёрткой load (у CART — вместе с родителем, РП35 п. 2), предел и валюта —
+   * из записи MANDATE_REQUESTED (инвариант 5). Внутренний вызов Платформы, без агента. Неизвестный — undefined;
+   * нарушенная цепочка, неопределимый статус, сбой хранилища — исключение: П3 отвечает STATE_UNAVAILABLE.
+   */
+  async budget(id: string): Promise<{ status: MandateStatus; amount_limit: number; currency: string } | undefined> {
+    if (!MANDATE_ID.test(id)) return undefined;
+    const row = await this.store.getMandate(id);
+    const m = row && (await this.load(id, row.agent_code));
+    if (!m) return undefined;
+    const t = m.head.payload as MandateRequestedPayload;
+    return { status: m.status, amount_limit: t.amount_limit, currency: t.currency };
   }
 
   /**

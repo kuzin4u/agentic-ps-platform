@@ -13,12 +13,15 @@ import {
 } from "../consent/model.js";
 import { isOpaquePrincipalRef } from "../consent/terms.js";
 import type { Params } from "../shared/config.js";
+import type { StateService } from "../state/service.js";
 import type { TrustedParticipants } from "./trusted.js";
 
 export interface ParticipantDeps {
   readonly trusted: TrustedParticipants;
   readonly consent: ConsentJournal;
   readonly params: SignaturePolicy & Pick<Params, "unavailable_retry_after_sec">;
+  /** П3: счёт бюджета открывается после MANDATE_SIGNED (РП41 п. 3); без П3 или при сбое — первым резервом. */
+  readonly state?: Pick<StateService, "open">;
 }
 
 /** Коды ответа ПИ-8 подписи (processing-interface.yaml); тело ошибки — `{code}`, причина — в журнале процесса. */
@@ -147,9 +150,12 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       req,
       reply,
       signBody,
-      (d) => {
+      async (d) => {
         const { signature, ...record } = d;
-        return deps.consent.sign(d, () => deps.trusted.verify(d.participant_code, d.kid, record, signature), deps.params);
+        const r = await deps.consent.sign(d, () => deps.trusted.verify(d.participant_code, d.kid, record, signature), deps.params);
+        // Открытие идемпотентно и не бросает: сбой ответ банку не меняет, счёт откроет первый резерв (РП41 п. 3).
+        if (r.status === "ACTIVE") await deps.state?.open(r.id);
+        return r;
       },
       {
         done: "ПИ-8: решение клиента записано",
