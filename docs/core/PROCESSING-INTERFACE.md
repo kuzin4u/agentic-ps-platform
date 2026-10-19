@@ -170,10 +170,11 @@
 ## 11. ПИ-8. Участники
 
 **Эмитент:**
-- `PUT/GET /participants/v1/instruments/{funding_ref}/limits` — ограничения клиента; расширение только с подтверждением клиента, сужение сразу;
+- `PUT/GET /participants/v1/principals/{ref}/limits` — лимиты клиента (РП45 п. 1, 3): подписанная запись банка `{context, participant_code, kid, principal_ref, version, limits, issued_at}` с меткой `pao:participant-limits:v1`; только вставка, действует наибольшая `version`; та же версия с другой записью или версия ниже действующей — 409 `LIMITS_VERSION_CONFLICT`; неизвестное поле или `period` — 422 `LIMITS_UNSUPPORTED`. `Limits.currency` (ISO 4217) обязательна при любом поле суммы, `period` — `DAY` или `MONTH` (календарный, `client_limit_period_tz`). Расширение — только с подтверждением клиента (в банке) и с начала следующего периода; сужение — сразу;
+- `PUT/GET /participants/v1/instruments/{funding_ref}/limits` — ограничения инструмента (PS-14: `funding_ref` — из записи реквизита);
 - `POST /participants/v1/mandates/{id}/sign` — подпись мандата клиентом в приложении (возврат результата в П2): запись о решении, подписанная ключом банка над `Mandate.hash` (РП36, доп.); без подписи точки нет;
 - `POST /participants/v1/mandates/{id}/revoke` — отзыв мандата клиентом в приложении: запись отзыва, подписанная ключом банка над `Mandate.hash` с меткой `pao:participant-mandate-revocation:v1` (РП38); отозван, отклонён или истёк — 200 с текущим статусом без записи;
-- `POST /participants/v1/principals/{ref}/revoke-all` — прекращение полномочий одним действием (PS-20, после привязки мандата к банку; РП38 п. 2);
+- `POST /participants/v1/principals/{ref}/revoke-all` — прекращение полномочий клиента одним действием (РП45 п. 4, код — PS-20 часть 2): подписанная запись с меткой `pao:participant-principal-revocation:v1`; первой — метка отзыва клиента (ADP отклоняет сразу, «до/после» — по порядку фиксации в базе), затем `MANDATE_REVOKED` каждому `ACTIVE`-мандату и `mandate.revoked` агенту;
 - `POST /participants/v1/confirmations/{id}` — подтверждение в приложении;
 - `POST /participants/v1/state/reserve|commit|release` — режим «сам эмитент»;
 - **вебхуки эмитенту** для уведомления клиента: первое использование полномочий, исчерпание бюджета, каждый отказ по превышению (ч. 4 ст. 9 161-ФЗ).
