@@ -1,5 +1,5 @@
 // Реестры кодов Платформы в формате /diag agentic-core (К17, РП42). Три реестра, не объединённых в один:
-// у 11 из 13 кодов ПИ то же имя, что у кода ПАО, а получатель и действие другие (РП42 п. 2).
+// у 10 из 13 кодов ПИ то же имя, что у кода ПАО, а получатель и действие другие (РП42 п. 2).
 // Коды ПАО — PAO_DIAG ядра как есть, свой реестр ПАО не пишется. Полнота — tests/unit/diag-registry.test.ts (К1.4).
 import type { DiagAction, DiagEntry, DiagSource } from "@kuzin4u/agentic-core/diag";
 import { DECISION_REASON, PI_VERSION } from "./canonical.generated.js";
@@ -31,7 +31,8 @@ export const PI_DIAG: Readonly<Record<PiCode, DiagEntry>> = {
   AGENT_SUSPENDED: pi("AGENT_SUSPENDED", ["platform"], "stop",
     "Помощник временно отключён от покупок. Обратитесь в поддержку сервиса.",
     "Допуск агента приостановлен оператором Платформы; агентские операции отклоняются до снятия.", `A1 п. 5.3; A2 п. 7.1; ${T6}`),
-  CREDENTIAL_INVALID: pi("CREDENTIAL_INVALID", ["agent", "bank"], "after_fix",
+  // stop, не after_fix: процессинг и эквайрер реквизит агента исправить не могут (ревью из чата, решение владельца 19.10.2026).
+  CREDENTIAL_INVALID: pi("CREDENTIAL_INVALID", ["agent", "bank"], "stop",
     "Покупка не прошла по технической причине. Повторите позже.",
     "Криптограмма агентского реквизита неверна или уже использована: операция — только с новым реквизитом.", `A3 п. 4.4; ${T6}`),
   MANDATE_NOT_FOUND: pi("MANDATE_NOT_FOUND", ["agent", "platform"], "after_human",
