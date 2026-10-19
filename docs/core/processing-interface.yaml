@@ -151,19 +151,59 @@ components:
           type: number
     Limits:
       type: object
+      description: "Лимиты клиента (РП45 п. 1, 3). Суммы — целые ≥ 0 в минимальных единицах, парой с currency (ISO 4217, обязательна при любом поле суммы); per_period и period — только вместе; period — календарный период в часовом поясе client_limit_period_tz. Неизвестное поле или period — 422 LIMITS_UNSUPPORTED. per_operation — сумма > per_operation → LIMIT_EXCEEDED; per_period — второй счёт удержаний ядра, резерв тем же op_key после мандата; merchant_categories — MCC вне списка → MANDATE_SCOPE; confirm_above — клиентский порог подтверждения (меньшее с рыночным, РП44 п. 5)."
+      additionalProperties: false
       properties:
         per_operation:
           type: integer
+          minimum: 0
         per_period:
           type: integer
+          minimum: 0
         period:
           type: string
+          enum:
+          - DAY
+          - MONTH
         merchant_categories:
           type: array
+          maxItems: 1000
           items:
             type: string
+            pattern: '^[0-9]{4}$'
         confirm_above:
           type: integer
+          minimum: 0
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+    LimitsRecordBody:
+      type: object
+      description: "Подписанная банком запись лимитов (РП45 п. 1). Подпись Ed25519 ключом банка над canonicalJson записи {context, participant_code, kid, principal_ref, version, limits, issued_at}; context = pao:participant-limits:v1, principal_ref — из пути. Только вставка; действует наибольшая version пары (participant_code, principal_ref)."
+      additionalProperties: false
+      required:
+      - participant_code
+      - kid
+      - version
+      - limits
+      - issued_at
+      - signature
+      properties:
+        participant_code:
+          type: string
+        kid:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        limits:
+          $ref: '#/components/schemas/Limits'
+        issued_at:
+          type: string
+          format: date-time
+        signature:
+          type: string
+          description: base64url, 64 байта
     StateOp:
       type: object
       required:
@@ -256,9 +296,40 @@ paths:
       responses:
         '202':
           description: Принято
+  /participants/v1/principals/{ref}/limits:
+    put:
+      summary: ПИ-8 Лимиты клиента (эмитент, РП45 п. 1, 3)
+      description: "Порядок: тело → подпись банка (неизвестный участник или ключ — тот же 401) → только вставка. Та же версия с той же записью — 200 без новой строки; версия не выше действующей или та же версия с другой записью — 409. Расширение per_period действует с начала следующего периода. GET — с подписью запроса участника (PS-20 часть 2)."
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        description: principal_ref клиента
+        schema:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitsRecordBody'
+      responses:
+        '200':
+          description: "Записано или повтор той же записи: {principal_ref, version}"
+        '400':
+          description: "`REQUEST_INVALID` — тело не по форме, сумма без currency, per_period без period"
+        '401':
+          description: "`SIGNATURE_INVALID` — подпись не проверена: неизвестный участник или ключ, неверная подпись, иная метка контекста"
+        '409':
+          description: "`LIMITS_VERSION_CONFLICT` — версия не выше действующей или другая запись той же версии"
+        '422':
+          description: "`LIMITS_UNSUPPORTED` — неизвестное поле limits или period"
+        '503':
+          description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
   /participants/v1/instruments/{funding_ref}/limits:
     put:
-      summary: ПИ-8 Ограничения клиента (эмитент)
+      summary: ПИ-8 Ограничения инструмента (эмитент; PS-14 — funding_ref из записи реквизита)
       parameters:
       - name: funding_ref
         in: path

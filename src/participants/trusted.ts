@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { canonicalJson } from "@kuzin4u/agentic-core";
 import type { MandateDecisionPayload, MandateRevocationPayload } from "../consent/model.js";
 import { ED25519, parseKey } from "../registry/keys.js";
+import { participantLimitsSigningInput, type LimitsRecord } from "./limits.js";
 
 /** Метка контекста подписи участника (РП36 доп.): подпись банка пригодна только для подписи мандата этой версии. */
 export const PARTICIPANT_SIGNATURE_CONTEXT = "pao:participant-mandate-signature:v1";
@@ -103,6 +104,11 @@ export class TrustedParticipants {
   /** Подпись участника над записью об отзыве (РП38): метка отзыва, подпись решения не подходит. */
   verifyRevocation(record: ParticipantRevocationRecord, signature: string): boolean {
     return this.verifyInput(record.participant_code, record.kid, participantRevocationSigningInput(record), signature);
+  }
+
+  /** Подпись участника над записью лимитов клиента (РП45 п. 1): своя метка, подпись решения или отзыва не подходит. */
+  verifyLimits(record: LimitsRecord, signature: string): boolean {
+    return this.verifyInput(record.participant_code, record.kid, participantLimitsSigningInput(record), signature);
   }
 
   private verifyInput(participant_code: string, kid: string, input: Buffer, signature: string): boolean {

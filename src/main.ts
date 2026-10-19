@@ -1,6 +1,7 @@
 import pg from "pg";
 import { buildServer, parseEnv, parseTrustedProxies, type PlatformEnv } from "./server.js";
 import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
+import { MemoryLimitsStore, PgLimitsStore } from "./participants/limits.js";
 import { loadTrustedParticipants, type TrustedParticipants } from "./participants/trusted.js";
 import { EventDeliverer, httpsTransport, startEventDelivery } from "./pao/delivery.js";
 import { paoIdempotency } from "./pao/idempotency.js";
@@ -166,10 +167,10 @@ async function serve(): Promise<void> {
     trustedProxies,
     // Подписка — в записи агента (РП40 п. 1); разрешение имени — системное (стендового порта здесь нет, РП40 п. 8).
     pao: { verifier, keys, idempotency, params, consent, subscriptions: { set: registry.subscribe.bind(registry) } },
-    participants: { trusted, consent, params, state },
+    participants: { trusted, consent, params, state, limits: pool ? new PgLimitsStore(pool) : new MemoryLimitsStore() },
   });
   app.log.info({ params }, "стендовые параметры загружены");
-  if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce, идемпотентность, журнал согласий и удержания П3 в памяти — один процесс, повтор после перезапуска не ловится");
+  if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce, идемпотентность, журнал согласий, удержания П3 и лимиты клиента в памяти — один процесс, повтор после перезапуска не ловится");
   const stopPurge = startNoncePurge(nonces, params.signature_skew_sec * 1000, (err) =>
     app.log.error({ err }, "ПАО: сбой очистки nonce"),
   );
