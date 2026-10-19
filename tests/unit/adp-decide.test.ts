@@ -268,10 +268,34 @@ describe("мандат и область (SPEC §6 п. 5–6, РП43 п. 2–3)"
     expect(await reasonOf(adp, msg({ op_ref: "c", currency: "USD" }))).toBe("MANDATE_SCOPE");
   });
 
-  it("CART до двух резервов с родителем — STATE_UNAVAILABLE, не APPROVE по счёту CART (РП43 п. 6)", async () => {
-    const { adp, journal } = setup();
+  it("CART без parent_id или без родителя в журнале — STATE_UNAVAILABLE, не APPROVE по счёту CART (РП43 п. 6)", async () => {
+    const { adp, journal, available } = setup();
     journal.set(M, { type: "CART" });
+    expect(await reasonOf(adp, msg({ op_ref: "a" }))).toBe("STATE_UNAVAILABLE");
+    journal.set(M, { type: "CART", parent_id: "mnd_parent" });
+    expect(await reasonOf(adp, msg({ op_ref: "b" }))).toBe("STATE_UNAVAILABLE");
+    await expect(available()).rejects.toThrow();
+  });
+
+  it("CART: сбой резерва на родителе — STATE_UNAVAILABLE, резерв CART освобождён", async () => {
+    const { adp, journal, available, ledger } = setup();
+    const P = "mnd_00000000-0000-4000-8000-0000000000aa";
+    journal.set(P);
+    journal.set(M, { type: "CART", parent_id: P, amount_limit: 200_000 });
+    const reserve = ledger.reserve.bind(ledger);
+    ledger.reserve = (...a) => (a[0] === accountId(P) ? Promise.reject(new Error("ECONNRESET")) : reserve(...a));
     expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
+    expect(await available()).toBe(200_000);
+  });
+
+  it("CART: отзыв в окне резерва — оба удержания освобождены", async () => {
+    const { adp, journal, available } = setup();
+    const P = "mnd_00000000-0000-4000-8000-0000000000aa";
+    journal.set(P);
+    journal.set(M, { type: "CART", parent_id: P, amount_limit: 200_000 });
+    journal.onGet = (n) => (n === 3 ? "REVOKED" : undefined);
+    expect(await reasonOf(adp, msg())).toBe("MANDATE_REVOKED");
+    expect([await available(), await available(P)]).toEqual([200_000, LIMIT]);
   });
 
   it("сумма выше confirm_above_kop до PS-13 — CONFIRMATION_REQUIRED / CONFIRMATION_REQUIRED, с confirmation_ref — то же", async () => {

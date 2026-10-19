@@ -17,7 +17,7 @@ export interface AdpAgents {
   get(agent_code: string): Pick<AgentRecord, "status" | "level"> | undefined;
 }
 
-export type AdpMandate = Pick<Mandate, "status" | "type" | "merchant_scope" | "currency" | "amount_limit">;
+export type AdpMandate = Pick<Mandate, "status" | "type" | "parent_id" | "merchant_scope" | "currency" | "amount_limit">;
 
 /** Журнал согласий (П2): мандат агента со статусом по свёртке; чужой или неизвестный — undefined; сбой — исключение. */
 export interface AdpMandates {
@@ -228,45 +228,68 @@ export class Adp {
     if (merchant === undefined || !m.merchant_scope.includes(merchant)) return no("MANDATE_SCOPE", mandate_id);
     if (msg.currency !== m.currency) return no("MANDATE_SCOPE", mandate_id);
 
-    // CART — два резерва с родителем INTENT (РП43 п. 6, К1.4); до них не одобряем без проверки родителя.
-    if (m.type === "CART") return no("STATE_UNAVAILABLE", mandate_id);
+    // Счета резерва: CART — свой и родителя INTENT, всегда в порядке «CART → родитель» (РП43 п. 6); INTENT — один.
+    const accounts: { readonly id: string; readonly limit: number }[] = [{ id: mandate_id, limit: m.amount_limit }];
+    if (m.type === "CART") {
+      const parent = typeof m.parent_id === "string" && m.parent_id !== "" ? await this.mandate(m.parent_id, agent_code, msg.op_ref) : undefined;
+      // CART без родителя в журнале или родитель не прочитан — не подтверждено (целостность), не APPROVE по счёту CART.
+      if (parent === "unavailable" || !parent || typeof m.parent_id !== "string") return no("STATE_UNAVAILABLE", mandate_id);
+      accounts.push({ id: m.parent_id, limit: parent.amount_limit });
+    }
 
     // 9–10. Порог подтверждения до PS-13: подтверждение проверить нечем — CONFIRMATION_REQUIRED (РП43 п. 7). Резерв под
     // такой ответ не держим; остаток (проверки 7–8, идут раньше) — чтением без резерва, не подтверждён — отказ.
     if (msg.amount > this.opts.params.confirm_above_kop) {
-      const left = await this.opts.state.amountLeft(mandate_id, m.amount_limit);
+      const left = await this.leftOf(accounts);
       if (left === undefined) return no("STATE_UNAVAILABLE", mandate_id);
       return no(left < msg.amount ? "LIMIT_EXCEEDED" : "CONFIRMATION_REQUIRED", mandate_id);
     }
 
-    // 7–8, 11. Резерв: разовая сумма и остаток — одно атомарное условие ядра; op_key — op_ref (РП43 п. 5).
+    // 7–8, 11. Резерв: разовая сумма и остаток — одно атомарное условие ядра на каждом счёте; op_key — op_ref (РП43 п. 5).
+    // Отказ на счёте родителя — освобождение резерва CART и причина родителя (РП43 п. 6).
     const money = { amount: msg.amount, currency: msg.currency };
-    const r = await this.opts.state.reserve(mandate_id, money, msg.op_ref, { waitExhausted: false });
-    if (!r.ok) {
-      const reason = STATE_TO_PI[r.code];
-      if (reason === "INVALID") throw new AdpRequestInvalid("amount");
-      if (r.code === "IDEMPOTENCY_CONFLICT") {
-        this.log("warn", { op_ref: msg.op_ref, mandate_id, incident: true }, "ADP: резерв по op_ref с другой суммой");
+    const holds: string[] = [];
+    for (const a of accounts) {
+      const r = await this.opts.state.reserve(a.id, money, msg.op_ref, { waitExhausted: false });
+      if (!r.ok) {
+        for (const h of holds) await this.release(h, msg.op_ref);
+        const reason = STATE_TO_PI[r.code];
+        if (reason === "INVALID") throw new AdpRequestInvalid("amount");
+        if (r.code === "IDEMPOTENCY_CONFLICT") {
+          this.log("warn", { op_ref: msg.op_ref, mandate_id: a.id, incident: true }, "ADP: резерв по op_ref с другой суммой");
+        }
+        return no(reason, mandate_id);
       }
-      return no(reason, mandate_id);
+      holds.push(r.hold.id);
     }
 
     // 12. Сверка статуса после резерва (РП43 п. 5): отзыв в окне между чтением и резервом — освобождение и отказ.
-    // Момент авторизации для A3 п. 6.3 — это чтение; отзыв после него — «после авторизации».
+    // Момент авторизации для A3 п. 6.3 — это чтение; у CART статус свёрнут с родителем (РП35 п. 2).
     const after = await this.mandate(mandate_id, agent_code, msg.op_ref);
     const late = after === "unavailable" || !after ? "STATE_UNAVAILABLE" : this.statusReason(after);
     if (late) {
-      await this.release(r.hold.id, msg.op_ref);
+      for (const h of holds) await this.release(h, msg.op_ref);
       return no(late, mandate_id);
     }
-    const left = await this.opts.state.amountLeft(mandate_id, m.amount_limit);
+    const left = await this.leftOf(accounts);
     return {
       reason: null,
       mandate_id,
-      holds: [r.hold.id],
+      holds,
       agent_level: agent.level,
       ...(left === undefined ? {} : { left }),
     };
+  }
+
+  /** Остаток для ответа: меньшее по счетам (у CART — CART и родитель, РП43 п. 6); не прочитан хоть один — undefined. */
+  private async leftOf(accounts: readonly { readonly id: string; readonly limit: number }[]): Promise<number | undefined> {
+    let min: number | undefined;
+    for (const a of accounts) {
+      const left = await this.opts.state.amountLeft(a.id, a.limit);
+      if (left === undefined) return undefined;
+      min = min === undefined ? left : Math.min(min, left);
+    }
+    return min;
   }
 
   private async mandate(id: string, agent_code: string, op_ref: string): Promise<AdpMandate | undefined | "unavailable"> {
