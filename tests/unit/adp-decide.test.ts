@@ -115,7 +115,9 @@ function spy<T extends object>(inner: T, broken: Set<string>, count: { n: number
   });
 }
 
-function setup(opts: { phase?: 1 | 2 | 3; client?: ClientThresholds; threshold?: number; now?: () => Date } = {}) {
+function setup(
+  opts: { phase?: 1 | 2 | 3; client?: ClientThresholds; threshold?: number; splitMinOps?: number; now?: () => Date } = {},
+) {
   const agents = new Agents();
   const journal = new Journal().set(M);
   const ledger = new AsyncMemoryHoldLedger();
@@ -129,7 +131,10 @@ function setup(opts: { phase?: 1 | 2 | 3; client?: ClientThresholds; threshold?:
     mandates: journal,
     state,
     operations,
-    params: { aoi_rollout_phase: opts.phase ?? 3, confirm_above_kop: opts.threshold ?? THRESHOLD, split_window_sec: 600, split_min_ops: 2 },
+    params: { aoi_rollout_phase: opts.phase ?? 3, confirm_above_kop: opts.threshold ?? THRESHOLD,
+      split_window_sec: 600,
+      split_min_ops: opts.splitMinOps ?? 2,
+    },
     ...(opts.client ? { clientThresholds: opts.client } : {}),
     ...(opts.now ? { now: opts.now } : {}),
     log: (_l, fields, m) => logs.push({ fields, msg: m }),
@@ -584,15 +589,34 @@ describe("резерв в П3 и коды П3 → ПИ (SPEC §6 п. 7–8, 11; 
   });
 
   it("ПС10 через ADP: 20 одновременных по 100 000 коп. при 300 000 — ровно 3 APPROVE, перерасхода нет", async () => {
-    const { adp, available } = setup();
+    // Сценарий проверяет одно решение — бюджет: правило доли вне залпа (split_min_ops 21 > 20 операций; РП44 доп. п. 1).
+    const { adp, available } = setup({ splitMinOps: 21 });
     const ds = await Promise.all(
       Array.from({ length: 20 }, (_, i) => adp.decide(msg({ op_ref: `OPKC-PS10-${i}`, amount: 100_000 }))),
     );
     const kinds = ds.map((d) => pair(d));
     expect(kinds.filter((d) => d.decision === "APPROVE")).toHaveLength(3);
-    // Записи «в работе» входят в окно до резерва (РП44 п. 2): в залпе часть отказов — доля, а не LIMIT_EXCEEDED.
-    expect(kinds.filter((d) => d.reason === "LIMIT_EXCEEDED" || d.reason === "CONFIRMATION_REQUIRED")).toHaveLength(17);
+    expect(kinds.filter((d) => d.reason === "LIMIT_EXCEEDED")).toHaveLength(17);
     expect(await available()).toBe(0);
+  });
+
+  it("бюджет и дробление в одном залпе (РП44 доп. п. 1): 20 по 100 000 при пределе и пороге 300 000 — ровно 3 APPROVE", async () => {
+    const { adp, available, logs } = setup({ threshold: 300_000 });
+    const ds = await Promise.all(
+      Array.from({ length: 20 }, (_, i) => adp.decide(msg({ op_ref: `OPKC-MIX-${i}`, amount: 100_000 }))),
+    );
+    // В окно входят первые три по порядку входа (сумма 300 000 не выше порога), все три резервируются — бюджет ровно.
+    expect(ds.filter((d) => d.decision === "APPROVE"), "бюджет превышен или недобран (инвариант 4)").toHaveLength(3);
+    expect(await available()).toBe(0);
+    // Остальные 17 — доли (с ними в окне 4 и больше, сумма выше порога), к резерву не идут. Ответ доли — по остатку,
+    // прочитанному без резерва: прочитан до резервов трёх первых — CONFIRMATION_REQUIRED со split_detected: true; после —
+    // LIMIT_EXCEEDED (DECLINE, поля split_detected нет — РП44 п. 7). Разбиение 17 между ними зависит от очерёдности.
+    const rest = ds.filter((d) => d.decision !== "APPROVE");
+    for (const d of rest) {
+      if (d.decision === "CONFIRMATION_REQUIRED") expect(d.split_detected).toBe(true);
+      else expect([pair(d).reason, d.split_detected]).toEqual(["LIMIT_EXCEEDED", undefined]);
+    }
+    expect(logs.filter((l) => l.fields.split_detected === true), "каждая из 17 — доля").toHaveLength(17);
   });
 });
 
