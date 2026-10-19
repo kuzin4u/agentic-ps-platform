@@ -124,7 +124,7 @@ describe("П3 резерв (РП41 п. 4–5)", () => {
     ["REVOKED", "MANDATE_REVOKED"],
     ["EXPIRED", "MANDATE_EXPIRED"],
     ["EXHAUSTED", "LIMIT_EXCEEDED"],
-    ["REJECTED", "MANDATE_SCOPE"],
+    ["REJECTED", "MANDATE_REVOKED"],
   ] as const)("мандат %s — %s, резерва нет", async (status, code) => {
     const s = setup({ status });
     expect(await s.state.reserve(M, RUB(1), "a")).toEqual({ ok: false, code });

@@ -60,15 +60,18 @@ const trusted = loadTrustedParticipants(process.env.PARTICIPANT_KEYS_PATH, { sta
 // Журнал согласий (П2): PostgreSQL при DATABASE_URL, иначе (dev) — память ядра. Порядок отзыва — из записи участника (РП37).
 // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6).
 const consentStore = pool ? new PgConsentStore(pool) : new MemoryConsentStore();
-const consent = new ConsentJournal(consentStore, {
+const consent: ConsentJournal = new ConsentJournal(consentStore, {
   revocationOrder: () => trusted.revocationOrder(),
   pushFor: (code, type) => registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false),
+  // Остаток для verify — из П3 (РП41 п. 10); state объявлен ниже, вызов — только при обращении.
+  amountLeft: (id, limit) => state.amountLeft(id, limit),
 });
 
 // Бюджет мандата (П3, РП41): удержания ядра — PostgreSQL при DATABASE_URL, иначе (dev) память ядра; источник — журнал согласий.
-const state = new StateService(holdLedger(pool), consent, {
+const state: StateService = new StateService(holdLedger(pool), consent, {
   reservationTtlSec: params.reservation_ttl_sec,
   log: (level, fields, msg) => app.log[level](fields, msg),
+  exhausted: (id, payload) => consent.exhausted(id, payload),
 });
 
 /** Проход доставки событий раз в секунду: меньше первой задержки повтора ядра (1 с). */

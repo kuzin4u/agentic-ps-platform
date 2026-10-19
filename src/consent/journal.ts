@@ -24,6 +24,7 @@ import {
   ConsentStateUnknown,
   MANDATE_ID,
   type MandateDecisionPayload,
+  type MandateExhaustedPayload,
   type MandateRelinquishPayload,
   type MandateRequestedPayload,
   type MandateRevocationPayload,
@@ -92,6 +93,11 @@ export interface ConsentJournalOptions {
    * пишется в той же транзакции. Не задано — push нет (только лента).
    */
   readonly pushFor?: (agent_code: string, type: PaoEventType) => boolean;
+  /**
+   * Остаток бюджета мандата из П3 для verify (РП41 п. 10): число ≥ 0 или undefined — бюджет не подтверждён (STATE_UNKNOWN).
+   * Без него (тесты П2 без П3) — предел мандата.
+   */
+  readonly amountLeft?: (mandate_id: string, amount_limit: number) => Promise<number | undefined>;
 }
 
 /** Мандат, прочитанный из журнала: цепочка проверена, предмет сверен с обязательством. */
@@ -106,6 +112,7 @@ export class ConsentJournal {
   private readonly now: () => Date;
   private readonly revocationOrder: () => string | undefined;
   private readonly pushFor: (agent_code: string, type: PaoEventType) => boolean;
+  private readonly amountLeft: (mandate_id: string, amount_limit: number) => Promise<number | undefined>;
   /**
    * Лок записи по мандату: решение банка, отзыв клиентом и отказ агента по одному мандату — по очереди внутри процесса
    * (РП36 доп. п. 4, РП38 п. 4); между экземплярами — дубль решения и записи после отзыва терпит свёртка (РП38 п. 5).
@@ -119,6 +126,7 @@ export class ConsentJournal {
     this.now = opts.now ?? (() => new Date());
     this.revocationOrder = opts.revocationOrder;
     this.pushFor = opts.pushFor ?? (() => false);
+    this.amountLeft = opts.amountLeft ?? (async (_id, limit) => limit);
   }
 
   /**
@@ -369,6 +377,23 @@ export class ConsentJournal {
   }
 
   /**
+   * Исчерпание бюджета — запись MANDATE_EXHAUSTED с событием mandate.exhausted в одной транзакции (РП41 п. 11, РП39 п. 1).
+   * Пишет П3 после закрепления всего предела или при отказе в резерве, если записи нет (доп. 1). Под локом записи по
+   * мандату; запись — только при ACTIVE (у CART — вместе с родителем): уже EXHAUSTED, отозван, истёк — без записи.
+   * true — запись сделана.
+   */
+  async exhausted(id: string, payload: MandateExhaustedPayload): Promise<boolean> {
+    return this.locked(id, async () => {
+      const row = await this.store.getMandate(id);
+      const m = row && (await this.load(id, row.agent_code));
+      if (!row || !m || m.status !== "ACTIVE") return false;
+      const event = mandateEvent(row.agent_code, "MANDATE_EXHAUSTED", id);
+      await this.chainJournal(row.chain, undefined, event).append("MANDATE_EXHAUSTED", id, payload, id);
+      return true;
+    });
+  }
+
+  /**
    * Лента событий этого агента после курсора after (РП39 п. 7): по возрастанию номера, не больше limit. Чужой или
    * неизвестный after — EventCursorUnknown (400). Событие — сигнал: статус мандата — через get (РП39 п. 6).
    */
@@ -421,16 +446,17 @@ export class ConsentJournal {
   /**
    * Проверка мандата этого агента без предмета (A7 п. 9.2, РП38 п. 6): ровно {outcome, amount_left, valid_to, as_of}.
    * Статус — свёрткой load (у CART — вместе с родителем, РП35 п. 2). Чужой или неизвестный — undefined.
-   * До П3 (PS-09) amount_left = amount_limit у ACTIVE (расходования нет), 0 у остальных; STATE_UNKNOWN — с П3.
+   * amount_left у ACTIVE — остаток счёта мандата в П3 (РП41 п. 10); бюджет не подтверждён — STATE_UNKNOWN с 0
+   * (A7 п. 8.6); у остальных статусов, включая EXHAUSTED, — OUT_OF_SCOPE с 0. Чтение не пишет.
    */
   async verify(id: string, agent_code: string): Promise<MandateVerify | undefined> {
     const m = await this.load(id, agent_code);
     if (!m) return undefined;
     const t = m.head.payload as MandateRequestedPayload;
-    const confirmed = m.status === "ACTIVE";
+    const left = m.status === "ACTIVE" ? await this.amountLeft(id, t.amount_limit) : 0;
     return {
-      outcome: confirmed ? "CONFIRMED" : "OUT_OF_SCOPE",
-      amount_left: confirmed ? t.amount_limit : 0,
+      outcome: m.status !== "ACTIVE" ? "OUT_OF_SCOPE" : left === undefined ? "STATE_UNKNOWN" : "CONFIRMED",
+      amount_left: left ?? 0,
       valid_to: t.valid_to,
       as_of: this.now().toISOString(),
     };
@@ -566,6 +592,7 @@ const MANDATE_EVENT = {
   MANDATE_REJECTED: "mandate.rejected",
   MANDATE_REVOKED: "mandate.revoked",
   MANDATE_RELINQUISHED: "mandate.revoked",
+  MANDATE_EXHAUSTED: "mandate.exhausted",
 } as const satisfies Record<string, PaoEventType>;
 
 /** Событие агенту мандата: в data — только id (A7 п. 8.3, РП39 п. 5). */

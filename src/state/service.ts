@@ -2,7 +2,7 @@
 // Условие по остатку и изменение — одна операция ядра (PgHoldLedger / AsyncMemoryHoldLedger); своих реализаций и прямых
 // запросов к таблицам удержаний нет (РП41 п. 2). Любое неподтверждённое состояние — STATE_UNAVAILABLE (A3 п. 4.5).
 import { HoldError, type AsyncHoldLedger, type Hold, type Money } from "@kuzin4u/agentic-core";
-import type { MandateStatus } from "../consent/model.js";
+import type { MandateExhaustedPayload, MandateStatus } from "../consent/model.js";
 
 /** Коды П3 (РП41 п. 5): внутренние, на границе их сопоставляет вызывающий (ADP — PS-10, П10 — PS-20). */
 export type StateCode =
@@ -47,21 +47,34 @@ export interface StateServiceOptions {
   readonly now?: () => Date;
   readonly clientLimit?: ClientLimitCheck;
   readonly log?: StateLog;
+  /**
+   * Запись MANDATE_EXHAUSTED с событием (журнал согласий, РП41 п. 11): после закрепления всего предела и при отказе в
+   * резерве, если её нет (доп. 1). Проверку «ещё ACTIVE» делает журнал под локом.
+   */
+  readonly exhausted?: (mandate_id: string, payload: MandateExhaustedPayload) => Promise<unknown>;
 }
 
 /** Счёт удержаний мандата. Id мандата — по маске без «:», поэтому id счёта и ref однозначны. */
-export const accountId = (mandate_id: string): string => `mandate:${mandate_id}`;
+const ACCOUNT_PREFIX = "mandate:";
+export const accountId = (mandate_id: string): string => `${ACCOUNT_PREFIX}${mandate_id}`;
+
+/** Мандат удержания — из id счёта; чужой счёт (не П3) — undefined. */
+const mandateOf = (h: Hold): string | undefined =>
+  h.account.startsWith(ACCOUNT_PREFIX) ? h.account.slice(ACCOUNT_PREFIX.length) : undefined;
 
 /** ref глобален в журнале удержаний: мандат + ключ операции (РП41 п. 4). */
 export const holdRef = (mandate_id: string, op_key: string): string => `mandate:${mandate_id}:op:${op_key}`;
 
-/** Мандат не ACTIVE — код по статусу, резерва нет (РП41 п. 5). REJECTED не стал действующим — вне пределов. */
+/**
+ * Мандат не ACTIVE — код по статусу, резерва нет (РП41 п. 5). REJECTED — MANDATE_REVOKED: в ПАО «отозван или отклонён»,
+ * действие агента — стоп; MANDATE_SCOPE велел бы пересобрать корзину (доп. РП41 п. 5, ревью К1.2–К1.4).
+ */
 const STATUS_CODE: Record<Exclude<MandateStatus, "ACTIVE">, StateCode> = {
   PENDING_SIGNATURE: "PRINCIPAL_SIGNATURE_PENDING",
   REVOKED: "MANDATE_REVOKED",
   EXPIRED: "MANDATE_EXPIRED",
   EXHAUSTED: "LIMIT_EXCEEDED",
-  REJECTED: "MANDATE_SCOPE",
+  REJECTED: "MANDATE_REVOKED",
 };
 
 const fail = (code: StateCode): StateResult => ({ ok: false, code });
@@ -124,6 +137,8 @@ export class StateService {
     try {
       return { ok: true, hold: await this.ledger.reserve(accountId(mandate_id), money, ref, expires_at) };
     } catch (e) {
+      // Предел закреплён целиком, а записи нет (сбой после commit) — дописать; ответ тот же (доп. 1 к РП41 п. 11).
+      if (holdCode(e) === "INSUFFICIENT") await this.markExhausted(mandate_id);
       if (holdCode(e) !== "UNKNOWN_ACCOUNT") return this.reserveFailed(e, mandate_id);
     }
     // Счёт не открылся после подписи — открыть из записи мандата и повторить один раз (РП41 п. 3).
@@ -142,7 +157,9 @@ export class StateService {
   async commit(hold_id: string, money: Money): Promise<StateResult> {
     if (!isUnits(money.amount)) return fail("REQUEST_INVALID");
     try {
-      return { ok: true, hold: await this.ledger.commit(hold_id, money, true) };
+      const hold = await this.ledger.commit(hold_id, money, true);
+      await this.markExhausted(mandateOf(hold));
+      return { ok: true, hold };
     } catch (e) {
       const code = holdCode(e);
       if (code === "BAD_AMOUNT" || code === "BAD_CURRENCY" || code === "CURRENCY_MISMATCH") return fail("REQUEST_INVALID");
@@ -159,7 +176,11 @@ export class StateService {
       this.log("warn", { hold_id, ref: h.ref, expires_at: h.expires_at }, "П3: поздний клиринг — удержание уже освобождено");
       return fail("RESERVATION_RELEASED");
     }
-    if (h.committed === money.amount && h.currency === money.currency) return { ok: true, hold: h };
+    if (h.committed === money.amount && h.currency === money.currency) {
+      // Повтор закрепления дописывает исчерпание, если первый вызов упал между commit и записью (РП41 п. 11).
+      await this.markExhausted(mandateOf(h));
+      return { ok: true, hold: h };
+    }
     return fail("COMMIT_CONFLICT");
   }
 
@@ -181,6 +202,32 @@ export class StateService {
     } catch (e) {
       this.log("warn", { code: holdCode(e) }, "П3: проход expire не выполнен");
       return [];
+    }
+  }
+
+  /**
+   * Остаток для verify (РП41 п. 10): available счёта, не ниже 0; счёта ещё нет — предел (расходования не было, чтение
+   * счёт не открывает); сбой — undefined (STATE_UNKNOWN).
+   */
+  async amountLeft(mandate_id: string, amount_limit: number): Promise<number | undefined> {
+    try {
+      return Math.max(0, (await this.ledger.available(accountId(mandate_id))).amount);
+    } catch (e) {
+      if (holdCode(e) === "UNKNOWN_ACCOUNT") return amount_limit;
+      this.log("warn", { mandate_id, code: holdCode(e) ?? "storage" }, "П3: остаток не прочитан — STATE_UNKNOWN");
+      return undefined;
+    }
+  }
+
+  /** Закреплён весь предел — запись MANDATE_EXHAUSTED (РП41 п. 11). Сбой — в журнал процесса, ответ П3 не меняется. */
+  private async markExhausted(mandate_id: string | undefined): Promise<void> {
+    if (!mandate_id || !this.opts.exhausted) return;
+    try {
+      const a = await this.ledger.account(accountId(mandate_id));
+      if (a.committed < a.limit) return;
+      await this.opts.exhausted(mandate_id, { committed: a.committed, currency: a.currency });
+    } catch (e) {
+      this.log("warn", { mandate_id, code: holdCode(e) ?? "storage" }, "П3: запись MANDATE_EXHAUSTED не выполнена");
     }
   }
 
