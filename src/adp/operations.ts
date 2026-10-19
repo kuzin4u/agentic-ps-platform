@@ -65,8 +65,7 @@ export class PgOperationStore implements OperationStore {
       "INSERT INTO adp_operations (op_ref, msg_hash, at) VALUES ($1, $2, $3) ON CONFLICT (op_ref) DO NOTHING RETURNING op_ref",
       [op_ref, msg_hash, at],
     );
-    // ПОЛОМКА (временно, PS-10 К2.4): резерв в обход записи «в работе» — всегда к резерву.
-    if (ins.rows.length >= 0) return undefined;
+    if (ins.rows.length === 1) return undefined;
     const r = await this.client.query<OperationRow>(
       "SELECT op_ref, msg_hash, decision, mandate_id, holds, at FROM adp_operations WHERE op_ref = $1",
       [op_ref],
