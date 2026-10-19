@@ -331,8 +331,9 @@ export class ConsentJournal {
     }
     // CART подписывает банк корневого INTENT (РП45 п. 1): клиент мандата для лимитов — по подписи корня; другой
     // участник не вправе подписывать этот мандат — тот же отказ, что неизвестный ключ.
+    // Корень ещё не подписан — банк корня не определён: подписать CART не вправе никто (РП45 доп. п. 12).
     const parentSigner = m.head.parent_ref ? signerOf(m.entries, m.head.parent_ref) : undefined;
-    if (d.decision === "SIGN" && parentSigner !== undefined && parentSigner !== d.participant_code) {
+    if (d.decision === "SIGN" && m.head.parent_ref && parentSigner !== d.participant_code) {
       throw new ConsentSignRejected("SIGNATURE_INVALID", id, m.status);
     }
     if (d.decision === "SIGN" && d.signature_type === "simple" && needsQualified(m.head.payload as MandateRequestedPayload, m.head.at, policy)) {

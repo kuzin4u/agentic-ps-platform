@@ -72,6 +72,8 @@ describe("клиент мандата из журнала (РП45 п. 1)", () =>
     try {
       const p = await consent.request(A, key(), intent);
       expect((await consent.adpMandate(p.id!, A))?.client).toBeNull();
+      // CART под неподписанным корнем не создаётся (PARENT_NOT_ACTIVE) — подпись «до корня» недостижима (РП45 доп. п. 12).
+      await expect(consent.request(A, key(), cart(p.id!))).rejects.toThrow(/PARENT_NOT_ACTIVE/);
       expect((await sign(p.id!, p.hash!, emu)).status).toBe(200);
       const view = await consent.adpMandate(p.id!, A);
       expect(view?.client).toEqual({ participant_code: emu.participant_code, principal_ref: "prn_7f3c9a" });
