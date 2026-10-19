@@ -22,7 +22,8 @@ const auth = (mandate_id: string, amount: number): CanonicalMessage => ({
 function adpFor(c: Ctx): Adp {
   return new Adp({
     agents: { get: (code) => (code === A ? { status: "ACTIVE", level: 2 } : undefined) },
-    mandates: c.consent,
+    mandates: { get: (id, a) => c.consent.adpMandate(id, a) },
+    clientLimits: { get: async () => [] },
     state: c.state,
     operations: new MemoryOperationStore(),
     params: { aoi_rollout_phase: 3, confirm_above_kop: 1_000_000, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },

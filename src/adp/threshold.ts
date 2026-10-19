@@ -13,9 +13,10 @@ export interface Threshold {
 export const MARKET_THRESHOLD_CURRENCY = "RUB";
 
 /**
- * Лимиты клиента мандата (ПИ-8 Limits, РП45 п. 1–2): действующая запись банка — одно чтение на решение; из неё же
- * клиентский порог (ClientThresholds РП44 п. 5), per_operation, merchant_categories и per_period. Записи нет —
- * undefined; сбой — исключение (→ STATE_UNAVAILABLE). Запись проверяет ADP: не по форме — тоже не подтверждено.
+ * Лимиты клиента мандата (ПИ-8 Limits, РП45 п. 1–2): все версии записей банка по возрастанию version
+ * (`{limits, received_at}`) — одно чтение на решение. Действующая — последняя: из неё клиентский порог (ClientThresholds
+ * РП44 п. 5), per_operation, merchant_categories; лимит за период — по истории (расширение со следующего периода).
+ * Записей нет — []; сбой — исключение (→ STATE_UNAVAILABLE). Ответ проверяет ADP: не по форме — тоже не подтверждено.
  */
 export interface ClientLimitsSource {
   get(client: ClientRef): Promise<unknown>;

@@ -127,7 +127,8 @@ class Mandates implements AdpMandates, MandateBudgetSource {
   readonly map = new Map<string, AdpMandate>();
   add(limit: number, scope: string[] = ["MER-1042"]): string {
     const id = mandate();
-    this.map.set(id, { status: "ACTIVE", type: "INTENT", merchant_scope: scope, currency: "RUB", amount_limit: limit });
+    // Клиент — свой на мандат: лимиты клиента здесь не заданы (они — adp-client-pg.test.ts).
+    this.map.set(id, { status: "ACTIVE", type: "INTENT", merchant_scope: scope, currency: "RUB", amount_limit: limit, client: { participant_code: "bank:pg", principal_ref: `prn_${mseq}` } });
     return id;
   }
   async get(id: string, agent_code: string): Promise<AdpMandate | undefined> {
@@ -161,6 +162,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
     new Adp({
       agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
       mandates,
+      clientLimits: { get: async () => [] },
       state: new StateService(new PgHoldLedger(pool), mandates, { reservationTtlSec: 600 }),
       // Предел ожидания блокировки окна в бою — adp_timeout_ms; в залпах на CI — с запасом, чтобы не мерить скорость CI.
       operations: new PgOperationStore(pool, { lockTimeoutMs: p.lockTimeoutMs ?? 5_000, ...(hooks ? { hooks } : {}) }),
@@ -276,6 +278,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
     const a = new Adp({
       agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
       mandates,
+      clientLimits: { get: async () => [] },
       state: new StateService(new PgHoldLedger(db.pool), mandates, { reservationTtlSec: 600 }),
       operations: new PgOperationStore(db.pool, { lockTimeoutMs: 150 }),
       params: { aoi_rollout_phase: 3, confirm_above_kop: 300_000, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },

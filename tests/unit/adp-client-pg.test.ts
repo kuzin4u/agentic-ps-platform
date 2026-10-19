@@ -70,7 +70,7 @@ describe.skipIf(!DATABASE_URL)("лимит клиента на PostgreSQL: дв�
       operations: new PgOperationStore(pool, { lockTimeoutMs: 5_000 }),
       // Проверяется одно правило — лимит клиента: порог и правило доли вне залпа.
       params: { aoi_rollout_phase: 3, confirm_above_kop: 10_000_000, split_window_sec: 600, split_min_ops: 41, client_limit_period_tz: TZ },
-      clientLimits: { get: async (c) => limits.get(c.principal_ref) },
+      clientLimits: { get: async (c) => (limits.has(c.principal_ref) ? [{ limits: limits.get(c.principal_ref), received_at: "2026-09-01T00:00:00Z" }] : []) },
     });
 
   beforeAll(async () => {

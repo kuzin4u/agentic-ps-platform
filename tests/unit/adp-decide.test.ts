@@ -30,6 +30,10 @@ const LIMIT = 300_000;
 const THRESHOLD = 1_000_000;
 /** Клиент мандата из журнала (РП45 п. 1): банк подписи корня и principal_ref. */
 const CLIENT = { participant_code: "bank:a", principal_ref: "prn_7f3c9a" } as const;
+/** Лимитов клиента нет: порт подключён (обязателен), записей — ни одной. */
+const NO_LIMITS: ClientLimitsSource = { get: async () => [] };
+/** Версия записи лимитов в истории порта: получена давно — действует в текущем периоде. */
+const version = (limits: unknown, received_at = "2026-09-01T00:00:00Z") => ({ limits, received_at });
 
 const msg = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
   op_ref: "OPKC-20261019-000001",
@@ -138,7 +142,7 @@ function setup(
       split_window_sec: 600,
       split_min_ops: opts.splitMinOps ?? 2, client_limit_period_tz: "Europe/Moscow",
     },
-    ...(opts.client ? { clientLimits: opts.client } : {}),
+    clientLimits: opts.client ?? NO_LIMITS,
     ...(opts.now ? { now: opts.now } : {}),
     log: (_l, fields, m) => logs.push({ fields, msg: m }),
   });
@@ -364,7 +368,7 @@ describe("меньшее из порогов (SPEC §6 п. 10, РП44 п. 5, A3 
       calls: 0,
       async get() {
         port.calls++;
-        return typeof v === "function" ? (v as () => never)() : v;
+        return typeof v === "function" ? (v as () => never)() : v === undefined ? [] : [version(v)];
       },
     };
     return port;
@@ -678,6 +682,7 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
       state,
       operations: new MemoryOperationStore(),
       params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
+      clientLimits: NO_LIMITS,
       log: (_l, fields, m) => logs.push({ fields, msg: m }),
     });
     expect(await reasonOf(fresh, msg())).toBe("STATE_UNAVAILABLE");
@@ -736,6 +741,7 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
       state: new StateService(ledger, journal, { reservationTtlSec: 600 }),
       operations,
       params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
+      clientLimits: NO_LIMITS,
     });
     expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
     expect(journal.calls).toBe(0);
@@ -804,7 +810,8 @@ describe("лимиты клиента в ADP (SPEC §6 п. 6–7, 10–11; РП4
       async get(c: { participant_code: string; principal_ref: string }) {
         src.reads++;
         if (src.failing) throw new Error("хранилище лимитов недоступно");
-        return c.participant_code === CLIENT.participant_code && c.principal_ref === CLIENT.principal_ref ? src.rec : undefined;
+        const own = c.participant_code === CLIENT.participant_code && c.principal_ref === CLIENT.principal_ref;
+        return own && src.rec !== undefined ? [version(src.rec)] : [];
       },
     };
     return src;
@@ -884,5 +891,59 @@ describe("лимиты клиента в ADP (SPEC §6 п. 6–7, 10–11; РП4
     orphan.journal.set(M, { client: null });
     expect(await reasonOf(orphan.adp, msg())).toBe("STATE_UNAVAILABLE");
     expect(await reasonOf(setup({ client: limitsOf({ ...DAY, currency: "USD" }) }).adp, msg())).toBe("STATE_UNAVAILABLE");
+  });
+});
+
+describe("лимит за период: снятие или смена вида — со следующего периода (РП45 п. 1, /audit № 1)", () => {
+  /** История версий клиента CLIENT; часы ADP — подвижные. */
+  const history = (...vs: { limits: unknown; received_at: string }[]): ClientLimitsSource => ({ get: async () => vs });
+  const DAY2 = { per_period: 200_000, period: "DAY", currency: "RUB" };
+  const MONTH2 = { per_period: 200_000, period: "MONTH", currency: "RUB" };
+  const withMandate2 = (j: { set: (id: string, over?: object) => unknown }) => j.set("mnd_00000000-0000-4000-8000-000000000009");
+  const on = (op_ref: string, mandate_id = M) => msg({ op_ref, amount: 150_000, aoi: { indicator: true, agent_code: AGENT, mandate_id } });
+
+  it("обход (а): новая версия без per_period — до конца суток прежний дневной лимит, с 00:00 МСК — снят", async () => {
+    let now = Date.parse("2026-10-19T12:00:00Z");
+    const src = history(version(DAY2, "2026-10-01T00:00:00Z"), version({ per_operation: 500_000, currency: "RUB" }, "2026-10-19T11:00:00Z"));
+    const { adp, journal } = setup({ client: src, now: () => new Date(now) });
+    withMandate2(journal);
+    expect(pair(await adp.decide(on("a1"))).decision).toBe("APPROVE");
+    expect(await reasonOf(adp, on("a2", "mnd_00000000-0000-4000-8000-000000000009"))).toBe("LIMIT_EXCEEDED");
+    now = Date.parse("2026-10-19T21:00:00Z"); // 00:00 МСК 20.10
+    expect(pair(await adp.decide(on("a3", "mnd_00000000-0000-4000-8000-000000000009"))).decision).toBe("APPROVE");
+  });
+
+  it("обход (б): MONTH израсходован → DAY с полным пределом — до конца месяца действует месячный", async () => {
+    // Расход по месячному — 10.10, смена на DAY — 19.10: дневной счёт 19.10 пуст, обход дал бы полный дневной предел.
+    let now = Date.parse("2026-10-10T12:00:00Z");
+    const src = history(version(MONTH2, "2026-09-01T00:00:00Z"), version(DAY2, "2026-10-19T13:00:00Z"));
+    const { adp, journal } = setup({ client: src, now: () => new Date(now) });
+    withMandate2(journal);
+    expect(pair(await adp.decide(on("b1"))).decision).toBe("APPROVE"); // 150 000 из месячных 200 000
+    now = Date.parse("2026-10-19T14:00:00Z"); // после смены на DAY
+    expect(await reasonOf(adp, on("b2", "mnd_00000000-0000-4000-8000-000000000009"))).toBe("LIMIT_EXCEEDED");
+    now = Date.parse("2026-10-31T21:00:00Z"); // 00:00 МСК 01.11 — дневной
+    expect(pair(await adp.decide(on("b3", "mnd_00000000-0000-4000-8000-000000000009"))).decision).toBe("APPROVE");
+  });
+
+  it("история не по форме (не массив, версия без received_at) — STATE_UNAVAILABLE", async () => {
+    expect(await reasonOf(setup({ client: { get: async () => ({ limits: DAY2 }) } }).adp, msg())).toBe("STATE_UNAVAILABLE");
+    expect(await reasonOf(setup({ client: { get: async () => [{ limits: DAY2 }] } }).adp, msg())).toBe("STATE_UNAVAILABLE");
+  });
+});
+
+describe("порт лимитов клиента обязателен (решение владельца по /audit, РП45)", () => {
+  it("без clientLimits ADP не собирается — ошибка типов (npm run check в CI), а не «проверки нет»", () => {
+    const base = {
+      agents: new Agents(),
+      mandates: new Journal(),
+      state: new StateService(new AsyncMemoryHoldLedger(), new Journal(), { reservationTtlSec: 600 }),
+      operations: new MemoryOperationStore(),
+      params: { aoi_rollout_phase: 3 as const, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
+    };
+    // @ts-expect-error — clientLimits обязателен: станет необязательным — эта строка сломает npm run check.
+    const make = () => new Adp(base);
+    expect(typeof make).toBe("function");
+    expect(new Adp({ ...base, clientLimits: NO_LIMITS })).toBeInstanceOf(Adp);
   });
 });

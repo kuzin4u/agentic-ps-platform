@@ -12,7 +12,14 @@ import { ConsentIntegrityError } from "../consent/model.js";
 import type { StateService } from "../state/index.js";
 import { STATE_TO_PI, STATUS_TO_PI } from "./codes.js";
 import type { OperationRecord, OperationStore, WindowResult } from "./operations.js";
-import { parseLimits, periodStart, type ClientLimits, type ClientRef } from "../participants/limits.js";
+import {
+  effectivePeriodLimit,
+  parseLimits,
+  periodStart,
+  type ClientLimits,
+  type ClientRef,
+  type PeriodLimit,
+} from "../participants/limits.js";
 import type { ClientAccount } from "../state/index.js";
 import {
   clientThreshold,
@@ -29,7 +36,7 @@ export interface AdpAgents {
 
 export type AdpMandate = Pick<Mandate, "status" | "type" | "parent_id" | "merchant_scope" | "currency" | "amount_limit"> & {
   /** Клиент мандата из журнала (РП45 п. 1): банк подписи корня и principal_ref; null — подписи корня нет. */
-  readonly client?: ClientRef | null;
+  readonly client: ClientRef | null;
 };
 
 /** Журнал согласий (П2): мандат агента со статусом по свёртке; чужой или неизвестный — undefined; сбой — исключение. */
@@ -49,10 +56,10 @@ export interface AdpOptions {
     "aoi_rollout_phase" | "confirm_above_kop" | "split_window_sec" | "split_min_ops" | "client_limit_period_tz"
   >;
   /**
-   * Лимиты клиента (ПИ-8, РП45 п. 1–2); не переданы — не подключены: только предел мандата и рыночный порог (тесты
-   * прежних проверок). Подключены — у мандата без клиента (подписи корня нет) — STATE_UNAVAILABLE.
+   * Лимиты клиента (ПИ-8, РП45 п. 1–2) — обязательны (решение владельца по /audit): забытый порт — ошибка сборки, а не
+   * «проверки нет». У мандата без клиента (подписи корня нет) — STATE_UNAVAILABLE.
    */
-  readonly clientLimits?: ClientLimitsSource;
+  readonly clientLimits: ClientLimitsSource;
   readonly log?: AdpLog;
   readonly clock?: () => number;
   readonly now?: () => Date;
@@ -266,14 +273,15 @@ export class Adp {
 
     // Лимиты клиента мандата — одно чтение на решение (РП45 п. 1–2): MCC (п. 6), per_operation (п. 7), порог (п. 10),
     // per_period (п. 11). Записи нет — только предел мандата; не прочитана, не по форме, другая валюта — не подтверждено.
-    const limits = await this.clientLimits(msg, m, mandate_id);
-    if (limits === "unavailable") return no("STATE_UNAVAILABLE", mandate_id);
+    const read = await this.clientLimits(msg, m, mandate_id);
+    if (read === "unavailable") return no("STATE_UNAVAILABLE", mandate_id);
+    const limits = read?.current;
     if (limits?.merchant_categories !== undefined) {
       const mcc = msg.merchant?.mcc;
       if (mcc === undefined || !limits.merchant_categories.includes(mcc)) return no("MANDATE_SCOPE", mandate_id);
     }
     if (limits?.per_operation !== undefined && msg.amount > limits.per_operation) return no("LIMIT_EXCEEDED", mandate_id);
-    const client = limits && m.client ? this.clientAccount(m.client, limits) : undefined;
+    const client = read?.period && m.client ? this.clientAccount(m.client, read.period) : undefined;
 
     // Счета резерва: CART — свой и родителя INTENT, всегда в порядке «CART → родитель» (РП43 п. 6); INTENT — один.
     const accounts: { readonly id: string; readonly limit: number }[] = [{ id: mandate_id, limit: m.amount_limit }];
@@ -385,12 +393,15 @@ export class Adp {
   }
 
   /**
-   * Запись лимитов клиента мандата (РП45 п. 1): не подключены — undefined (только предел мандата); записи нет — undefined;
-   * мандат без клиента при подключённых лимитах, сбой, запись не по форме, валюта записи ≠ валюте операции — unavailable.
+   * Лимиты клиента мандата (РП45 п. 1): действующая запись и лимит за период по истории версий (расширение — со
+   * следующего периода). Записей нет — undefined (только предел мандата); мандат без клиента, сбой, версия не по форме,
+   * валюта действующей записи или лимита за период ≠ валюте операции — unavailable.
    */
-  private async clientLimits(msg: CanonicalMessage, m: AdpMandate, mandate_id: string): Promise<ClientLimits | undefined | "unavailable"> {
-    const source = this.opts.clientLimits;
-    if (!source) return undefined;
+  private async clientLimits(
+    msg: CanonicalMessage,
+    m: AdpMandate,
+    mandate_id: string,
+  ): Promise<{ readonly current: ClientLimits; readonly period: PeriodLimit | undefined } | undefined | "unavailable"> {
     const fields = { op_ref: msg.op_ref, mandate_id };
     if (!m.client) {
       this.log("warn", fields, "ADP: клиент мандата не определён — нет подписи банка у корня");
@@ -398,27 +409,43 @@ export class Adp {
     }
     let raw: unknown;
     try {
-      raw = await source.get(m.client);
+      raw = await this.opts.clientLimits.get(m.client);
     } catch {
       this.log("warn", fields, "ADP: лимиты клиента не прочитаны");
       return "unavailable";
     }
-    if (raw === undefined) return undefined;
-    const p = parseLimits(raw);
-    if (!p.ok) {
-      this.log("warn", fields, "ADP: запись лимитов клиента не по форме");
+    if (!Array.isArray(raw)) {
+      this.log("warn", fields, "ADP: лимиты клиента не по форме");
       return "unavailable";
     }
-    if (p.limits.currency !== undefined && p.limits.currency !== msg.currency) {
+    const versions: { limits: ClientLimits; received_at: string }[] = [];
+    for (const v of raw as unknown[]) {
+      const o = (typeof v === "object" && v !== null ? v : {}) as Record<string, unknown>;
+      const p = parseLimits(o.limits);
+      if (!p.ok || typeof o.received_at !== "string" || Number.isNaN(Date.parse(o.received_at))) {
+        this.log("warn", fields, "ADP: запись лимитов клиента не по форме");
+        return "unavailable";
+      }
+      versions.push({ limits: p.limits, received_at: o.received_at });
+    }
+    const current = versions.at(-1)?.limits;
+    if (!current) return undefined;
+    let period: PeriodLimit | undefined;
+    try {
+      period = effectivePeriodLimit(versions, this.opts.params.client_limit_period_tz, this.now());
+    } catch {
+      this.log("warn", fields, "ADP: лимит клиента за период не вычислен");
+      return "unavailable";
+    }
+    if ((current.currency !== undefined && current.currency !== msg.currency) || (period && period.currency !== msg.currency)) {
       this.log("warn", { ...fields, currency: msg.currency }, "ADP: валюта лимитов клиента ≠ валюте операции");
       return "unavailable";
     }
-    return p.limits;
+    return { current, period };
   }
 
-  /** Счёт лимита клиента за период (РП45 п. 1): per_period не задан — счёта нет. Период — часы Платформы. */
-  private clientAccount(c: ClientRef, l: ClientLimits): ClientAccount | undefined {
-    if (l.per_period === undefined || l.period === undefined || l.currency === undefined) return undefined;
+  /** Счёт лимита клиента за период (РП45 п. 1). Период — часы Платформы. */
+  private clientAccount(c: ClientRef, l: PeriodLimit): ClientAccount {
     return {
       ...c,
       period: l.period,

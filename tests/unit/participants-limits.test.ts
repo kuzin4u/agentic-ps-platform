@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  effectivePeriodLimit,
   MemoryLimitsStore,
   parseLimits,
   periodStart,
@@ -90,6 +91,9 @@ function storeContract(name: string, make: () => Promise<LimitsStore>) {
       expect(await s.put(rec(3, { limits: { per_operation: 5_000, currency: "RUB" } }))).toBe("inserted");
       expect((await s.current(c))?.version).toBe(3);
       expect((await s.current(c))?.limits).toEqual({ per_operation: 5_000, currency: "RUB" });
+      // История — все версии по возрастанию: правило «расширение со следующего периода» (РП45 п. 1).
+      expect((await s.history(c)).map((r) => r.version)).toEqual([2, 3]);
+      expect(await s.history({ participant_code: "bank:x", principal_ref: "prn_none" })).toEqual([]);
     });
     it("пара «банк + клиент»: записи другого банка для того же principal_ref — отдельные", async () => {
       const s = await make();
@@ -162,5 +166,36 @@ describe("ПИ-8 PUT /participants/v1/principals/{ref}/limits (стенд, эм�
     } finally {
       await stand.close();
     }
+  });
+});
+
+describe("лимит за период по истории версий: расширение — со следующего периода (РП45 п. 1, /audit № 1)", () => {
+  const TZ = "Europe/Moscow";
+  const v = (limits: Record<string, unknown>, received_at: string) => ({ limits: limits as never, received_at });
+  const DAY3 = { per_period: 300_000, period: "DAY", currency: "RUB" };
+  const MONTH3 = { per_period: 300_000, period: "MONTH", currency: "RUB" };
+  const at = (iso: string) => new Date(iso);
+
+  it("снятие per_period — прежний лимит до конца текущего периода, со следующего — снят", () => {
+    const h = [v(DAY3, "2026-10-01T09:00:00Z"), v({ per_operation: 1_000, currency: "RUB" }, "2026-10-19T09:00:00Z")];
+    expect(effectivePeriodLimit(h, TZ, at("2026-10-19T20:59:00Z"))).toEqual(DAY3); // 23:59 МСК — тот же день
+    expect(effectivePeriodLimit(h, TZ, at("2026-10-19T21:00:00Z"))).toBeUndefined(); // 00:00 МСК — следующий
+  });
+  it("смена MONTH → DAY — месячный до конца месяца, дневной — с 1-го числа (расход за месяц учтён)", () => {
+    const h = [v(MONTH3, "2026-09-01T09:00:00Z"), v(DAY3, "2026-10-19T09:00:00Z")];
+    expect(effectivePeriodLimit(h, TZ, at("2026-10-31T20:59:00Z"))).toEqual(MONTH3);
+    expect(effectivePeriodLimit(h, TZ, at("2026-10-31T21:00:00Z"))).toEqual(DAY3);
+  });
+  it("смена валюты — как смена вида; новый per_period там, где не было, и смена суммы при том же виде — сразу", () => {
+    expect(effectivePeriodLimit([v(DAY3, "2026-10-01T00:00:00Z"), v({ ...DAY3, currency: "USD" }, "2026-10-19T09:00:00Z")], TZ, at("2026-10-19T10:00:00Z"))).toEqual(DAY3);
+    expect(effectivePeriodLimit([v({}, "2026-10-01T00:00:00Z"), v(DAY3, "2026-10-19T09:00:00Z")], TZ, at("2026-10-19T10:00:00Z"))).toEqual(DAY3);
+    const more = { ...DAY3, per_period: 900_000 };
+    // Сумма — сразу в записи; расширение суммы в периоде держит счёт периода (StateService.reserveClient).
+    expect(effectivePeriodLimit([v(DAY3, "2026-10-01T00:00:00Z"), v(more, "2026-10-19T09:00:00Z")], TZ, at("2026-10-19T10:00:00Z"))).toEqual(more);
+    expect(effectivePeriodLimit([], TZ, at("2026-10-19T10:00:00Z"))).toBeUndefined();
+  });
+  it("несколько версий в одном периоде: снятие, затем возврат того же вида — действует последний того же вида", () => {
+    const h = [v(DAY3, "2026-10-01T00:00:00Z"), v({}, "2026-10-19T08:00:00Z"), v({ ...DAY3, per_period: 100_000 }, "2026-10-19T09:00:00Z")];
+    expect(effectivePeriodLimit(h, TZ, at("2026-10-19T10:00:00Z"))).toEqual({ ...DAY3, per_period: 100_000 });
   });
 });

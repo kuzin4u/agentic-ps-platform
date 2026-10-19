@@ -134,7 +134,10 @@ export function createStand(): Stand {
         state,
         operations: new MemoryOperationStore(),
         params,
-        clientLimits: { get: async (c) => (await limits.current(c))?.limits },
+        // Все версии записей банка: лимит за период — по истории (расширение со следующего периода).
+        clientLimits: { get: (c) => limits.history(c) },
+        // Часы стенда (setClock): период лимита клиента и окно дробления — по тем же часам, что резервы и подписи.
+        now,
       }),
     },
   });

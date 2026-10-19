@@ -131,6 +131,8 @@ export interface LimitsStore {
   put(rec: StoredLimits): Promise<LimitsPut>;
   /** Действующая запись пары — наибольшая версия; записи нет — undefined. */
   current(client: ClientRef): Promise<StoredLimits | undefined>;
+  /** Все версии пары по возрастанию version — для правила «расширение со следующего периода» (РП45 п. 1). */
+  history(client: ClientRef): Promise<readonly StoredLimits[]>;
 }
 
 /** Та же запись: реквизиты и подпись (Ed25519 детерминирована — повтор банка даёт ту же подпись). */
@@ -156,6 +158,10 @@ export class MemoryLimitsStore implements LimitsStore {
     const rows = this.#rows.get(clientKey(client));
     if (!rows || rows.length === 0) return undefined;
     return structuredClone(rows.reduce((a, b) => (b.version > a.version ? b : a)));
+  }
+
+  async history(client: ClientRef): Promise<readonly StoredLimits[]> {
+    return structuredClone([...(this.#rows.get(clientKey(client)) ?? [])].sort((a, b) => a.version - b.version));
   }
 }
 
@@ -217,6 +223,15 @@ export class PgLimitsStore implements LimitsStore {
     const row = r.rows[0];
     return row && fromRow(row);
   }
+
+  async history(client: ClientRef): Promise<readonly StoredLimits[]> {
+    const r = await this.client.query<LimitsRow>(
+      `SELECT participant_code, principal_ref, version, kid, limits, issued_at, signature, received_at
+         FROM participant_limits WHERE participant_code = $1 AND principal_ref = $2 ORDER BY version`,
+      [client.participant_code, client.principal_ref],
+    );
+    return r.rows.map(fromRow);
+  }
 }
 
 /**
@@ -232,3 +247,40 @@ export function periodStart(period: LimitPeriod, tz: string, now: Date): string 
   if (!y || !m || !d) throw new Error(`periodStart: дата не вычислена в поясе ${tz}`);
   return period === "DAY" ? `${y}-${m}-${d}` : `${y}-${m}`;
 }
+
+/** Лимит за период, действующий для счёта клиента: предел парой с валютой и вид периода. */
+export interface PeriodLimit {
+  readonly per_period: number;
+  readonly period: LimitPeriod;
+  readonly currency: string;
+}
+
+const periodLimitOf = (l: ClientLimits): PeriodLimit | undefined =>
+  l.per_period !== undefined && l.period !== undefined && l.currency !== undefined
+    ? { per_period: l.per_period, period: l.period, currency: l.currency }
+    : undefined;
+
+/**
+ * Действующий лимит за период по истории версий (РП45 п. 1, решение владельца по /audit № 1): версия, которая снимает
+ * per_period или меняет period либо валюту, — расширение: действует с начала следующего периода прежнего вида, а до
+ * того — прежний лимит. Новый per_period там, где его не было, и смена суммы при том же виде — сразу (сужение и
+ * расширение суммы решает счёт периода, StateService.reserveClient). versions — по возрастанию version.
+ */
+export function effectivePeriodLimit(
+  versions: readonly { readonly limits: ClientLimits; readonly received_at: string }[],
+  tz: string,
+  now: Date,
+): PeriodLimit | undefined {
+  let eff: PeriodLimit | undefined;
+  for (const v of versions) {
+    const next = periodLimitOf(v.limits);
+    if (eff === undefined || (next && next.period === eff.period && next.currency === eff.currency)) {
+      eff = next;
+      continue;
+    }
+    // Снятие или смена вида — со следующего периода прежнего вида: в периоде получения версии действует прежний.
+    if (periodStart(eff.period, tz, now) !== periodStart(eff.period, tz, new Date(v.received_at))) eff = next;
+  }
+  return eff;
+}
+
