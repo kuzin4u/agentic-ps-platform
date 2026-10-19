@@ -1,6 +1,7 @@
 // Запись операции ADP (РП43 п. 5): op_ref → решение и удержания. По ней — идемпотентность ПИ-1 и закрепление и
 // освобождение по событиям ПИ-3 (PS-16). В памяти (dev без базы, стенд) и на PostgreSQL (sql/103_adp_operations.sql).
-// BYPASS не пишется.
+// BYPASS не пишется. Окно дробления (РП44 п. 4) — столбцы той же записи (sql/104_adp_split_window.sql).
+import { createHash } from "node:crypto";
 import type { SqlClient } from "@kuzin4u/agentic-core";
 import type { Decision } from "../shared/canonical.generated.js";
 
@@ -16,6 +17,33 @@ export interface OperationRecord {
   readonly at: string;
 }
 
+/** Вход операции в окно дробления (РП44 п. 4): ключ — корневой INTENT, сумма парой с валютой, время — часы Платформы. */
+export interface WindowEntry {
+  readonly key: string;
+  readonly amount: number;
+  readonly currency: string;
+  readonly at_ms: number;
+}
+
+/** Правило доли (РП44 п. 1): в окне после since_ms вместе с операцией ≥ min_ops и сумма > threshold. */
+export interface WindowRule {
+  readonly since_ms: number;
+  readonly threshold: number;
+  readonly min_ops: number;
+}
+
+/** Итог входа: entered = false — доля, в окно не вошла; ops и sum — вместе с операцией. */
+export interface WindowResult {
+  readonly entered: boolean;
+  readonly ops: number;
+  readonly sum: number;
+}
+
+/** В окне — одобрения и записи «в работе», вошедшие в окно; отказ решением убирает запись фильтром (РП44 п. 2). */
+const counts = (decision: Decision | null): boolean => decision === null || decision.decision === "APPROVE";
+
+const isSplit = (ops: number, sum: number, rule: WindowRule): boolean => ops >= rule.min_ops && sum > rule.threshold;
+
 /** Хранилище записей операций; сбой — исключение (→ STATE_UNAVAILABLE до резерва, после — журнал процесса). */
 export interface OperationStore {
   /**
@@ -25,10 +53,17 @@ export interface OperationStore {
   begin(op_ref: string, msg_hash: string, at: string): Promise<OperationRecord | undefined>;
   /** Решение по записи «в работе». */
   finish(rec: OperationRecord): Promise<void>;
+  /**
+   * Атомарно по ключу окна: прочитать число и сумму окна; не доля — записать вход своей записи «в работе» (один раз).
+   * Одновременные входы по одному ключу — по очереди, в том числе с разных экземпляров (РП44 п. 4). Сбой — исключение.
+   */
+  enterWindow(op_ref: string, entry: WindowEntry, rule: WindowRule): Promise<WindowResult>;
 }
 
 export class MemoryOperationStore implements OperationStore {
   readonly #map = new Map<string, OperationRecord>();
+  /** Входы окна по op_ref: заполняются один раз, решение их не меняет (как столбцы окна на PG). */
+  readonly #window = new Map<string, WindowEntry>();
 
   async begin(op_ref: string, msg_hash: string, at: string): Promise<OperationRecord | undefined> {
     const prior = this.#map.get(op_ref);
@@ -40,6 +75,32 @@ export class MemoryOperationStore implements OperationStore {
   async finish(rec: OperationRecord): Promise<void> {
     const prior = this.#map.get(rec.op_ref);
     if (prior && prior.decision === null && prior.msg_hash === rec.msg_hash) this.#map.set(rec.op_ref, structuredClone(rec));
+  }
+
+  /**
+   * Проверка и запись без await между ними: один процесс — одна очередь (РП44 п. 4). Входы старше окна удаляются по
+   * пути (длина окна — один параметр на процесс, доп. РП44 п. 2): перебор не растёт со временем работы стенда.
+   */
+  async enterWindow(op_ref: string, entry: WindowEntry, rule: WindowRule): Promise<WindowResult> {
+    const own = this.#map.get(op_ref);
+    if (!own || own.decision !== null || this.#window.has(op_ref)) throw new Error("adp_operations: вход в окно не у записи «в работе»");
+    let ops = 1;
+    let sum = entry.amount;
+    for (const [ref, w] of this.#window) {
+      if (w.at_ms <= rule.since_ms) {
+        this.#window.delete(ref);
+        continue;
+      }
+      if (w.key !== entry.key || !counts(this.#map.get(ref)?.decision ?? null)) continue;
+      if (w.currency !== entry.currency) throw new Error("adp_operations: окно в разных валютах");
+      ops++;
+      sum += w.amount;
+    }
+    // Как на PG: сумма вне точного диапазона — не подтверждено, не догадка.
+    if (!Number.isSafeInteger(sum)) throw new Error("adp_operations: сумма окна вне точного диапазона");
+    const entered = !isSplit(ops, sum, rule);
+    if (entered) this.#window.set(op_ref, { ...entry });
+    return { entered, ops, sum };
   }
 }
 
@@ -58,7 +119,18 @@ interface OperationRow extends Record<string, unknown> {
  * же хэшем; решённую строку триггер не даёт изменить или удалить.
  */
 export class PgOperationStore implements OperationStore {
-  constructor(private readonly client: SqlClient) {}
+  private readonly hooks: PgOperationHooks;
+  private readonly lockTimeoutMs: number;
+
+  /** lockTimeoutMs — предел ожидания блокировки окна: adp_timeout_ms (доп. РП44 п. 2). */
+  constructor(
+    private readonly client: TxSqlClient,
+    opts: { readonly lockTimeoutMs: number; readonly hooks?: PgOperationHooks },
+  ) {
+    if (!Number.isSafeInteger(opts.lockTimeoutMs) || opts.lockTimeoutMs < 1) throw new Error("PgOperationStore: lockTimeoutMs — целое ≥ 1");
+    this.lockTimeoutMs = opts.lockTimeoutMs;
+    this.hooks = opts.hooks ?? {};
+  }
 
   async begin(op_ref: string, msg_hash: string, at: string): Promise<OperationRecord | undefined> {
     const ins = await this.client.query(
@@ -82,4 +154,77 @@ export class PgOperationStore implements OperationStore {
       [rec.op_ref, JSON.stringify(rec.decision), rec.mandate_id, JSON.stringify(rec.holds), rec.msg_hash],
     );
   }
+
+  /**
+   * Транзакция (РП44 п. 4): блокировка ключа окна, чтение окна — уже после неё (снимок READ COMMITTED берётся на
+   * каждый оператор), запись своей строки «в работе», COMMIT. Резерв ядра — после COMMIT: блокировка через вызов ядра
+   * не держится. Ожидание блокировки — не дольше lockTimeoutMs (lock_timeout транзакции): процессинг ответа уже не ждёт,
+   * поэтому превышение — исключение (→ STATE_UNAVAILABLE) без входа в окно и без резерва (доп. РП44 п. 2).
+   */
+  async enterWindow(op_ref: string, entry: WindowEntry, rule: WindowRule): Promise<WindowResult> {
+    const tx = await this.client.connect();
+    let broken: Error | undefined;
+    try {
+      try {
+        await tx.query("BEGIN");
+        await tx.query("SELECT set_config('lock_timeout', $1, true)", [`${this.lockTimeoutMs}ms`]);
+        await this.hooks.beforeLock?.(op_ref);
+        await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [splitWindowLockKey(entry.key)]);
+        const r = await tx.query<{ ops: string; sum: string | null; currencies: string }>(
+          `SELECT count(*) AS ops, sum(amount) AS sum, count(*) FILTER (WHERE currency <> $3) AS currencies
+             FROM adp_operations
+            WHERE window_key = $1 AND window_at_ms > $2 AND op_ref <> $4
+              AND (decision IS NULL OR decision->>'decision' = 'APPROVE')`,
+          [entry.key, rule.since_ms, entry.currency, op_ref],
+        );
+        const row = r.rows[0];
+        if (!row) throw new Error("adp_operations: окно не прочитано");
+        if (Number(row.currencies) !== 0) throw new Error("adp_operations: окно в разных валютах");
+        const ops = Number(row.ops) + 1;
+        const sum = Number(row.sum ?? 0) + entry.amount;
+        if (!Number.isSafeInteger(sum)) throw new Error("adp_operations: сумма окна вне точного диапазона");
+        await this.hooks.windowRead?.(op_ref);
+        const entered = !isSplit(ops, sum, rule);
+        if (entered) {
+          const u = await tx.query(
+            `UPDATE adp_operations SET window_key = $2, amount = $3, currency = $4, window_at_ms = $5
+              WHERE op_ref = $1 AND decision IS NULL AND window_key IS NULL RETURNING op_ref`,
+            [op_ref, entry.key, entry.amount, entry.currency, entry.at_ms],
+          );
+          if (u.rows.length !== 1) throw new Error("adp_operations: вход в окно не у записи «в работе»");
+        }
+        await tx.query("COMMIT");
+        return { entered, ops, sum };
+      } catch (err) {
+        // Соединение, на котором не прошёл ROLLBACK (в том числе после сбоя BEGIN), в пул не возвращается (как РП39).
+        await tx.query("ROLLBACK").catch((rb: unknown) => {
+          broken = rb instanceof Error ? rb : new Error(String(rb));
+        });
+        throw err;
+      }
+    } finally {
+      tx.release(broken);
+    }
+  }
+}
+
+/** Пул: транзакция окна — на своём соединении. pg.Pool подходит без обёртки. */
+export interface TxSqlClient extends SqlClient {
+  connect(): Promise<SqlClient & { release(err?: Error | boolean): void }>;
+}
+
+/**
+ * Точки внутри транзакции окна — только для тестов (гонка двух экземпляров): beforeLock — после BEGIN, до блокировки
+ * ключа окна; windowRead — после чтения окна, до записи входа.
+ */
+export interface PgOperationHooks {
+  readonly beforeLock?: (op_ref: string) => Promise<void>;
+  readonly windowRead?: (op_ref: string) => Promise<void>;
+}
+
+const SPLIT_WINDOW_LOCK_DOMAIN = "adp:split-window-lock:v1";
+
+/** Ключ pg_advisory_xact_lock окна: 64 бита SHA-256 со знаком, десятичной строкой (как ключ ленты событий, РП39 п. 2). */
+export function splitWindowLockKey(window_key: string): string {
+  return createHash("sha256").update(`${SPLIT_WINDOW_LOCK_DOMAIN}\n${window_key}`, "utf8").digest().readBigInt64BE(0).toString();
 }

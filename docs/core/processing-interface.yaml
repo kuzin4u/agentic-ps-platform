@@ -139,6 +139,7 @@ components:
           - ADP_UNAVAILABLE
         split_detected:
           type: boolean
+          description: 'Дробление по мандату в окне (РП44 п. 7): true — только у CONFIRMATION_REQUIRED по доле (операция не выше порога, но с одобрениями и записями «в работе» в окне split_window_sec по корневому INTENT их не меньше split_min_ops и сумма выше порога); false — у CONFIRMATION_REQUIRED по порогу одной операции; у прочих решений поля нет.'
         reservation_id:
           type: string
           nullable: true
