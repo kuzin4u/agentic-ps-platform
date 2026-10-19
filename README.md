@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.8.0** (точка решения ADP: `POST /adp/v1/decide` на стенде, порядок проверок и коды ПИ, резерв по `op_ref`, CART с бюджетом родителя INTENT, PS-10). Что изменилось и что ломает — в
+Текущая версия — **v0.9.0** (порог подтверждения и дробление в ADP: меньшее из порогов, окно дробления по корневому INTENT, `split_detected`, PS-13). Что изменилось и что ломает — в
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.8.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.9.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.
