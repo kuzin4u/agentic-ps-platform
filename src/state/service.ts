@@ -121,18 +121,6 @@ export class StateService {
     }
     const expires_at = this.now().getTime() + this.opts.reservationTtlSec * 1000;
     const ref = holdRef(mandate_id, op_key);
-    // ПОЛОМКА К1.4 (временно, откат следующим коммитом): чтение → проверка → запись в обход ledger.
-    const raw = (this.ledger as unknown as { client?: { query: (q: string, v: unknown[]) => Promise<{ rows: Record<string, string>[] }> } }).client;
-    if (raw) {
-      await this.openFrom(mandate_id, b).catch(() => undefined);
-      const { rows } = await raw.query("SELECT reserved, committed, limit_amount FROM core_hold_accounts WHERE id = $1", [accountId(mandate_id)]);
-      const reserved = Number(rows[0]?.reserved);
-      if (Number(rows[0]?.limit_amount) - Number(rows[0]?.committed) - reserved < money.amount) return fail("LIMIT_EXCEEDED");
-      await new Promise((r) => setTimeout(r, 20));
-      await raw.query("UPDATE core_hold_accounts SET reserved = $2 WHERE id = $1", [accountId(mandate_id), reserved + money.amount]);
-      const hold: Hold = { id: `HLD-x-${op_key}`, account: accountId(mandate_id), ref, currency: money.currency, amount: money.amount, committed: 0, released: 0, state: "RESERVED", expires_at };
-      return { ok: true, hold };
-    }
     try {
       return { ok: true, hold: await this.ledger.reserve(accountId(mandate_id), money, ref, expires_at) };
     } catch (e) {
