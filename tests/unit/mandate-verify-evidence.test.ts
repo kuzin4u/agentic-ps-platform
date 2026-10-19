@@ -10,7 +10,7 @@ import { MemoryConsentStore } from "../../src/consent/store.js";
 import type { MandateDecisionPayload, MandateRevocationPayload } from "../../src/consent/model.js";
 import { participantRevocationSigningInput, participantSigningInput } from "../../src/participants/trusted.js";
 import { createStand, type Stand } from "../../src/stand/index.js";
-import type { JournalRecordV14, MandateRequest } from "../../src/shared/pao.js";
+import type { JournalRecord, MandateRequest } from "../../src/shared/pao.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { signedInject } from "../support/signed-inject.js";
 
@@ -106,7 +106,7 @@ describe("verify и evidence по ПАО на стенде", () => {
     expect(res.statusCode).toBe(200);
     const ev = res.json() as {
       mandate_chain: { id: string; hash: string; status: string; agent_code: string; revocation_order: string }[];
-      records: JournalRecordV14[];
+      records: JournalRecord[];
       operations: unknown[];
       integrity: string;
     };
@@ -135,12 +135,12 @@ describe("verify и evidence по ПАО на стенде", () => {
     const signedRecs = ev.records.filter((r) => r.kind === "MANDATE_SIGNED");
     expect(signedRecs).toHaveLength(2);
     for (const r of signedRecs) {
-      const { signature, ...rec } = r.payload as MandateDecisionPayload;
+      const { signature, ...rec } = r.payload as unknown as MandateDecisionPayload;
       expect(edVerify(null, participantSigningInput(rec), bank, Buffer.from(signature, "base64url"))).toBe(true);
       expect(rec.mandate_hash).toBe(ev.records.find((x) => x.kind === "MANDATE_REQUESTED" && x.ref === r.ref)?.hash);
     }
     const rev = ev.records.find((r) => r.kind === "MANDATE_REVOKED")!;
-    const { signature, ...revRec } = rev.payload as MandateRevocationPayload;
+    const { signature, ...revRec } = rev.payload as unknown as MandateRevocationPayload;
     expect(edVerify(null, participantRevocationSigningInput(revRec), bank, Buffer.from(signature, "base64url"))).toBe(true);
     // Соли нет; в записях — только обязательство предмета (предмет агента — в mandate_chain, как в GET).
     expect(res.body).not.toContain('"salt"');
