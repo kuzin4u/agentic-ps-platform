@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.5.0** (лента событий, подписка и push-доставка, PS-08). Что изменилось и что ломает — в
+Текущая версия — **v0.6.0** (бюджет мандата в П3: резерв → закрепление → освобождение, `verify.amount_left`, `EXHAUSTED`, PS-09). Что изменилось и что ломает — в
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.5.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.6.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.
