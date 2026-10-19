@@ -7,7 +7,14 @@
 import { PgHoldLedger } from "@kuzin4u/agentic-core";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Adp, PgOperationStore, type AdpMandate, type AdpMandates, type PgOperationHooks } from "../../src/adp/index.js";
+import {
+  Adp,
+  PgOperationStore,
+  splitWindowLockKey,
+  type AdpMandate,
+  type AdpMandates,
+  type PgOperationHooks,
+} from "../../src/adp/index.js";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import { parseDecision } from "../../src/shared/codes.js";
 import { accountId, StateService, type MandateBudget, type MandateBudgetSource } from "../../src/state/index.js";
@@ -26,8 +33,8 @@ describe.skipIf(!DATABASE_URL)("запись операции ADP на PostgreSQ
 
   beforeAll(async () => {
     db = await openTestDb("adp");
-    s1 = new PgOperationStore(db.pool);
-    s2 = new PgOperationStore(db.reopen());
+    s1 = new PgOperationStore(db.pool, { lockTimeoutMs: 150 });
+    s2 = new PgOperationStore(db.reopen(), { lockTimeoutMs: 150 });
   });
   afterAll(async () => {
     await db?.close();
@@ -71,6 +78,33 @@ describe.skipIf(!DATABASE_URL)("запись операции ADP на PostgreSQ
     const other = opRef();
     await s1.begin(other, H, AT);
     await expect(s1.enterWindow(other, { ...e, currency: "USD" }, rule)).rejects.toThrow(/валют/);
+  });
+
+  it("вставка только «в работе» без решения и окна (BEFORE INSERT, доп. РП44 п. 2)", async () => {
+    const ins = (cols: string, vals: string) =>
+      db.pool.query(`INSERT INTO adp_operations (op_ref, msg_hash, at, ${cols}) VALUES ($1, $2, $3, ${vals})`, [opRef(), H, AT]);
+    await expect(ins("decision", `'{"decision":"APPROVE","reason":null}'::jsonb`)).rejects.toThrow(/только «в работе»/);
+    await expect(ins("window_key, amount, currency, window_at_ms", "'mnd_x', 1, 'RUB', 1")).rejects.toThrow(/только «в работе»/);
+  });
+
+  it("ожидание блокировки окна — не дольше lockTimeoutMs: исключение без входа в окно (доп. РП44 п. 2)", async () => {
+    const op = opRef();
+    const key = `mnd_lock_${op}`;
+    await s1.begin(op, H, AT);
+    const holder = await db.pool.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT pg_advisory_xact_lock($1::bigint)", [splitWindowLockKey(key)]);
+      const quick = new PgOperationStore(db.reopen(), { lockTimeoutMs: 50 });
+      await expect(quick.enterWindow(op, { key, amount: 1, currency: "RUB", at_ms: 1 }, { since_ms: 0, threshold: 300_000, min_ops: 2 })).rejects.toThrow(
+        /lock timeout|блокировк/i,
+      );
+    } finally {
+      await holder.query("ROLLBACK");
+      holder.release();
+    }
+    const r = await db.pool.query("SELECT window_key FROM adp_operations WHERE op_ref = $1", [op]);
+    expect(r.rows[0]).toEqual({ window_key: null });
   });
 
   it("решённую строку нельзя изменить, удалить или очистить TRUNCATE (триггеры, /audit PS-10 № 5)", async () => {
@@ -119,12 +153,17 @@ const auth = (mandate_id: string, op_ref: string, amount: number, merchant = "ME
 describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два экземпляра (РП43 п. 5, доп. п. 16; инвариант 4)", () => {
   let db: TestDb;
   const mandates = new Mandates();
-  const instance = (pool: pg.Pool, p: { threshold?: number; splitMinOps?: number } = {}, hooks?: PgOperationHooks): Adp =>
+  const instance = (
+    pool: pg.Pool,
+    p: { threshold?: number; splitMinOps?: number; lockTimeoutMs?: number } = {},
+    hooks?: PgOperationHooks,
+  ): Adp =>
     new Adp({
       agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
       mandates,
       state: new StateService(new PgHoldLedger(pool), mandates, { reservationTtlSec: 600 }),
-      operations: new PgOperationStore(pool, hooks),
+      // Предел ожидания блокировки окна в бою — adp_timeout_ms; в залпах на CI — с запасом, чтобы не мерить скорость CI.
+      operations: new PgOperationStore(pool, { lockTimeoutMs: p.lockTimeoutMs ?? 5_000, ...(hooks ? { hooks } : {}) }),
       params: {
         aoi_rollout_phase: 3,
         confirm_above_kop: p.threshold ?? 1_000_000,
@@ -177,21 +216,58 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
 
   it("две доли с двух экземпляров, гонка между чтением и записью окна — одобрена одна (блокировка ключа окна)", async () => {
     const M = mandates.add(1_000_000);
-    // Первый, прочитав окно, ждёт второго до 300 мс: с блокировкой второй стоит на ней до COMMIT первого и окна не
-    // читает; без блокировки оба читают пустое окно — две доли одобрены (поломка К1.5).
-    let release!: () => void;
-    const second = new Promise<void>((r) => (release = r));
-    let reads = 0;
+    // Управляемая пауза без тайм-аута (доп. РП44 п. 2): первый, прочитав окно, ждёт, пока второй пройдёт beforeLock и
+    // либо встанет на блокировке ключа окна (видно в pg_locks), либо — без блокировки — сам прочитает окно. С блокировкой
+    // второй читает окно только после COMMIT первого и видит его вход (доля); без неё оба читают пустое окно — две доли
+    // одобрены (поломка К1.5, К2.1а).
+    let tried = 0;
+    let readers = 0;
+    let secondRead = false;
+    const watcher = db.reopen();
+    // Ожидание именно этой блокировки: pg_locks — на весь кластер, ключ advisory — classid (старшие 32 бита) и objid.
+    const secondBlocked = async (): Promise<boolean> => {
+      const r = await watcher.query<{ n: string }>(
+        `SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+            AND ((classid::bigint << 32) | objid::bigint) = $1::bigint`,
+        [splitWindowLockKey(M)],
+      );
+      return Number(r.rows[0]?.n) > 0;
+    };
     const hooks: PgOperationHooks = {
+      beforeLock: async () => {
+        tried++;
+      },
       windowRead: async () => {
-        if (++reads === 1) await Promise.race([second, new Promise((r) => setTimeout(r, 300))]);
-        else release();
+        if (++readers > 1) {
+          secondRead = true;
+          return;
+        }
+        // Второй вошёл в транзакцию (beforeLock — до или после этого чтения), затем стоит на блокировке или читает сам.
+        while (!(tried >= 2 && (secondRead || (await secondBlocked())))) await new Promise((r) => setTimeout(r, 5));
       },
     };
     const [c1, c2] = [instance(db.pool, { threshold: 300_000, splitMinOps: 2 }, hooks), instance(db.reopen(), { threshold: 300_000, splitMinOps: 2 }, hooks)];
     const ds = await Promise.all([c1.decide(auth(M, "OPKC-SPLIT-PG-1", 170_000)), c2.decide(auth(M, "OPKC-SPLIT-PG-2", 170_000))]);
     expect(ds.filter((d) => d.decision === "APPROVE"), "две доли под порогом одобрены (обход порога дроблением)").toHaveLength(1);
     expect(ds.filter((d) => d.decision === "CONFIRMATION_REQUIRED" && d.split_detected === true)).toHaveLength(1);
+    await watcher.end();
+  });
+
+  it("ожидание блокировки окна дольше предела — STATE_UNAVAILABLE без входа в окно и без резерва (доп. РП44 п. 2)", async () => {
+    const M = mandates.add(1_000_000);
+    const a = instance(db.reopen(), { threshold: 300_000, splitMinOps: 2, lockTimeoutMs: 50 });
+    const holder = await db.pool.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT pg_advisory_xact_lock($1::bigint)", [splitWindowLockKey(M)]);
+      const d = await a.decide(auth(M, "OPKC-LOCK-PG-1", 170_000));
+      expect([d.decision, d.reason]).toEqual(["DECLINE", "STATE_UNAVAILABLE"]);
+    } finally {
+      await holder.query("ROLLBACK");
+      holder.release();
+    }
+    const r = await db.pool.query("SELECT window_key, holds FROM adp_operations WHERE op_ref = $1", ["OPKC-LOCK-PG-1"]);
+    expect(r.rows[0]).toEqual({ window_key: null, holds: [] });
   });
 
   it("ПС12 на PG: вторая доля — CONFIRMATION_REQUIRED с split_detected; вне окна (через 600 с) — APPROVE", async () => {
@@ -201,7 +277,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
       agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
       mandates,
       state: new StateService(new PgHoldLedger(db.pool), mandates, { reservationTtlSec: 600 }),
-      operations: new PgOperationStore(db.pool),
+      operations: new PgOperationStore(db.pool, { lockTimeoutMs: 150 }),
       params: { aoi_rollout_phase: 3, confirm_above_kop: 300_000, split_window_sec: 600, split_min_ops: 2 },
       now: () => new Date(ms),
     });

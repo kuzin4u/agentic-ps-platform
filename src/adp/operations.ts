@@ -77,18 +77,27 @@ export class MemoryOperationStore implements OperationStore {
     if (prior && prior.decision === null && prior.msg_hash === rec.msg_hash) this.#map.set(rec.op_ref, structuredClone(rec));
   }
 
-  /** Проверка и запись без await между ними: один процесс — одна очередь (РП44 п. 4). */
+  /**
+   * Проверка и запись без await между ними: один процесс — одна очередь (РП44 п. 4). Входы старше окна удаляются по
+   * пути (длина окна — один параметр на процесс, доп. РП44 п. 2): перебор не растёт со временем работы стенда.
+   */
   async enterWindow(op_ref: string, entry: WindowEntry, rule: WindowRule): Promise<WindowResult> {
     const own = this.#map.get(op_ref);
     if (!own || own.decision !== null || this.#window.has(op_ref)) throw new Error("adp_operations: вход в окно не у записи «в работе»");
     let ops = 1;
     let sum = entry.amount;
     for (const [ref, w] of this.#window) {
-      if (w.key !== entry.key || w.at_ms <= rule.since_ms || !counts(this.#map.get(ref)?.decision ?? null)) continue;
+      if (w.at_ms <= rule.since_ms) {
+        this.#window.delete(ref);
+        continue;
+      }
+      if (w.key !== entry.key || !counts(this.#map.get(ref)?.decision ?? null)) continue;
       if (w.currency !== entry.currency) throw new Error("adp_operations: окно в разных валютах");
       ops++;
       sum += w.amount;
     }
+    // Как на PG: сумма вне точного диапазона — не подтверждено, не догадка.
+    if (!Number.isSafeInteger(sum)) throw new Error("adp_operations: сумма окна вне точного диапазона");
     const entered = !isSplit(ops, sum, rule);
     if (entered) this.#window.set(op_ref, { ...entry });
     return { entered, ops, sum };
@@ -110,10 +119,18 @@ interface OperationRow extends Record<string, unknown> {
  * же хэшем; решённую строку триггер не даёт изменить или удалить.
  */
 export class PgOperationStore implements OperationStore {
+  private readonly hooks: PgOperationHooks;
+  private readonly lockTimeoutMs: number;
+
+  /** lockTimeoutMs — предел ожидания блокировки окна: adp_timeout_ms (доп. РП44 п. 2). */
   constructor(
     private readonly client: TxSqlClient,
-    private readonly hooks: PgOperationHooks = {},
-  ) {}
+    opts: { readonly lockTimeoutMs: number; readonly hooks?: PgOperationHooks },
+  ) {
+    if (!Number.isSafeInteger(opts.lockTimeoutMs) || opts.lockTimeoutMs < 1) throw new Error("PgOperationStore: lockTimeoutMs — целое ≥ 1");
+    this.lockTimeoutMs = opts.lockTimeoutMs;
+    this.hooks = opts.hooks ?? {};
+  }
 
   async begin(op_ref: string, msg_hash: string, at: string): Promise<OperationRecord | undefined> {
     const ins = await this.client.query(
@@ -141,14 +158,17 @@ export class PgOperationStore implements OperationStore {
   /**
    * Транзакция (РП44 п. 4): блокировка ключа окна, чтение окна — уже после неё (снимок READ COMMITTED берётся на
    * каждый оператор), запись своей строки «в работе», COMMIT. Резерв ядра — после COMMIT: блокировка через вызов ядра
-   * не держится.
+   * не держится. Ожидание блокировки — не дольше lockTimeoutMs (lock_timeout транзакции): процессинг ответа уже не ждёт,
+   * поэтому превышение — исключение (→ STATE_UNAVAILABLE) без входа в окно и без резерва (доп. РП44 п. 2).
    */
   async enterWindow(op_ref: string, entry: WindowEntry, rule: WindowRule): Promise<WindowResult> {
     const tx = await this.client.connect();
     let broken: Error | undefined;
     try {
-      await tx.query("BEGIN");
       try {
+        await tx.query("BEGIN");
+        await tx.query("SELECT set_config('lock_timeout', $1, true)", [`${this.lockTimeoutMs}ms`]);
+        await this.hooks.beforeLock?.(op_ref);
         await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [splitWindowLockKey(entry.key)]);
         const r = await tx.query<{ ops: string; sum: string | null; currencies: string }>(
           `SELECT count(*) AS ops, sum(amount) AS sum, count(*) FILTER (WHERE currency <> $3) AS currencies
@@ -176,7 +196,7 @@ export class PgOperationStore implements OperationStore {
         await tx.query("COMMIT");
         return { entered, ops, sum };
       } catch (err) {
-        // Соединение, на котором не прошёл ROLLBACK, в пул не возвращается (как запись журнала с событием, РП39).
+        // Соединение, на котором не прошёл ROLLBACK (в том числе после сбоя BEGIN), в пул не возвращается (как РП39).
         await tx.query("ROLLBACK").catch((rb: unknown) => {
           broken = rb instanceof Error ? rb : new Error(String(rb));
         });
@@ -193,8 +213,12 @@ export interface TxSqlClient extends SqlClient {
   connect(): Promise<SqlClient & { release(err?: Error | boolean): void }>;
 }
 
-/** Точка внутри транзакции окна — только для тестов: после чтения окна, до записи входа (гонка двух экземпляров). */
+/**
+ * Точки внутри транзакции окна — только для тестов (гонка двух экземпляров): beforeLock — после BEGIN, до блокировки
+ * ключа окна; windowRead — после чтения окна, до записи входа.
+ */
 export interface PgOperationHooks {
+  readonly beforeLock?: (op_ref: string) => Promise<void>;
   readonly windowRead?: (op_ref: string) => Promise<void>;
 }
 

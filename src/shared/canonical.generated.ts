@@ -1,9 +1,9 @@
 // Сгенерировано scripts/gen-shared.mjs из docs/core/processing-interface.yaml — не править вручную.
-// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 3b00d2727c6a03634a10d1b9ac810cc7f4921c6f4145d07a6c8eca1719d55487
+// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 627d8775e363fd67192aac809d844b1e649a5c2b44424d8b00a613d359099ef0
 // Номера полей и кодов внешних форматов здесь нет: только каноническая модель [альбом] (РП6).
 
 export const PI_VERSION = "1.0.0-draft";
-export const PI_SPEC_SHA256 = "3b00d2727c6a03634a10d1b9ac810cc7f4921c6f4145d07a6c8eca1719d55487";
+export const PI_SPEC_SHA256 = "627d8775e363fd67192aac809d844b1e649a5c2b44424d8b00a613d359099ef0";
 
 export interface Instrument {
   kind: "AGENT_TOKEN" | "ACCOUNT_LINK" | "CARD_TOKEN";
@@ -49,6 +49,7 @@ export interface CanonicalMessage {
 export interface Decision {
   decision: "APPROVE" | "DECLINE" | "CONFIRMATION_REQUIRED" | "BYPASS";
   reason?: null | "AOI_MISSING" | "AOI_MISMATCH" | "AGENT_UNKNOWN" | "AGENT_SUSPENDED" | "CREDENTIAL_INVALID" | "MANDATE_NOT_FOUND" | "MANDATE_EXPIRED" | "MANDATE_REVOKED" | "MANDATE_SCOPE" | "LIMIT_EXCEEDED" | "STATE_UNAVAILABLE" | "CONFIRMATION_REQUIRED" | "ADP_UNAVAILABLE";
+  /** Дробление по мандату в окне (РП44 п. 7): true — только у CONFIRMATION_REQUIRED по доле (операция не выше порога, но с одобрениями и записями «в работе» в окне split_window_sec по корневому INTENT их не меньше split_min_ops и сумма выше порога); false — у CONFIRMATION_REQUIRED по порогу одной операции; у прочих решений поля нет. */
   split_detected?: boolean;
   reservation_id?: string | null;
   agent_level?: number;
@@ -277,7 +278,8 @@ export const PI_SCHEMAS: Record<string, unknown> = {
         ]
       },
       "split_detected": {
-        "type": "boolean"
+        "type": "boolean",
+        "description": "Дробление по мандату в окне (РП44 п. 7): true — только у CONFIRMATION_REQUIRED по доле (операция не выше порога, но с одобрениями и записями «в работе» в окне split_window_sec по корневому INTENT их не меньше split_min_ops и сумма выше порога); false — у CONFIRMATION_REQUIRED по порогу одной операции; у прочих решений поля нет."
       },
       "reservation_id": {
         "type": "string",

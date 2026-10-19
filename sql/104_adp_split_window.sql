@@ -34,3 +34,18 @@ BEGIN
   RETURN NEW;
 END
 $$;
+
+-- Вставка — только «в работе» без окна (доп. РП44 п. 2, /audit PS-13 № 5): решение и столбцы окна при INSERT запрещены,
+-- иначе строка обошла бы «один раз из NULL у записи в работе». Код Платформы вставляет только op_ref, msg_hash, at.
+CREATE FUNCTION adp_operations_insert_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.decision IS NOT NULL OR NEW.window_key IS NOT NULL OR NEW.amount IS NOT NULL OR NEW.currency IS NOT NULL
+     OR NEW.window_at_ms IS NOT NULL THEN
+    RAISE EXCEPTION 'adp_operations: вставка только «в работе» без решения и окна' USING ERRCODE = 'restrict_violation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER adp_operations_insert_guard BEFORE INSERT ON adp_operations
+  FOR EACH ROW EXECUTE FUNCTION adp_operations_insert_guard();

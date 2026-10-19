@@ -556,6 +556,25 @@ describe("дробление по мандату в окне (SPEC §6 п. 9, Р
     await s.begin("y", "h", "t");
     await expect(s.enterWindow("y", { ...e, currency: "USD" }, rule)).rejects.toThrow(/валют/);
   });
+
+  it("MemoryOperationStore.enterWindow: входы старше окна удаляются; сумма вне точного диапазона — исключение (доп. РП44 п. 2)", async () => {
+    const s = new MemoryOperationStore();
+    const e = { key: M, amount: 100, currency: "RUB", at_ms: 1_000 };
+    await s.begin("old", "h", "t");
+    await s.enterWindow("old", e, { since_ms: 0, threshold: 300_000, min_ops: 2 });
+    await s.begin("new", "h", "t");
+    // Вход «old» (1 000 мс) вне окна (since 1 000): не считается и удаляется из перебора.
+    expect(await s.enterWindow("new", { ...e, at_ms: 5_000 }, { since_ms: 1_000, threshold: 300_000, min_ops: 2 })).toEqual({
+      entered: true,
+      ops: 1,
+      sum: 100,
+    });
+    await s.begin("big", "h", "t");
+    const huge = { ...e, amount: Number.MAX_SAFE_INTEGER, at_ms: 5_000 };
+    await expect(s.enterWindow("big", huge, { since_ms: 1_000, threshold: Number.MAX_SAFE_INTEGER, min_ops: 99 })).rejects.toThrow(
+      /точного диапазона/,
+    );
+  });
 });
 
 describe("резерв в П3 и коды П3 → ПИ (SPEC §6 п. 7–8, 11; РП43 п. 3, 5)", () => {
