@@ -116,6 +116,17 @@ describe.skipIf(!DATABASE_URL)("лимиты на PostgreSQL (sql/105)", () => {
     await db?.close();
   });
   storeContract("PostgreSQL", async () => new PgLimitsStore(db.pool));
+  it("гонка версий на двух экземплярах (РП45 доп. п. 10): PUT v2 ‖ v3 — действует v3; v3 всегда записан, v2 — записан или 409", async () => {
+    const s1 = new PgLimitsStore(db.pool);
+    const s2 = new PgLimitsStore(db.reopen());
+    for (let i = 0; i < 10; i++) {
+      const principal_ref = `prn_race_${i}`;
+      const [r2, r3] = await Promise.all([s1.put(rec(2, { principal_ref })), s2.put(rec(3, { principal_ref }))]);
+      expect(r3, "старшая версия не записана").toBe("inserted");
+      expect(["inserted", "conflict"]).toContain(r2);
+      expect((await s1.current({ participant_code: "bank:a", principal_ref }))?.version, "действует не старшая версия").toBe(3);
+    }
+  });
   it("записи не меняются и не удаляются (только вставка, триггер)", async () => {
     const s = new PgLimitsStore(db.pool);
     await s.put(rec(1, { principal_ref: "prn_guard" }));

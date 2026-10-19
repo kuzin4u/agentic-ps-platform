@@ -21,7 +21,8 @@ import { ConsentIntegrityError, type MandateStatus } from "../../src/consent/mod
 import type { AgentStatus } from "../../src/registry/model.js";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import { DECISION_REASONS, parseDecision } from "../../src/shared/codes.js";
-import { accountId, STATE_CODES, StateService, type MandateBudget, type MandateBudgetSource } from "../../src/state/index.js";
+import { periodStart } from "../../src/participants/limits.js";
+import { accountId, clientAccountId, STATE_CODES, StateService, type MandateBudget, type MandateBudgetSource } from "../../src/state/index.js";
 
 const AGENT = "nspk:agent:buyref-01:v3";
 const OTHER = "nspk:agent:other-02:v1";
@@ -946,4 +947,53 @@ describe("порт лимитов клиента обязателен (реше�
     expect(typeof make).toBe("function");
     expect(new Adp({ ...base, clientLimits: NO_LIMITS })).toBeInstanceOf(Adp);
   });
+});
+
+describe("лимит клиента: CART, отзыв после резерва, сужение через ADP (РП45 п. 1, доп. п. 6; /audit № 4)", () => {
+  const C = "mnd_00000000-0000-4000-8000-0000000000c1";
+  const NOW = new Date("2026-10-19T10:00:00Z");
+  const DAY = (per_period: number) => ({ per_period, period: "DAY", currency: "RUB" });
+  const clientAcc = clientAccountId({ ...CLIENT, period: "DAY", period_start: periodStart("DAY", "Europe/Moscow", NOW) });
+  /** Подвижная история версий клиента CLIENT. */
+  const mutable = (...vs: { limits: unknown; received_at: string }[]) => {
+    const src = { vs, get: async () => src.vs };
+    return src;
+  };
+
+  it("CART: порядок CART → родитель → клиент; отказ клиента освобождает оба удержания мандатов", async () => {
+    const { adp, journal, ledger, available } = setup({ client: mutable(version(DAY(100_000))), now: () => NOW });
+    journal.set(C, { type: "CART", parent_id: M, amount_limit: 200_000 });
+    const d = await adp.decide(msg({ op_ref: "cart-1", amount: 150_000, aoi: { indicator: true, agent_code: AGENT, mandate_id: C } }));
+    expect(pair(d).reason).toBe("LIMIT_EXCEEDED");
+    expect(await available(C)).toBe(200_000);
+    expect(await available(M)).toBe(LIMIT);
+    // Под лимитом — три удержания по порядку: CART, родитель, клиент.
+    const ok = await adp.decide(msg({ op_ref: "cart-2", amount: 50_000, aoi: { indicator: true, agent_code: AGENT, mandate_id: C } }));
+    expect(pair(ok).decision).toBe("APPROVE");
+    expect((await ledger.get(ok.reservation_id!)).account).toBe(accountId(C));
+    expect((await ledger.available(clientAcc)).amount).toBe(50_000);
+  });
+
+  it("отзыв после резерва (п. 12) освобождает и удержание клиента", async () => {
+    const { adp, journal, ledger, available } = setup({ client: mutable(version(DAY(300_000))), now: () => NOW });
+    journal.onGet = (n) => (n === 2 ? "REVOKED" : undefined);
+    expect(await reasonOf(adp, msg({ op_ref: "rev-1", amount: 100_000 }))).toBe("MANDATE_REVOKED");
+    expect(await available()).toBe(LIMIT);
+    expect((await ledger.available(clientAcc)).amount).toBe(300_000);
+  });
+
+  it("сужение per_period в периоде через ADP — STATE_UNAVAILABLE до удержания сужения (доп. п. 6), резервов нет", async () => {
+    const src = mutable(version(DAY(300_000)));
+    const { adp, journal, available } = setup({ client: src, now: () => NOW });
+    journal.set("mnd_00000000-0000-4000-8000-0000000000c2");
+    expect(pair(await adp.decide(msg({ op_ref: "nar-1", amount: 50_000 }))).decision).toBe("APPROVE");
+    src.vs = [...src.vs, version(DAY(100_000), "2026-10-19T09:30:00Z")];
+    const m2 = "mnd_00000000-0000-4000-8000-0000000000c2";
+    expect(await reasonOf(adp, msg({ op_ref: "nar-2", amount: 10_000, aoi: { indicator: true, agent_code: AGENT, mandate_id: m2 } }))).toBe("STATE_UNAVAILABLE");
+    expect(await available(m2)).toBe(LIMIT);
+  });
+
+  it.todo(
+    "PS-16 (обязательное условие, /audit № 2): клиринг закрепляет и освобождает оба удержания — мандата и клиента — по записи операции (op_ref → holds); закреплённое удержание клиента проход expire не освобождает, per_period не превышается после клиринга",
+  );
 });
