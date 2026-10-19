@@ -16,6 +16,14 @@ const BYPASS: Decision = Object.freeze({ decision: "BYPASS", reason: null, decid
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 export async function adpRoutes(app: FastifyInstance, deps: AdpDeps): Promise<void> {
+  // Ошибки разбора (тело не JSON, Content-Type не application/json — 400/415 Fastify) — 400 с телом {} без текста
+  // Fastify; прочие — 503 {}. Решения нет — процессинг ставит ADP_UNAVAILABLE агентской (ПИ-1, /audit PS-10 № 6).
+  app.setErrorHandler((err, req, reply) => {
+    const code = (err as { statusCode?: unknown } | null)?.statusCode;
+    const status = typeof code === "number" && code >= 400 && code < 500 ? 400 : 503;
+    if (status === 503) req.log.error({ err }, "ADP: сбой маршрута — 503");
+    return reply.code(status).send({});
+  });
   app.post("/adp/v1/decide", async (req, reply) => {
     const body = req.body;
     // Тело не объект и вид инструмента не прочитать — неагентской её не признать: 400 (у процессинга — ADP_UNAVAILABLE).

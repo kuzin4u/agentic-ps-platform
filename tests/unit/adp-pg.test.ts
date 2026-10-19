@@ -55,12 +55,14 @@ describe.skipIf(!DATABASE_URL)("запись операции ADP на PostgreSQ
     expect((await s1.begin(op, H, AT))?.decision).toBeNull();
   });
 
-  it("решённую строку нельзя изменить или удалить (триггер)", async () => {
+  it("решённую строку нельзя изменить, удалить или очистить TRUNCATE (триггеры, /audit PS-10 № 5)", async () => {
     const op = opRef();
     await s1.begin(op, H, AT);
     await s1.finish({ op_ref: op, msg_hash: H, decision: APPROVE, mandate_id: null, holds: [], at: AT });
     await expect(db.pool.query("UPDATE adp_operations SET holds = '[]'::jsonb WHERE op_ref = $1", [op])).rejects.toThrow(/не меняются/);
     await expect(db.pool.query("DELETE FROM adp_operations WHERE op_ref = $1", [op])).rejects.toThrow(/удаление запрещено/);
+    await expect(db.pool.query("TRUNCATE adp_operations")).rejects.toThrow(/удаление запрещено/);
+    expect((await s1.begin(op, H, AT))?.decision).toEqual(APPROVE);
   });
 });
 

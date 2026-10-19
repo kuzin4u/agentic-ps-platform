@@ -85,6 +85,16 @@ describe("POST /adp/v1/decide (ПИ-1)", () => {
     expect(res.json()).toEqual({});
   });
 
+  it.each([
+    ["тело не JSON", "application/json", "{не json"],
+    ["Content-Type не application/json", "application/xml", "<auth/>"],
+  ])("%s — 400 с телом {}, без текста Fastify (/audit PS-10 № 6)", async (_n, type, payload) => {
+    const { app } = server();
+    const res = await app.inject({ method: "POST", url: "/adp/v1/decide", headers: { "content-type": type }, payload });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({});
+  });
+
   it("сбой точки решения (исключение) — 503, не BYPASS", async () => {
     const { adp, app } = server();
     adp.decide = () => Promise.reject(new Error("неожиданно"));

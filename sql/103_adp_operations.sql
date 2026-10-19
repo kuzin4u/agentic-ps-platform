@@ -15,7 +15,7 @@ CREATE TABLE adp_operations (
 
 CREATE FUNCTION adp_operations_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF TG_OP = 'DELETE' THEN
+  IF TG_OP = 'DELETE' OR TG_OP = 'TRUNCATE' THEN
     RAISE EXCEPTION 'adp_operations: удаление запрещено' USING ERRCODE = 'restrict_violation';
   END IF;
   IF OLD.decision IS NOT NULL OR NEW.op_ref <> OLD.op_ref OR NEW.msg_hash <> OLD.msg_hash OR NEW.at <> OLD.at THEN
@@ -27,3 +27,7 @@ $$;
 
 CREATE TRIGGER adp_operations_guard BEFORE UPDATE OR DELETE ON adp_operations
   FOR EACH ROW EXECUTE FUNCTION adp_operations_guard();
+
+-- TRUNCATE строчные триггеры не вызывает — отдельный, на оператор (/audit PS-10 № 5). Права ролей на базу — SEC-1.
+CREATE TRIGGER adp_operations_no_truncate BEFORE TRUNCATE ON adp_operations
+  FOR EACH STATEMENT EXECUTE FUNCTION adp_operations_guard();

@@ -14,7 +14,7 @@ import {
   type AdpMandate,
   type AdpMandates,
 } from "../../src/adp/index.js";
-import type { MandateStatus } from "../../src/consent/model.js";
+import { ConsentIntegrityError, type MandateStatus } from "../../src/consent/model.js";
 import type { AgentStatus } from "../../src/registry/model.js";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import { DECISION_REASONS, parseDecision } from "../../src/shared/codes.js";
@@ -65,6 +65,8 @@ class Journal implements AdpMandates, MandateBudgetSource {
   readonly map = new Map<string, Row>();
   /** Вызывается при каждом чтении ADP по номеру чтения; вернуть статус — подменить его. */
   onGet?: (n: number) => MandateStatus | "fail" | undefined;
+  /** Исключение вместо ответа (нарушенная цепочка и т. п.). */
+  throwing?: Error;
   #n = 0;
   set(id: string, over: Partial<Row> = {}): this {
     this.map.set(id, {
@@ -81,6 +83,7 @@ class Journal implements AdpMandates, MandateBudgetSource {
   async get(id: string, agent_code: string): Promise<AdpMandate | undefined> {
     this.calls++;
     if (this.failing) throw new Error("журнал недоступен");
+    if (this.throwing) throw this.throwing;
     const r = this.map.get(id);
     if (!r || r.agent_code !== agent_code) return undefined;
     const sub = this.onGet?.(++this.#n);
@@ -221,6 +224,12 @@ describe("агент — из реестра (SPEC §6 п. 3, A1 п. 5.3, инв
     expect(pair(await adp.decide(msg()))).toEqual({ decision: "DECLINE", reason: "STATE_UNAVAILABLE" });
   });
 
+  it("неизвестный вид инструмента при aoi — CREDENTIAL_INVALID и инцидент (доп. РП43 п. 13, /audit PS-10 № 1)", async () => {
+    const { adp, logs } = setup();
+    expect(await reasonOf(adp, msg({ instrument: { kind: "NEW_KIND" as "CARD_TOKEN" } }))).toBe("CREDENTIAL_INVALID");
+    expect(logs.some((l) => l.fields.incident === true && l.fields.kind === "NEW_KIND")).toBe(true);
+  });
+
   it("агентский токен с aoi до PS-14 — CREDENTIAL_INVALID (проверки 2 и 4 не подтверждены, РП43 п. 7), и до реестра", async () => {
     const { adp, agents } = setup();
     agents.map.clear();
@@ -253,6 +262,20 @@ describe("мандат и область (SPEC §6 п. 5–6, РП43 п. 2–3)"
     journal.set(M, { status: "FROZEN" as MandateStatus });
     expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
     await expect(available()).rejects.toThrow();
+  });
+
+  it("тип мандата вне перечня — STATE_UNAVAILABLE, не резерв «как INTENT» (/audit PS-10 № 2)", async () => {
+    const { adp, journal, available } = setup();
+    journal.set(M, { type: "SUBSCRIPTION" as "INTENT" });
+    expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
+    await expect(available()).rejects.toThrow();
+  });
+
+  it("нарушенная цепочка журнала — STATE_UNAVAILABLE и инцидент (РП43 п. 4, /audit PS-10 № 3)", async () => {
+    const { adp, journal, logs } = setup();
+    journal.throwing = new ConsentIntegrityError(M, "цепочка нарушена");
+    expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
+    expect(logs.some((l) => l.fields.incident === true && l.msg.includes("журнал согласий"))).toBe(true);
   });
 
   it("сбой журнала — STATE_UNAVAILABLE, не BYPASS (РП43 п. 4)", async () => {
@@ -382,6 +405,22 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
     const a = await adp.decide(msg());
     await state.release(a.reservation_id!);
     expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
+  });
+
+  it("запись операции потеряна, удержание по ref освобождено — STATE_UNAVAILABLE и запись в журнал (/audit PS-10 № 4)", async () => {
+    const { adp, state, journal, logs } = setup();
+    const a = await adp.decide(msg());
+    await state.release(a.reservation_id!);
+    const fresh = new Adp({
+      agents: new Agents(),
+      mandates: journal,
+      state,
+      operations: new MemoryOperationStore(),
+      params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD },
+      log: (_l, fields, m) => logs.push({ fields, msg: m }),
+    });
+    expect(await reasonOf(fresh, msg())).toBe("STATE_UNAVAILABLE");
+    expect(logs.some((l) => l.fields.incident === true && l.msg.includes("уже освобождено"))).toBe(true);
   });
 
   it("повтор отказа — прежний отказ", async () => {

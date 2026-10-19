@@ -8,6 +8,7 @@ import type { Params } from "../shared/config.js";
 import type { Mandate } from "../shared/pao.js";
 import type { AgentRecord } from "../registry/model.js";
 import { parseAgentCode } from "../registry/code.js";
+import { ConsentIntegrityError } from "../consent/model.js";
 import type { StateService } from "../state/index.js";
 import { STATE_TO_PI, STATUS_TO_PI } from "./codes.js";
 import type { OperationRecord, OperationStore } from "./operations.js";
@@ -200,8 +201,14 @@ export class Adp {
     if (aoi.indicator !== true || !wellFormedCode(aoi.agent_code)) return no("AOI_MISSING");
     const agent_code = aoi.agent_code;
 
-    // 2, 4. Домен токена и криптограмма — PS-14; до него не подтверждено (РП43 п. 7). Неизвестный вид с aoi — то же.
-    if (kind !== "CARD_TOKEN") return no("CREDENTIAL_INVALID");
+    // 2, 4. Домен токена и криптограмма — PS-14; до него не подтверждено (РП43 п. 7). Неизвестный вид с aoi — реквизит
+    // не опознан: CREDENTIAL_INVALID и инцидент (доп. РП43 п. 13).
+    if (kind !== "CARD_TOKEN") {
+      if (!agentInstrument) {
+        this.log("warn", { op_ref: msg.op_ref, kind, incident: true }, "ADP: неизвестный вид инструмента при признаке");
+      }
+      return no("CREDENTIAL_INVALID");
+    }
 
     // 3. Агент — из реестра (инвариант 5). Исключённый — вне реестра (A1 п. 5.3); сбой реестра — не подтверждено.
     let agent: Pick<AgentRecord, "status" | "level"> | undefined;
@@ -227,6 +234,9 @@ export class Adp {
     const merchant = msg.merchant?.id;
     if (merchant === undefined || !m.merchant_scope.includes(merchant)) return no("MANDATE_SCOPE", mandate_id);
     if (msg.currency !== m.currency) return no("MANDATE_SCOPE", mandate_id);
+
+    // Тип мандата вне перечня (данные, а не тип) — не подтверждено, а не «как INTENT» (инвариант 3, как доп. РП43 п. 19).
+    if (m.type !== "INTENT" && m.type !== "CART") return no("STATE_UNAVAILABLE", mandate_id);
 
     // Счета резерва: CART — свой и родителя INTENT, всегда в порядке «CART → родитель» (РП43 п. 6); INTENT — один.
     const accounts: { readonly id: string; readonly limit: number }[] = [{ id: mandate_id, limit: m.amount_limit }];
@@ -257,6 +267,10 @@ export class Adp {
         if (reason === "INVALID") throw new AdpRequestInvalid("amount");
         if (r.code === "IDEMPOTENCY_CONFLICT") {
           this.log("warn", { op_ref: msg.op_ref, mandate_id: a.id, incident: true }, "ADP: резерв по op_ref с другой суммой");
+        }
+        if (r.code === "RESERVATION_RELEASED") {
+          // Тот же ref по освобождённому удержанию: одобрить без удержания нельзя (РП41 доп. п. 19, РП43 п. 3).
+          this.log("warn", { op_ref: msg.op_ref, mandate_id: a.id, incident: true }, "ADP: резерв по op_ref — удержание уже освобождено");
         }
         return no(reason, mandate_id);
       }
@@ -295,8 +309,10 @@ export class Adp {
   private async mandate(id: string, agent_code: string, op_ref: string): Promise<AdpMandate | undefined | "unavailable"> {
     try {
       return await this.opts.mandates.get(id, agent_code);
-    } catch {
-      this.log("warn", { op_ref, mandate_id: id }, "ADP: журнал согласий не прочитан");
+    } catch (e) {
+      // Нарушенная цепочка — ещё и инцидент (РП43 п. 4); прочий сбой — не подтверждено.
+      const incident = e instanceof ConsentIntegrityError;
+      this.log("warn", { op_ref, mandate_id: id, ...(incident ? { incident: true } : {}) }, "ADP: журнал согласий не прочитан");
       return "unavailable";
     }
   }
