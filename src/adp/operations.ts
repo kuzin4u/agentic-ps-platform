@@ -169,6 +169,7 @@ export class PgOperationStore implements OperationStore {
         await tx.query("BEGIN");
         await tx.query("SELECT set_config('lock_timeout', $1, true)", [`${this.lockTimeoutMs}ms`]);
         await this.hooks.beforeLock?.(op_ref);
+        await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [splitWindowLockKey(entry.key)]);
         const r = await tx.query<{ ops: string; sum: string | null; currencies: string }>(
           `SELECT count(*) AS ops, sum(amount) AS sum, count(*) FILTER (WHERE currency <> $3) AS currencies
              FROM adp_operations
