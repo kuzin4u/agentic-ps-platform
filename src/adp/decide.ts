@@ -11,7 +11,7 @@ import { parseAgentCode } from "../registry/code.js";
 import { ConsentIntegrityError } from "../consent/model.js";
 import type { StateService } from "../state/index.js";
 import { STATE_TO_PI, STATUS_TO_PI } from "./codes.js";
-import type { OperationRecord, OperationStore } from "./operations.js";
+import type { OperationRecord, OperationStore, WindowResult } from "./operations.js";
 import {
   CLIENT_THRESHOLDS_NOT_CONNECTED,
   effectiveThreshold,
@@ -39,7 +39,7 @@ export interface AdpOptions {
   readonly mandates: AdpMandates;
   readonly state: Pick<StateService, "reserve" | "release" | "hold" | "amountLeft">;
   readonly operations: OperationStore;
-  readonly params: Pick<Params, "aoi_rollout_phase" | "confirm_above_kop">;
+  readonly params: Pick<Params, "aoi_rollout_phase" | "confirm_above_kop" | "split_window_sec" | "split_min_ops">;
   /** Клиентский порог (ПИ-8, PS-20); не передан — не подключён, действует рыночный (РП44 п. 5). */
   readonly clientThresholds?: ClientThresholds;
   readonly log?: AdpLog;
@@ -267,6 +267,29 @@ export class Adp {
     const threshold = await this.threshold(msg, mandate_id);
     if (threshold === undefined) return no("STATE_UNAVAILABLE", mandate_id);
     if (msg.amount > threshold) return this.confirm(accounts, msg.amount, mandate_id, false);
+
+    // 9. Дробление (РП44 п. 1–4): операция не выше порога — доля, если в окне по корневому INTENT (у CART — родитель)
+    // вместе с ней ≥ split_min_ops одобрений и сумма выше порога. Доля в окно не входит; вход — до резерва, отказ резерва
+    // убирает запись из окна решением DECLINE. Окно не прочитано — не подтверждено, не «окна нет».
+    const window_key = accounts.at(-1)?.id ?? mandate_id;
+    const at_ms = this.now().getTime();
+    let w: WindowResult;
+    try {
+      w = await this.opts.operations.enterWindow(
+        msg.op_ref,
+        { key: window_key, amount: msg.amount, currency: msg.currency, at_ms },
+        { since_ms: at_ms - this.opts.params.split_window_sec * 1000, threshold, min_ops: this.opts.params.split_min_ops },
+      );
+    } catch {
+      this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: окно дробления не прочитано");
+      return no("STATE_UNAVAILABLE", mandate_id);
+    }
+    if (!w.entered) {
+      // Телеметрия ПС12: сигнал, не инцидент; реквизитов инструмента нет (инвариант 1, РП44 п. 7).
+      const fields = { op_ref: msg.op_ref, mandate_id, window_key, ops: w.ops, sum: w.sum, currency: msg.currency, split_detected: true };
+      this.log("warn", fields, "ADP: дробление по мандату в окне");
+      return this.confirm(accounts, msg.amount, mandate_id, true);
+    }
 
     // 7–8, 11. Резерв: разовая сумма и остаток — одно атомарное условие ядра на каждом счёте; op_key — op_ref (РП43 п. 5).
     // Отказ на счёте родителя — освобождение резерва CART и причина родителя (РП43 п. 6).

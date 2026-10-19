@@ -107,7 +107,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
       mandates,
       state: new StateService(new PgHoldLedger(pool), mandates, { reservationTtlSec: 600 }),
       operations: new PgOperationStore(pool),
-      params: { aoi_rollout_phase: 3, confirm_above_kop: 1_000_000 },
+      params: { aoi_rollout_phase: 3, confirm_above_kop: 1_000_000, split_window_sec: 600, split_min_ops: 2 },
     });
   let a1: Adp;
   let a2: Adp;
@@ -129,7 +129,8 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
     const pairs = ds.map((d) => parseDecision(d, "adp"));
     const approved = pairs.filter((p) => p.decision === "APPROVE").length;
     expect(approved, `перерасход бюджета: одобрено ${approved} при месте для 3 (инвариант 4)`).toBe(3);
-    expect(pairs.filter((p) => p.reason === "LIMIT_EXCEEDED")).toHaveLength(17);
+    // Записи «в работе» входят в окно до резерва (РП44 п. 2): в залпе часть отказов — доля, а не LIMIT_EXCEEDED.
+    expect(pairs.filter((p) => p.reason === "LIMIT_EXCEEDED" || p.reason === "CONFIRMATION_REQUIRED")).toHaveLength(17);
     const a = await ledger.account(accountId(M));
     expect(a.reserved + a.committed, "перерасход: закреплено + зарезервировано > предела").toBeLessThanOrEqual(a.limit);
     expect(a.reserved).toBe(300_000);

@@ -115,7 +115,7 @@ function spy<T extends object>(inner: T, broken: Set<string>, count: { n: number
   });
 }
 
-function setup(opts: { phase?: 1 | 2 | 3; client?: ClientThresholds } = {}) {
+function setup(opts: { phase?: 1 | 2 | 3; client?: ClientThresholds; threshold?: number; now?: () => Date } = {}) {
   const agents = new Agents();
   const journal = new Journal().set(M);
   const ledger = new AsyncMemoryHoldLedger();
@@ -129,8 +129,9 @@ function setup(opts: { phase?: 1 | 2 | 3; client?: ClientThresholds } = {}) {
     mandates: journal,
     state,
     operations,
-    params: { aoi_rollout_phase: opts.phase ?? 3, confirm_above_kop: THRESHOLD },
+    params: { aoi_rollout_phase: opts.phase ?? 3, confirm_above_kop: opts.threshold ?? THRESHOLD, split_window_sec: 600, split_min_ops: 2 },
     ...(opts.client ? { clientThresholds: opts.client } : {}),
+    ...(opts.now ? { now: opts.now } : {}),
     log: (_l, fields, m) => logs.push({ fields, msg: m }),
   });
   const available = async (id = M) => (await ledger.available(accountId(id))).amount;
@@ -146,7 +147,7 @@ describe("BYPASS — первая проверка (РП4, РП43 п. 1, инв�
     const { adp, agents, journal, broken, io } = setup();
     agents.failing = true;
     journal.failing = true;
-    for (const m of ["begin", "finish", "get", "reserve", "available", "release", "account"]) broken.add(m);
+    for (const m of ["begin", "finish", "enterWindow", "get", "reserve", "available", "release", "account"]) broken.add(m);
     expect(pair(await adp.decide(plain()))).toEqual({ decision: "BYPASS", reason: null });
     expect([agents.calls, journal.calls, io.n]).toEqual([0, 0, 0]);
   });
@@ -426,6 +427,132 @@ describe("меньшее из порогов (SPEC §6 п. 10, РП44 п. 5, A3 
   });
 });
 
+describe("дробление по мандату в окне (SPEC §6 п. 9, РП44 п. 1–4, 7; ПС12)", () => {
+  const PART = 170_000;
+  /** Порог 3 000 ₽ (PARAMS), предел 10 000 ₽, часы Платформы — под рукой теста. */
+  function split() {
+    let ms = Date.parse("2026-10-19T10:00:00Z");
+    const s = setup({ threshold: 300_000, now: () => new Date(ms) });
+    s.journal.set(M, { amount_limit: 1_000_000 });
+    return { ...s, tick: (sec: number) => (ms += sec * 1000) };
+  }
+  const op = (op_ref: string, amount = PART, over: Partial<CanonicalMessage> = {}) => msg({ op_ref, amount, ...over });
+
+  it("ПС12: две по 1 700 ₽ — вторая CONFIRMATION_REQUIRED с split_detected: true, без резерва; третья — тоже", async () => {
+    const { adp, available } = split();
+    expect(pair(await adp.decide(op("a"))).decision).toBe("APPROVE");
+    for (const ref of ["b", "c"]) {
+      const d = await adp.decide(op(ref));
+      expect([pair(d).reason, d.split_detected]).toEqual(["CONFIRMATION_REQUIRED", true]);
+    }
+    expect(await available()).toBe(1_000_000 - PART);
+  });
+
+  it("ПС12: запись в журнал процесса — warn, без реквизитов и без инцидента", async () => {
+    const { adp, logs } = split();
+    await adp.decide(op("a"));
+    await adp.decide(op("b"));
+    const rec = logs.find((l) => l.fields.split_detected === true);
+    expect(rec?.fields).toEqual({ op_ref: "b", mandate_id: M, window_key: M, ops: 2, sum: 2 * PART, currency: "RUB", split_detected: true });
+    expect(JSON.stringify(rec)).not.toMatch(/tok_|token_ref|cryptogram|funding_ref/);
+    expect(rec?.fields).not.toHaveProperty("incident");
+  });
+
+  it("повтор op_ref доли — тот же ответ со split_detected; с confirmation_ref до PS-19 — тоже (РП44 п. 6)", async () => {
+    const { adp } = split();
+    await adp.decide(op("a"));
+    const first = await adp.decide(op("b"));
+    const again = await adp.decide(op("b"));
+    expect(again).toEqual({ ...first, decided_in_ms: again.decided_in_ms });
+    const c = await adp.decide(op("c", PART, { confirmation_ref: "cnf_1" }));
+    expect([pair(c).reason, c.split_detected]).toEqual(["CONFIRMATION_REQUIRED", true]);
+  });
+
+  it("граница окна: через 599 с — доля, через 600 с — вне окна, APPROVE", async () => {
+    const { adp, tick } = split();
+    await adp.decide(op("a"));
+    tick(599);
+    expect((await adp.decide(op("b"))).split_detected).toBe(true);
+    tick(1);
+    expect(pair(await adp.decide(op("c"))).decision).toBe("APPROVE");
+  });
+
+  it("сумма окна не выше порога — не доля: 1 000 + 1 000 + 1 000 — все APPROVE, четвёртая — доля", async () => {
+    const { adp } = split();
+    for (const ref of ["a", "b", "c"]) expect(pair(await adp.decide(op(ref, 100_000))).decision).toBe("APPROVE");
+    expect((await adp.decide(op("d", 100_000))).split_detected).toBe(true);
+  });
+
+  it("операция выше порога — п. 10 (split_detected: false) и в окно не входит", async () => {
+    const { adp } = split();
+    expect((await adp.decide(op("a", 400_000))).split_detected).toBe(false);
+    expect(pair(await adp.decide(op("b"))).decision).toBe("APPROVE");
+  });
+
+  it("доля в окно не входит: после доли окно — прежнее", async () => {
+    const { adp } = split();
+    await adp.decide(op("a"));
+    expect((await adp.decide(op("b"))).split_detected).toBe(true);
+    expect(pair(await adp.decide(op("c", 100_000))).decision).toBe("APPROVE");
+  });
+
+  it("отказ резерва после входа в окно — решение DECLINE убирает запись из окна (РП44 п. 2)", async () => {
+    const { adp, broken } = split();
+    await adp.decide(op("a"));
+    broken.add("reserve");
+    expect(await reasonOf(adp, op("b", 100_000))).toBe("STATE_UNAVAILABLE");
+    broken.delete("reserve");
+    expect(pair(await adp.decide(op("c", 120_000))).decision).toBe("APPROVE");
+  });
+
+  it("доля и остаток меньше суммы — LIMIT_EXCEEDED (проверки 7–8 раньше 9), резерва нет", async () => {
+    const { adp, journal, available } = split();
+    journal.set(M, { amount_limit: 300_000 });
+    await adp.decide(op("a"));
+    expect(await reasonOf(adp, op("b"))).toBe("LIMIT_EXCEEDED");
+    expect(await available()).toBe(300_000 - PART);
+  });
+
+  it("ключ окна — корневой INTENT: две CART под одним INTENT — одно окно", async () => {
+    const { adp, journal } = split();
+    const P = "mnd_00000000-0000-4000-8000-0000000000aa";
+    const C2 = "mnd_00000000-0000-4000-8000-0000000000bb";
+    journal.set(P, { amount_limit: 1_000_000 });
+    journal.set(M, { type: "CART", parent_id: P, amount_limit: 500_000 });
+    journal.set(C2, { type: "CART", parent_id: P, amount_limit: 500_000 });
+    expect(pair(await adp.decide(op("a"))).decision).toBe("APPROVE");
+    const d = await adp.decide(op("b", PART, { aoi: { indicator: true, agent_code: AGENT, mandate_id: C2 } }));
+    expect([pair(d).reason, d.split_detected]).toEqual(["CONFIRMATION_REQUIRED", true]);
+  });
+
+  it("окна по разным мандатам не смешиваются", async () => {
+    const { adp, journal } = split();
+    const M2 = "mnd_00000000-0000-4000-8000-0000000000cc";
+    journal.set(M2, { amount_limit: 1_000_000 });
+    await adp.decide(op("a"));
+    expect(pair(await adp.decide(op("b", PART, { aoi: { indicator: true, agent_code: AGENT, mandate_id: M2 } }))).decision).toBe("APPROVE");
+  });
+
+  it("окно не прочитано — STATE_UNAVAILABLE без резерва (A3 п. 4.5)", async () => {
+    const { adp, broken, available } = split();
+    broken.add("enterWindow");
+    expect(await reasonOf(adp, op("a"))).toBe("STATE_UNAVAILABLE");
+    await expect(available()).rejects.toThrow();
+  });
+
+  it("MemoryOperationStore.enterWindow: только у записи «в работе», один раз; разные валюты в окне — исключение", async () => {
+    const s = new MemoryOperationStore();
+    const rule = { since_ms: 0, threshold: 300_000, min_ops: 2 };
+    const e = { key: M, amount: 1, currency: "RUB", at_ms: 1 };
+    await expect(s.enterWindow("x", e, rule)).rejects.toThrow();
+    await s.begin("x", "h", "t");
+    expect(await s.enterWindow("x", e, rule)).toEqual({ entered: true, ops: 1, sum: 1 });
+    await expect(s.enterWindow("x", e, rule)).rejects.toThrow();
+    await s.begin("y", "h", "t");
+    await expect(s.enterWindow("y", { ...e, currency: "USD" }, rule)).rejects.toThrow(/валют/);
+  });
+});
+
 describe("резерв в П3 и коды П3 → ПИ (SPEC §6 п. 7–8, 11; РП43 п. 3, 5)", () => {
   it("APPROVE: reservation_id = hold.id, agent_level из реестра, mandate_left_after — остаток после резерва", async () => {
     const { adp, ledger, available } = setup();
@@ -463,7 +590,8 @@ describe("резерв в П3 и коды П3 → ПИ (SPEC §6 п. 7–8, 11; 
     );
     const kinds = ds.map((d) => pair(d));
     expect(kinds.filter((d) => d.decision === "APPROVE")).toHaveLength(3);
-    expect(kinds.filter((d) => d.reason === "LIMIT_EXCEEDED")).toHaveLength(17);
+    // Записи «в работе» входят в окно до резерва (РП44 п. 2): в залпе часть отказов — доля, а не LIMIT_EXCEEDED.
+    expect(kinds.filter((d) => d.reason === "LIMIT_EXCEEDED" || d.reason === "CONFIRMATION_REQUIRED")).toHaveLength(17);
     expect(await available()).toBe(0);
   });
 });
@@ -502,7 +630,7 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
       mandates: journal,
       state,
       operations: new MemoryOperationStore(),
-      params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD },
+      params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2 },
       log: (_l, fields, m) => logs.push({ fields, msg: m }),
     });
     expect(await reasonOf(fresh, msg())).toBe("STATE_UNAVAILABLE");
@@ -560,7 +688,7 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
       mandates: journal,
       state: new StateService(ledger, journal, { reservationTtlSec: 600 }),
       operations,
-      params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD },
+      params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2 },
     });
     expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
     expect(journal.calls).toBe(0);
