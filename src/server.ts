@@ -30,6 +30,19 @@ export interface ServerOptions {
    * подключает (доп. РП43 п. 21): открытого порта с правом создавать резервы нет.
    */
   adp?: AdpDeps;
+  /**
+   * Режим «только BYPASS» (РП43 п. 8): самопроверка при старте не прошла. Неагентским — BYPASS, агентским — 503 без
+   * решения; ПАО, П10 и точка решения не регистрируются; /health — 200 с mode и кодами непрошедших проверок; при входе
+   * в режим — запись «тревога». В main.ts — вместе с маршрутом ADP (SEC-1, доп. РП43 п. 21–22).
+   */
+  bypassOnly?: BypassOnly;
+}
+
+export interface BypassOnly {
+  /** Непрошедшие проверки самопроверки — только имя и код реестра PLATFORM_DIAG, без текста исключений (РП42 доп. п. 12). */
+  readonly failures: readonly { readonly check: string; readonly code: string }[];
+  /** Запись «тревога» в журнал процесса; по умолчанию — журнал Fastify уровня fatal. */
+  readonly alarm?: (fields: Record<string, unknown>, msg: string) => void;
 }
 
 /** Минимальная длина префикса доверенного прокси (РП32, дополнение п. 2); шире — отдельным решением. */
@@ -61,6 +74,17 @@ export function parseTrustedProxies(value: string | undefined): string[] {
 export function buildServer(opts: ServerOptions): FastifyInstance {
   const proxies = opts.trustedProxies ?? [];
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: proxies.length > 0 ? [...proxies] : false });
+
+  const bypass = opts.bypassOnly;
+  if (bypass) {
+    const failures = bypass.failures.map(({ check, code }) => ({ check, code }));
+    // 200, а не 503: оркестратор не перезапускает процесс, и неагентские не теряют BYPASS (решение владельца, РП43 п. 8).
+    app.get("/health", async () => ({ status: "ok", env: opts.env, mode: "bypass_only", failures }));
+    void app.register(async (scope) => adpRoutes(scope, {}));
+    const alarm = bypass.alarm ?? ((fields, msg) => app.log.fatal(fields, msg));
+    alarm({ alarm: true, mode: "bypass_only", failures }, "Платформа: самопроверка не прошла — режим «только BYPASS», агентские операции не принимаются");
+    return app;
+  }
 
   // Живость процесса; к базе не обращается.
   app.get("/health", async () => ({ status: "ok", env: opts.env }));
