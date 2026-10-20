@@ -3,6 +3,7 @@
 // не открывает (доставка стенда — в процессе), поэтому адрес-заглушка нужен только для проверки «адрес глобальный».
 // Рабочий сервер этот модуль не импортирует (tests/unit/stand-boundary.test.ts): у него — системное разрешение имени.
 import { STAND_AGENT_EMULATOR_ADDRESS, STAND_AGENT_EMULATOR_HOST } from "../env/agent/index.js";
+import { STAND_ISSUER_WEBHOOK_ADDRESS, STAND_ISSUER_WEBHOOK_HOST } from "../env/issuer/webhook.js";
 import { STAND_PORT, type HostResolver } from "../pao/subscription.js";
 
 export { STAND_AGENT_EMULATOR_ADDRESS, STAND_AGENT_EMULATOR_HOST };
@@ -17,7 +18,11 @@ export interface StandDns {
 
 export function createStandDns(): StandDns {
   const initial = (): Map<string, readonly string[]> =>
-    new Map([[STAND_AGENT_EMULATOR_HOST, [STAND_AGENT_EMULATOR_ADDRESS]]]);
+    new Map([
+      [STAND_AGENT_EMULATOR_HOST, [STAND_AGENT_EMULATOR_ADDRESS]],
+      // Приёмник вебхука банка стенда (РП46 (б) п. 3).
+      [STAND_ISSUER_WEBHOOK_HOST, [STAND_ISSUER_WEBHOOK_ADDRESS]],
+    ]);
   let table = initial();
   const resolve: HostResolver = async (host) => {
     const a = table.get(host);

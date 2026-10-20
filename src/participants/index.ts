@@ -3,3 +3,4 @@ export const component = "П10";
 
 export * from "./trusted.js";
 export * from "./routes.js";
+export * from "./notifications.js";

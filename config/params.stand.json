@@ -30,5 +30,8 @@
   "protocol_overlap_days": 180,
   "issuer_mode_default": "ON_BEHALF",
   "cx_outcome_timeout_days": 30,
-  "client_limit_period_tz": "Europe/Moscow"
+  "client_limit_period_tz": "Europe/Moscow",
+  "participant_notify_max_delay_sec": 60,
+  "participant_notify_horizon_sec": 86400,
+  "participant_notify_allow_hosts": ["issuer-emulator.stand"]
 }

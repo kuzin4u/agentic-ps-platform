@@ -15,7 +15,25 @@ export interface OperationRecord {
   /** hold.id по каждому счёту в порядке резерва: CART, затем родитель (РП43 п. 6). */
   readonly holds: readonly string[];
   readonly at: string;
+  /** Признаки для уведомителя участника (РП46 доп. п. 9 (о1)): пишутся тем же обновлением, что решение. */
+  readonly notify?: OperationNotify;
 }
+
+/**
+ * Признаки записи операции для уведомлений клиента через банк (РП46 доп. п. 7, 9): клиент мандата, агент, чей предел у
+ * LIMIT_EXCEEDED, счёт периода клиента и остаток после резерва. Только коды и ссылки (инвариант 1).
+ */
+export interface OperationNotify {
+  readonly participant_code: string;
+  readonly principal_ref: string;
+  readonly agent_code: string;
+  readonly limit_source?: LimitSource;
+  readonly client_account?: string;
+  readonly client_left_after?: number;
+}
+
+/** Чей предел сработал у LIMIT_EXCEEDED: мандата (в том числе родителя CART) или лимита клиента за период. */
+export type LimitSource = "MANDATE" | "CLIENT";
 
 /** Вход операции в окно дробления (РП44 п. 4): ключ — корневой INTENT, сумма парой с валютой, время — часы Платформы. */
 export interface WindowEntry {
@@ -70,6 +88,17 @@ export class MemoryOperationStore implements OperationStore {
     if (prior) return structuredClone(prior);
     this.#map.set(op_ref, { op_ref, msg_hash, decision: null, mandate_id: null, holds: [], at });
     return undefined;
+  }
+
+  /** Все записи — источник уведомителя в памяти (РП46 доп. п. 7); копии, хранилище не меняется. */
+  *records(): Iterable<OperationRecord> {
+    for (const r of this.#map.values()) yield structuredClone(r);
+  }
+
+  /** Запись по op_ref — для уведомителя в памяти и тестов; нет — undefined. */
+  get(op_ref: string): OperationRecord | undefined {
+    const r = this.#map.get(op_ref);
+    return r && structuredClone(r);
   }
 
   async finish(rec: OperationRecord): Promise<void> {
@@ -149,9 +178,25 @@ export class PgOperationStore implements OperationStore {
   }
 
   async finish(rec: OperationRecord): Promise<void> {
+    // Признаки уведомителя — тем же оператором (РП46 доп. п. 9 (о1)): новых обращений к базе в пути ADP нет.
+    const n = rec.notify;
     await this.client.query(
-      "UPDATE adp_operations SET decision = $2::jsonb, mandate_id = $3, holds = $4::jsonb WHERE op_ref = $1 AND decision IS NULL AND msg_hash = $5",
-      [rec.op_ref, JSON.stringify(rec.decision), rec.mandate_id, JSON.stringify(rec.holds), rec.msg_hash],
+      `UPDATE adp_operations SET decision = $2::jsonb, mandate_id = $3, holds = $4::jsonb,
+              participant_code = $6, principal_ref = $7, agent_code = $8, limit_source = $9, client_account = $10, client_left_after = $11
+        WHERE op_ref = $1 AND decision IS NULL AND msg_hash = $5`,
+      [
+        rec.op_ref,
+        JSON.stringify(rec.decision),
+        rec.mandate_id,
+        JSON.stringify(rec.holds),
+        rec.msg_hash,
+        n?.participant_code ?? null,
+        n?.principal_ref ?? null,
+        n?.agent_code ?? null,
+        n?.limit_source ?? null,
+        n?.client_account ?? null,
+        n?.client_left_after ?? null,
+      ],
     );
   }
 

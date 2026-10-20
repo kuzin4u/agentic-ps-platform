@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import Fastify, { type FastifyInstance } from "fastify";
 import { adpRoutes, type AdpDeps } from "./adp/routes.js";
+import type { NotifierHealth } from "./participants/notifications.js";
 import { participantRoutes, type ParticipantDeps } from "./participants/routes.js";
 import { paoRoutes, type PaoDeps } from "./pao/routes.js";
 
@@ -30,6 +31,11 @@ export interface ServerOptions {
    * подключает (доп. РП43 п. 21): открытого порта с правом создавать резервы нет.
    */
   adp?: AdpDeps;
+  /**
+   * Уведомитель участников (РП46 доп. п. 7): его состояние — в /health (ревью КТ1), без обращения к базе; отставание —
+   * признак с кодом PARTICIPANT_NOTIFY_LAGGING, статус ответа остаётся 200 (уведомления в решении о платеже не участвуют).
+   */
+  notifier?: { health(): NotifierHealth };
   /**
    * Режим «только BYPASS» (РП43 п. 8): самопроверка при старте не прошла. Неагентским — BYPASS, агентским — 503 без
    * решения; ПАО, П10 и точка решения не регистрируются; /health — 200 с mode и кодами непрошедших проверок; при входе
@@ -86,8 +92,9 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     return app;
   }
 
-  // Живость процесса; к базе не обращается.
-  app.get("/health", async () => ({ status: "ok", env: opts.env }));
+  // Живость процесса; к базе не обращается. Уведомитель — по последнему проходу этого процесса.
+  const notifier = opts.notifier;
+  app.get("/health", async () => ({ status: "ok", env: opts.env, ...(notifier ? { participant_notify: notifier.health() } : {}) }));
 
   // Проверка обращения — в отдельном контексте: /health её не проходит.
   const pao = opts.pao;

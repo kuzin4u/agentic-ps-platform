@@ -9,8 +9,16 @@ import { ConsentJournal, MemoryConsentStore } from "../consent/index.js";
 import type { MandateDecisionPayload } from "../consent/model.js";
 import { createAgentReceiver, type AgentReceiver } from "../env/agent/index.js";
 import { createIssuerEmulator } from "../env/issuer/index.js";
+import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
+import {
+  MemoryParticipantNotificationStore,
+  ParticipantNotifier,
+  type NoticeDeliveryRow,
+  type NotifierResult,
+} from "../participants/notifications.js";
+import { WebhookDeliverer } from "../participants/webhook.js";
 import { TrustedParticipants, type TrustedParticipantKey } from "../participants/trusted.js";
 import { ParticipantRequestVerifier } from "../participants/verify.js";
 import { paoIdempotency } from "../pao/idempotency.js";
@@ -51,6 +59,11 @@ export interface StandIssuer {
    * 200 `{principal_ref, revocation_ref, revoked}` или `{code}`; `mandate.revoked` агенту — по каждому мандату.
    */
   revokeAll(principalRef: string, revocationRef: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /**
+   * Лента уведомлений клиента через банк (РП46 (б) п. 3, ПИ-8 `GET /participants/v1/notifications`) с подписью запроса
+   * банка; after — notification_id последнего прочитанного. Уведомления по решениям ADP — после stand.notifyParticipants().
+   */
+  getNotifications(after?: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
 }
 
 export interface Stand {
@@ -69,6 +82,20 @@ export interface Stand {
   deliverEvents(): Promise<number>;
   /** Строка попытки push по событию (состояние, попытки, причина) — для тестов. */
   delivery(event_id: string): Promise<DeliveryRow | undefined>;
+  /**
+   * Проход уведомителя участников по часам стенда (РП46 доп. п. 7): уведомления клиента через банк по решённым записям
+   * операций ADP вне пути авторизации. Таймера на стенде нет — тест вызывает проход сам.
+   */
+  notifyParticipants(): Promise<NotifierResult>;
+  /**
+   * Проход вебхука-сигнала банку стенда по часам стенда (РП46 (б) п. 3): все готовые попытки до пустой очереди; число
+   * попыток. Повтор — по nextAttemptDelayMs ядра, тест двигает часы. Приёмник — issuerWebhook.
+   */
+  deliverParticipantNotifications(): Promise<number>;
+  /** Строка попытки вебхука по уведомлению — для тестов. */
+  notificationDelivery(notification_id: string): Promise<NoticeDeliveryRow | undefined>;
+  /** Приёмник вебхука банка стенда: ответы по очереди, полученные и обработанные сигналы. */
+  readonly issuerWebhook: IssuerWebhookReceiver;
   /** Приложение банка: подпись и отзыв мандата клиентом (РП12, РП36, РП38). */
   readonly issuer: StandIssuer;
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
@@ -100,9 +127,13 @@ export function createStand(): Stand {
   // Журнал согласий — память ядра (РП30 п. 6), часы стенда.
   // Банк стенда — эмулятор эмитента с ключом в памяти; другого доверенного участника на стенде нет (РП36 доп.).
   const emulator = createIssuerEmulator();
-  const trusted = new TrustedParticipants([emulator.trustedKey], { stand: true });
+  // Адрес вебхука банка стенда — в записи доверенного участника (РП46 доп. п. 9 (о4)).
+  const trusted = new TrustedParticipants([{ ...emulator.trustedKey, notify_url: STAND_ISSUER_NOTIFY_URL }], { stand: true });
   // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6).
-  const consentStore = new MemoryConsentStore();
+  // Outbox участника стенда — в памяти; журнал согласий пишет в него client.mandate_exhausted и client.revoked_all.
+  const operations = new MemoryOperationStore();
+  const notifications = new MemoryParticipantNotificationStore(operations);
+  const consentStore = new MemoryConsentStore({ notifications });
   const consent: ConsentJournal = new ConsentJournal(consentStore, {
     now,
     revocationOrder: () => trusted.revocationOrder(),
@@ -131,10 +162,36 @@ export function createStand(): Stand {
     now: () => now().getTime(),
     stand: true,
   });
+  // Записи операций ADP стенда — память; уведомитель участников читает их вне пути авторизации (РП46 доп. п. 7).
+  const notifier = new ParticipantNotifier(notifications, {
+    horizonSec: params.participant_notify_horizon_sec,
+    now: () => now().getTime(),
+  });
+  // Вебхук-сигнал банку стенда: проверка адреса та же, что в рабочем сервере, подменены разрешение имени и транспорт.
+  const issuerWebhook = createIssuerWebhookReceiver();
+  const webhook = new WebhookDeliverer({
+    store: notifications,
+    notifyUrl: (code) => trusted.notifyUrl(code),
+    resolveHost: dns.resolve,
+    transport: issuerWebhook.transport,
+    params,
+    now: () => now().getTime(),
+    stand: true,
+  });
   const app = buildServer({
     env: "dev",
+    notifier,
     pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
-    participants: { trusted, consent, params, state, limits, now, requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, now }) },
+    participants: {
+      trusted,
+      consent,
+      params,
+      state,
+      limits,
+      now,
+      requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, now }),
+      notifications,
+    },
     // ADP стенда (ПИ-1, РП43): реестр, журнал и П3 стенда, записи операций в памяти; только 127.0.0.1 (доп. РП43 п. 21).
     // Мандат — с клиентом из журнала, лимиты клиента — из записей банка стенда (РП45 п. 1–2).
     adp: {
@@ -142,7 +199,7 @@ export function createStand(): Stand {
         agents: registry,
         mandates: { get: (id, agent_code) => consent.adpMandate(id, agent_code) },
         state,
-        operations: new MemoryOperationStore(),
+        operations,
         params,
         // Все версии записей банка: лимит за период — по истории (расширение со следующего периода).
         clientLimits: { get: (c) => limits.history(c) },
@@ -210,6 +267,13 @@ export function createStand(): Stand {
       const res = await app.inject({ method: "GET", url: path, headers: emulator.signRequest("GET", path, "", now()) });
       return { statusCode: res.statusCode, body: res.json() };
     },
+    async getNotifications(after) {
+      const path = "/participants/v1/notifications";
+      const query = after === undefined ? "" : `after=${encodeURIComponent(after)}`;
+      const url = query === "" ? path : `${path}?${query}`;
+      const res = await app.inject({ method: "GET", url, headers: emulator.signRequest("GET", path, query, now()) });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
     async revokeAll(principalRef, revocationRef) {
       const record = {
         participant_code: emulator.participant_code,
@@ -237,6 +301,14 @@ export function createStand(): Stand {
       return total;
     },
     delivery: (id) => consentStore.delivery(id),
+    notifyParticipants: () => notifier.runOnce(),
+    async deliverParticipantNotifications() {
+      let total = 0;
+      for (let n = await webhook.runOnce(); n > 0; n = await webhook.runOnce()) total += n;
+      return total;
+    },
+    notificationDelivery: (id) => notifications.delivery(id),
+    issuerWebhook,
     issuer,
     setClock: (d) => (clock = d),
     now,

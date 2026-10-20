@@ -36,6 +36,11 @@ export interface TrustedParticipantKey {
   readonly public_key: string;
   /** Порядок отзыва — ссылка на соглашение банка с клиентом (РП37); у всех ключей участника одна. */
   readonly revocation_order: string;
+  /**
+   * Адрес вебхука-сигнала уведомлений клиента (РП46 доп. п. 9 (о4)) — часть соглашения с банком, у всех ключей участника
+   * один; смена — новой записью участника. Нет — уведомления только лентой. Форма и адреса имени — при каждой отправке.
+   */
+  readonly notify_url?: string;
 }
 
 /** Порядок отзыва на стенде (РП37 п. 5). */
@@ -52,6 +57,8 @@ export class TrustedParticipants {
   private readonly keys = new Map<string, KeyObject>();
   /** Порядок отзыва по участнику (РП37). */
   private readonly orders = new Map<string, string>();
+  /** Адрес вебхука по участнику (РП46 доп. п. 9 (о4)); null — у участника вебхука нет. */
+  private readonly notifyUrls = new Map<string, string | null>();
 
   constructor(list: readonly TrustedParticipantKey[], opts: TrustedParticipantsOptions) {
     const live = new Set<string>();
@@ -74,6 +81,15 @@ export class TrustedParticipants {
         throw new Error(`Доверенные участники: у ${k.participant_code} разные revocation_order в записях ключей (РП37)`);
       }
       this.orders.set(k.participant_code, k.revocation_order);
+      // Адрес вебхука: строка https:// до 2048 знаков (полная проверка — перед каждой отправкой, как РП40 п. 4).
+      const url = k.notify_url ?? null;
+      if (url !== null && (typeof url !== "string" || url.length > 2048 || !/^https:\/\//i.test(url))) {
+        throw new Error(`Доверенные участники: недопустимый notify_url у ${k.participant_code} (РП46 доп. п. 9)`);
+      }
+      if (this.notifyUrls.has(k.participant_code) && this.notifyUrls.get(k.participant_code) !== url) {
+        throw new Error(`Доверенные участники: у ${k.participant_code} разные notify_url в записях ключей (РП46 доп. п. 9)`);
+      }
+      this.notifyUrls.set(k.participant_code, url);
       // Тот же разбор, что у ключей агентов: каноническая запись, ed25519, слабые ключи — отказ.
       const parsed = parseKey([ED25519], k.alg, k.public_key);
       if (!parsed) throw new Error(`Доверенные участники: ключ ${k.participant_code}/${String(k.kid)} не принят (ed25519, DER SPKI base64)`);
@@ -97,6 +113,11 @@ export class TrustedParticipants {
   revocationOrder(): string | undefined {
     for (const [code, order] of this.orders) if (code !== STAND_ISSUER_CODE) return order;
     return this.orders.get(STAND_ISSUER_CODE);
+  }
+
+  /** Адрес вебхука участника (РП46 доп. п. 9 (о4)); нет или участник неизвестен — undefined (только лента). */
+  notifyUrl(participant_code: string): string | undefined {
+    return this.notifyUrls.get(participant_code) ?? undefined;
   }
 
   /** Подпись участника над записью о решении; неизвестный участник или ключ — false, как неверная подпись. */

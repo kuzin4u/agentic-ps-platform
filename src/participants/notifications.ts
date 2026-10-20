@@ -1,0 +1,608 @@
+// П10 Уведомления клиента через банк (PS-20 ч. 3; РП46 (б), доп. п. 7, 9; A3 п. 5.3): Outbox участника и уведомитель по
+// сохранённым записям операций ADP вне пути авторизации. Номер в ленте участника — под локом участника (как лента агента,
+// РП39 п. 2); второе уведомление на то же событие отсекает notification_id из типа и ключа повтора. Только коды и ссылки:
+// principal_ref, mandate_id, agent_code, op_ref, revocation_ref (инвариант 1, правило совместимости 3).
+import { createHash } from "node:crypto";
+import { canonicalJson } from "@kuzin4u/agentic-core";
+import type { SqlClient } from "@kuzin4u/agentic-core";
+import type { LimitSource, OperationNotify, OperationRecord, TxSqlClient } from "../adp/operations.js";
+import type { DeliveryOutcome, DeliveryState } from "../pao/delivery.js";
+import type { Decision } from "../shared/canonical.generated.js";
+
+export const NOTIFICATION_TYPES = [
+  "client.mandate_first_use",
+  "client.mandate_exhausted",
+  "client.limit_exhausted",
+  "client.limit_declined",
+  "client.revoked_all",
+] as const;
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+
+export interface NotificationData {
+  readonly principal_ref: string;
+  readonly mandate_id?: string;
+  readonly agent_code?: string;
+  readonly op_ref?: string;
+  /** Чей предел у client.limit_declined (РП46 (б) п. 2). */
+  readonly reason?: LimitSource;
+  readonly revocation_ref?: string;
+}
+
+/** Что записать: тип, ключ повтора (операция, мандат, счёт периода, revocation_ref) и данные. Номер и id даёт запись. */
+export interface NotificationDraft {
+  readonly type: NotificationType;
+  readonly key: string;
+  readonly data: NotificationData;
+}
+
+export interface StoredNotification {
+  readonly participant_code: string;
+  readonly seq: number;
+  readonly notification_id: string;
+  readonly type: NotificationType;
+  readonly at: string;
+  readonly data: NotificationData;
+}
+
+/**
+ * Уведомление в транзакции записи журнала (РП46 (б) п. 2): client.mandate_exhausted — вместе с MANDATE_EXHAUSTED. Лок
+ * участника берётся после лока агента (порядок «пара → агент → участник», РП46 доп. п. 5).
+ */
+export interface ParticipantNotice {
+  readonly participant_code: string;
+  readonly drafts: readonly NotificationDraft[];
+}
+
+/** Приёмник уведомлений в памяти для журнала согласий: вставка без await — атомарно с записью в одном процессе. */
+export interface NotificationSink {
+  insertNow(participant_code: string, drafts: readonly NotificationDraft[], at: string): void;
+}
+
+/** Решённая запись операции с клиентом мандата — вход уведомителя. */
+export interface NotifyOp {
+  readonly op_ref: string;
+  readonly decision: Decision;
+  readonly mandate_id: string | null;
+  readonly at: string;
+  readonly notify: OperationNotify;
+}
+
+export const NOTIFICATION_ID_DOMAIN = "pao:participant-notification-id:v1";
+export const NOTIFY_LOCK_DOMAIN = "pao:participant-notify-lock:v1";
+export const NOTIFICATION_ID = /^ntf_[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** notification_id — `ntf_` + UUID v8 из участника, типа и ключа повтора: одно событие — один id на всех экземплярах. */
+export function notificationIdFor(participant_code: string, type: NotificationType, key: string): string {
+  if ([participant_code, key].some((v) => v === "" || v.includes("\n"))) throw new Error("notificationIdFor: участник или ключ");
+  const b = createHash("sha256").update(`${NOTIFICATION_ID_DOMAIN}\n${participant_code}\n${type}\n${key}`, "utf8").digest().subarray(0, 16);
+  b[6] = (b[6]! & 0x0f) | 0x80; // версия 8
+  b[8] = (b[8]! & 0x3f) | 0x80; // вариант RFC 9562
+  const h = b.toString("hex");
+  return `ntf_${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/** Ключ pg_advisory_xact_lock участника: 64 бита SHA-256 со знаком, десятичной строкой (как ключ ленты агента). */
+export function notifyLockKey(participant_code: string): string {
+  return createHash("sha256").update(`${NOTIFY_LOCK_DOMAIN}\n${participant_code}`, "utf8").digest().readBigInt64BE(0).toString();
+}
+
+/** Решение, по которому могут быть уведомления: одобрение (первое использование, исчерпание лимита) или LIMIT_EXCEEDED. */
+const notifiable = (d: Decision): boolean => d.decision === "APPROVE" || d.reason === "LIMIT_EXCEEDED";
+
+/**
+ * Уведомления по записи операции (РП46 (б) п. 2): APPROVE — первое использование мандата (ключ — мандат) и, если остаток
+ * счёта клиента стал 0, исчерпание лимита клиента (ключ — счёт периода); LIMIT_EXCEEDED — отказ по превышению (ключ —
+ * операция, одно на операцию при повторах агента).
+ */
+export function draftsFor(op: NotifyOp): NotificationDraft[] {
+  const { principal_ref, agent_code } = op.notify;
+  const mandate_id = op.mandate_id ?? undefined;
+  const ref = { principal_ref, ...(mandate_id ? { mandate_id } : {}), agent_code };
+  if (op.decision.decision === "APPROVE") {
+    const out: NotificationDraft[] = [];
+    if (mandate_id) out.push({ type: "client.mandate_first_use", key: mandate_id, data: ref });
+    if (op.notify.client_account && op.notify.client_left_after === 0) {
+      out.push({ type: "client.limit_exhausted", key: op.notify.client_account, data: { ...ref, op_ref: op.op_ref } });
+    }
+    return out;
+  }
+  if (op.decision.reason === "LIMIT_EXCEEDED") {
+    const reason = op.notify.limit_source;
+    return [{ type: "client.limit_declined", key: op.op_ref, data: { ...ref, op_ref: op.op_ref, ...(reason ? { reason } : {}) } }];
+  }
+  return [];
+}
+
+/** Курсор after — не уведомление этого участника (чужое или неизвестное — одинаково): 400 REQUEST_INVALID. */
+export class NotificationCursorUnknown extends Error {
+  constructor() {
+    super("NOTIFICATION_CURSOR_UNKNOWN");
+  }
+}
+
+/** Строка попытки вебхука, взятая обработчиком: attempts уже включает эту попытку; claim — номер взятия (как РП40 доп. п. 6–8). */
+export interface DueNotice {
+  readonly notification: StoredNotification;
+  readonly attempts: number;
+  readonly claim: number;
+}
+
+export interface NoticeDeliveryRow {
+  readonly notification_id: string;
+  readonly participant_code: string;
+  readonly state: DeliveryState;
+  readonly attempts: number;
+  readonly claims: number;
+  readonly next_at_ms: number;
+  readonly last_reason: string | null;
+}
+
+/** Хранилище уведомлений участника; сбой — исключение. */
+export interface ParticipantNotificationStore {
+  /** Неразобранные решённые записи с клиентом, по которым могут быть уведомления, с at ≥ sinceAt, по возрастанию at. */
+  pending(sinceAt: string, limit: number): Promise<readonly NotifyOp[]>;
+  /** Самая старая неразобранная такая запись с at ≥ sinceAt — признак отставания уведомителя (доп. РП46 п. 9 (о2)). */
+  oldestPending(sinceAt: string): Promise<string | undefined>;
+  /** Одной транзакцией: лок участника, уведомления с ключом против повторов, отметка разбора записи операции. */
+  settle(op: NotifyOp, drafts: readonly NotificationDraft[], at: string): Promise<void>;
+  /** Уведомления не по записи операции (client.revoked_all): лок участника, ключ против повторов. */
+  append(participant_code: string, drafts: readonly NotificationDraft[], at: string): Promise<void>;
+  /** Лента участника после курсора, по возрастанию seq; чужой или неизвестный курсор — NotificationCursorUnknown. */
+  page(participant_code: string, after: string | undefined, limit: number): Promise<readonly StoredNotification[]>;
+  /**
+   * Попытки вебхука (РП46 (б) п. 3): строка на каждое уведомление — в транзакции уведомления; взять готовые PENDING с
+   * арендой (attempts + 1, claims + 1, next_at_ms — конец аренды), как доставка событий агенту (РП40 п. 5, доп. п. 7).
+   */
+  claimDue(nowMs: number, leaseUntilMs: number, limit: number): Promise<readonly DueNotice[]>;
+  /** Итог попытки при совпадении номера взятия и PENDING; иначе ничего (строку уже взял другой после аренды). */
+  finishDelivery(notification_id: string, claim: number, outcome: DeliveryOutcome): Promise<void>;
+  /** Строка попытки по уведомлению — для тестов и разбора. */
+  delivery(notification_id: string): Promise<NoticeDeliveryRow | undefined>;
+}
+
+/** Итог попытки в памяти — как в журнале согласий: возврат (refund, SKIPPED) — attempts − 1. */
+function finishedNotice(cur: NoticeDeliveryRow, o: DeliveryOutcome): NoticeDeliveryRow {
+  if (o.state === "DELIVERED") return { ...cur, state: "DELIVERED", last_reason: null };
+  if (o.state === "PENDING") {
+    const attempts = o.refund ? Math.max(0, cur.attempts - 1) : cur.attempts;
+    return { ...cur, state: "PENDING", attempts, next_at_ms: o.next_at_ms, last_reason: o.reason };
+  }
+  const attempts = o.state === "SKIPPED" ? Math.max(0, cur.attempts - 1) : cur.attempts;
+  return { ...cur, state: o.state, attempts, last_reason: o.reason };
+}
+
+/** Записи операций в памяти — источник уведомителя стенда (MemoryOperationStore.records). */
+export interface OperationRecords {
+  records(): Iterable<OperationRecord>;
+}
+
+const toNotifyOp = (r: OperationRecord): NotifyOp | undefined =>
+  r.decision && r.notify && notifiable(r.decision)
+    ? { op_ref: r.op_ref, decision: r.decision, mandate_id: r.mandate_id, at: r.at, notify: r.notify }
+    : undefined;
+
+/** В памяти (dev, стенд): один процесс — одна очередь; номер — по участнику, ключ против повторов — Map по id. */
+export class MemoryParticipantNotificationStore implements ParticipantNotificationStore {
+  readonly #byId = new Map<string, StoredNotification>();
+  readonly #feeds = new Map<string, StoredNotification[]>();
+  readonly #seen = new Set<string>();
+  readonly #deliveries = new Map<string, NoticeDeliveryRow>();
+
+  constructor(private readonly operations: OperationRecords) {}
+
+  async pending(sinceAt: string, limit: number): Promise<readonly NotifyOp[]> {
+    const out: NotifyOp[] = [];
+    for (const r of this.operations.records()) {
+      const op = toNotifyOp(r);
+      if (op && op.at >= sinceAt && !this.#seen.has(op.op_ref)) out.push(op);
+    }
+    return out.sort((a, b) => (a.at === b.at ? (a.op_ref < b.op_ref ? -1 : 1) : a.at < b.at ? -1 : 1)).slice(0, limit);
+  }
+
+  async oldestPending(sinceAt: string): Promise<string | undefined> {
+    return (await this.pending(sinceAt, 1))[0]?.at;
+  }
+
+  async settle(op: NotifyOp, drafts: readonly NotificationDraft[], at: string): Promise<void> {
+    this.insertNow(op.notify.participant_code, drafts, at);
+    this.#seen.add(op.op_ref);
+  }
+
+  async append(participant_code: string, drafts: readonly NotificationDraft[], at: string): Promise<void> {
+    this.insertNow(participant_code, drafts, at);
+  }
+
+  async page(participant_code: string, after: string | undefined, limit: number): Promise<readonly StoredNotification[]> {
+    const feed = this.#feeds.get(participant_code) ?? [];
+    let from = 0;
+    if (after !== undefined) {
+      const cur = this.#byId.get(after);
+      if (!cur || cur.participant_code !== participant_code) throw new NotificationCursorUnknown();
+      from = cur.seq;
+    }
+    return feed.slice(from, from + limit).map((n) => structuredClone(n));
+  }
+
+  /** Вставка без await (NotificationSink): журнал согласий в памяти пишет уведомление вместе с записью. */
+  insertNow(participant_code: string, drafts: readonly NotificationDraft[], at: string): void {
+    const feed = this.#feeds.get(participant_code) ?? [];
+    for (const d of drafts) {
+      const notification_id = notificationIdFor(participant_code, d.type, d.key);
+      if (this.#byId.has(notification_id)) continue;
+      const n: StoredNotification = { participant_code, seq: feed.length + 1, notification_id, type: d.type, at, data: { ...d.data } };
+      feed.push(n);
+      this.#byId.set(notification_id, n);
+      this.#deliveries.set(notification_id, {
+        notification_id,
+        participant_code,
+        state: "PENDING",
+        attempts: 0,
+        claims: 0,
+        next_at_ms: Date.parse(at),
+        last_reason: null,
+      });
+    }
+    this.#feeds.set(participant_code, feed);
+  }
+
+  async claimDue(nowMs: number, leaseUntilMs: number, limit: number): Promise<readonly DueNotice[]> {
+    const due = [...this.#deliveries.values()]
+      .filter((d) => d.state === "PENDING" && d.next_at_ms <= nowMs)
+      .sort((a, b) => a.next_at_ms - b.next_at_ms)
+      .slice(0, limit);
+    return due.map((d) => {
+      const next = { ...d, attempts: d.attempts + 1, claims: d.claims + 1, next_at_ms: leaseUntilMs };
+      this.#deliveries.set(d.notification_id, next);
+      return { notification: structuredClone(this.#byId.get(d.notification_id)!), attempts: next.attempts, claim: next.claims };
+    });
+  }
+
+  async finishDelivery(notification_id: string, claim: number, outcome: DeliveryOutcome): Promise<void> {
+    const cur = this.#deliveries.get(notification_id);
+    if (!cur || cur.state !== "PENDING" || cur.claims !== claim) return;
+    this.#deliveries.set(notification_id, finishedNotice(cur, outcome));
+  }
+
+  async delivery(notification_id: string): Promise<NoticeDeliveryRow | undefined> {
+    const d = this.#deliveries.get(notification_id);
+    return d && { ...d };
+  }
+}
+
+/** Точки внутри транзакции уведомления — только для тестов (гонка двух экземпляров): locked — сразу после лока участника. */
+export interface PgNotificationHooks {
+  readonly locked?: (participant_code: string) => Promise<void>;
+}
+
+interface PendingRow extends Record<string, unknown> {
+  op_ref: string;
+  decision: Decision;
+  mandate_id: string | null;
+  at: string;
+  participant_code: string;
+  principal_ref: string;
+  agent_code: string;
+  limit_source: LimitSource | null;
+  client_account: string | null;
+  client_left_after: string | null;
+}
+
+const PENDING_WHERE = `o.decision IS NOT NULL AND o.participant_code IS NOT NULL AND o.at >= $1
+     AND (o.decision->>'decision' = 'APPROVE' OR o.decision->>'reason' = 'LIMIT_EXCEEDED')
+     AND NOT EXISTS (SELECT 1 FROM participant_notify_seen s WHERE s.op_ref = o.op_ref)`;
+
+/**
+ * На PostgreSQL (sql/107): транзакция на запись операции — лок участника, seq = max + 1 у участника, вставка
+ * ON CONFLICT (notification_id) DO NOTHING, отметка разбора, COMMIT. Лок держится до фиксации, поэтому N + 1
+ * фиксируется только после N и курсор ленты не проскакивает незафиксированное (как РП39 п. 2).
+ */
+export class PgParticipantNotificationStore implements ParticipantNotificationStore {
+  private readonly hooks: PgNotificationHooks;
+
+  constructor(
+    private readonly client: TxSqlClient,
+    opts: { readonly hooks?: PgNotificationHooks } = {},
+  ) {
+    this.hooks = opts.hooks ?? {};
+  }
+
+  async pending(sinceAt: string, limit: number): Promise<readonly NotifyOp[]> {
+    const r = await this.client.query<PendingRow>(
+      `SELECT o.op_ref, o.decision, o.mandate_id, o.at, o.participant_code, o.principal_ref, o.agent_code, o.limit_source,
+              o.client_account, o.client_left_after
+         FROM adp_operations o
+        WHERE ${PENDING_WHERE}
+        ORDER BY o.at, o.op_ref
+        LIMIT $2`,
+      [sinceAt, limit],
+    );
+    return r.rows.map((row) => ({
+      op_ref: row.op_ref,
+      decision: row.decision,
+      mandate_id: row.mandate_id,
+      at: row.at,
+      notify: {
+        participant_code: row.participant_code,
+        principal_ref: row.principal_ref,
+        agent_code: row.agent_code,
+        ...(row.limit_source ? { limit_source: row.limit_source } : {}),
+        ...(row.client_account ? { client_account: row.client_account } : {}),
+        ...(row.client_left_after === null ? {} : { client_left_after: Number(row.client_left_after) }),
+      },
+    }));
+  }
+
+  async oldestPending(sinceAt: string): Promise<string | undefined> {
+    const r = await this.client.query<{ at: string | null }>(`SELECT min(o.at) AS at FROM adp_operations o WHERE ${PENDING_WHERE}`, [sinceAt]);
+    return r.rows[0]?.at ?? undefined;
+  }
+
+  async settle(op: NotifyOp, drafts: readonly NotificationDraft[], at: string): Promise<void> {
+    await this.tx(op.notify.participant_code, drafts, at, op.op_ref);
+  }
+
+  async append(participant_code: string, drafts: readonly NotificationDraft[], at: string): Promise<void> {
+    await this.tx(participant_code, drafts, at);
+  }
+
+  async page(participant_code: string, after: string | undefined, limit: number): Promise<readonly StoredNotification[]> {
+    let from = 0;
+    if (after !== undefined) {
+      const c = await this.client.query<{ seq: string }>(
+        "SELECT seq FROM participant_notifications WHERE notification_id = $1 AND participant_code = $2",
+        [after, participant_code],
+      );
+      if (!c.rows[0]) throw new NotificationCursorUnknown();
+      from = Number(c.rows[0].seq);
+    }
+    const r = await this.client.query<{ seq: string; notification_id: string; type: NotificationType; at: string; data: string }>(
+      `SELECT seq, notification_id, type, at, data FROM participant_notifications
+        WHERE participant_code = $1 AND seq > $2 ORDER BY seq LIMIT $3`,
+      [participant_code, from, limit],
+    );
+    return r.rows.map((row) => ({
+      participant_code,
+      seq: Number(row.seq),
+      notification_id: row.notification_id,
+      type: row.type,
+      at: row.at,
+      data: JSON.parse(row.data) as NotificationData,
+    }));
+  }
+
+  async claimDue(nowMs: number, leaseUntilMs: number, limit: number): Promise<readonly DueNotice[]> {
+    const r = await this.client.query<{
+      participant_code: string;
+      seq: string;
+      notification_id: string;
+      type: NotificationType;
+      at: string;
+      data: string;
+      attempts: number;
+      claims: number;
+    }>(
+      `WITH c AS (
+         SELECT notification_id FROM participant_notification_deliveries
+         WHERE state = 'PENDING' AND next_at_ms <= $1 ORDER BY next_at_ms LIMIT $3 FOR UPDATE SKIP LOCKED
+       ), u AS (
+         UPDATE participant_notification_deliveries d SET attempts = d.attempts + 1, claims = d.claims + 1, next_at_ms = $2
+         FROM c WHERE d.notification_id = c.notification_id RETURNING d.notification_id, d.attempts, d.claims
+       )
+       SELECT n.participant_code, n.seq, n.notification_id, n.type, n.at, n.data, u.attempts, u.claims
+       FROM u JOIN participant_notifications n ON n.notification_id = u.notification_id`,
+      [nowMs, leaseUntilMs, limit],
+    );
+    return r.rows.map((x) => ({
+      notification: {
+        participant_code: x.participant_code,
+        seq: Number(x.seq),
+        notification_id: x.notification_id,
+        type: x.type,
+        at: x.at,
+        data: JSON.parse(x.data) as NotificationData,
+      },
+      attempts: Number(x.attempts),
+      claim: Number(x.claims),
+    }));
+  }
+
+  async finishDelivery(notification_id: string, claim: number, outcome: DeliveryOutcome): Promise<void> {
+    const refund = outcome.state === "SKIPPED" || (outcome.state === "PENDING" && outcome.refund === true);
+    await this.client.query(
+      `UPDATE participant_notification_deliveries
+       SET state = $3, attempts = GREATEST(0, attempts - $4), next_at_ms = COALESCE($5, next_at_ms), last_reason = $6
+       WHERE notification_id = $1 AND claims = $2 AND state = 'PENDING'`,
+      [
+        notification_id,
+        claim,
+        outcome.state,
+        refund ? 1 : 0,
+        outcome.state === "PENDING" ? outcome.next_at_ms : null,
+        outcome.state === "DELIVERED" ? null : outcome.reason,
+      ],
+    );
+  }
+
+  async delivery(notification_id: string): Promise<NoticeDeliveryRow | undefined> {
+    const r = await this.client.query<{
+      notification_id: string;
+      participant_code: string;
+      state: DeliveryState;
+      attempts: number;
+      claims: number;
+      next_at_ms: string;
+      last_reason: string | null;
+    }>(
+      `SELECT notification_id, participant_code, state, attempts, claims, next_at_ms, last_reason
+         FROM participant_notification_deliveries WHERE notification_id = $1`,
+      [notification_id],
+    );
+    const x = r.rows[0];
+    return x && { ...x, attempts: Number(x.attempts), claims: Number(x.claims), next_at_ms: Number(x.next_at_ms) };
+  }
+
+  private async tx(participant_code: string, drafts: readonly NotificationDraft[], at: string, op_ref?: string): Promise<void> {
+    const tx = await this.client.connect();
+    let broken: Error | undefined;
+    try {
+      try {
+        await tx.query("BEGIN");
+        await insertNotificationsTx(tx, participant_code, drafts, at, this.hooks);
+        if (op_ref !== undefined) {
+          await tx.query("INSERT INTO participant_notify_seen (op_ref, at) VALUES ($1, $2) ON CONFLICT (op_ref) DO NOTHING", [op_ref, at]);
+        }
+        await tx.query("COMMIT");
+      } catch (err) {
+        // Соединение, на котором не прошёл ROLLBACK, в пул не возвращается (как РП39).
+        await tx.query("ROLLBACK").catch((rb: unknown) => {
+          broken = rb instanceof Error ? rb : new Error(String(rb));
+        });
+        throw err;
+      }
+    } finally {
+      tx.release(broken);
+    }
+  }
+}
+
+/**
+ * Уведомления в открытой транзакции: лок участника до фиксации, seq = max + 1, ON CONFLICT (notification_id) DO NOTHING —
+ * второе уведомление на то же событие не пишется. Общая для уведомителя, revoke-all и записи MANDATE_EXHAUSTED.
+ */
+export async function insertNotificationsTx(
+  tx: SqlClient,
+  participant_code: string,
+  drafts: readonly NotificationDraft[],
+  at: string,
+  hooks: PgNotificationHooks = {},
+): Promise<void> {
+  await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [notifyLockKey(participant_code)]);
+  await hooks.locked?.(participant_code);
+  for (const d of drafts) {
+    const ins = await tx.query<{ notification_id: string }>(
+      `INSERT INTO participant_notifications (participant_code, seq, notification_id, type, at, data)
+       SELECT $1, COALESCE(max(seq), 0) + 1, $2, $3, $4, $5 FROM participant_notifications WHERE participant_code = $1
+       ON CONFLICT (notification_id) DO NOTHING
+       RETURNING notification_id`,
+      [participant_code, notificationIdFor(participant_code, d.type, d.key), d.type, at, canonicalJson(d.data)],
+    );
+    // Строка попытки вебхука — только у новой строки Outbox (повтор события — без второй попытки, РП46 (б) п. 3).
+    if (ins.rows[0]) {
+      await tx.query(
+        `INSERT INTO participant_notification_deliveries (notification_id, participant_code, state, attempts, next_at_ms)
+         VALUES ($1, $2, 'PENDING', 0, $3)`,
+        [ins.rows[0].notification_id, participant_code, Date.parse(at)],
+      );
+    }
+  }
+}
+
+/** Сколько записей операций уведомитель разбирает за проход. */
+export const NOTIFY_BATCH = 100;
+
+export type NotifierLog = (level: "info" | "warn", fields: Record<string, unknown>, msg: string) => void;
+
+export interface NotifierResult {
+  readonly settled: number;
+  readonly failed: number;
+  /** Неразобранная запись старше половины горизонта (доп. РП46 п. 9 (о2)). */
+  readonly lagging: boolean;
+}
+
+/** Состояние уведомителя для /health (ревью КТ1): без обращения к базе — по последнему проходу этого процесса. */
+export interface NotifierHealth {
+  /** Конец последнего прохода без исключения; null — проходов ещё не было. */
+  readonly last_pass_at: string | null;
+  readonly lagging: boolean;
+  /** Код реестра при отставании (PLATFORM_DIAG). */
+  readonly code?: "PARTICIPANT_NOTIFY_LAGGING";
+}
+
+/**
+ * Уведомитель (РП46 доп. п. 7): проход по решённым записям операций в горизонте вне пути авторизации. Сбой записи — в
+ * журнал процесса, запись остаётся неразобранной и берётся следующим проходом.
+ */
+export class ParticipantNotifier {
+  private readonly now: () => number;
+  private readonly log: NotifierLog;
+  private readonly startedMs: number;
+  private lastPassMs: number | undefined;
+  private lastLagging = false;
+
+  constructor(
+    private readonly store: ParticipantNotificationStore,
+    private readonly opts: {
+      readonly horizonSec: number;
+      readonly now?: () => number;
+      readonly log?: NotifierLog;
+    },
+  ) {
+    this.now = opts.now ?? (() => Date.now());
+    this.log = opts.log ?? (() => {});
+    this.startedMs = this.now();
+  }
+
+  /**
+   * Отставание видно снаружи (ревью КТ1): проход не завершался дольше половины горизонта (с запуска или с последнего
+   * прохода) или последний проход нашёл запись старше половины горизонта. Остановившийся уведомитель журнал не пишет —
+   * признак берёт мониторинг из /health.
+   */
+  health(): NotifierHealth {
+    const since = this.lastPassMs ?? this.startedMs;
+    const lagging = this.lastLagging || this.now() - since > (this.opts.horizonSec * 1000) / 2;
+    return {
+      last_pass_at: this.lastPassMs === undefined ? null : new Date(this.lastPassMs).toISOString(),
+      lagging,
+      ...(lagging ? { code: "PARTICIPANT_NOTIFY_LAGGING" as const } : {}),
+    };
+  }
+
+  /** Признак отставания: самая старая неразобранная запись старше половины горизонта. */
+  async lagging(): Promise<boolean> {
+    const nowMs = this.now();
+    const oldest = await this.store.oldestPending(new Date(nowMs - this.opts.horizonSec * 1000).toISOString());
+    return oldest !== undefined && Date.parse(oldest) < nowMs - (this.opts.horizonSec * 1000) / 2;
+  }
+
+  async runOnce(): Promise<NotifierResult> {
+    const nowMs = this.now();
+    const since = new Date(nowMs - this.opts.horizonSec * 1000).toISOString();
+    const at = new Date(nowMs).toISOString();
+    let settled = 0;
+    let failed = 0;
+    for (const op of await this.store.pending(since, NOTIFY_BATCH)) {
+      try {
+        await this.store.settle(op, draftsFor(op), at);
+        settled++;
+      } catch {
+        failed++;
+        this.log("warn", { op_ref: op.op_ref, participant_code: op.notify.participant_code }, "П10: уведомление по записи операции не записано");
+      }
+    }
+    const lagging = await this.lagging();
+    if (lagging) this.log("warn", { code: "PARTICIPANT_NOTIFY_LAGGING" }, "П10: уведомитель отстаёт больше чем на половину горизонта");
+    this.lastPassMs = this.now();
+    this.lastLagging = lagging;
+    return { settled, failed, lagging };
+  }
+}
+
+/** Проход уведомителя по таймеру; останов ждёт идущий проход. */
+export function startParticipantNotifier(notifier: ParticipantNotifier, everyMs: number, onError: (err: unknown) => void): () => Promise<void> {
+  let running: Promise<void> | undefined;
+  const timer = setInterval(() => {
+    if (running) return;
+    running = notifier
+      .runOnce()
+      .then(
+        () => undefined,
+        (err: unknown) => onError(err),
+      )
+      .finally(() => (running = undefined));
+  }, everyMs);
+  timer.unref();
+  return async () => {
+    clearInterval(timer);
+    await running;
+  };
+}

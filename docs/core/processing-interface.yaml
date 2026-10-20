@@ -652,6 +652,99 @@ paths:
           description: "`SIGNATURE_INVALID` — подпись не проверена (в том числе метка отзыва одного мандата)"
         '503':
           description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After: сбой посередине — метка уже действует, банк повторяет тот же revocation_ref"
+  /participants/v1/notifications:
+    get:
+      summary: ПИ-8 Лента уведомлений клиента через банк (эмитент, РП46 (б), доп. п. 7, 9, 10; A3 п. 5.3)
+      description: "Уведомления клиенту банка: client.mandate_first_use (первое одобрение по мандату, одно на мандат), client.limit_declined (отказ LIMIT_EXCEEDED, одно на операцию, reason — MANDATE или CLIENT), client.limit_exhausted (остаток лимита клиента за период стал 0, одно на счёт периода, после отмены операции не отменяется), client.mandate_exhausted (бюджет мандата исчерпан), client.revoked_all (отзыв всех полномочий, одно на revocation_ref). По решениям ADP — уведомителем вне пути авторизации, задержка не больше participant_notify_max_delay_sec; нет сохранённой записи решения — нет уведомления. Подпись HTTP-запроса участника — как GET лимитов (RFC 9421, профиль ПАО §2 с x-participant-code); участник — из проверенной подписи, только свои уведомления. По возрастанию seq, не больше event_page_max за ответ; дальше — следующий запрос с after. Вебхук-сигнал POST {notification_id, seq} на notify_url из записи доверенного участника — без подписи Платформы до SEC-1, содержание — только из этой ленты; без notify_url и после исчерпания попыток — только лента."
+      parameters:
+      - name: after
+        in: query
+        required: false
+        description: notification_id последнего прочитанного уведомления этого участника; без него — с начала ленты
+        schema:
+          type: string
+          pattern: '^ntf_[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      - name: x-participant-code
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: x-timestamp
+        in: header
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - name: x-nonce
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: content-digest
+        in: header
+        required: true
+        description: digest пустого тела
+        schema:
+          type: string
+      - name: signature-input
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: signature
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: "{notifications: [{notification_id, seq, type, at, data}]}; data — только principal_ref, mandate_id, agent_code, op_ref, reason, revocation_ref (коды, без текстов и номера карты)"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notifications]
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      type: object
+                      required: [notification_id, seq, type, at, data]
+                      properties:
+                        notification_id:
+                          type: string
+                        seq:
+                          type: integer
+                          minimum: 1
+                        type:
+                          type: string
+                          enum: [client.mandate_first_use, client.mandate_exhausted, client.limit_exhausted, client.limit_declined, client.revoked_all]
+                        at:
+                          type: string
+                          format: date-time
+                        data:
+                          type: object
+                          required: [principal_ref]
+                          properties:
+                            principal_ref:
+                              type: string
+                            mandate_id:
+                              type: string
+                            agent_code:
+                              type: string
+                            op_ref:
+                              type: string
+                            reason:
+                              type: string
+                              enum: [MANDATE, CLIENT]
+                            revocation_ref:
+                              type: string
+        '400':
+          description: "`REQUEST_INVALID` — after чужой, неизвестный, не по форме или повторён, лишний параметр запроса (после проверенной подписи)"
+        '401':
+          description: "`SIGNATURE_INVALID` — нет подписи, неизвестный участник или ключ, состав не по профилю, вне окна, повтор nonce"
+        '503':
+          description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
   /participants/v1/confirmations/{id}:
     post:
       summary: ПИ-8/ПИ-6 Результат подтверждения

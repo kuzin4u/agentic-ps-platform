@@ -167,8 +167,23 @@ describe("стендовые параметры", () => {
       "`bypass_overhead_ms` < `adp_p99_ms`",
       "`adp_timeout_ms` > `adp_p99_ms`",
       "`key_overlap_days` < `key_ttl_days`",
+      "`participant_notify_horizon_sec` ≥ 2 × `participant_notify_max_delay_sec`",
     ]) {
       expect(section, rule).toContain(rule);
+    }
+  });
+
+  it("participant_notify_horizon_sec не меньше двух participant_notify_max_delay_sec (РП46 доп. п. 9 (о2))", () => {
+    expect(parseParams({ ...stand(), participant_notify_max_delay_sec: 60, participant_notify_horizon_sec: 120 }).participant_notify_horizon_sec).toBe(120);
+    expect(() => parseParams({ ...stand(), participant_notify_max_delay_sec: 60, participant_notify_horizon_sec: 119 })).toThrow(
+      /participant_notify_horizon_sec меньше двух participant_notify_max_delay_sec/,
+    );
+  });
+
+  it("participant_notify_allow_hosts — как event_subscription_allow_hosts: IP и повтор — отказ, пустой допустим", () => {
+    expect(parseParams({ ...stand(), participant_notify_allow_hosts: [] }).participant_notify_allow_hosts).toEqual([]);
+    for (const v of [["127.0.0.1"], ["a.stand", "a.stand"], ["A.stand"], "a.stand"]) {
+      expect(() => parseParams({ ...stand(), participant_notify_allow_hosts: v }), JSON.stringify(v)).toThrow(/participant_notify_allow_hosts:/);
     }
   });
 

@@ -16,13 +16,14 @@ import { isOpaquePrincipalRef } from "../consent/terms.js";
 import type { Params } from "../shared/config.js";
 import type { StateService } from "../state/service.js";
 import { limitsBody, type LimitsStore } from "./limits.js";
+import { NOTIFICATION_ID, NotificationCursorUnknown, type ParticipantNotificationStore } from "./notifications.js";
 import type { TrustedParticipants } from "./trusted.js";
 import type { ParticipantRequestVerifier } from "./verify.js";
 
 export interface ParticipantDeps {
   readonly trusted: TrustedParticipants;
   readonly consent: ConsentJournal;
-  readonly params: SignaturePolicy & Pick<Params, "unavailable_retry_after_sec">;
+  readonly params: SignaturePolicy & Pick<Params, "unavailable_retry_after_sec"> & Partial<Pick<Params, "event_page_max">>;
   /** П3: счёт бюджета открывается после MANDATE_SIGNED (РП41 п. 3); без П3 или при сбое — первым резервом. */
   readonly state?: Pick<StateService, "open">;
   /** Лимиты клиента от банка (РП45 п. 1); без хранилища маршрута лимитов нет. */
@@ -31,6 +32,8 @@ export interface ParticipantDeps {
   readonly now?: () => Date;
   /** Подпись запроса участника у чтений ПИ-8 (RFC 9421, РП46 (в)); без неё маршрута GET лимитов нет. */
   readonly requests?: ParticipantRequestVerifier;
+  /** Outbox участника (РП46 (б)); без него, без подписи запроса и без event_page_max маршрута ленты уведомлений нет. */
+  readonly notifications?: ParticipantNotificationStore;
 }
 
 /** Коды ответа ПИ-8 подписи (processing-interface.yaml); тело ошибки — `{code}`, причина — в журнале процесса. */
@@ -245,6 +248,47 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
     }
   });
 
+  // Лента уведомлений клиента через банк (РП46 (б) п. 3): подпись запроса участника (RFC 9421) → только свои, участник —
+  // из проверенной подписи; after — notification_id этого участника, чужой, неизвестный или не по форме — 400 (как лента
+  // агента, РП39 п. 7, доп. п. 4). Страница — не больше event_page_max, по возрастанию seq.
+  const notifications = deps.notifications;
+  const pageMax = deps.params.event_page_max;
+  if (deps.requests && notifications && pageMax !== undefined) {
+    const requests = deps.requests;
+    app.get("/participants/v1/notifications", async (req, reply) => {
+      const fail = (code: keyof typeof HTTP) => {
+        const http = HTTP[code]!;
+        if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+        return reply.code(http).send({ code });
+      };
+      const auth = await verifyRead(requests, req);
+      if (!auth.ok) {
+        if (auth.code === "UPSTREAM_UNAVAILABLE") {
+          req.log.error({ err: auth.cause }, "ПИ-8: лента уведомлений — сбой хранилища nonce");
+          return fail("UPSTREAM_UNAVAILABLE");
+        }
+        req.log.info("ПИ-8: лента уведомлений — подпись запроса участника не проверена");
+        return fail("SIGNATURE_INVALID");
+      }
+      const query = req.query as Record<string, unknown>;
+      const keys = Object.keys(query);
+      const after = query.after;
+      if (keys.some((k) => k !== "after") || (after !== undefined && (typeof after !== "string" || !NOTIFICATION_ID.test(after)))) {
+        return fail("REQUEST_INVALID");
+      }
+      try {
+        const page = await notifications.page(auth.participant_code, after, pageMax);
+        return reply.code(200).send({
+          notifications: page.map((n) => ({ notification_id: n.notification_id, seq: n.seq, type: n.type, at: n.at, data: n.data })),
+        });
+      } catch (err) {
+        if (err instanceof NotificationCursorUnknown) return fail("REQUEST_INVALID");
+        req.log.error({ err, participant_code: auth.participant_code }, "ПИ-8: сбой ленты уведомлений");
+        return fail("UPSTREAM_UNAVAILABLE");
+      }
+    });
+  }
+
   const limits = deps.limits;
   if (!limits) return;
   // Лимиты клиента (РП45 п. 1, 3): тело → подпись банка (401 до хранилища) → только вставка с версией. GET того же пути —
@@ -287,15 +331,7 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
       return reply.code(http).send({ code });
     };
-    const url = req.raw.url ?? "";
-    const q = url.indexOf("?");
-    const auth = await requests.verify({
-      method: req.method,
-      path: q < 0 ? url : url.slice(0, q),
-      query: q < 0 ? "" : url.slice(q + 1),
-      headers: req.headers,
-      body: "",
-    });
+    const auth = await verifyRead(requests, req);
     if (!auth.ok) {
       if (auth.code === "UPSTREAM_UNAVAILABLE") {
         req.log.error({ err: auth.cause }, "ПИ-8: GET лимитов — сбой хранилища nonce");
@@ -313,5 +349,18 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       req.log.error({ err, participant_code: auth.participant_code }, "ПИ-8: сбой хранилища лимитов");
       return fail("UPSTREAM_UNAVAILABLE");
     }
+  });
+}
+
+/** Подпись запроса участника у чтения ПИ-8 (РП46 (в)): путь и запрос — как пришли, тело пустое. */
+function verifyRead(requests: ParticipantRequestVerifier, req: FastifyRequest) {
+  const url = req.raw.url ?? "";
+  const q = url.indexOf("?");
+  return requests.verify({
+    method: req.method,
+    path: q < 0 ? url : url.slice(0, q),
+    query: q < 0 ? "" : url.slice(q + 1),
+    headers: req.headers,
+    body: "",
   });
 }
