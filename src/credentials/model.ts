@@ -1,6 +1,6 @@
 // П5 Агентские реквизиты (SPEC §3, РП47): записи токена и реквизита, порты токен-сервиса (ПИ-4) и банка клиента.
 // Номера карты нет нигде (инвариант 1): у токена — только funding_ref банка, у реквизита — SHA-256 криптограммы, а не она.
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 
 /** Домен агентского токена (РП47 п. 2): из записи CART журнала, а не со слов агента (инвариант 5). */
 export interface TokenDomain {
@@ -66,12 +66,12 @@ const LETTERS = "abcdefghijklmnopqrstuvwxyz";
 
 /**
  * Непрозрачная ссылка: префикс и 24 строчные латинские буквы. Без цифр — длинная цифровая серия не похожа на номер
- * карты и не задевает правило непрозрачных ссылок (инвариант 1, STATUS «Открыто» о семи цифрах).
+ * карты и не задевает правило непрозрачных ссылок (инвариант 1, STATUS «Открыто» о семи цифрах). Буква — randomInt
+ * (отбор без смещения), а не «байт % 26»: 256 на 26 не делится (CodeQL js/biased-cryptographic-random).
  */
 export function opaqueRef(prefix: string): string {
-  const b = randomBytes(24);
   let s = prefix;
-  for (const x of b) s += LETTERS[x % LETTERS.length];
+  for (let i = 0; i < 24; i++) s += LETTERS[randomInt(LETTERS.length)];
   return s;
 }
 

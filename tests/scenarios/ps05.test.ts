@@ -158,6 +158,12 @@ describe("ПС05 на стенде: агентский токен и крипт�
     });
     const decide = async (op_ref: string) =>
       parseDecision((await stand.app.inject({ method: "POST", url: "/adp/v1/decide", payload: msg(op_ref) })).json(), "adp");
+    // Домен — из записи токена Платформы, которую читает ADP (а не копия эмулятора): чужой код агента в aoi — AOI_MISMATCH.
+    const foreign = { ...msg("OPKC-PS05-0"), aoi: { ...c.aoi, agent_code: "nspk:agent:other:v1" } };
+    expect(parseDecision((await stand.app.inject({ method: "POST", url: "/adp/v1/decide", payload: foreign })).json(), "adp")).toMatchObject({
+      decision: "DECLINE",
+      reason: "AOI_MISMATCH",
+    });
     expect((await decide("OPKC-PS05-1")).decision).toBe("APPROVE");
     expect(await decide("OPKC-PS05-2")).toMatchObject({ decision: "DECLINE", reason: "CREDENTIAL_INVALID" });
     const again = await call("POST", "/pao/v1/credentials", credReq({ order_ref: "ORD-ps05-adp", amount_max: 50_000 }));

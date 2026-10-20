@@ -1,7 +1,7 @@
 // ADP п. 2 и 4 с агентским токеном (PS-14 К1.3б, РП47 п. 6–8): домен токена, криптограмма, предел инструмента,
 // погашение ISSUED → USED только у APPROVE после резерва; одноразовость при гонке; на настоящем журнале и П3 в памяти.
 import { describe, expect, it } from "vitest";
-import { Adp, MemoryOperationStore } from "../../src/adp/index.js";
+import { Adp, MemoryOperationStore, type AdpCredentials, type AdpMandates, type AdpOptions } from "../../src/adp/index.js";
 import { Credentials, MemoryCredentialStore, type CredentialStore } from "../../src/credentials/index.js";
 import { createTokenServiceEmulator } from "../../src/env/tsp/index.js";
 import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
@@ -22,9 +22,22 @@ interface World {
   issue: (order_ref?: string, amount_max?: number) => Promise<Credential>;
   logs: string[];
   setNow: (t: number) => void;
+  /** ADP с теми же журналом, П3 и записями операций, но своим портом П5 или журналом согласий. */
+  adpWith: (over: { credentials?: AdpCredentials; mandates?: AdpMandates }) => Adp;
 }
 
-async function world(opts: { store?: CredentialStore; cartLimit?: number; confirmAbove?: number; adpStore?: CredentialStore } = {}): Promise<World> {
+/**
+ * Подделка порта П5 делегированием, а не Object.create: у MemoryCredentialStore закрытые поля (#), через прототип они
+ * не наследуются — унаследованный метод бросает TypeError, и тест проходил бы на чужой ветке (ревью КТ1 Б1).
+ */
+const delegate = (s: CredentialStore, over: Partial<AdpCredentials> = {}): AdpCredentials => ({
+  tokenByRef: (t) => s.tokenByRef(t),
+  credentialByCryptogram: (t, h) => s.credentialByCryptogram(t, h),
+  consume: (c, o) => s.consume(c, o),
+  ...over,
+});
+
+async function world(opts: { cartLimit?: number; confirmAbove?: number; clientPerPeriod?: number } = {}): Promise<World> {
   let now = T0.getTime();
   const c = setup({ now: () => new Date(now) });
   const p = await mk(c, intent({ amount_limit: 50_000 }));
@@ -41,7 +54,7 @@ async function world(opts: { store?: CredentialStore; cartLimit?: number; confir
     }),
   );
   await decide(c, cart);
-  const store = opts.store ?? new MemoryCredentialStore();
+  const store = new MemoryCredentialStore();
   const credentials = new Credentials({
     mandates: { get: (id, code) => c.consent.credentialMandate(id, code) },
     store,
@@ -51,13 +64,18 @@ async function world(opts: { store?: CredentialStore; cartLimit?: number; confir
     now: () => new Date(now),
   });
   const logs: string[] = [];
-  const adp = new Adp({
+  // Лимит клиента за период (РП45 п. 1): запись банка до начала периода — действует сразу.
+  const versions =
+    opts.clientPerPeriod === undefined
+      ? []
+      : [{ limits: { per_period: opts.clientPerPeriod, period: "DAY", currency: "RUB" }, received_at: "2026-10-18T00:00:00Z" }];
+  const adpOpts: AdpOptions = {
     agents: { get: (code) => (code === A || code === B ? { status: "ACTIVE", level: 2 } : undefined) },
     mandates: { get: (id, a) => c.consent.adpMandate(id, a) },
-    clientLimits: { get: async () => [] },
+    clientLimits: { get: async () => versions },
     state: c.state,
     operations: new MemoryOperationStore(),
-    credentials: opts.adpStore ?? store,
+    credentials: store,
     params: {
       aoi_rollout_phase: 3,
       confirm_above_kop: opts.confirmAbove ?? 1_000_000,
@@ -67,13 +85,15 @@ async function world(opts: { store?: CredentialStore; cartLimit?: number; confir
     },
     log: (_l, fields, msg) => logs.push(`${msg} ${JSON.stringify(fields)}`),
     now: () => new Date(now),
-  });
+  };
+  const adp = new Adp(adpOpts);
   const issue = async (order_ref = "ORD-1", amount_max = limit): Promise<Credential> => {
     const r = await credentials.issue(A, { mandate_id: cart.id, order_ref, merchant_id: "MER-1042", amount_max, currency: "RUB", kind: "CARD" });
     if (!r.ok) throw new Error(`реквизит не выдан: ${r.code}`);
     return r.credential;
   };
-  return { c, store, adp, parent: p.id, cart: cart.id, issue, logs, setNow: (t) => (now = t) };
+  const adpWith = (over: { credentials?: AdpCredentials; mandates?: AdpMandates }) => new Adp({ ...adpOpts, ...over });
+  return { c, store, adp, parent: p.id, cart: cart.id, issue, logs, setNow: (t) => (now = t), adpWith };
 }
 
 const auth = (w: World, cred: Credential, over: Partial<CanonicalMessage> = {}, amount = 20_000): CanonicalMessage => ({
@@ -124,6 +144,8 @@ describe("ADP п. 2 и 4: агентский токен (РП47 п. 6–8)", () 
     const decisions = ds.map((d) => parseDecision(d, "adp"));
     expect(decisions.filter((d) => d.decision === "APPROVE")).toHaveLength(1);
     expect(decisions.filter((d) => d.reason === "CREDENTIAL_INVALID")).toHaveLength(1);
+    // Проигравшая прошла п. 4 и резерв и проиграла именно на погашении (ревью КТ1 З5 (б)).
+    expect(w.logs.filter((l) => l.startsWith("ADP: криптограмма уже погашена другой авторизацией"))).toHaveLength(1);
     expect(await left(w, w.cart)).toBe(20_000);
     expect(await left(w, w.parent)).toBe(40_000);
   });
@@ -171,11 +193,12 @@ describe("ADP п. 2 и 4: агентский токен (РП47 п. 6–8)", () 
     expect(await reason(w, auth(w, cred, { merchant: { id: "MER-2" } }))).toBe("CREDENTIAL_INVALID");
   });
 
-  it("сумма > amount_max или валюта ≠ — LIMIT_EXCEEDED (меньшее из инструмента и мандата, A3 п. 7.2), реквизит не погашен", async () => {
+  it("сумма > amount_max — LIMIT_EXCEEDED (меньшее из инструмента и мандата, A3 п. 7.2); другая валюта — MANDATE_SCOPE на п. 6; реквизит не погашен", async () => {
     const w = await world();
     const cred = await w.issue("ORD-1", 15_000);
     expect(await reason(w, auth(w, cred, {}, 15_001))).toBe("LIMIT_EXCEEDED");
-    expect(await reason(w, auth(w, cred, { currency: "USD" }, 1_000))).not.toBe("APPROVE");
+    // Валюта реквизита всегда = валюте CART (РП47 п. 4): другую валюту отсекает п. 6, условие п. 7 — страховка (ревью КТ1 Б2).
+    expect(await reason(w, auth(w, cred, { currency: "USD" }, 1_000))).toBe("MANDATE_SCOPE");
     expect(await status(w)).toBe("ISSUED");
     expect(await left(w, w.cart)).toBe(30_000);
     expect(parseDecision(await w.adp.decide(auth(w, cred, {}, 15_000)), "adp").decision).toBe("APPROVE");
@@ -189,22 +212,72 @@ describe("ADP п. 2 и 4: агентский токен (РП47 п. 6–8)", () 
     expect(parseDecision(await w.adp.decide(auth(w, cred, {}, 9_000)), "adp").decision).toBe("APPROVE");
   });
 
-  it("сбой погашения — STATE_UNAVAILABLE, удержания освобождены; сбой чтения токена или реквизита — STATE_UNAVAILABLE", async () => {
-    const w = await world();
+  it("сбой погашения после резерва — освобождены все удержания (CART, родитель, лимит клиента), STATE_UNAVAILABLE, реквизит ISSUED", async () => {
+    const w = await world({ clientPerPeriod: 25_000 });
     const cred = await w.issue();
-    const broken = Object.create(w.store) as CredentialStore;
-    broken.consume = () => Promise.reject(new Error("db"));
-    const adp = new Adp({ ...(w.adp as unknown as { opts: ConstructorParameters<typeof Adp>[0] }).opts, credentials: broken });
-    expect(parseDecision(await adp.decide(auth(w, cred)), "adp").reason).toBe("STATE_UNAVAILABLE");
+    const adp = w.adpWith({ credentials: delegate(w.store, { consume: () => Promise.reject(new Error("db")) }) });
+    expect(parseDecision(await adp.decide(auth(w, cred, {}, 20_000)), "adp").reason).toBe("STATE_UNAVAILABLE");
+    // Дошли до погашения (резерв был), а не упали раньше.
+    expect(w.logs.filter((l) => l.startsWith("ADP: погашение реквизита не записано"))).toHaveLength(1);
     expect(await left(w, w.cart)).toBe(30_000);
     expect(await left(w, w.parent)).toBe(50_000);
     expect(await status(w)).toBe("ISSUED");
-    for (const method of ["tokenByRef", "credentialByCryptogram"] as const) {
-      const s = Object.create(w.store) as CredentialStore;
-      (s as unknown as Record<string, unknown>)[method] = () => Promise.reject(new Error("db"));
-      const a = new Adp({ ...(w.adp as unknown as { opts: ConstructorParameters<typeof Adp>[0] }).opts, credentials: s });
-      expect(parseDecision(await a.decide(auth(w, cred)), "adp").reason, method).toBe("STATE_UNAVAILABLE");
-    }
+    // Удержание лимита клиента освобождено: весь лимит снова доступен той же криптограмме.
+    expect(parseDecision(await w.adp.decide(auth(w, cred, {}, 25_000)), "adp").decision).toBe("APPROVE");
+  });
+
+  it("сбой чтения токена (п. 2) или записи реквизита (п. 4) — STATE_UNAVAILABLE до резерва", async () => {
+    const w = await world();
+    const cred = await w.issue();
+    const byToken = w.adpWith({ credentials: delegate(w.store, { tokenByRef: () => Promise.reject(new Error("db")) }) });
+    expect(parseDecision(await byToken.decide(auth(w, cred)), "adp").reason).toBe("STATE_UNAVAILABLE");
+    expect(w.logs.filter((l) => l.startsWith("ADP: запись токена не прочитана"))).toHaveLength(1);
+    const byCred = w.adpWith({ credentials: delegate(w.store, { credentialByCryptogram: () => Promise.reject(new Error("db")) }) });
+    expect(parseDecision(await byCred.decide(auth(w, cred)), "adp").reason).toBe("STATE_UNAVAILABLE");
+    expect(w.logs.filter((l) => l.startsWith("ADP: запись реквизита не прочитана"))).toHaveLength(1);
+    expect(await left(w, w.cart)).toBe(30_000);
+  });
+
+  it("гонка с лимитом клиента: проигравшая на погашении освобождает и удержание лимита клиента", async () => {
+    const w = await world({ clientPerPeriod: 25_000 });
+    const cred = await w.issue();
+    const ds = await Promise.all([w.adp.decide(auth(w, cred, {}, 10_000)), w.adp.decide(auth(w, cred, {}, 10_000))]);
+    expect(ds.map((d) => d.decision).sort()).toEqual(["APPROVE", "DECLINE"]);
+    expect(w.logs.filter((l) => l.startsWith("ADP: криптограмма уже погашена другой авторизацией"))).toHaveLength(1);
+    // Остаток клиента — 15 000: второй реквизит на 15 000 одобряется, только если удержание проигравшей освобождено.
+    const next = await w.issue("ORD-2", 15_000);
+    expect(parseDecision(await w.adp.decide(auth(w, next, {}, 15_000)), "adp").decision).toBe("APPROVE");
+  });
+
+  it("отзыв между резервом и сверкой статуса (п. 12) — освобождение, MANDATE_REVOKED, реквизит не погашен", async () => {
+    const w = await world();
+    const cred = await w.issue();
+    let calls = 0;
+    const mandates: AdpMandates = {
+      async get(id, a) {
+        const m = await w.c.consent.adpMandate(id, a);
+        // Второе чтение CART — сверка п. 12 (первое — п. 5; родитель читается своим id).
+        return m && id === w.cart && ++calls === 2 ? { ...m, status: "REVOKED" } : m;
+      },
+    };
+    expect(parseDecision(await w.adpWith({ mandates }).decide(auth(w, cred)), "adp").reason).toBe("MANDATE_REVOKED");
+    expect(await status(w)).toBe("ISSUED");
+    expect(await left(w, w.cart)).toBe(30_000);
+    expect(await left(w, w.parent)).toBe(50_000);
+  });
+
+  it("отказ резерва по бюджету — реквизит не погашен (ISSUED)", async () => {
+    const w = await world();
+    expect(parseDecision(await w.adp.decide(auth(w, await w.issue("ORD-1"), {}, 20_000)), "adp").decision).toBe("APPROVE");
+    const second = await w.issue("ORD-2");
+    expect(await reason(w, auth(w, second, {}, 20_000))).toBe("LIMIT_EXCEEDED");
+    expect(await status(w, "ORD-2")).toBe("ISSUED");
+  });
+
+  it("AGENT_TOKEN с aoi без mandate_id — AOI_MISMATCH на п. 2 (мандат признака ≠ домену), не MANDATE_NOT_FOUND", async () => {
+    const w = await world();
+    const cred = await w.issue();
+    expect(await reason(w, auth(w, cred, { aoi: { indicator: true, agent_code: A } as CanonicalMessage["aoi"] }))).toBe("AOI_MISMATCH");
   });
 
   it("в журнале процесса ADP нет token_ref и криптограммы, нет серий из 13–19 цифр (инвариант 1)", async () => {

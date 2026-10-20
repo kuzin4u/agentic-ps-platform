@@ -436,7 +436,13 @@ export class Adp {
     }
     // Погашение криптограммы (РП47 п. 8): только у APPROVE, после резерва и сверки статуса, условной записью ISSUED → USED.
     // Погасила другая авторизация (в том числе на другом экземпляре) — освобождение и CREDENTIAL_INVALID (A3 п. 4.4);
-    // сбой записи — освобождение и не подтверждено.
+    // сбой записи — освобождение и не подтверждено. AGENT_TOKEN без записи реквизита сюда дойти не должен (п. 2 и 4);
+    // дошёл — не APPROVE без погашения, а освобождение и не подтверждено (ревью КТ1 З4, инвариант 3).
+    if (kind === "AGENT_TOKEN" && (!cred || !credentials)) {
+      for (const h of holds) await this.release(h, msg.op_ref);
+      this.log("warn", { op_ref: msg.op_ref, mandate_id, incident: true }, "ADP: агентский токен без записи реквизита к погашению");
+      return no("STATE_UNAVAILABLE", mandate_id);
+    }
     if (cred && credentials) {
       let consumed: boolean;
       try {

@@ -183,6 +183,25 @@ describe("П5 выдача реквизита (РП47)", () => {
     expect(await setup({ read: { client: null } }).c.issue(AGENT, req())).toMatchObject({ ok: false, code: "STATE_UNAVAILABLE" });
   });
 
+  it("повтор: пересчёт криптограммы не совпал с хэшем записи (сменился ключ токен-сервиса) — UPSTREAM_UNAVAILABLE и инцидент, значение не выдаётся", async () => {
+    const issuer = createIssuerEmulator();
+    const tsp = createTokenServiceEmulator();
+    let calls = 0;
+    const logs: string[] = [];
+    const c = new Credentials({
+      mandates: { get: async () => ({ mandate: cart(), client: { participant_code: issuer.participant_code, principal_ref: "pr_alpha" }, token_consent: true }) },
+      store: new MemoryCredentialStore(),
+      tsp: { issueToken: (i) => tsp.issueToken(i), cryptogram: async (i) => ((await tsp.cryptogram(i)) + (++calls > 1 ? "x" : "")) },
+      funding: issuer,
+      params: { cryptogram_ttl_sec: TTL },
+      now: () => new Date(T0),
+      log: (f, m) => logs.push(`${m} ${JSON.stringify(f)}`),
+    });
+    expect((await c.issue(AGENT, req())).ok).toBe(true);
+    expect(await c.issue(AGENT, req())).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
+    expect(logs.some((l) => l.startsWith("П5: пересчёт криптограммы не совпал с записью") && l.includes('"incident":true'))).toBe(true);
+  });
+
   it("сбой хранилища — STATE_UNAVAILABLE; токен-сервис недоступен — UPSTREAM_UNAVAILABLE", async () => {
     const broken = new MemoryCredentialStore();
     broken.credentialByOrder = () => Promise.reject(new Error("db"));
