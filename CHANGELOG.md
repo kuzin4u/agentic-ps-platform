@@ -5,6 +5,52 @@
 ставит владелец на коммит слияния в `main`. Версия ПАО — `info.version` в `docs/core/agent-protocol.yaml`, сверка копий —
 по `PAO_SPEC_SHA256` (`src/shared/pao-errors.generated.ts`). Записи до v0.4.0 — в описаниях PR и тегах.
 
+## v0.10.0 — 20.10.2026
+
+PS-20 «Шлюз участников (П10)», части 1 и 2: PR #41 (слит 19.10) и PR #44. Решения РП45 (с доп. п. 6–12) и РП46 (с доп.
+п. 1–8). ПАО — по-прежнему 1.4.0, `PAO_SPEC_SHA256` не меняется (`48bd3397…9ad9da`). ПИ — `Limits` с `currency`,
+`principals/{ref}/limits` (`PUT`, `GET`), `principals/{ref}/revoke-all`; новый `PI_SPEC_SHA256` `0b6f3876…`.
+Ядро — **`#v0.11.0`** (было `#v0.8.0`). Миграции — `sql/105_participant_limits.sql`, `sql/106_principal_order.sql`.
+
+### Меняет поведение для агента (схема ПАО прежняя)
+
+- **Лимит клиента в банке** (ч. 1, РП45 п. 1): `per_operation` — `LIMIT_EXCEEDED` до резерва; `merchant_categories` —
+  MCC вне списка → `MANDATE_SCOPE`; `per_period` — второй счёт удержаний ядра, неделимо по всем мандатам клиента и на
+  двух экземплярах; клиентский порог `confirm_above` — меньшее с рыночным (РП44 п. 5). Повтор не поможет до нового
+  периода или правки лимита в банке (`after_human`).
+- **Изменение лимита в периоде — сразу** (ч. 2, РП46 (г)): сужение и расширение `per_period` действуют с новой версии
+  записи банка; временный `STATE_UNAVAILABLE` после сужения (РП45 доп. п. 6, ч. 1) снят. Сужение ниже израсходованного —
+  `LIMIT_EXCEEDED` до конца периода. Снятие `per_period` или смена `period` — со следующего периода (РП45 доп. п. 7).
+- **Отзыв всех полномочий клиента одним действием** (ч. 2, РП46 (а)): `mandate.revoked` по каждому действующему мандату
+  клиента, **в том числе по CART**; мандаты не действуют с фиксации отзыва в Платформе (`GET` — `REVOKED`, `verify` —
+  `OUT_OF_SCOPE`, авторизация — `MANDATE_REVOKED`), до прихода событий. Подпись после отзыва — новое согласие.
+  Авторизованное до отзыва исполняется.
+
+### Стенд
+
+- `stand.issuer.setLimits(principalRef, limits, version)` (ч. 1), `stand.issuer.getLimits(principalRef)`,
+  `stand.issuer.revokeAll(principalRef, revocationRef)`, `stand.issuer.signRequest(method, path, query, at)` (ч. 2).
+
+### Для банка (ПИ-8)
+
+- `PUT /participants/v1/principals/{ref}/limits` — подписанная запись с версией (`pao:participant-limits:v1`), только
+  вставка; `GET` того же пути — с подписью HTTP-запроса участника (RFC 9421, `x-participant-code`), только свои клиенты.
+- `POST /participants/v1/principals/{ref}/revoke-all` — запись `pao:participant-principal-revocation:v1`; «до/после» —
+  по номеру в паре под локом пары в базе, часы не участвуют.
+
+### Не вошло
+
+- **Уведомления клиента через банк** (A3 п. 5.3; РП46 (б), доп. п. 7) — PS-20 ч. 3, перед PS-14.
+
+### Переход с 0.9.x
+
+- **Ядро `#v0.11.0`.** Потребителям стенда — ядро той же версии. Смена тега ядра — без `npm install`: ссылка в
+  `package.json` → `version` и `resolved` в `package-lock.json` на `git+https://github.com/kuzin4u/agentic-core.git#<полный
+  хэш коммита тега>` → `npm ci` → `grep -n agentic-core package.json package-lock.json` (РП46 доп. п. 1). `npm install`
+  оставляет прежний коммит в lock и переводит `resolved` на `git+ssh`.
+- **Подписанный мандат без строки порядка пары** (подписан до v0.10.0) не читается как действующий — 503 /
+  `STATE_UNAVAILABLE` (РП46 (а) п. 6). Хранилище песочницы пересоздаётся.
+
 ## v0.9.0 — 19.10.2026
 
 PS-13 «Порог подтверждения и дробление в ADP», PR #40. ПАО — по-прежнему 1.4.0, `PAO_SPEC_SHA256` не меняется
