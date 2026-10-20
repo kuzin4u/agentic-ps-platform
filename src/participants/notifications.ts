@@ -296,7 +296,7 @@ export class PgParticipantNotificationStore implements ParticipantNotificationSt
             `INSERT INTO participant_notifications (participant_code, seq, notification_id, type, at, data)
              SELECT $1, COALESCE(max(seq), 0) + 1, $2, $3, $4, $5 FROM participant_notifications WHERE participant_code = $1
              ON CONFLICT (notification_id) DO NOTHING`,
-            [participant_code, notificationIdFor(participant_code, d.type, d.key), d.type, at, canonicalJson(d.data)],
+            [participant_code, notificationIdFor(participant_code, d.type, `${d.key}:${Math.random()}`), d.type, at, canonicalJson(d.data)], // ПОЛОМКА К3.4б (временно, откат следом): без ключа против повторов
           );
         }
         if (op_ref !== undefined) {
