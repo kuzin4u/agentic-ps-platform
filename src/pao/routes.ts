@@ -10,7 +10,8 @@ import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
 import type { Params } from "../shared/config.js";
 import type { AgentSelf } from "../shared/pao.js";
-import { keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
+import type { Credentials } from "../credentials/service.js";
+import { credentialRequestBody, hasPaymentDetails, keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
 import { consentErrorReply } from "./consent-errors.js";
 import { EVENT_ID, EventCursorUnknown } from "./events.js";
 import { paoError, type PaoErrorReply } from "./errors.js";
@@ -44,6 +45,11 @@ export interface PaoDeps {
   };
   /** Разрешение имени адреса подписки (РП40 п. 2–4); по умолчанию — системное, на стенде — стендовое (п. 8). */
   readonly resolveHost?: HostResolver;
+  /**
+   * Агентские реквизиты (П5, РП47); без них POST /pao/v1/credentials не регистрируется: токен-сервис оператора (ПИ-4)
+   * в рабочем сервере не подключён — только стенд и тесты.
+   */
+  readonly credentials?: Pick<Credentials, "issue">;
   /** Стенд (РП40 п. 8): только он принимает стендовые порты; в рабочем сервере стендовый порт — отказ запуска. */
   readonly stand?: boolean;
   /** Монотонные часы предела обработчика (РП33 доп.); по умолчанию performance.now — в тестах подменяются. */
@@ -164,11 +170,18 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     reply: FastifyReply,
     parse: (raw: string) => T | undefined,
     handler: (agent: AgentRecord, input: T, ctx: MutatingCtx) => PaoReply | Promise<PaoReply>,
+    opts: { readonly forbidPaymentDetails?: boolean } = {},
   ): Promise<FastifyReply> {
     const agent = req.paoAgent as AgentRecord;
     const key = req.headers["idempotency-key"];
     if (typeof key !== "string" || key === "") return send(reply, paoError("IDEMPOTENCY_REQUIRED"));
     const raw = typeof req.body === "string" ? req.body : "";
+    // Реквизиты карты в теле — 422 CREDENTIALS_FORBIDDEN до схемы и захвата ключа: номер не попадает ни в хранилище
+    // идемпотентности, ни в журнал процесса (инвариант 1); в журнал — только код агента.
+    if (opts.forbidPaymentDetails && hasPaymentDetails(raw)) {
+      req.log.warn({ agent_code: agent.agent_code }, "ПАО: в теле запроса платёжные реквизиты — отклонено");
+      return send(reply, paoError("CREDENTIALS_FORBIDDEN", "A3 п. 2"));
+    }
     const input = parse(raw);
     if (input === undefined) return send(reply, paoError("REQUEST_INVALID"));
     const { path, query } = target(req);
@@ -239,6 +252,28 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       }
     }),
   );
+
+  // Агентский реквизит на заказ (ПАО §4, РП47 п. 4–5): agent_code — из проверенного обращения (инвариант 5); отказ П5 —
+  // код ПАО, причина — в журнал процесса; отказ журнала — по consentErrorReply. 5xx не сохраняется под ключом (РП30 п. 3).
+  const credentials = deps.credentials;
+  if (credentials) {
+    app.post("/pao/v1/credentials", async (req, reply) =>
+      mutating(req, reply, credentialRequestBody, async (agent, input, ctx) => {
+        if (!MANDATE_ID.test(input.mandate_id)) return reply4xx(paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+        try {
+          const r = await credentials.issue(agent.agent_code, input, ctx.beforeWrite);
+          if (r.ok) return { status: 201, body: r.credential };
+          req.log.info({ agent_code: agent.agent_code, mandate_id: input.mandate_id, code: r.code }, "ПАО: реквизит не выдан");
+          return reply4xx(paoError(r.code, r.norm, r.message));
+        } catch (err) {
+          const e = consentErrorReply(err);
+          if (!e) throw err;
+          req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
+          return reply4xx(e);
+        }
+      }, { forbidPaymentDetails: true }),
+    );
+  }
 
   // Отказ агента от полномочий (ПАО §3, A7 п. 6; РП38 п. 3–4): только свой мандат, под ключом идемпотентности; запись
   // MANDATE_RELINQUISHED — при PENDING_SIGNATURE или ACTIVE, иначе текущий мандат без записи. Отказ от INTENT отзывает его CART (РП35).

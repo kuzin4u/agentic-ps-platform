@@ -9,6 +9,8 @@ import type { Mandate } from "../shared/pao.js";
 import type { AgentRecord } from "../registry/model.js";
 import { parseAgentCode } from "../registry/code.js";
 import { ConsentIntegrityError } from "../consent/model.js";
+import { sha256Hex, type CredentialRecord } from "../credentials/model.js";
+import type { CredentialStore } from "../credentials/store.js";
 import type { StateService } from "../state/index.js";
 import { STATE_TO_PI, STATUS_TO_PI } from "./codes.js";
 import type { LimitSource, OperationNotify, OperationRecord, OperationStore, WindowResult } from "./operations.js";
@@ -44,6 +46,12 @@ export interface AdpMandates {
   get(mandate_id: string, agent_code: string): Promise<AdpMandate | undefined>;
 }
 
+/**
+ * Агентские реквизиты (П5, РП47 п. 6–8): домен токена (п. 2), запись реквизита по криптограмме (п. 4), погашение после
+ * резерва. Не подключены — AGENT_TOKEN не подтверждается: CREDENTIAL_INVALID, как до PS-14 (РП43 п. 7). Сбой — исключение.
+ */
+export type AdpCredentials = Pick<CredentialStore, "tokenByRef" | "credentialByCryptogram" | "consume">;
+
 export type AdpLog = (level: "info" | "warn", fields: Record<string, unknown>, msg: string) => void;
 
 export interface AdpOptions {
@@ -60,6 +68,7 @@ export interface AdpOptions {
    * «проверки нет». У мандата без клиента (подписи корня нет) — STATE_UNAVAILABLE.
    */
   readonly clientLimits: ClientLimitsSource;
+  readonly credentials?: AdpCredentials;
   readonly log?: AdpLog;
   readonly clock?: () => number;
   readonly now?: () => Date;
@@ -255,9 +264,27 @@ export class Adp {
     if (aoi.indicator !== true || !wellFormedCode(aoi.agent_code)) return no("AOI_MISSING");
     const agent_code = aoi.agent_code;
 
-    // 2, 4. Домен токена и криптограмма — PS-14; до него не подтверждено (РП43 п. 7). Неизвестный вид с aoi — реквизит
-    // не опознан: CREDENTIAL_INVALID и инцидент (доп. РП43 п. 13).
-    if (kind !== "CARD_TOKEN") {
+    // 2. Домен токена (РП47 п. 6): только AGENT_TOKEN, до реестра; домен — из записи токена Платформы, а не из aoi.
+    // ACCOUNT_LINK — до PS-21 не подтверждено (РП43 п. 7). Неизвестный вид с aoi — реквизит не опознан: CREDENTIAL_INVALID
+    // и инцидент (доп. РП43 п. 13). CARD_TOKEN с aoi — без п. 2 и 4 (РП47 п. 9; решение — PS-14 ч. 2).
+    const credentials = this.opts.credentials;
+    const token_ref = msg.instrument?.token_ref;
+    if (kind === "AGENT_TOKEN") {
+      if (!credentials || typeof token_ref !== "string" || token_ref === "") return no("CREDENTIAL_INVALID");
+      let token: { readonly agent_code: string; readonly mandate_id: string } | undefined;
+      try {
+        token = await credentials.tokenByRef(token_ref);
+      } catch {
+        this.log("warn", { op_ref: msg.op_ref }, "ADP: запись токена не прочитана");
+        return no("STATE_UNAVAILABLE");
+      }
+      if (!token) return no("CREDENTIAL_INVALID");
+      if (token.agent_code !== agent_code || token.mandate_id !== aoi.mandate_id) {
+        // Недостоверный код агента или мандат в признаке (A1 п. 8.2); в журнал — коды, без реквизитов инструмента.
+        this.log("warn", { op_ref: msg.op_ref, agent_code, incident: true }, "ADP: признак не совпадает с доменом токена");
+        return no("AOI_MISMATCH");
+      }
+    } else if (kind !== "CARD_TOKEN") {
       if (!agentInstrument) {
         this.log("warn", { op_ref: msg.op_ref, kind, incident: true }, "ADP: неизвестный вид инструмента при признаке");
       }
@@ -274,6 +301,22 @@ export class Adp {
     }
     if (!agent || agent.status === "EXCLUDED") return no("AGENT_UNKNOWN");
     if (agent.status === "SUSPENDED") return no("AGENT_SUSPENDED");
+
+    // 4. Криптограмма (РП47 п. 7): запись реквизита по токену и SHA-256 криптограммы; нет, истекла (часы Платформы), не
+    // ISSUED, другой продавец — CREDENTIAL_INVALID. Сумма против amount_max — на п. 7 (там известен клиент для уведомления).
+    let cred: CredentialRecord | undefined;
+    if (kind === "AGENT_TOKEN" && credentials && typeof token_ref === "string") {
+      const cryptogram = msg.instrument.cryptogram;
+      if (typeof cryptogram !== "string" || cryptogram === "") return no("CREDENTIAL_INVALID");
+      try {
+        cred = await credentials.credentialByCryptogram(token_ref, sha256Hex(cryptogram));
+      } catch {
+        this.log("warn", { op_ref: msg.op_ref }, "ADP: запись реквизита не прочитана");
+        return no("STATE_UNAVAILABLE");
+      }
+      if (!cred || cred.status !== "ISSUED" || !(Date.parse(cred.valid_to) > this.now().getTime())) return no("CREDENTIAL_INVALID");
+      if (cred.merchant_id !== msg.merchant?.id) return no("CREDENTIAL_INVALID");
+    }
 
     // 5. Мандат агента (чужой = неизвестный), статус — по свёртке журнала (инвариант 5).
     const mandate_id = aoi.mandate_id;
@@ -303,6 +346,9 @@ export class Adp {
       if (mcc === undefined || !limits.merchant_categories.includes(mcc)) return no("MANDATE_SCOPE", mandate_id);
     }
     if (limits?.per_operation !== undefined && msg.amount > limits.per_operation) return no("LIMIT_EXCEEDED", mandate_id, "CLIENT");
+    // 7. Ограничение инструмента (A3 п. 7.2, РП47 п. 7): сумма > amount_max или валюта ≠ валюте реквизита. Источник предела
+    // в уведомлении — не MANDATE и не CLIENT: client.limit_declined без reason (INSTRUMENT — PS-14 ч. 2, ПИ-8).
+    if (cred && (msg.amount > cred.amount_max || msg.currency !== cred.currency)) return no("LIMIT_EXCEEDED", mandate_id);
     const client = read?.period && m.client ? this.clientAccount(m.client, read.period) : undefined;
 
     // Счета резерва: CART — свой и родителя INTENT, всегда в порядке «CART → родитель» (РП43 п. 6); INTENT — один.
@@ -387,6 +433,30 @@ export class Adp {
     if (late) {
       for (const h of holds) await this.release(h, msg.op_ref);
       return no(late, mandate_id);
+    }
+    // Погашение криптограммы (РП47 п. 8): только у APPROVE, после резерва и сверки статуса, условной записью ISSUED → USED.
+    // Погасила другая авторизация (в том числе на другом экземпляре) — освобождение и CREDENTIAL_INVALID (A3 п. 4.4);
+    // сбой записи — освобождение и не подтверждено. AGENT_TOKEN без записи реквизита сюда дойти не должен (п. 2 и 4);
+    // дошёл — не APPROVE без погашения, а освобождение и не подтверждено (ревью КТ1 З4, инвариант 3).
+    if (kind === "AGENT_TOKEN" && (!cred || !credentials)) {
+      for (const h of holds) await this.release(h, msg.op_ref);
+      this.log("warn", { op_ref: msg.op_ref, mandate_id, incident: true }, "ADP: агентский токен без записи реквизита к погашению");
+      return no("STATE_UNAVAILABLE", mandate_id);
+    }
+    if (cred && credentials) {
+      let consumed: boolean;
+      try {
+        consumed = await credentials.consume(cred.credential_ref, msg.op_ref);
+      } catch {
+        this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: погашение реквизита не записано");
+        for (const h of holds) await this.release(h, msg.op_ref);
+        return no("STATE_UNAVAILABLE", mandate_id);
+      }
+      if (!consumed) {
+        for (const h of holds) await this.release(h, msg.op_ref);
+        this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: криптограмма уже погашена другой авторизацией");
+        return no("CREDENTIAL_INVALID", mandate_id);
+      }
     }
     const left = await this.leftOf(accounts, client);
     // Счёт клиента и остаток после резерва — для client.limit_exhausted (РП46 (б) п. 2); остаток уже прочитан для ответа.

@@ -634,6 +634,28 @@ export class ConsentJournal {
   }
 
   /**
+   * Мандат для выдачи реквизита (РП47 п. 4): то же, что adpMandate, и token_consent записи MANDATE_SIGNED корня
+   * (РП36 доп. п. 10); подписи корня нет — null. Внутренний вызов П5, агенту не отдаётся.
+   */
+  async credentialMandate(
+    id: string,
+    agent_code: string,
+  ): Promise<{ readonly mandate: Mandate; readonly client: ClientRef | null; readonly token_consent: boolean | null } | undefined> {
+    const m = await this.load(id, agent_code);
+    if (!m) return undefined;
+    const root = m.head.parent_ref ?? id;
+    const participant_code = signerOf(m.entries, root);
+    const { principal_ref } = m.head.payload as MandateRequestedPayload;
+    const signed = m.entries.find((x) => x.ref === root && x.kind === "MANDATE_SIGNED");
+    const consent = signed && objectPayload(signed) ? signed.payload.token_consent : undefined;
+    return {
+      mandate: this.toMandate(id, m.head, m.subj, m.status),
+      client: participant_code ? { participant_code, principal_ref } : null,
+      token_consent: typeof consent === "boolean" ? consent : null,
+    };
+  }
+
+  /**
    * Мандат этого агента со статусом на момент чтения. Чужой или неизвестный id — undefined (как неизвестный).
    * Цепочка проверяется целиком, предмет — по обязательству: расхождение — ConsentIntegrityError (инвариант 6).
    */

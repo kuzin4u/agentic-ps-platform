@@ -1,9 +1,9 @@
 // Сгенерировано scripts/gen-shared.mjs из docs/core/processing-interface.yaml — не править вручную.
-// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 8d0be345985f980138c85c5e3b60228b76fe5998e488809e688ff99d02d6a582
+// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 ab4a5f7be9b88c5717d102911210e82256dd1b7f66c48378844d5be053482e08
 // Номера полей и кодов внешних форматов здесь нет: только каноническая модель [альбом] (РП6).
 
 export const PI_VERSION = "1.0.0-draft";
-export const PI_SPEC_SHA256 = "8d0be345985f980138c85c5e3b60228b76fe5998e488809e688ff99d02d6a582";
+export const PI_SPEC_SHA256 = "ab4a5f7be9b88c5717d102911210e82256dd1b7f66c48378844d5be053482e08";
 
 export interface Instrument {
   kind: "AGENT_TOKEN" | "ACCOUNT_LINK" | "CARD_TOKEN";

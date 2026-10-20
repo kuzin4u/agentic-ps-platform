@@ -5,6 +5,44 @@
 ставит владелец на коммит слияния в `main`. Версия ПАО — `info.version` в `docs/core/agent-protocol.yaml`, сверка копий —
 по `PAO_SPEC_SHA256` (`src/shared/pao-errors.generated.ts`). Записи до v0.4.0 — в описаниях PR и тегах.
 
+## v0.12.0 — 20.10.2026
+
+PS-14 «Агентские реквизиты (П5)», часть 1, PR #47. Решение РП47 (с дополнениями п. 1–8). ПАО — по-прежнему 1.4.0,
+`PAO_SPEC_SHA256` не меняется (`48bd3397…9ad9da`), контракт без изменений: коды и ответы метода — из общей таблицы §6;
+ядро — `#v0.11.0` без изменений. ПИ — описание `client.limit_declined` (без `reason` — предел инструмента); новый
+`PI_SPEC_SHA256` `ab4a5f7b…`. Миграция — `sql/108_agent_credentials.sql`.
+
+### Агенту (AG-11)
+
+- **`POST /pao/v1/credentials`** (под `Idempotency-Key`): реквизит — только по мандату **CART** `ACTIVE`; ответ 201
+  `Credential` `kind: CARD`, `payload` — `{token_ref, cryptogram, valid_to}`, `aoi` — из записи Платформы. Номера карты
+  нет. `valid_to` = min(сейчас + `cryptogram_ttl_sec`, срок CART).
+- **Коды:** мандат не найден или чужой — 404 `MANDATE_NOT_FOUND`; не подписан — 409 `PRINCIPAL_SIGNATURE_PENDING`;
+  истёк — 409 `MANDATE_EXPIRED`; отозван или отклонён — 409 `MANDATE_REVOKED`; `EXHAUSTED` — 409 `LIMIT_EXCEEDED`;
+  INTENT, продавец вне области, другая валюта, `amount_max` > `amount_limit` CART, клиент не дал согласия на токен —
+  409 `MANDATE_SCOPE` (`after_human`); `kind: SBP` — 409 `CREDENTIAL_INVALID` (`after_fix`: брать `CARD`; проверяется
+  после мандата и области); реквизиты карты в теле (`pan`, `cvv`… или серия 13–19 цифр по Луну) — 422
+  `CREDENTIALS_FORBIDDEN` (`never`); 503 `STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`.
+- **Повтор по заказу:** тот же `order_ref` с теми же `merchant_id`, `amount_max`, `currency` — тот же реквизит и та же
+  криптограмма (текущий `status`); с другими — 409 `IDEMPOTENCY_CONFLICT`. После `USED` или истечения — новый
+  `order_ref`. Ссылки заказа — непрозрачные: `order_ref` с серией 13–19 цифр, проходящей Луна, получит 422.
+- **Авторизация:** криптограмма гасится только одобренной авторизацией (`APPROVE`); после отказа или
+  `CONFIRMATION_REQUIRED` тот же реквизит годен для повтора заказа. Сумма выше `amount_max` — `LIMIT_EXCEEDED`;
+  повторная авторизация той же криптограммой — `CREDENTIAL_INVALID`; код агента или мандат в `aoi` ≠ домену токена —
+  `AOI_MISMATCH`. Отзыв ключа подписи агента выданный реквизит не аннулирует (ПС02).
+- `GET /pao/v1/credentials/{ref}` — в PS-14 ч. 2.
+
+### Стенд
+
+- `stand.tsp` — эмулятор токен-сервиса (`issued`, `verify`); ADP стенда проверяет домен токена и криптограмму по тому же
+  хранилищу П5, что выдаёт реквизиты; `funding_ref` — от банка стенда.
+
+### Переход с 0.11.x
+
+- Миграция `sql/108` (таблицы `agent_tokens`, `agent_credentials`); параметр `cryptogram_ttl_sec` — уже в файле
+  параметров. Рабочий сервер (`main.ts`) маршрут `/credentials` не регистрирует — токен-сервиса оператора нет.
+- `AGENT_TOKEN` с `aoi` больше не отклоняется безусловно `CREDENTIAL_INVALID`: проверки 2 и 4 ADP подключены.
+
 ## v0.11.0 — 20.10.2026
 
 PS-20 «Шлюз участников (П10)», часть 3 — уведомления клиента через банк (A3 п. 5.3, ч. 4 ст. 9 161-ФЗ), PR #46. Решение

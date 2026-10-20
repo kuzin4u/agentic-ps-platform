@@ -9,6 +9,8 @@ import { ConsentJournal, MemoryConsentStore } from "../consent/index.js";
 import type { MandateDecisionPayload } from "../consent/model.js";
 import { createAgentReceiver, type AgentReceiver } from "../env/agent/index.js";
 import { createIssuerEmulator } from "../env/issuer/index.js";
+import { createTokenServiceEmulator, type TokenServiceEmulator } from "../env/tsp/index.js";
+import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
@@ -98,6 +100,8 @@ export interface Stand {
   readonly issuerWebhook: IssuerWebhookReceiver;
   /** Приложение банка: подпись и отзыв мандата клиентом (РП12, РП36, РП38). */
   readonly issuer: StandIssuer;
+  /** Эмулятор токен-сервиса (ПИ-4, РП47): выпущенные токены и проверка криптограммы — для тестов. */
+  readonly tsp: Pick<TokenServiceEmulator, "issued" | "verify">;
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
   setClock(d: Date | undefined): void;
   /** Текущее время стенда — те же часы, что у реестра и эмуляторов. */
@@ -178,10 +182,21 @@ export function createStand(): Stand {
     now: () => now().getTime(),
     stand: true,
   });
+  // Агентские реквизиты (П5, РП47): токен-сервис — эмулятор с ключом в памяти, funding_ref — от банка стенда.
+  const tsp = createTokenServiceEmulator();
+  const credentialStore = new MemoryCredentialStore();
+  const credentials = new Credentials({
+    mandates: { get: (id, agent_code) => consent.credentialMandate(id, agent_code) },
+    store: credentialStore,
+    tsp,
+    funding: emulator,
+    params,
+    now,
+  });
   const app = buildServer({
     env: "dev",
     notifier,
-    pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
+    pao: { verifier, keys, idempotency, params, consent, subscriptions, credentials, resolveHost: dns.resolve, stand: true },
     participants: {
       trusted,
       consent,
@@ -203,6 +218,8 @@ export function createStand(): Stand {
         params,
         // Все версии записей банка: лимит за период — по истории (расширение со следующего периода).
         clientLimits: { get: (c) => limits.history(c) },
+        // Домен токена, криптограмма и погашение — то же хранилище П5, что выдаёт реквизиты (РП47 п. 6–8).
+        credentials: credentialStore,
         // Часы стенда (setClock): период лимита клиента и окно дробления — по тем же часам, что резервы и подписи.
         now,
       }),
@@ -310,6 +327,7 @@ export function createStand(): Stand {
     notificationDelivery: (id) => notifications.delivery(id),
     issuerWebhook,
     issuer,
+    tsp,
     setClock: (d) => (clock = d),
     now,
     admit: (application, operator) => registry.admit(application, { contour: "sandbox", operator }),

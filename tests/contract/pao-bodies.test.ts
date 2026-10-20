@@ -3,7 +3,14 @@
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
-import { KEY_REGISTRATION_REQUIRED, MANDATE_REQUEST_REQUIRED, mandateRequestBody, SUBSCRIPTION_REQUIRED } from "../../src/pao/index.js";
+import {
+  CREDENTIAL_REQUEST_REQUIRED,
+  credentialRequestBody,
+  KEY_REGISTRATION_REQUIRED,
+  MANDATE_REQUEST_REQUIRED,
+  mandateRequestBody,
+  SUBSCRIPTION_REQUIRED,
+} from "../../src/pao/index.js";
 import { EVENT_TYPES } from "../../src/pao/subscription.js";
 
 const pao = parse(readFileSync("docs/core/agent-protocol.yaml", "utf8"), { maxAliasCount: -1 });
@@ -134,6 +141,36 @@ describe("тело PUT /pao/v1/subscription — по схеме Subscription (PS
   // 400 и 403 метод отдаёт (РП40 п. 2, 6–7), в YAML — только 200: объявляются в ПАО 1.5.0 (РП39 п. 8, № 24).
   it("ответы метода в ПАО 1.4.0 — только 200; Idempotency-Key — в параметрах", () => {
     expect(Object.keys(op.responses)).toEqual(["200"]);
+    expect(op.parameters.map((p: { $ref?: string }) => p.$ref)).toContain("#/components/parameters/IdempotencyKey");
+  });
+});
+
+describe("тело POST /pao/v1/credentials — по схеме CredentialRequest (PS-14, РП47)", () => {
+  const schema = pao.components.schemas.CredentialRequest;
+  const valid = { mandate_id: "mnd_x", order_ref: "ORD-1", merchant_id: "MER-1", amount_max: 1, currency: "RUB", kind: "CARD" };
+
+  it("обязательные поля совпадают с required схемы; без любого из них — undefined; поля схемы — все обязательные", () => {
+    expect([...CREDENTIAL_REQUEST_REQUIRED].sort()).toEqual([...schema.required].sort());
+    expect(Object.keys(schema.properties).sort()).toEqual([...CREDENTIAL_REQUEST_REQUIRED].sort());
+    expect(credentialRequestBody(JSON.stringify(valid))).toEqual(valid);
+    for (const f of CREDENTIAL_REQUEST_REQUIRED) {
+      const { [f]: _drop, ...rest } = valid;
+      void _drop;
+      expect(credentialRequestBody(JSON.stringify(rest)), f).toBeUndefined();
+    }
+  });
+
+  it("перечень kind — как в схеме; amount_max — целое ≥ 1; лишние поля не возвращаются", () => {
+    for (const kind of schema.properties.kind.enum as string[]) expect(credentialRequestBody(JSON.stringify({ ...valid, kind }))).toBeDefined();
+    expect(credentialRequestBody(JSON.stringify({ ...valid, kind: "PAN" }))).toBeUndefined();
+    for (const amount_max of [0, 1.5, "1", -1]) expect(credentialRequestBody(JSON.stringify({ ...valid, amount_max }))).toBeUndefined();
+    // Реквизиты карты в теле отклоняет маршрут (422 CREDENTIALS_FORBIDDEN, pao-credentials-forbidden.test.ts), не разбор.
+    expect(credentialRequestBody(JSON.stringify({ ...valid, extra: "x" }))).toEqual(valid);
+  });
+
+  it("ответы метода — 201, 409, 422, 428, 503 и ключ идемпотентности", () => {
+    const op = pao.paths["/pao/v1/credentials"].post;
+    expect(Object.keys(op.responses).sort()).toEqual(["201", "409", "422", "428", "503"]);
     expect(op.parameters.map((p: { $ref?: string }) => p.$ref)).toContain("#/components/parameters/IdempotencyKey");
   });
 });

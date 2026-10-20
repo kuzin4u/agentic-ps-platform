@@ -1,8 +1,9 @@
 // П9 Проверка тела изменяющих методов по схеме метода (РП31 п. 1): до обработчика и до захвата ключа идемпотентности.
 // Схема — вручную; совпадение обязательных полей с agent-protocol.yaml сверяет tests/contract/pao-bodies.test.ts.
 // Лишние поля игнорируются (ПАО §7): класс и уровень в теле не читаются, они — только из реестра (инвариант 5).
-import { parseRfc3339 } from "../consent/model.js";
-import type { MandateRequest } from "../shared/pao.js";
+import { MANDATE_ID, parseRfc3339 } from "../consent/model.js";
+import { isCurrencyCode } from "@kuzin4u/agentic-core";
+import type { CredentialRequest, MandateRequest } from "../shared/pao.js";
 import type { AgentSubscription } from "../registry/model.js";
 import { EVENT_TYPES } from "./subscription.js";
 
@@ -147,4 +148,116 @@ export function subscriptionBody(raw: string): AgentSubscription | undefined {
   if (!events.every((e) => (EVENT_TYPES as readonly unknown[]).includes(e))) return undefined;
   if (new Set(events).size !== events.length) return undefined;
   return { url, events: events as AgentSubscription["events"] };
+}
+
+/** Обязательные поля `CredentialRequest` (ПАО 1.4.0); сверка с YAML — tests/contract/pao-bodies.test.ts. */
+export const CREDENTIAL_REQUEST_REQUIRED = ["mandate_id", "order_ref", "merchant_id", "amount_max", "currency", "kind"] as const;
+
+/** Длина ссылок заказа и продавца: они попадают в запись реквизита и в HMAC криптограммы (РП47 п. 3, 10). */
+export const CREDENTIAL_REF_MAX = 128;
+
+const ref = (v: unknown): v is string => typeof v === "string" && v !== "" && v.length <= CREDENTIAL_REF_MAX;
+
+/**
+ * Тело `POST /pao/v1/credentials` по схеме `CredentialRequest` (строки, `amount_max` — целое ≥ 1 в минимальных единицах,
+ * `currency` — ISO 4217, `kind` — перечень) или undefined — тогда REQUEST_INVALID. Смысл (мандат, область, предел) — П5.
+ */
+export function credentialRequestBody(raw: string): CredentialRequest | undefined {
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (!isObj(v)) return undefined;
+  const mandate_id = own(v, "mandate_id");
+  const order_ref = own(v, "order_ref");
+  const merchant_id = own(v, "merchant_id");
+  const amount_max = own(v, "amount_max");
+  const currency = own(v, "currency");
+  const kind = own(v, "kind");
+  if (!ref(mandate_id) || !ref(order_ref) || !ref(merchant_id)) return undefined;
+  if (typeof amount_max !== "number" || !Number.isSafeInteger(amount_max) || amount_max < 1) return undefined;
+  if (!isCurrencyCode(currency)) return undefined;
+  if (kind !== "CARD" && kind !== "SBP") return undefined;
+  return { mandate_id, order_ref, merchant_id, amount_max, currency, kind };
+}
+
+/**
+ * Имена полей с платёжными реквизитами карты (ПАО §6 CREDENTIALS_FORBIDDEN, РП47 доп.): агент реквизитов не знает и не
+ * передаёт (инвариант 1). Сравнение — без регистра, «_» и «-».
+ */
+export const PAYMENT_DETAIL_FIELDS: readonly string[] = [
+  "pan",
+  "cardnumber",
+  "card",
+  "cvv",
+  "cvv2",
+  "cvc",
+  "cvc2",
+  "expiry",
+  "expirydate",
+  "expmonth",
+  "expyear",
+  "track1",
+  "track2",
+  "trackdata",
+];
+
+const FIELD_KEY = (k: string): string => k.toLowerCase().replace(/[_-]/g, "");
+
+/** Поля со ссылкой на мандат: значение по форме MANDATE_ID присвоено Платформой. */
+const MANDATE_REF_FIELDS: readonly string[] = ["mandate_id", "parent_id"];
+
+/** Контрольная сумма Луна (ISO/IEC 7812-1): серия 13–19 цифр, похожая на номер карты. */
+function luhn(digits: string): boolean {
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+/** Серии 13–19 цифр (в том числе через одиночный пробел или дефис) с верной суммой Луна. */
+const PAN_LIKE = /\d(?:[ -]?\d){12,18}/g;
+const hasPanLike = (s: string): boolean =>
+  [...s.matchAll(PAN_LIKE)].some((m) => {
+    const d = m[0].replace(/[ -]/g, "");
+    return d.length >= 13 && d.length <= 19 && luhn(d);
+  });
+
+/**
+ * В теле есть платёжные реквизиты карты (ПАО §6 CREDENTIALS_FORBIDDEN, решение владельца по ревью КТ1 З2): поле с именем
+ * из PAYMENT_DETAIL_FIELDS на любом уровне или значение (строка, число, имя поля) с серией 13–19 цифр по Луну. Проверка —
+ * до разбора по схеме и до захвата ключа идемпотентности: номер не попадает ни в хранилища, ни в журнал процесса.
+ * Тело не JSON — по сериям в тексте. id мандата по форме MANDATE_ID (UUID, присвоен Платформой) не сканируется: серия
+ * его цифр через дефисы может пройти проверку Луна, а данных карты в нём нет.
+ */
+export function hasPaymentDetails(raw: string): boolean {
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return hasPanLike(raw);
+  }
+  const walk = (x: unknown): boolean => {
+    if (typeof x === "string") return hasPanLike(x);
+    if (typeof x === "number") return hasPanLike(String(x));
+    if (Array.isArray(x)) return x.some(walk);
+    if (isObj(x)) {
+      return Object.entries(x).some(
+        ([k, val]) =>
+          PAYMENT_DETAIL_FIELDS.includes(FIELD_KEY(k)) ||
+          hasPanLike(k) ||
+          (!(MANDATE_REF_FIELDS.includes(k) && typeof val === "string" && MANDATE_ID.test(val)) && walk(val)),
+      );
+    }
+    return false;
+  };
+  return walk(v);
 }
