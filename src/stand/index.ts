@@ -52,6 +52,11 @@ export interface StandIssuer {
    * 200 `{principal_ref, revocation_ref, revoked}` или `{code}`; `mandate.revoked` агенту — по каждому мандату.
    */
   revokeAll(principalRef: string, revocationRef: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /**
+   * Лента уведомлений клиента через банк (РП46 (б) п. 3, ПИ-8 `GET /participants/v1/notifications`) с подписью запроса
+   * банка; after — notification_id последнего прочитанного. Уведомления по решениям ADP — после stand.notifyParticipants().
+   */
+  getNotifications(after?: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
 }
 
 export interface Stand {
@@ -149,7 +154,16 @@ export function createStand(): Stand {
     env: "dev",
     notifier,
     pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
-    participants: { trusted, consent, params, state, limits, now, requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, now }) },
+    participants: {
+      trusted,
+      consent,
+      params,
+      state,
+      limits,
+      now,
+      requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, now }),
+      notifications,
+    },
     // ADP стенда (ПИ-1, РП43): реестр, журнал и П3 стенда, записи операций в памяти; только 127.0.0.1 (доп. РП43 п. 21).
     // Мандат — с клиентом из журнала, лимиты клиента — из записей банка стенда (РП45 п. 1–2).
     adp: {
@@ -223,6 +237,13 @@ export function createStand(): Stand {
     async getLimits(principalRef) {
       const path = `/participants/v1/principals/${encodeURIComponent(principalRef)}/limits`;
       const res = await app.inject({ method: "GET", url: path, headers: emulator.signRequest("GET", path, "", now()) });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    async getNotifications(after) {
+      const path = "/participants/v1/notifications";
+      const query = after === undefined ? "" : `after=${encodeURIComponent(after)}`;
+      const url = query === "" ? path : `${path}?${query}`;
+      const res = await app.inject({ method: "GET", url, headers: emulator.signRequest("GET", path, query, now()) });
       return { statusCode: res.statusCode, body: res.json() };
     },
     async revokeAll(principalRef, revocationRef) {

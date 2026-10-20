@@ -183,8 +183,9 @@ async function serve(): Promise<void> {
 
   // Уведомитель участников (РП46 доп. п. 7) — только с PostgreSQL: записи операций ADP рабочего сервера в базе.
   // Состояние — в /health (ревью КТ1): остановившийся уведомитель виден мониторингу без журнала.
-  const notifier = pool
-    ? new ParticipantNotifier(new PgParticipantNotificationStore(pool), {
+  const notifyStore = pool ? new PgParticipantNotificationStore(pool) : undefined;
+  const notifier = notifyStore
+    ? new ParticipantNotifier(notifyStore, {
         horizonSec: params.participant_notify_horizon_sec,
         log: (level, fields, msg) => app.log[level](fields, msg),
       })
@@ -205,6 +206,8 @@ async function serve(): Promise<void> {
       state,
       limits: pool ? new PgLimitsStore(pool) : new MemoryLimitsStore(),
       requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, nonces }),
+      // Лента уведомлений клиента (РП46 (б) п. 3) — из Outbox участника в базе; без базы уведомлений нет.
+      ...(notifyStore ? { notifications: notifyStore } : {}),
     },
   });
   app.log.info({ params }, "стендовые параметры загружены");
