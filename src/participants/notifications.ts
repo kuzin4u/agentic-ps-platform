@@ -328,6 +328,15 @@ export interface NotifierResult {
   readonly lagging: boolean;
 }
 
+/** Состояние уведомителя для /health (ревью КТ1): без обращения к базе — по последнему проходу этого процесса. */
+export interface NotifierHealth {
+  /** Конец последнего прохода без исключения; null — проходов ещё не было. */
+  readonly last_pass_at: string | null;
+  readonly lagging: boolean;
+  /** Код реестра при отставании (PLATFORM_DIAG). */
+  readonly code?: "PARTICIPANT_NOTIFY_LAGGING";
+}
+
 /**
  * Уведомитель (РП46 доп. п. 7): проход по решённым записям операций в горизонте вне пути авторизации. Сбой записи — в
  * журнал процесса, запись остаётся неразобранной и берётся следующим проходом.
@@ -335,6 +344,9 @@ export interface NotifierResult {
 export class ParticipantNotifier {
   private readonly now: () => number;
   private readonly log: NotifierLog;
+  private readonly startedMs: number;
+  private lastPassMs: number | undefined;
+  private lastLagging = false;
 
   constructor(
     private readonly store: ParticipantNotificationStore,
@@ -346,6 +358,22 @@ export class ParticipantNotifier {
   ) {
     this.now = opts.now ?? (() => Date.now());
     this.log = opts.log ?? (() => {});
+    this.startedMs = this.now();
+  }
+
+  /**
+   * Отставание видно снаружи (ревью КТ1): проход не завершался дольше половины горизонта (с запуска или с последнего
+   * прохода) или последний проход нашёл запись старше половины горизонта. Остановившийся уведомитель журнал не пишет —
+   * признак берёт мониторинг из /health.
+   */
+  health(): NotifierHealth {
+    const since = this.lastPassMs ?? this.startedMs;
+    const lagging = this.lastLagging || this.now() - since > (this.opts.horizonSec * 1000) / 2;
+    return {
+      last_pass_at: this.lastPassMs === undefined ? null : new Date(this.lastPassMs).toISOString(),
+      lagging,
+      ...(lagging ? { code: "PARTICIPANT_NOTIFY_LAGGING" as const } : {}),
+    };
   }
 
   /** Признак отставания: самая старая неразобранная запись старше половины горизонта. */
@@ -372,6 +400,8 @@ export class ParticipantNotifier {
     }
     const lagging = await this.lagging();
     if (lagging) this.log("warn", { code: "PARTICIPANT_NOTIFY_LAGGING" }, "П10: уведомитель отстаёт больше чем на половину горизонта");
+    this.lastPassMs = this.now();
+    this.lastLagging = lagging;
     return { settled, failed, lagging };
   }
 }

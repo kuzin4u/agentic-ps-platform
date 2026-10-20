@@ -21,6 +21,7 @@ import {
   type StoredNotification,
 } from "../../src/participants/notifications.js";
 import type { Decision } from "../../src/shared/canonical.generated.js";
+import { buildServer } from "../../src/server.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
 const BANK = "bank:a";
@@ -193,6 +194,40 @@ describe("уведомления клиента через банк — памя
     s.settle = settle;
     expect(await notifier(s).runOnce()).toMatchObject({ settled: 1, failed: 0 });
     expect(await types(s)).toEqual([["client.limit_declined", 1]]);
+  });
+});
+
+describe("состояние уведомителя в /health (ревью КТ1): остановка видна мониторингу без журнала", () => {
+  it("проход не выполнялся дольше половины горизонта — признак PARTICIPANT_NOTIFY_LAGGING в ответе /health; после прохода — снят", async () => {
+    let now = NOW;
+    const n = new ParticipantNotifier(new MemoryParticipantNotificationStore(new MemoryOperationStore()), { horizonSec: HORIZON, now: () => now });
+    const app = buildServer({ env: "dev", notifier: n });
+    const health = async () => (await app.inject({ method: "GET", url: "/health" })).json() as Record<string, unknown>;
+    expect(await health()).toEqual({ status: "ok", env: "dev", participant_notify: { last_pass_at: null, lagging: false } });
+    now += (HORIZON * 1000) / 2 + 1;
+    const res = await app.inject({ method: "GET", url: "/health" });
+    expect(res.statusCode, "отставание уведомителя не снимает готовность").toBe(200);
+    expect(res.json()).toMatchObject({ participant_notify: { last_pass_at: null, lagging: true, code: "PARTICIPANT_NOTIFY_LAGGING" } });
+    await n.runOnce();
+    expect(await health()).toMatchObject({ participant_notify: { last_pass_at: iso(now), lagging: false } });
+    now += (HORIZON * 1000) / 2 + 1;
+    expect(await health()).toMatchObject({ participant_notify: { last_pass_at: iso(now - (HORIZON * 1000) / 2 - 1), lagging: true, code: "PARTICIPANT_NOTIFY_LAGGING" } });
+  });
+
+  it("последний проход нашёл запись старше половины горизонта — признак держится до прохода без отставания", async () => {
+    const ops = new MemoryOperationStore();
+    const store = new MemoryParticipantNotificationStore(ops);
+    let now = NOW;
+    const n = new ParticipantNotifier(store, { horizonSec: HORIZON, now: () => now });
+    await decided({ ops, store }, DECLINE("LIMIT_EXCEEDED"), { notify: client({ limit_source: "MANDATE" }), at: NOW - (HORIZON * 1000) / 2 - 1 });
+    const slow = store.settle.bind(store);
+    store.settle = () => Promise.reject(new Error("ECONNRESET"));
+    await n.runOnce();
+    expect(n.health()).toMatchObject({ lagging: true, code: "PARTICIPANT_NOTIFY_LAGGING" });
+    store.settle = slow;
+    now += 1_000;
+    await n.runOnce();
+    expect(n.health()).toEqual({ last_pass_at: iso(now), lagging: false });
   });
 });
 

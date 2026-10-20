@@ -181,9 +181,19 @@ async function serve(): Promise<void> {
     log: (level, fields, msg) => app.log[level](fields, msg),
   });
 
+  // Уведомитель участников (РП46 доп. п. 7) — только с PostgreSQL: записи операций ADP рабочего сервера в базе.
+  // Состояние — в /health (ревью КТ1): остановившийся уведомитель виден мониторингу без журнала.
+  const notifier = pool
+    ? new ParticipantNotifier(new PgParticipantNotificationStore(pool), {
+        horizonSec: params.participant_notify_horizon_sec,
+        log: (level, fields, msg) => app.log[level](fields, msg),
+      })
+    : undefined;
+
   const app = buildServer({
     env,
     logger: true,
+    ...(notifier ? { notifier } : {}),
     trustedProxies,
     // Подписка — в записи агента (РП40 п. 1); разрешение имени — системное (стендового порта здесь нет, РП40 п. 8).
     pao: { verifier, keys, idempotency, params, consent, subscriptions: { set: registry.subscribe.bind(registry) } },
@@ -206,17 +216,9 @@ async function serve(): Promise<void> {
     app.log.error({ err }, "ПАО: сбой прохода доставки событий"),
   );
   const stopExpiry = startReservationExpiry(state, RESERVATION_EXPIRE_EVERY_MS);
-  // Уведомитель участников (РП46 доп. п. 7): раз в секунду — не реже participant_notify_max_delay_sec (≥ 1 с); только с
-  // PostgreSQL — записи операций ADP рабочего сервера в базе.
-  const stopNotify = pool
-    ? startParticipantNotifier(
-        new ParticipantNotifier(new PgParticipantNotificationStore(pool), {
-          horizonSec: params.participant_notify_horizon_sec,
-          log: (level, fields, msg) => app.log[level](fields, msg),
-        }),
-        PARTICIPANT_NOTIFY_EVERY_MS,
-        (err) => app.log.error({ err }, "П10: сбой прохода уведомителя"),
-      )
+  // Проход уведомителя раз в секунду — не реже participant_notify_max_delay_sec (≥ 1 с).
+  const stopNotify = notifier
+    ? startParticipantNotifier(notifier, PARTICIPANT_NOTIFY_EVERY_MS, (err) => app.log.error({ err }, "П10: сбой прохода уведомителя"))
     : async () => {};
   app.addHook("onClose", async () => {
     await stopPurge();

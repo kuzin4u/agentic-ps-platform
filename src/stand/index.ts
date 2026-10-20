@@ -146,6 +146,7 @@ export function createStand(): Stand {
   });
   const app = buildServer({
     env: "dev",
+    notifier,
     pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
     participants: { trusted, consent, params, state, limits, now, requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, now }) },
     // ADP стенда (ПИ-1, РП43): реестр, журнал и П3 стенда, записи операций в памяти; только 127.0.0.1 (доп. РП43 п. 21).
