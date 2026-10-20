@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.10.0** (шлюз участников, PS-20 ч. 1–2: лимит клиента в банке вторым счётом удержаний, `setLimit` ядра v0.11.0, `revoke-all` по порядку фиксации, `GET` лимитов с подписью запроса участника). Что изменилось и что ломает — в
+Текущая версия — **v0.11.0** (шлюз участников, PS-20 ч. 1–3: лимит клиента в банке вторым счётом удержаний, `setLimit` ядра v0.11.0, `revoke-all` по порядку фиксации, `GET` лимитов с подписью запроса участника, уведомления клиента через банк — лента и вебхук-сигнал). Что изменилось и что ломает — в
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.10.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.11.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.

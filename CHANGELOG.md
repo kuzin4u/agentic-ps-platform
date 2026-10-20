@@ -5,6 +5,50 @@
 ставит владелец на коммит слияния в `main`. Версия ПАО — `info.version` в `docs/core/agent-protocol.yaml`, сверка копий —
 по `PAO_SPEC_SHA256` (`src/shared/pao-errors.generated.ts`). Записи до v0.4.0 — в описаниях PR и тегах.
 
+## v0.11.0 — 20.10.2026
+
+PS-20 «Шлюз участников (П10)», часть 3 — уведомления клиента через банк (A3 п. 5.3, ч. 4 ст. 9 161-ФЗ), PR #46. Решение
+РП46 доп. п. 9–11. ПАО — по-прежнему 1.4.0, `PAO_SPEC_SHA256` не меняется (`48bd3397…9ad9da`); ядро — `#v0.11.0` без
+изменений. ПИ — `GET /participants/v1/notifications`; новый `PI_SPEC_SHA256` `8d0be345…`. Миграция —
+`sql/107_participant_notifications.sql`.
+
+### Для банка (ПИ-8)
+
+- **Лента** `GET /participants/v1/notifications?after=<notification_id>` — с подписью HTTP-запроса участника (как `GET`
+  лимитов), только свои уведомления, по возрастанию `seq`, не больше `event_page_max` за ответ; `after` чужой,
+  неизвестный или не по форме — 400 `REQUEST_INVALID`.
+- **Типы:** `client.mandate_first_use` (первое одобрение по мандату), `client.limit_declined` (каждый отказ
+  `LIMIT_EXCEEDED`, одно на операцию, `reason` — `MANDATE` / `CLIENT`), `client.limit_exhausted` (лимит клиента за
+  период исчерпан; одно на счёт периода, после отмены операции не отменяется), `client.mandate_exhausted`,
+  `client.revoked_all` (одно на `revocation_ref`). `data` — только коды и ссылки, без текстов и номера карты.
+- **Вебхук-сигнал** `POST {notification_id, seq}` (заголовок `x-notification-id`) на `notify_url` из записи доверенного
+  участника — без подписи Платформы до SEC-1; содержание — только из ленты. Проверка адреса и повтор — как push агенту
+  (РП40); после `event_retry_max` попыток и без `notify_url` — только лента; `notify_url`, добавленный позже, сигналов
+  по уже пропущенным не даёт.
+- **Задержка** по решениям ADP — не больше `participant_notify_max_delay_sec` (уведомитель вне пути авторизации). Нет
+  сохранённой записи решения ADP — нет уведомления (остаточный риск Р-111).
+
+### Агенту
+
+- Схема ПАО и поведение не меняются: путь ADP — те же обращения к хранилищу (тест-счётчик), лока участника нет.
+
+### Стенд
+
+- `stand.notifyParticipants()` — проход уведомителя по часам стенда; `stand.deliverParticipantNotifications()` — вебхук
+  банку стенда (`issuer-emulator.stand`, приёмник `stand.issuerWebhook`); `stand.issuer.getNotifications(after)`;
+  `stand.notificationDelivery(id)`.
+- `/health` стенда и рабочего сервера отдаёт `participant_notify` — время последнего прохода и признак
+  `PARTICIPANT_NOTIFY_LAGGING` (статус 200).
+
+### Переход с 0.10.x
+
+- **Новые параметры** (`config/params.stand.json`, `PARAMS_PATH`): `participant_notify_max_delay_sec` (60),
+  `participant_notify_horizon_sec` (86 400, не меньше двух задержек), `participant_notify_allow_hosts`
+  (`["issuer-emulator.stand"]`). Свой файл параметров без них — отказ запуска.
+- **`notify_url`** в записи доверенного участника (`PARTICIPANT_KEYS_PATH`) — необязательно, `https://`, один на
+  участника; без него уведомления — только лентой.
+- Миграция `sql/107` применяется при запуске; в dev без базы уведомлений клиента нет.
+
 ## v0.10.0 — 20.10.2026
 
 PS-20 «Шлюз участников (П10)», части 1 и 2: PR #41 (слит 19.10) и PR #44. Решения РП45 (с доп. п. 6–12) и РП46 (с доп.
