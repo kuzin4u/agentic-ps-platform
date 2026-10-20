@@ -125,6 +125,8 @@
 
 TypeScript, Node ≥ 20.19 (`engines`; CI — матрица 20.19 и 22, К3.1 служебной 14.10), Fastify, PostgreSQL 16, vitest, docker compose для песочницы (РП10). Подпись — ed25519 в песочнице; ГОСТ — точка расширения (РП5).
 
+**Смена тега ядра** (`@kuzin4u/agentic-core`, РП46 нюанс К1.1): ссылка в `package.json` → `version` и `resolved` в `package-lock.json` на `git+https://github.com/kuzin4u/agentic-core.git#<полный хэш коммита тега>` (`git -C ../agentic-core rev-parse vX.Y.Z^{commit}`) → `npm ci` → `grep -n agentic-core package.json package-lock.json` и `version` в `node_modules/@kuzin4u/agentic-core/package.json`. `npm install` для смены тега не использовать: он оставляет прежний коммит в lock и переводит `resolved` на `git+ssh`, а `package.json` — на `github:`.
+
 ```
 src/
   shared/        каноническая модель, коды, конфиг
