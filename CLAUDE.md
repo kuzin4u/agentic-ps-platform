@@ -26,7 +26,7 @@
 | `docs/core/NORMS.md` | Нормы A1–A9 | через `/decision` |
 | `docs/core/SCENARIOS.md`, `tests/scenarios/scenarios.json` | 28 сценариев (JSON — источник) | через `/decision` |
 | `docs/core/PARAMS.md`, `config/params.stand.json` | Стендовые параметры | значения — с записью в журнал |
-| `docs/core/DECISIONS.md` | РП1–РП45 | через `/decision` |
+| `docs/core/DECISIONS.md` | РП1–РП46 | через `/decision` |
 | `docs/core/ROADMAP.md` | План продукта | с утверждения владельца |
 | `docs/core/STATUS.md` | Состояние, расхождения, следующая сессия | через `/finish` |
 | `docs/reference/` | Пул и обзорная страница | **только чтение** |
@@ -124,6 +124,8 @@
 ## Стек
 
 TypeScript, Node ≥ 20.19 (`engines`; CI — матрица 20.19 и 22, К3.1 служебной 14.10), Fastify, PostgreSQL 16, vitest, docker compose для песочницы (РП10). Подпись — ed25519 в песочнице; ГОСТ — точка расширения (РП5).
+
+**Смена тега ядра** (`@kuzin4u/agentic-core`, РП46 нюанс К1.1): ссылка в `package.json` → `version` и `resolved` в `package-lock.json` на `git+https://github.com/kuzin4u/agentic-core.git#<полный хэш коммита тега>` (`git -C ../agentic-core rev-parse vX.Y.Z^{commit}`) → `npm ci` → `grep -n agentic-core package.json package-lock.json` и `version` в `node_modules/@kuzin4u/agentic-core/package.json`. `npm install` для смены тега не использовать: он оставляет прежний коммит в lock и переводит `resolved` на `git+ssh`, а `package.json` — на `github:`.
 
 ```
 src/

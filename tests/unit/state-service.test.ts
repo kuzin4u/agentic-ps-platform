@@ -31,14 +31,25 @@ class Budgets implements MandateBudgetSource {
   }
 }
 
-/** Ядро с отказом хранилища по выбору: сбой не HoldError — STATE_UNAVAILABLE, без догадки. */
-function flaky(inner: AsyncHoldLedger, broken: Set<keyof AsyncHoldLedger>): AsyncHoldLedger {
+/**
+ * Ядро с отказом хранилища по выбору: сбой не HoldError — STATE_UNAVAILABLE, без догадки. calls — имена вызовов StateService
+ * (обычный путь резерва клиента — account и reserve, РП46 (г)); hooks.beforeSetLimit — вмешательство другого экземпляра
+ * между чтением счёта и setLimit (гонка сужения с резервом).
+ */
+function flaky(
+  inner: AsyncHoldLedger,
+  broken: Set<keyof AsyncHoldLedger>,
+  calls: string[],
+  hooks: { beforeSetLimit?: () => Promise<void> },
+): AsyncHoldLedger {
   return new Proxy(inner, {
     get(t, p, r) {
       const v = Reflect.get(t, p, r) as unknown;
       if (typeof v !== "function") return v;
-      return (...a: unknown[]) => {
-        if (broken.has(p as keyof AsyncHoldLedger)) return Promise.reject(new Error("ECONNRESET"));
+      return async (...a: unknown[]) => {
+        calls.push(String(p));
+        if (broken.has(p as keyof AsyncHoldLedger)) throw new Error("ECONNRESET");
+        if (p === "setLimit") await hooks.beforeSetLimit?.();
         return (v as (...x: unknown[]) => unknown).apply(t, a);
       };
     },
@@ -51,12 +62,26 @@ function setup(opts: { status?: MandateStatus } = {}) {
   const ledger = new AsyncMemoryHoldLedger();
   const broken = new Set<keyof AsyncHoldLedger>();
   const logs: string[] = [];
-  const state = new StateService(flaky(ledger, broken), budgets, {
+  const calls: string[] = [];
+  const hooks: { beforeSetLimit?: () => Promise<void> } = {};
+  const state = new StateService(flaky(ledger, broken, calls, hooks), budgets, {
     reservationTtlSec: TTL,
     now: () => new Date(now),
     log: (_l, _f, msg) => logs.push(msg),
   });
-  return { state, ledger, budgets, broken, logs, tick: (sec: number) => (now += sec * 1000), at: () => now };
+  return {
+    state,
+    ledger,
+    budgets,
+    broken,
+    logs,
+    calls,
+    set beforeSetLimit(f: (() => Promise<void>) | undefined) {
+      hooks.beforeSetLimit = f;
+    },
+    tick: (sec: number) => (now += sec * 1000),
+    at: () => now,
+  };
 }
 
 describe("П3 резерв (РП41 п. 4–5)", () => {
@@ -340,15 +365,86 @@ describe("П3 лимит клиента вторым счётом удержан
     expect(await s.state.clientLeft(CLIENT(500, { period_start: "2026-10-21" }))).toBe(500);
   });
 
-  it("расширение в периоде — прежний предел до следующего периода; сужение — STATE_UNAVAILABLE до удержания сужения (часть 2)", async () => {
+  it("расширение в периоде — сразу: предел счёта = запись (setLimit, РП46 (г))", async () => {
     const s = setup();
     expect((await s.state.reserveClient(CLIENT(2_000), RUB(1_500), "w1")).ok).toBe(true);
-    // Банк расширил до 5 000: счёт периода открыт с 2 000 — расширение со следующего периода (безопасная сторона).
-    expect(await s.state.reserveClient(CLIENT(5_000), RUB(1_000), "w2")).toEqual({ ok: false, code: "LIMIT_EXCEEDED" });
-    expect((await s.state.reserveClient(CLIENT(5_000), RUB(500), "w3")).ok).toBe(true);
-    // Банк сузил до 1 000: прежний предел больше — не подтверждено, а не «по старому пределу».
-    expect(await s.state.reserveClient(CLIENT(1_000), RUB(1), "w4")).toEqual({ ok: false, code: "STATE_UNAVAILABLE" });
-    expect(s.logs).toContain("П3: лимит клиента сужен в периоде — до удержания сужения резерва нет");
+    // Банк расширил до 5 000 (после подтверждения клиентом, ПИ-8): действует сразу, не со следующего периода.
+    expect((await s.state.reserveClient(CLIENT(5_000), RUB(3_500), "w2")).ok).toBe(true);
+    expect(await s.ledger.account(clientAccountId(CLIENT(5_000)))).toMatchObject({ limit: 5_000, reserved: 5_000 });
+    expect(await s.state.reserveClient(CLIENT(5_000), RUB(1), "w3")).toEqual({ ok: false, code: "LIMIT_EXCEEDED" });
+  });
+
+  it("сужение выше удержанного — сразу: остаток по новому пределу", async () => {
+    const s = setup();
+    expect((await s.state.reserveClient(CLIENT(3_000), RUB(1_000), "n1")).ok).toBe(true);
+    expect(await s.state.clientLeft(CLIENT(1_500))).toBe(500);
+    expect(await s.state.reserveClient(CLIENT(1_500), RUB(600), "n2")).toEqual({ ok: false, code: "LIMIT_EXCEEDED" });
+    expect(await s.ledger.account(clientAccountId(CLIENT(1_500)))).toMatchObject({ limit: 1_500, reserved: 1_000 });
+    expect((await s.state.reserveClient(CLIENT(1_500), RUB(500), "n3")).ok).toBe(true);
+  });
+
+  it("сужение ниже удержанного — предел = committed + reserved, остаток 0; после освобождения — снова по записи", async () => {
+    const s = setup();
+    const r1 = await s.state.reserveClient(CLIENT(3_000), RUB(2_000), "b1");
+    expect(r1.ok).toBe(true);
+    // Банк сузил до 1 000 при удержанных 2 000: прошлое не отменяется (A3 п. 6.3), новых резервов нет.
+    expect(await s.state.reserveClient(CLIENT(1_000), RUB(1), "b2")).toEqual({ ok: false, code: "LIMIT_EXCEEDED" });
+    expect(await s.ledger.account(clientAccountId(CLIENT(1_000)))).toMatchObject({ limit: 2_000, reserved: 2_000 });
+    expect(await s.state.clientLeft(CLIENT(1_000))).toBe(0);
+    // Уже суженный до использованного счёт setLimit не вызывает (РП46 (г) п. 1, З3).
+    const calls = s.calls.length;
+    expect(await s.state.reserveClient(CLIENT(1_000), RUB(1), "b3")).toEqual({ ok: false, code: "LIMIT_EXCEEDED" });
+    expect(s.calls.slice(calls)).not.toContain("setLimit");
+    // Удержание освобождено — предел снова приводится к записи: освобождённое запись не превышает.
+    if (r1.ok) await s.ledger.release(r1.hold.id);
+    expect(await s.state.clientLeft(CLIENT(1_000))).toBe(1_000);
+    expect((await s.state.reserveClient(CLIENT(1_000), RUB(1_000), "b4")).ok).toBe(true);
+    expect(await s.ledger.account(clientAccountId(CLIENT(1_000)))).toMatchObject({ limit: 1_000, reserved: 1_000 });
+    expect(await s.state.reserveClient(CLIENT(1_000), RUB(1), "b5")).toEqual({ ok: false, code: "LIMIT_EXCEEDED" });
+  });
+
+  it("обычный путь — account и reserve, без setLimit; расхождение — один setLimit", async () => {
+    const s = setup();
+    expect((await s.state.reserveClient(CLIENT(3_000), RUB(100), "p1")).ok).toBe(true);
+    let from = s.calls.length;
+    expect((await s.state.reserveClient(CLIENT(3_000), RUB(100), "p2")).ok).toBe(true);
+    expect(s.calls.slice(from)).toEqual(["account", "reserve"]);
+    from = s.calls.length;
+    expect((await s.state.reserveClient(CLIENT(2_000), RUB(100), "p3")).ok).toBe(true);
+    expect(s.calls.slice(from)).toEqual(["account", "setLimit", "reserve"]);
+  });
+
+  it("гонка сужения с резервом: LIMIT_BELOW_USED — перечитать и повторить; одобрений не больше суженного предела", async () => {
+    const s = setup();
+    expect((await s.state.reserveClient(CLIENT(3_000), RUB(500), "g0")).ok).toBe(true);
+    // Между чтением счёта и setLimit другой экземпляр резервирует по старой записи (3 000) — setLimit(1 000) ниже
+    // использованного (LIMIT_BELOW_USED): перечитать, сузить до использованного.
+    s.beforeSetLimit = async () => {
+      s.beforeSetLimit = undefined;
+      await s.ledger.reserve(clientAccountId(CLIENT(3_000)), RUB(1_000), "client:bank:a:prn_7f3c9a:op:g1", null);
+    };
+    expect(await s.state.reserveClient(CLIENT(1_000), RUB(1), "g2")).toEqual({ ok: false, code: "LIMIT_EXCEEDED" });
+    expect(s.calls.filter((c) => c === "setLimit")).toHaveLength(2);
+    expect(await s.ledger.account(clientAccountId(CLIENT(1_000)))).toMatchObject({ limit: 1_500, reserved: 1_500 });
+  });
+
+  it("гонка с резервом три раза подряд — STATE_UNAVAILABLE без резерва (fail-closed)", async () => {
+    const s = setup();
+    expect((await s.state.reserveClient(CLIENT(9_000), RUB(500), "h0")).ok).toBe(true);
+    let n = 0;
+    s.beforeSetLimit = async () => {
+      await s.ledger.reserve(clientAccountId(CLIENT(9_000)), RUB(1_000), `client:bank:a:prn_7f3c9a:op:race-${++n}`, null);
+    };
+    expect(await s.state.reserveClient(CLIENT(1_000), RUB(1), "h1")).toEqual({ ok: false, code: "STATE_UNAVAILABLE" });
+    expect(s.logs).toContain("П3: предел счёта клиента не приведён к записи за три попытки — резерва нет");
+  });
+
+  it("одновременные резервы и сужение — сумма одобрений после сужения не выше нового предела (инвариант 4)", async () => {
+    const s = setup();
+    expect((await s.state.reserveClient(CLIENT(3_000), RUB(100), "c0")).ok).toBe(true);
+    const rs = await Promise.all(Array.from({ length: 20 }, (_, i) => s.state.reserveClient(CLIENT(1_000), RUB(100), `cc-${i}`)));
+    expect(rs.filter((r) => r.ok)).toHaveLength(9);
+    expect(await s.ledger.account(clientAccountId(CLIENT(1_000)))).toMatchObject({ limit: 1_000, reserved: 1_000 });
   });
 
   it("валюта лимита ≠ валюте операции, сбой хранилища — STATE_UNAVAILABLE без резерва (A3 п. 4.5)", async () => {
@@ -359,7 +455,7 @@ describe("П3 лимит клиента вторым счётом удержан
     s.broken.clear();
     s.broken.add("reserve");
     expect(await s.state.reserveClient(CLIENT(3_000), RUB(100), "c3")).toEqual({ ok: false, code: "STATE_UNAVAILABLE" });
-    s.broken.add("available");
+    s.broken.add("account");
     expect(await s.state.clientLeft(CLIENT(3_000))).toBeUndefined();
   });
 });

@@ -12,6 +12,7 @@ import { createIssuerEmulator } from "../env/issuer/index.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
 import { TrustedParticipants, type TrustedParticipantKey } from "../participants/trusted.js";
+import { ParticipantRequestVerifier } from "../participants/verify.js";
 import { paoIdempotency } from "../pao/idempotency.js";
 import { PaoRequestVerifier } from "../pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore, type AdmissionDecision } from "../registry/index.js";
@@ -41,6 +42,15 @@ export interface StandIssuer {
    * запись версии version; ответ шлюза участников — 200 `{principal_ref, version}` или `{code}`.
    */
   setLimits(principalRef: string, limits: unknown, version: number): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /** Чтение действующей записи лимитов (ПИ-8 `GET …/limits`) с подписью запроса банка (RFC 9421, РП46 (в)). */
+  getLimits(principalRef: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /** Заголовки подписанного запроса банка без тела (RFC 9421) — для своих чтений ПИ-8 и тестов отказов. */
+  signRequest(method: string, path: string, query: string, at: Date): Record<string, string>;
+  /**
+   * Отзыв всех полномочий клиента одним действием в приложении банка (РП45 п. 4, РП46 (а); ПИ-8 `revoke-all`): ответ —
+   * 200 `{principal_ref, revocation_ref, revoked}` или `{code}`; `mandate.revoked` агенту — по каждому мандату.
+   */
+  revokeAll(principalRef: string, revocationRef: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
 }
 
 export interface Stand {
@@ -124,7 +134,7 @@ export function createStand(): Stand {
   const app = buildServer({
     env: "dev",
     pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
-    participants: { trusted, consent, params, state, limits, now },
+    participants: { trusted, consent, params, state, limits, now, requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, now }) },
     // ADP стенда (ПИ-1, РП43): реестр, журнал и П3 стенда, записи операций в памяти; только 127.0.0.1 (доп. РП43 п. 21).
     // Мандат — с клиентом из журнала, лимиты клиента — из записей банка стенда (РП45 п. 1–2).
     adp: {
@@ -192,6 +202,25 @@ export function createStand(): Stand {
       const { principal_ref: _ref, ...body } = { ...record, signature: emulator.signLimits(record) };
       void _ref;
       const res = await app.inject({ method: "PUT", url: `/participants/v1/principals/${encodeURIComponent(principalRef)}/limits`, payload: body });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    signRequest: (method, path, query, at) => emulator.signRequest(method, path, query, at),
+    async getLimits(principalRef) {
+      const path = `/participants/v1/principals/${encodeURIComponent(principalRef)}/limits`;
+      const res = await app.inject({ method: "GET", url: path, headers: emulator.signRequest("GET", path, "", now()) });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    async revokeAll(principalRef, revocationRef) {
+      const record = {
+        participant_code: emulator.participant_code,
+        kid: emulator.trustedKey.kid,
+        principal_ref: principalRef,
+        revocation_ref: revocationRef,
+        revoked_at: now().toISOString(),
+      };
+      const { principal_ref: _ref, ...body } = { ...record, signature: emulator.signPrincipalRevocation(record) };
+      void _ref;
+      const res = await app.inject({ method: "POST", url: `/participants/v1/principals/${encodeURIComponent(principalRef)}/revoke-all`, payload: body });
       return { statusCode: res.statusCode, body: res.json() };
     },
   };

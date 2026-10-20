@@ -29,6 +29,7 @@ import type { Mandate, MandateRequest } from "../../src/shared/pao.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 import { signedInject } from "../support/signed-inject.js";
+import { signDirect } from "../support/consent-sign.js";
 
 const A = "nspk:agent:sign-a:v1";
 const T0 = new Date("2026-10-18T10:00:00Z");
@@ -368,8 +369,7 @@ describe("порядок отзыва в мандате (РП37, № 22)", () =>
     const store = new MemoryConsentStore();
     const j = new ConsentJournal(store, { now: () => T0, revocationOrder: () => ro });
     const p = await j.request(A, key(), intent());
-    const row = (await store.getMandate(p.id!))!;
-    await new AsyncHashChainJournal(store.journal(row.chain), () => T0.toISOString()).append("MANDATE_SIGNED", p.id!, {}, p.id!);
+    await signDirect(store, p.id!, T0);
     ro = "bank:a:revocation:v2";
     const c: Mandate = await j.request(A, key(), cart(p.id!));
     expect(c.revocation_order).toBe("bank:a:revocation:v1");

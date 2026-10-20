@@ -58,8 +58,12 @@ const revocation = (id: string, hash: string): MandateRevocationPayload => ({
 const journalOf = (store: ConsentStore): ConsentJournal =>
   new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => T0 });
 
-async function mk(j: ConsentJournal, agent = A): Promise<{ id: string; hash: string }> {
-  const m = await j.request(agent, key(), intent());
+/**
+ * principal_ref — свой у каждого мандата по умолчанию: подписи одной пары клиента идут под локом пары (РП46 (а)) раньше
+ * блокировки агента, а здесь проверяется именно блокировка агента.
+ */
+async function mk(j: ConsentJournal, agent = A, principal_ref = `prn_${randomUUID().replace(/[^a-f]/g, "").slice(0, 8)}`): Promise<{ id: string; hash: string }> {
+  const m = await j.request(agent, key(), intent({ principal_ref }));
   return { id: m.id!, hash: m.hash! };
 }
 

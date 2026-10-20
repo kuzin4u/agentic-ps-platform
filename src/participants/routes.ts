@@ -10,12 +10,14 @@ import {
   parseRfc3339,
   type MandateDecisionPayload,
   type MandateRevocationPayload,
+  type PrincipalRevocationPayload,
 } from "../consent/model.js";
 import { isOpaquePrincipalRef } from "../consent/terms.js";
 import type { Params } from "../shared/config.js";
 import type { StateService } from "../state/service.js";
 import { limitsBody, type LimitsStore } from "./limits.js";
 import type { TrustedParticipants } from "./trusted.js";
+import type { ParticipantRequestVerifier } from "./verify.js";
 
 export interface ParticipantDeps {
   readonly trusted: TrustedParticipants;
@@ -27,6 +29,8 @@ export interface ParticipantDeps {
   readonly limits?: LimitsStore;
   /** Часы Платформы для received_at записи лимитов. */
   readonly now?: () => Date;
+  /** Подпись запроса участника у чтений ПИ-8 (RFC 9421, РП46 (в)); без неё маршрута GET лимитов нет. */
+  readonly requests?: ParticipantRequestVerifier;
 }
 
 /** Коды ответа ПИ-8 подписи (processing-interface.yaml); тело ошибки — `{code}`, причина — в журнале процесса. */
@@ -37,6 +41,7 @@ const HTTP: Readonly<Record<string, number>> = {
   MANDATE_HASH_MISMATCH: 409,
   MANDATE_NOT_PENDING: 409,
   LIMITS_VERSION_CONFLICT: 409,
+  LIMITS_NOT_FOUND: 404,
   LIMITS_UNSUPPORTED: 422,
   QUALIFIED_SIGNATURE_REQUIRED: 422,
   STATE_UNAVAILABLE: 503,
@@ -104,6 +109,26 @@ function revokeBody(mandate_id: string, v: unknown): MandateRevocationPayload | 
     kid: o.kid as string,
     mandate_id,
     mandate_hash: o.mandate_hash as string,
+    revocation_ref: o.revocation_ref as string,
+    revoked_at: o.revoked_at as string,
+    signature: o.signature as string,
+  };
+}
+
+const REVOKE_ALL_FIELDS = ["kid", "participant_code", "revocation_ref", "revoked_at", "signature"].join(",");
+
+/** Тело revoke-all: ровно поля записи без principal_ref (он в пути) и подпись (РП45 п. 4). */
+function revokeAllBody(principal_ref: string, v: unknown): PrincipalRevocationPayload | undefined {
+  if (!isOpaqueRef(principal_ref) || typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  if (Object.keys(o).sort().join(",") !== REVOKE_ALL_FIELDS) return undefined;
+  const str = (k: string) => typeof o[k] === "string" && (o[k] as string).length > 0 && (o[k] as string).length <= 256;
+  if (!["participant_code", "kid", "revocation_ref", "revoked_at", "signature"].every(str)) return undefined;
+  if (Number.isNaN(parseRfc3339(o.revoked_at)) || !isOpaqueRef(o.revocation_ref)) return undefined;
+  return {
+    participant_code: o.participant_code as string,
+    kid: o.kid as string,
+    principal_ref,
     revocation_ref: o.revocation_ref as string,
     revoked_at: o.revoked_at as string,
     signature: o.signature as string,
@@ -190,6 +215,36 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
     ),
   );
 
+  // Отзыв всех полномочий клиента одним действием (РП45 п. 4, РП46 (а)): тело → подпись банка (401 до хранилища) → метка
+  // пары по порядку фиксации → MANDATE_REVOKED и mandate.revoked каждому ACTIVE-мандату пары, подписанному до метки.
+  // 200 — после всех записей; сбой посередине — 503, банк повторяет тот же revocation_ref.
+  app.post<{ Params: { ref: string } }>("/participants/v1/principals/:ref/revoke-all", async (req, reply) => {
+    const fail = (code: keyof typeof HTTP) => {
+      const http = HTTP[code]!;
+      if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+      return reply.code(http).send({ code });
+    };
+    const d = revokeAllBody(req.params.ref, req.body);
+    if (!d) return fail("REQUEST_INVALID");
+    const fields = { participant_code: d.participant_code, principal_ref: d.principal_ref, revocation_ref: d.revocation_ref };
+    try {
+      const r = await deps.consent.revokeAll(d, ({ signature, ...record }) => deps.trusted.verifyPrincipalRevocation(record, signature));
+      req.log.info({ ...fields, revoked: r.revoked }, r.replayed ? "ПИ-8: revoke-all — тот же revocation_ref с другой записью, метка прежняя" : "ПИ-8: revoke-all записан");
+      return reply.code(200).send({ principal_ref: r.principal_ref, revocation_ref: r.revocation_ref, revoked: r.revoked });
+    } catch (err) {
+      if (err instanceof ConsentSignRejected) {
+        req.log.info({ ...fields, reason: err.reason }, "ПИ-8: revoke-all не записан");
+        return fail(err.reason);
+      }
+      if (err instanceof ConsentIntegrityError || err instanceof ConsentStateUnknown) {
+        req.log.error({ err, ...fields }, "ПИ-8: revoke-all — состояние мандата не подтверждено");
+        return fail("STATE_UNAVAILABLE");
+      }
+      req.log.error({ err, ...fields }, "ПИ-8: revoke-all — сбой журнала согласий");
+      return fail("UPSTREAM_UNAVAILABLE");
+    }
+  });
+
   const limits = deps.limits;
   if (!limits) return;
   // Лимиты клиента (РП45 п. 1, 3): тело → подпись банка (401 до хранилища) → только вставка с версией. GET того же пути —
@@ -218,6 +273,44 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       return reply.code(200).send({ principal_ref: record.principal_ref, version: record.version });
     } catch (err) {
       req.log.error({ err, participant_code: record.participant_code }, "ПИ-8: сбой хранилища лимитов");
+      return fail("UPSTREAM_UNAVAILABLE");
+    }
+  });
+
+  const requests = deps.requests;
+  if (!requests) return;
+  // Чтение действующей записи лимитов (РП46 (в)): подпись запроса участника (RFC 9421) → только своя пара — участник из
+  // проверенной подписи; пара другого банка — 404, как нет записи (не раскрываем, что клиент есть у другого банка).
+  app.get<{ Params: { ref: string } }>("/participants/v1/principals/:ref/limits", async (req, reply) => {
+    const fail = (code: keyof typeof HTTP) => {
+      const http = HTTP[code]!;
+      if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+      return reply.code(http).send({ code });
+    };
+    const url = req.raw.url ?? "";
+    const q = url.indexOf("?");
+    const auth = await requests.verify({
+      method: req.method,
+      path: q < 0 ? url : url.slice(0, q),
+      query: q < 0 ? "" : url.slice(q + 1),
+      headers: req.headers,
+      body: "",
+    });
+    if (!auth.ok) {
+      if (auth.code === "UPSTREAM_UNAVAILABLE") {
+        req.log.error({ err: auth.cause }, "ПИ-8: GET лимитов — сбой хранилища nonce");
+        return fail("UPSTREAM_UNAVAILABLE");
+      }
+      req.log.info("ПИ-8: GET лимитов — подпись запроса участника не проверена");
+      return fail("SIGNATURE_INVALID");
+    }
+    if (!isOpaqueRef(req.params.ref)) return fail("REQUEST_INVALID");
+    try {
+      const cur = await limits.current({ participant_code: auth.participant_code, principal_ref: req.params.ref });
+      if (!cur) return fail("LIMITS_NOT_FOUND");
+      return reply.code(200).send(cur);
+    } catch (err) {
+      req.log.error({ err, participant_code: auth.participant_code }, "ПИ-8: сбой хранилища лимитов");
       return fail("UPSTREAM_UNAVAILABLE");
     }
   });

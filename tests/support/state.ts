@@ -44,6 +44,8 @@ export function setup(
     exhausted?: (id: string, p: MandateExhaustedPayload) => Promise<unknown>;
     log?: (msg: string) => void;
     now?: () => Date;
+    /** Общий эмулятор эмитента для двух экземпляров на одной базе. */
+    emu?: IssuerEmulator;
   } = {},
 ): Ctx {
   const consent: ConsentJournal = new ConsentJournal(opts.store ?? new MemoryConsentStore(), {
@@ -58,7 +60,7 @@ export function setup(
     exhausted: opts.exhausted ?? ((id, p) => consent.exhausted(id, p)),
     log: (_l, _f, msg) => opts.log?.(msg),
   });
-  const emu = createIssuerEmulator();
+  const emu = opts.emu ?? createIssuerEmulator();
   const trusted = new TrustedParticipants([emu.trustedKey], { stand: true });
   const app = buildServer({ env: "dev", participants: { trusted, consent, params: POLICY, state } });
   return { consent, ledger, state, app, emu };

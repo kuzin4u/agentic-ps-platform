@@ -3,6 +3,7 @@
 // Ядро не открывает транзакций (каждая операция — одна команда), поэтому порядок записи такой: индекс, предмет,
 // затем запись журнала. Запись журнала — источник истины: строка индекса без записи MANDATE_REQUESTED — мандата нет.
 // Запись, у которой есть событие агенту, и само событие — одной транзакцией Платформы (РП39 п. 1, sql/101_events.sql).
+import { createHash } from "node:crypto";
 import {
   AsyncMemoryJournalStore,
   canonicalJson,
@@ -38,6 +39,52 @@ export class ConsentRowConflict extends Error {
   }
 }
 
+/** Клиент мандата — пара банка и principal_ref (РП45 п. 1). */
+export interface PrincipalPair {
+  readonly participant_code: string;
+  readonly principal_ref: string;
+}
+
+/**
+ * Подпись мандата в порядке пары (РП46 (а)): строка SIGN пишется под локом пары в той же транзакции, что MANDATE_SIGNED.
+ * root_id ≠ mandate_id — CART: корень, отозванный меткой, CART подписать не даёт (PairRevoked).
+ */
+export interface PairSign {
+  readonly pair: PrincipalPair;
+  readonly mandate_id: string;
+  readonly root_id: string;
+  readonly at: string;
+}
+
+/** Номер SIGN мандата в паре и номер последней метки REVOKE_ALL пары; нет строки — undefined. */
+export interface PairPosition {
+  readonly sign: number | undefined;
+  readonly mark: number | undefined;
+}
+
+/** Метка отзыва всех полномочий пары (РП45 п. 4, РП46 (а)): номер и запись банка с подписью (canonicalJson). */
+export interface RevokeAllMark {
+  readonly n: number;
+  readonly revocation_ref: string;
+  readonly record: string;
+  readonly at: string;
+}
+
+/** Корень CART отозван меткой пары (РП46 (а) п. 2): подпись CART не пишется. */
+export class PairRevoked extends Error {
+  constructor(readonly mandateId: string) {
+    super(`PAIR_REVOKED: ${mandateId}`);
+  }
+}
+
+/**
+ * Ключ pg_advisory_xact_lock пары: 64 бита SHA-256 со знаком (как eventSeqLockKey). Коллизия двух пар только
+ * сериализует их подписи и метки, корректность не страдает (РП46 (а) п. 2).
+ */
+export function pairLockKey(p: PrincipalPair): string {
+  return createHash("sha256").update(`pao:principal-order:v1\n${p.participant_code}\n${p.principal_ref}`, "utf8").digest().readBigInt64BE(0).toString();
+}
+
 export interface ConsentStore extends EventDeliveryStore {
   insertMandate(row: MandateIndexRow): Promise<void>;
   getMandate(id: string): Promise<MandateIndexRow | undefined>;
@@ -50,7 +97,13 @@ export interface ConsentStore extends EventDeliveryStore {
    * события без записи нет. Повтор вставки ядром при гонке конца цепочки — новая попытка целиком. draft.push — и строка
    * попытки push-доставки в той же транзакции (РП40 п. 5).
    */
-  journalWithEvent(chain: string, draft: EventDraft): AsyncJournalStore;
+  journalWithEvent(chain: string, draft: EventDraft, sign?: PairSign): AsyncJournalStore;
+  /** Номер SIGN мандата и последней метки пары — одно чтение (РП46 (а) п. 5). */
+  pairPosition(pair: PrincipalPair, mandate_id: string): Promise<PairPosition>;
+  /** Метка пары под локом пары; повтор revocation_ref — прежняя метка, без новой строки (РП46 (а) п. 4). */
+  insertRevokeAll(pair: PrincipalPair, revocation_ref: string, record: string, at: string): Promise<RevokeAllMark>;
+  /** Подписи пары с номером меньше before, по возрастанию номера (записи отзыва после метки, РП46 (а) п. 4 (iii)). */
+  pairSigns(pair: PrincipalPair, before: number): Promise<readonly { readonly mandate_id: string; readonly n: number }[]>;
   /**
    * События агента после курсора after (event_id), по возрастанию номера, не больше limit; без after — с начала.
    * after — не событие этого агента: EventCursorUnknown (РП39 п. 7).
@@ -78,6 +131,7 @@ export class MemoryConsentStore implements ConsentStore {
   private readonly events = new Map<string, StoredEvent[]>();
   private readonly byEventId = new Map<string, StoredEvent>();
   private readonly deliveries = new Map<string, DeliveryRow>();
+  private readonly order = new Map<string, { n: number; kind: "SIGN" | "REVOKE_ALL"; ref: string; record: string | null; at: string }[]>();
 
   async insertMandate(row: MandateIndexRow): Promise<void> {
     if (this.mandates.has(row.id)) throw new ConsentRowConflict(row.id);
@@ -99,15 +153,18 @@ export class MemoryConsentStore implements ConsentStore {
     if (!s) this.chains.set(chain, (s = new AsyncMemoryJournalStore(chainGenesis(chain))));
     return s;
   }
-  journalWithEvent(chain: string, draft: EventDraft): AsyncJournalStore {
+  journalWithEvent(chain: string, draft: EventDraft, sign?: PairSign): AsyncJournalStore {
     const inner = this.journal(chain);
     return {
       ...(inner.genesis !== undefined ? { genesis: inner.genesis } : {}),
       last: () => inner.last(),
       all: () => inner.all(),
       append: async (e) => {
+        if (sign && sign.root_id !== sign.mandate_id && this.revokedByMark(sign.pair, sign.root_id)) throw new PairRevoked(sign.mandate_id);
         await inner.append(e);
-        // Без await между вставкой записи и события: в одном процессе другая запись между ними не встанет.
+        // Без await между вставкой записи, строки SIGN и события: в одном процессе другая запись между ними не встанет.
+        // Метка, вставшая между проверкой корня и записью, получает меньший номер — CART отозван правилом (РП46 (а) п. 3).
+        if (sign) this.pushOrder(sign.pair, "SIGN", sign.mandate_id, null, sign.at);
         const own = this.events.get(draft.agent_code) ?? [];
         const ev = eventOf(draft, chain, e, own.length + 1);
         own.push(ev);
@@ -116,6 +173,36 @@ export class MemoryConsentStore implements ConsentStore {
         if (draft.push) this.deliveries.set(ev.event_id, newDelivery(ev));
       },
     };
+  }
+  async pairPosition(pair: PrincipalPair, mandate_id: string): Promise<PairPosition> {
+    return this.position(pair, mandate_id);
+  }
+  async insertRevokeAll(pair: PrincipalPair, revocation_ref: string, record: string, at: string): Promise<RevokeAllMark> {
+    const prior = (this.order.get(pairKey(pair)) ?? []).find((r) => r.kind === "REVOKE_ALL" && r.ref === revocation_ref);
+    const row = prior ?? this.pushOrder(pair, "REVOKE_ALL", revocation_ref, record, at);
+    return { n: row.n, revocation_ref, record: row.record as string, at: row.at };
+  }
+  async pairSigns(pair: PrincipalPair, before: number): Promise<readonly { readonly mandate_id: string; readonly n: number }[]> {
+    return (this.order.get(pairKey(pair)) ?? []).filter((r) => r.kind === "SIGN" && r.n < before).map((r) => ({ mandate_id: r.ref, n: r.n }));
+  }
+  private position(pair: PrincipalPair, mandate_id: string): PairPosition {
+    const rows = this.order.get(pairKey(pair)) ?? [];
+    const marks = rows.filter((r) => r.kind === "REVOKE_ALL");
+    return { sign: rows.find((r) => r.kind === "SIGN" && r.ref === mandate_id)?.n, mark: marks.length ? marks[marks.length - 1]!.n : undefined };
+  }
+  private revokedByMark(pair: PrincipalPair, root_id: string): boolean {
+    const p = this.position(pair, root_id);
+    return p.mark !== undefined && (p.sign === undefined || p.mark > p.sign);
+  }
+  /** Строка порядка пары с номером max + 1; повтор SIGN того же мандата — прежняя строка (дубль решения, РП36 доп. п. 4). */
+  private pushOrder(pair: PrincipalPair, kind: "SIGN" | "REVOKE_ALL", ref: string, record: string | null, at: string) {
+    const rows = this.order.get(pairKey(pair)) ?? [];
+    const prior = rows.find((r) => r.kind === kind && r.ref === ref);
+    if (prior) return prior;
+    const row = Object.freeze({ n: rows.length + 1, kind, ref, record, at });
+    rows.push(row);
+    this.order.set(pairKey(pair), rows);
+    return row;
   }
   async claimDue(nowMs: number, leaseUntilMs: number, limit: number): Promise<readonly DueDelivery[]> {
     const due = [...this.deliveries.values()]
@@ -152,10 +239,12 @@ export interface TxSqlPool extends SqlClient {
 /**
  * Точки внутри транзакции записи с событием — только для тестов (сбой, гонка конца цепочки, барьер «номер выдан,
  * фиксация позже»): "journal" — после BEGIN, до записи журнала (у каждой попытки); "event" — после записи журнала и
- * блокировки агента, до вставки события; "commit" — после вставки события, до COMMIT.
+ * блокировки агента, до вставки события; "commit" — после вставки события и строки SIGN пары, до COMMIT.
  */
 export interface PgConsentStoreHooks {
   readonly inTx?: (step: "journal" | "event" | "commit", draft: EventDraft) => Promise<void>;
+  /** Точка в транзакции метки revoke-all: "mark" — после лока пары, до вставки метки (РП46 (а), тест гонки). */
+  readonly inMarkTx?: (pair: PrincipalPair) => Promise<void>;
 }
 
 const UNIQUE_VIOLATION = "23505";
@@ -197,27 +286,91 @@ export class PgConsentStore implements ConsentStore {
   journal(chain: string): AsyncJournalStore {
     return new PgJournalStore(this.client, chain);
   }
-  journalWithEvent(chain: string, draft: EventDraft): AsyncJournalStore {
+  journalWithEvent(chain: string, draft: EventDraft, sign?: PairSign): AsyncJournalStore {
     const read = new PgJournalStore(this.client, chain);
     return {
       genesis: read.genesis,
       last: () => read.last(),
       all: () => read.all(),
-      append: (e) => this.appendWithEvent(chain, e, draft),
+      append: (e) => this.appendWithEvent(chain, e, draft, sign),
     };
+  }
+
+  async pairPosition(pair: PrincipalPair, mandate_id: string): Promise<PairPosition> {
+    return position(this.client, pair, mandate_id);
+  }
+
+  /** Одна транзакция: лок пары, прежняя метка с тем же revocation_ref или новая с номером max + 1, COMMIT. */
+  async insertRevokeAll(pair: PrincipalPair, revocation_ref: string, record: string, at: string): Promise<RevokeAllMark> {
+    return this.tx(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [pairLockKey(pair)]);
+      await this.hooks.inMarkTx?.(pair);
+      await tx.query(
+        `INSERT INTO principal_order (participant_code, principal_ref, n, kind, ref, at, record)
+         SELECT $1, $2, COALESCE(MAX(n), 0) + 1, 'REVOKE_ALL', $3, $4, $5 FROM principal_order
+         WHERE participant_code = $1 AND principal_ref = $2
+         ON CONFLICT (participant_code, principal_ref, kind, ref) DO NOTHING`,
+        [pair.participant_code, pair.principal_ref, revocation_ref, at, record],
+      );
+      const r = await tx.query<{ n: string; record: string; at: string }>(
+        "SELECT n, record, at FROM principal_order WHERE participant_code = $1 AND principal_ref = $2 AND kind = 'REVOKE_ALL' AND ref = $3",
+        [pair.participant_code, pair.principal_ref, revocation_ref],
+      );
+      const x = r.rows[0];
+      if (!x) throw new Error("principal_order: метка после вставки не читается");
+      return { n: Number(x.n), revocation_ref, record: x.record, at: x.at };
+    });
+  }
+
+  async pairSigns(pair: PrincipalPair, before: number): Promise<readonly { readonly mandate_id: string; readonly n: number }[]> {
+    const r = await this.client.query<{ ref: string; n: string }>(
+      `SELECT ref, n FROM principal_order WHERE participant_code = $1 AND principal_ref = $2 AND kind = 'SIGN' AND n < $3 ORDER BY n`,
+      [pair.participant_code, pair.principal_ref, before],
+    );
+    return r.rows.map((x) => ({ mandate_id: x.ref, n: Number(x.n) }));
+  }
+
+  /** Транзакция на своём соединении; соединение, на котором не прошёл ROLLBACK, в пул не возвращается. */
+  private async tx<T>(fn: (tx: SqlClient) => Promise<T>): Promise<T> {
+    const tx = await this.client.connect();
+    let broken: Error | undefined;
+    try {
+      try {
+        await tx.query("BEGIN");
+        const out = await fn(tx);
+        await tx.query("COMMIT");
+        return out;
+      } catch (err) {
+        await tx.query("ROLLBACK").catch((rb: unknown) => {
+          broken = rb instanceof Error ? rb : new Error(String(rb));
+        });
+        throw err;
+      }
+    } finally {
+      tx.release(broken);
+    }
   }
 
   /**
    * Одна попытка — одна транзакция: запись журнала, блокировка агента, событие с номером max + 1, COMMIT (РП39 п. 1–2).
    * Блокировка держится до конца транзакции: номер N + 1 выдаётся только после фиксации N. Гонка конца цепочки —
    * ROLLBACK и JournalAppendConflict ядру, оно повторяет попытку целиком (поэтому без SAVEPOINT).
+   * sign — подпись мандата (РП46 (а) п. 2): первым — лок пары (метка revoke-all ждёт фиксации подписи, и наоборот),
+   * у CART — проверка корня по метке, строка SIGN с номером max + 1 — до COMMIT.
    */
-  private async appendWithEvent(chain: string, e: JournalEntry, draft: EventDraft): Promise<void> {
+  private async appendWithEvent(chain: string, e: JournalEntry, draft: EventDraft, sign?: PairSign): Promise<void> {
     const tx = await this.client.connect();
     let broken: Error | undefined;
     try {
       try {
         await tx.query("BEGIN");
+        if (sign) {
+          await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [pairLockKey(sign.pair)]);
+          if (sign.root_id !== sign.mandate_id) {
+            const p = await position(tx, sign.pair, sign.root_id);
+            if (p.mark !== undefined && (p.sign === undefined || p.mark > p.sign)) throw new PairRevoked(sign.mandate_id);
+          }
+        }
         await this.hooks.inTx?.("journal", draft);
         await new PgJournalStore(tx, chain).append(e);
         await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(draft.agent_code)]);
@@ -232,6 +385,16 @@ export class PgConsentStore implements ConsentStore {
           await tx.query(
             "INSERT INTO pao_event_deliveries (event_id, agent_code, state, attempts, next_at_ms) VALUES ($1, $2, 'PENDING', 0, $3)",
             [ev.event_id, ev.agent_code, Date.parse(ev.at)],
+          );
+        }
+        if (sign) {
+          // Дубль решения с другого экземпляра (РП36 доп. п. 4) — прежняя строка, номер не меняется.
+          await tx.query(
+            `INSERT INTO principal_order (participant_code, principal_ref, n, kind, ref, at, record)
+             SELECT $1, $2, COALESCE(MAX(n), 0) + 1, 'SIGN', $3, $4, NULL FROM principal_order
+             WHERE participant_code = $1 AND principal_ref = $2
+             ON CONFLICT (participant_code, principal_ref, kind, ref) DO NOTHING`,
+            [sign.pair.participant_code, sign.pair.principal_ref, sign.mandate_id, sign.at],
           );
         }
         await this.hooks.inTx?.("commit", draft);
@@ -335,6 +498,19 @@ export class PgConsentStore implements ConsentStore {
       throw err;
     }
   }
+}
+
+const pairKey = (p: PrincipalPair): string => `${p.participant_code}\n${p.principal_ref}`;
+
+/** Номер SIGN мандата и последней метки пары — одна команда. */
+async function position(client: SqlClient, pair: PrincipalPair, mandate_id: string): Promise<PairPosition> {
+  const r = await client.query<{ sign: string | null; mark: string | null }>(
+    `SELECT MAX(n) FILTER (WHERE kind = 'SIGN' AND ref = $3) AS sign, MAX(n) FILTER (WHERE kind = 'REVOKE_ALL') AS mark
+     FROM principal_order WHERE participant_code = $1 AND principal_ref = $2`,
+    [pair.participant_code, pair.principal_ref, mandate_id],
+  );
+  const x = r.rows[0];
+  return { sign: x?.sign == null ? undefined : Number(x.sign), mark: x?.mark == null ? undefined : Number(x.mark) };
 }
 
 /** bigint из pg — строкой. */

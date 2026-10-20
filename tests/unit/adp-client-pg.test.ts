@@ -119,4 +119,18 @@ describe.skipIf(!DATABASE_URL)("лимит клиента на PostgreSQL: дв�
     expect(again.ok && prior?.ok && again.hold.id === prior.hold.id).toBe(true);
     expect((await ledger.account(clientAccountId(acc))).reserved).toBe(300_000);
   });
+
+  it("сужение в периоде на двух пулах (РП46 (г)): 20 одновременных reserveClient по новой записи — одобрений не выше нового предела", async () => {
+    const c = client();
+    const at = (amount: number): ClientAccount => ({ ...c, period: "DAY", period_start: "2026-10-19", limit: { amount, currency: "RUB" } });
+    const s1 = new StateService(new PgHoldLedger(db.pool), mandates, { reservationTtlSec: 600 });
+    const s2 = new StateService(new PgHoldLedger(pool2), mandates, { reservationTtlSec: 600 });
+    expect((await s1.reserveClient(at(300_000), { amount: 50_000, currency: "RUB" }, "nar-0")).ok).toBe(true);
+    // Банк сузил до 1 000 ₽: удержано 500 ₽ — место ровно на 5 по 100 ₽, с обоих экземпляров одновременно.
+    const rs = await Promise.all(Array.from({ length: 20 }, (_, i) => (i % 2 ? s1 : s2).reserveClient(at(100_000), { amount: 10_000, currency: "RUB" }, `nar-${i + 1}`)));
+    const ok = rs.filter((r) => r.ok).length;
+    expect(ok, `сужение не применено на двух экземплярах: одобрено ${ok} при месте на 5 (инвариант 4)`).toBe(5);
+    expect(rs.filter((r) => !r.ok && r.code !== "LIMIT_EXCEEDED"), "гонка setLimit с резервом дала не LIMIT_EXCEEDED").toEqual([]);
+    expect(await ledger.account(clientAccountId(at(100_000)))).toMatchObject({ limit: 100_000, reserved: 100_000 });
+  });
 });

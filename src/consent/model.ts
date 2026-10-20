@@ -48,6 +48,25 @@ export interface MandateDecisionPayload {
  * payload записи MANDATE_REVOKED (РП38 п. 1): запись участника об отзыве клиентом и подпись участника над ней (base64url)
  * с меткой pao:participant-mandate-revocation:v1 — в выписке видно, кто отозвал и чем удостоверено.
  */
+/**
+ * Отзыв всех полномочий клиента одним действием (РП45 п. 4, РП46 (а)): запись банка над парой
+ * (participant_code, principal_ref) с меткой pao:participant-principal-revocation:v1 и подпись.
+ */
+export interface PrincipalRevocationPayload {
+  readonly participant_code: string;
+  readonly kid: string;
+  readonly principal_ref: string;
+  readonly revocation_ref: string;
+  readonly revoked_at: string;
+  readonly signature: string;
+}
+
+/** MANDATE_REVOKED по revoke-all: мандат и запись банка с подписью — проверяется без банка (выписка, РП38 п. 7). */
+export interface MandateRevokedAllPayload {
+  readonly mandate_id: string;
+  readonly revoke_all: PrincipalRevocationPayload;
+}
+
 export interface MandateRevocationPayload {
   readonly participant_code: string;
   readonly kid: string;

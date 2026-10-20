@@ -4,7 +4,7 @@
 import { createPublicKey, verify, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { canonicalJson } from "@kuzin4u/agentic-core";
-import type { MandateDecisionPayload, MandateRevocationPayload } from "../consent/model.js";
+import type { MandateDecisionPayload, MandateRevocationPayload, PrincipalRevocationPayload } from "../consent/model.js";
 import { ED25519, parseKey } from "../registry/keys.js";
 import { participantLimitsSigningInput, type LimitsRecord } from "./limits.js";
 
@@ -13,6 +13,9 @@ export const PARTICIPANT_SIGNATURE_CONTEXT = "pao:participant-mandate-signature:
 
 /** Метка контекста отзыва (РП38 п. 1): своя — подпись решения не годится как отзыв, и наоборот. */
 export const PARTICIPANT_REVOCATION_CONTEXT = "pao:participant-mandate-revocation:v1";
+
+/** Метка отзыва всех полномочий клиента (РП45 п. 4): своя — подпись отзыва одного мандата не годится, и наоборот. */
+export const PARTICIPANT_PRINCIPAL_REVOCATION_CONTEXT = "pao:participant-principal-revocation:v1";
 
 /** Код эмулятора эмитента стенда: ключ создаётся при старте стенда и только в памяти; в рабочем сервере — отказ запуска. */
 export const STAND_ISSUER_CODE = "stand:issuer-emulator";
@@ -106,9 +109,20 @@ export class TrustedParticipants {
     return this.verifyInput(record.participant_code, record.kid, participantRevocationSigningInput(record), signature);
   }
 
+  /** Подпись участника над записью отзыва всех полномочий клиента (РП45 п. 4): своя метка. */
+  verifyPrincipalRevocation(record: ParticipantPrincipalRevocationRecord, signature: string): boolean {
+    return this.verifyInput(record.participant_code, record.kid, participantPrincipalRevocationSigningInput(record), signature);
+  }
+
   /** Подпись участника над записью лимитов клиента (РП45 п. 1): своя метка, подпись решения или отзыва не подходит. */
   verifyLimits(record: LimitsRecord, signature: string): boolean {
     return this.verifyInput(record.participant_code, record.kid, participantLimitsSigningInput(record), signature);
+  }
+
+  /** Подпись Ed25519 над готовыми байтами (основа подписи запроса RFC 9421, РП46 (в)); неизвестный ключ — false. */
+  verifyRaw(participant_code: string, kid: string, data: Buffer, sig: Buffer): boolean {
+    const key = this.keys.get(keyId(participant_code, kid));
+    return key !== undefined && sig.length === 64 && verify(null, data, key, sig);
   }
 
   private verifyInput(participant_code: string, kid: string, input: Buffer, signature: string): boolean {
@@ -155,6 +169,23 @@ export const participantRevocationSigningInput = (r: ParticipantRevocationRecord
       kid: r.kid,
       mandate_id: r.mandate_id,
       mandate_hash: r.mandate_hash,
+      revocation_ref: r.revocation_ref,
+      revoked_at: r.revoked_at,
+    }),
+    "utf8",
+  );
+
+/** Подписываемая участником запись отзыва всех полномочий клиента (РП45 п. 4); метка добавляется при подписи. */
+export type ParticipantPrincipalRevocationRecord = Omit<PrincipalRevocationPayload, "signature">;
+
+/** Байты подписи revoke-all: canonicalJson записи с меткой pao:participant-principal-revocation:v1, UTF-8. */
+export const participantPrincipalRevocationSigningInput = (r: ParticipantPrincipalRevocationRecord): Buffer =>
+  Buffer.from(
+    canonicalJson({
+      context: PARTICIPANT_PRINCIPAL_REVOCATION_CONTEXT,
+      participant_code: r.participant_code,
+      kid: r.kid,
+      principal_ref: r.principal_ref,
       revocation_ref: r.revocation_ref,
       revoked_at: r.revoked_at,
     }),

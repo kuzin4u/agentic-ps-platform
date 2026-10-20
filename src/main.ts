@@ -3,6 +3,7 @@ import { buildServer, parseEnv, parseTrustedProxies, type PlatformEnv } from "./
 import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
 import { MemoryLimitsStore, PgLimitsStore } from "./participants/limits.js";
 import { loadTrustedParticipants, type TrustedParticipants } from "./participants/trusted.js";
+import { ParticipantRequestVerifier } from "./participants/verify.js";
 import { EventDeliverer, httpsTransport, startEventDelivery } from "./pao/delivery.js";
 import { paoIdempotency } from "./pao/idempotency.js";
 import { paoNonceStore, paoPoolConfig, requireDatabaseUrl, startNoncePurge } from "./pao/stores.js";
@@ -167,7 +168,15 @@ async function serve(): Promise<void> {
     trustedProxies,
     // Подписка — в записи агента (РП40 п. 1); разрешение имени — системное (стендового порта здесь нет, РП40 п. 8).
     pao: { verifier, keys, idempotency, params, consent, subscriptions: { set: registry.subscribe.bind(registry) } },
-    participants: { trusted, consent, params, state, limits: pool ? new PgLimitsStore(pool) : new MemoryLimitsStore() },
+    // Подпись запроса участника (РП46 (в)): nonce — в хранилище ПАО с приставкой participant: (одна очистка).
+    participants: {
+      trusted,
+      consent,
+      params,
+      state,
+      limits: pool ? new PgLimitsStore(pool) : new MemoryLimitsStore(),
+      requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, nonces }),
+    },
   });
   app.log.info({ params }, "стендовые параметры загружены");
   if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce, идемпотентность, журнал согласий, удержания П3 и лимиты клиента в памяти — один процесс, повтор после перезапуска не ловится");

@@ -299,7 +299,7 @@ paths:
   /participants/v1/principals/{ref}/limits:
     put:
       summary: ПИ-8 Лимиты клиента (эмитент, РП45 п. 1, 3)
-      description: "Порядок: тело → подпись банка (неизвестный участник или ключ — тот же 401) → только вставка. Та же версия с той же записью — 200 без новой строки; версия не выше действующей или та же версия с другой записью — 409. Расширение per_period действует с начала следующего периода. GET — с подписью запроса участника (PS-20 часть 2)."
+      description: "Порядок: тело → подпись банка (неизвестный участник или ключ — тот же 401) → только вставка. Та же версия с той же записью — 200 без новой строки; версия не выше действующей или та же версия с другой записью — 409. Сужение и расширение суммы per_period — сразу с новой версии (setLimit ядра, РП46 (г)); снятие per_period или смена period — со следующего периода (РП45 доп. п. 7). GET — с подписью запроса участника (PS-20 часть 2)."
       parameters:
       - name: ref
         in: path
@@ -325,6 +325,60 @@ paths:
           description: "`LIMITS_VERSION_CONFLICT` — версия не выше действующей или другая запись той же версии"
         '422':
           description: "`LIMITS_UNSUPPORTED` — неизвестное поле limits или period"
+        '503':
+          description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
+    get:
+      summary: ПИ-8 Действующая запись лимитов клиента (эмитент, РП46 (в))
+      description: "Подпись HTTP-запроса участника по профилю ПАО §2 (RFC 9421): Signature-Input ровно (\"@method\" \"@path\" \"@query\" \"content-digest\" \"x-participant-code\" \"x-timestamp\" \"x-nonce\"), alg ed25519, ключ — из доверенных ключей участников, окно — signature_skew_sec, nonce однократный. Участник — из проверенной подписи: банк читает только своих клиентов, пара другого банка — 404, как нет записи. Ответ — действующая запись (наибольшая версия) как прислал банк, с его подписью и received_at."
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        description: principal_ref клиента
+        schema:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      - name: x-participant-code
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: x-timestamp
+        in: header
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - name: x-nonce
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: content-digest
+        in: header
+        required: true
+        description: digest пустого тела
+        schema:
+          type: string
+      - name: signature-input
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: signature
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: "Действующая запись: {participant_code, kid, principal_ref, version, limits, issued_at, signature, received_at}"
+        '400':
+          description: "`REQUEST_INVALID` — ref не по маске (после проверенной подписи)"
+        '401':
+          description: "`SIGNATURE_INVALID` — нет подписи, неизвестный участник или ключ, состав не по профилю, вне окна, повтор nonce"
+        '404':
+          description: "`LIMITS_NOT_FOUND` — у этого банка записи для клиента нет (в том числе клиент другого банка)"
         '503':
           description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
   /participants/v1/instruments/{funding_ref}/limits:
@@ -532,16 +586,72 @@ paths:
           description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After"
   /participants/v1/principals/{ref}/revoke-all:
     post:
-      summary: ПИ-8 Прекращение полномочий одним действием (PS-20, РП38 п. 2)
+      summary: ПИ-8 Прекращение всех полномочий клиента одним действием (PS-20 ч. 2, РП45 п. 4, РП46 (а))
+      description: "Порядок: тело → подпись банка (Ed25519 над canonicalJson записи {context, participant_code, kid, principal_ref, revocation_ref, revoked_at}, context = pao:participant-principal-revocation:v1; неизвестный участник или ключ — тот же 401) → метка пары (participant_code, principal_ref) под локом пары, номер в паре — порядок фиксации, часы не участвуют → MANDATE_REVOKED с записью банка и mandate.revoked агенту каждому ACTIVE-мандату пары, подписанному до метки (сначала CART, затем корни). С фиксации метки мандаты пары, подписанные до неё, не действуют (ADP, GET, verify). Подпись после метки — новое согласие. PENDING_SIGNATURE не трогается. Повтор того же revocation_ref — прежняя метка, дописываются недописанные записи. Авторизованное до отзыва исполняется (A3 п. 6.3)."
       parameters:
       - name: ref
         in: path
         required: true
+        description: principal_ref клиента
         schema:
           type: string
+          pattern: ^[A-Za-z0-9_-]{1,64}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - participant_code
+              - kid
+              - revocation_ref
+              - revoked_at
+              - signature
+              properties:
+                participant_code:
+                  type: string
+                kid:
+                  type: string
+                revocation_ref:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{1,64}$
+                  description: "Непрозрачная ссылка банка без ПДн клиента; ключ идемпотентности метки"
+                revoked_at:
+                  type: string
+                  format: date-time
+                  description: Метка банка; в порядке «до/после» не участвует
+                signature:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{86}$
+                  description: Ed25519 (64 байта), base64url без дополнения
       responses:
         '200':
-          description: OK
+          description: Метка и все записи отзыва записаны (или уже были)
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - principal_ref
+                - revocation_ref
+                - revoked
+                properties:
+                  principal_ref:
+                    type: string
+                  revocation_ref:
+                    type: string
+                  revoked:
+                    type: integer
+                    minimum: 0
+                    description: Число мандатов, отозванных этим вызовом (повтор — 0 или недописанные)
+        '400':
+          description: "`REQUEST_INVALID` — тело не по схеме, ref не по маске; тело ошибки — `{code}`"
+        '401':
+          description: "`SIGNATURE_INVALID` — подпись не проверена (в том числе метка отзыва одного мандата)"
+        '503':
+          description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After: сбой посередине — метка уже действует, банк повторяет тот же revocation_ref"
   /participants/v1/confirmations/{id}:
     post:
       summary: ПИ-8/ПИ-6 Результат подтверждения

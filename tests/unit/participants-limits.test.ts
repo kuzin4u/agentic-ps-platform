@@ -13,6 +13,12 @@ import {
   type StoredLimits,
 } from "../../src/participants/limits.js";
 import { parseParams } from "../../src/shared/config.js";
+import { ConsentJournal } from "../../src/consent/journal.js";
+import { MemoryConsentStore } from "../../src/consent/store.js";
+import { createIssuerEmulator } from "../../src/env/issuer/index.js";
+import { TrustedParticipants } from "../../src/participants/trusted.js";
+import { ParticipantRequestVerifier } from "../../src/participants/verify.js";
+import { buildServer } from "../../src/server.js";
 import { createStand } from "../../src/stand/index.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
@@ -172,8 +178,10 @@ describe("ПИ-8 PUT /participants/v1/principals/{ref}/limits (стенд, эм�
       // Лишнее поле не подписано — отказ, а не пропуск.
       const extra = await stand.app.inject({ method: "PUT", url: "/participants/v1/principals/prn_7f3c9a/limits", payload: { ...body, note: "x" } });
       expect(extra.statusCode).toBe(400);
-      // GET — с подписью запроса участника (часть 2): без неё лимиты клиента не отдаются.
-      expect((await stand.app.inject({ method: "GET", url: "/participants/v1/principals/prn_7f3c9a/limits" })).statusCode).toBe(404);
+      // GET — с подписью запроса участника (РП46 (в)): без неё лимиты клиента не отдаются.
+      const get = await stand.app.inject({ method: "GET", url: "/participants/v1/principals/prn_7f3c9a/limits" });
+      expect(get.statusCode).toBe(401);
+      expect(get.json()).toEqual({ code: "SIGNATURE_INVALID" });
     } finally {
       await stand.close();
     }
@@ -210,3 +218,76 @@ describe("лимит за период по истории версий: рас�
     expect(effectivePeriodLimit(h, TZ, at("2026-10-19T10:00:00Z"))).toEqual({ ...DAY3, per_period: 100_000 });
   });
 });
+
+describe("ПИ-8 GET /participants/v1/principals/{ref}/limits с подписью запроса участника (RFC 9421, РП46 (в))", () => {
+  const PATH = "/participants/v1/principals/prn_7f3c9a/limits";
+  const T = new Date("2026-10-19T10:00:00Z");
+
+  it("подписанный запрос — 200 и действующая запись (наибольшая версия) с подписью банка; записи нет — 404 LIMITS_NOT_FOUND", async () => {
+    const stand = createStand();
+    stand.setClock(T);
+    try {
+      expect(await stand.issuer.getLimits("prn_7f3c9a")).toEqual({ statusCode: 404, body: { code: "LIMITS_NOT_FOUND" } });
+      await stand.issuer.setLimits("prn_7f3c9a", LIMITS, 1);
+      await stand.issuer.setLimits("prn_7f3c9a", { ...LIMITS, per_period: 200_000 }, 2);
+      const r = await stand.issuer.getLimits("prn_7f3c9a");
+      expect(r.statusCode).toBe(200);
+      expect(r.body).toMatchObject({
+        participant_code: stand.issuer.participant_code,
+        principal_ref: "prn_7f3c9a",
+        version: 2,
+        limits: { ...LIMITS, per_period: 200_000 },
+      });
+      expect((r.body as { signature: string }).signature).toMatch(/^[A-Za-z0-9_-]{86}$/);
+    } finally {
+      await stand.close();
+    }
+  });
+
+  it("повтор nonce, метка вне окна, чужой путь в подписи, заголовок не из состава — 401 одним кодом", async () => {
+    const stand = createStand();
+    stand.setClock(T);
+    try {
+      await stand.issuer.setLimits("prn_7f3c9a", LIMITS, 1);
+      const sign = (at = T, path = PATH) => stand.issuer.signRequest("GET", path, "", at);
+      const get = (headers: Record<string, string>) => stand.app.inject({ method: "GET", url: PATH, headers });
+      const h = sign();
+      expect((await get(h)).statusCode).toBe(200);
+      expect((await get(h)).statusCode, "повтор nonce принят").toBe(401);
+      const late = new Date(T.getTime() - (stand.params.signature_skew_sec + 1) * 1000);
+      expect((await get(sign(late))).statusCode, "метка вне окна принята").toBe(401);
+      expect((await get(sign(T, "/participants/v1/principals/prn_other1/limits"))).statusCode, "подпись чужого пути принята").toBe(401);
+      const swapped = sign();
+      swapped["signature-input"] = swapped["signature-input"]!.replace('"x-participant-code"', '"x-agent-code"');
+      expect((await get({ ...swapped, "x-agent-code": stand.issuer.participant_code })).statusCode, "состав подписи не по профилю принят").toBe(401);
+      expect((await get({ ...sign(), "x-participant-code": "bank:other" })).statusCode, "подмена участника принята").toBe(401);
+    } finally {
+      await stand.close();
+    }
+  });
+
+  it("пара другого банка — 404, как нет записи: участник — из проверенной подписи, не из пути", async () => {
+    const emu = createIssuerEmulator();
+    const trusted = new TrustedParticipants([emu.trustedKey], { stand: true });
+    const store = new MemoryLimitsStore();
+    await store.put(rec(5, { participant_code: "bank:other" }));
+    const app = buildServer({
+      env: "dev",
+      participants: {
+        trusted,
+        consent: new ConsentJournal(new MemoryConsentStore(), { revocationOrder: () => "bank:test:revocation:v1" }),
+        params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 },
+        limits: store,
+        requests: new ParticipantRequestVerifier(trusted, { skewSec: 300, now: () => T }),
+      },
+    });
+    try {
+      const res = await app.inject({ method: "GET", url: PATH, headers: emu.signRequest("GET", PATH, "", T) });
+      expect(res.statusCode, "банк прочитал запись клиента другого банка").toBe(404);
+      expect(res.json()).toEqual({ code: "LIMITS_NOT_FOUND" });
+    } finally {
+      await app.close();
+    }
+  });
+});
+
