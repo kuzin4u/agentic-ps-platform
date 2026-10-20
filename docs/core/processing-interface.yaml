@@ -532,16 +532,72 @@ paths:
           description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After"
   /participants/v1/principals/{ref}/revoke-all:
     post:
-      summary: ПИ-8 Прекращение полномочий одним действием (PS-20, РП38 п. 2)
+      summary: ПИ-8 Прекращение всех полномочий клиента одним действием (PS-20 ч. 2, РП45 п. 4, РП46 (а))
+      description: "Порядок: тело → подпись банка (Ed25519 над canonicalJson записи {context, participant_code, kid, principal_ref, revocation_ref, revoked_at}, context = pao:participant-principal-revocation:v1; неизвестный участник или ключ — тот же 401) → метка пары (participant_code, principal_ref) под локом пары, номер в паре — порядок фиксации, часы не участвуют → MANDATE_REVOKED с записью банка и mandate.revoked агенту каждому ACTIVE-мандату пары, подписанному до метки (сначала CART, затем корни). С фиксации метки мандаты пары, подписанные до неё, не действуют (ADP, GET, verify). Подпись после метки — новое согласие. PENDING_SIGNATURE не трогается. Повтор того же revocation_ref — прежняя метка, дописываются недописанные записи. Авторизованное до отзыва исполняется (A3 п. 6.3)."
       parameters:
       - name: ref
         in: path
         required: true
+        description: principal_ref клиента
         schema:
           type: string
+          pattern: ^[A-Za-z0-9_-]{1,64}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - participant_code
+              - kid
+              - revocation_ref
+              - revoked_at
+              - signature
+              properties:
+                participant_code:
+                  type: string
+                kid:
+                  type: string
+                revocation_ref:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{1,64}$
+                  description: "Непрозрачная ссылка банка без ПДн клиента; ключ идемпотентности метки"
+                revoked_at:
+                  type: string
+                  format: date-time
+                  description: Метка банка; в порядке «до/после» не участвует
+                signature:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{86}$
+                  description: Ed25519 (64 байта), base64url без дополнения
       responses:
         '200':
-          description: OK
+          description: Метка и все записи отзыва записаны (или уже были)
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - principal_ref
+                - revocation_ref
+                - revoked
+                properties:
+                  principal_ref:
+                    type: string
+                  revocation_ref:
+                    type: string
+                  revoked:
+                    type: integer
+                    minimum: 0
+                    description: Число мандатов, отозванных этим вызовом (повтор — 0 или недописанные)
+        '400':
+          description: "`REQUEST_INVALID` — тело не по схеме, ref не по маске; тело ошибки — `{code}`"
+        '401':
+          description: "`SIGNATURE_INVALID` — подпись не проверена (в том числе метка отзыва одного мандата)"
+        '503':
+          description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After: сбой посередине — метка уже действует, банк повторяет тот же revocation_ref"
   /participants/v1/confirmations/{id}:
     post:
       summary: ПИ-8/ПИ-6 Результат подтверждения

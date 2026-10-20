@@ -22,6 +22,7 @@ import { buildServer } from "../../src/server.js";
 import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { signedInject } from "../support/signed-inject.js";
+import { signDirect } from "../support/consent-sign.js";
 
 const pao = parse(readFileSync("docs/core/agent-protocol.yaml", "utf8"), { maxAliasCount: -1 });
 const A = "nspk:agent:mand-a:v1";
@@ -104,11 +105,8 @@ describe("POST /pao/v1/mandates", () => {
       body: typeof body === "string" ? body : JSON.stringify(body),
       headers: key === null ? {} : { "idempotency-key": key },
     });
-  /** Подпись принципала — часть 2 PS-06; здесь — запись MANDATE_SIGNED напрямую. */
-  const sign = async (id: string) => {
-    const row = (await store.getMandate(id))!;
-    await new AsyncHashChainJournal(store.journal(row.chain)).append("MANDATE_SIGNED", `${id}:signed`, {}, id);
-  };
+  /** Подпись принципала в обход ПИ-8: MANDATE_SIGNED и строка SIGN порядка пары (РП46 (а)). */
+  const sign = (id: string) => signDirect(store, id);
   const append = async (id: string, kind: string) => {
     const row = (await store.getMandate(id))!;
     await new AsyncHashChainJournal(store.journal(row.chain)).append(kind, `${id}:${kind}`, {}, id);

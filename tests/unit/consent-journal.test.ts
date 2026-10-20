@@ -28,6 +28,7 @@ import {
 } from "../../src/consent/model.js";
 import { ConsentRowConflict, MemoryConsentStore, PgConsentStore, type ConsentStore } from "../../src/consent/store.js";
 import { ConsentRequestRejected, isOpaquePrincipalRef } from "../../src/consent/terms.js";
+import { signDirect } from "../support/consent-sign.js";
 import { assertMigrationRanges, platformMigrationsDir } from "../../src/shared/migrations.js";
 import type { MandateRequest } from "../../src/shared/pao.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
@@ -63,16 +64,8 @@ const cart = (parent_id: string, over: Partial<MandateRequest> = {}): MandateReq
     ...over,
   });
 
-/** Подпись принципала — часть 2 PS-06; здесь запись MANDATE_SIGNED пишется в цепочку напрямую. */
-async function sign(store: ConsentStore, id: string): Promise<void> {
-  const row = (await store.getMandate(id))!;
-  await new AsyncHashChainJournal(store.journal(row.chain), () => T0.toISOString()).append(
-    "MANDATE_SIGNED",
-    `${id}:signed`,
-    {},
-    id,
-  );
-}
+/** Подпись принципала в обход ПИ-8: MANDATE_SIGNED и строка SIGN порядка пары (РП46 (а)). */
+const sign = (store: ConsentStore, id: string): Promise<void> => signDirect(store, id, T0);
 
 const rejected = (reason: string, field: string) =>
   expect.objectContaining({ reason, field }) as unknown as ConsentRequestRejected;
@@ -251,7 +244,10 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
       };
       return {
         insertMandate: (r) => store.insertMandate(r),
-        journalWithEvent: (c, d) => store.journalWithEvent(c, d),
+        journalWithEvent: (c, d, sg) => store.journalWithEvent(c, d, sg),
+        pairPosition: (p, id) => store.pairPosition(p, id),
+        insertRevokeAll: (p, ref, r, at) => store.insertRevokeAll(p, ref, r, at),
+        pairSigns: (p, before) => store.pairSigns(p, before),
         listEvents: (a, after, n) => store.listEvents(a, after, n),
         claimDue: (t, l, n) => store.claimDue(t, l, n),
         finish: (id, a, o) => store.finish(id, a, o),
@@ -364,7 +360,10 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
       let hidden = true;
       const racing: ConsentStore = {
         insertMandate: (r) => store.insertMandate(r),
-        journalWithEvent: (c, d) => store.journalWithEvent(c, d),
+        journalWithEvent: (c, d, sg) => store.journalWithEvent(c, d, sg),
+        pairPosition: (p, id) => store.pairPosition(p, id),
+        insertRevokeAll: (p, ref, r, at) => store.insertRevokeAll(p, ref, r, at),
+        pairSigns: (p, before) => store.pairSigns(p, before),
         listEvents: (a, after, n) => store.listEvents(a, after, n),
         claimDue: (t, l, n) => store.claimDue(t, l, n),
         finish: (id, a, o) => store.finish(id, a, o),
@@ -461,7 +460,10 @@ function suite(name: string, open: () => Promise<{ store: ConsentStore }>) {
       let injected = false;
       const racing: ConsentStore = {
         insertMandate: (r) => store.insertMandate(r),
-        journalWithEvent: (c, d) => store.journalWithEvent(c, d),
+        journalWithEvent: (c, d, sg) => store.journalWithEvent(c, d, sg),
+        pairPosition: (p, id) => store.pairPosition(p, id),
+        insertRevokeAll: (p, ref, r, at) => store.insertRevokeAll(p, ref, r, at),
+        pairSigns: (p, before) => store.pairSigns(p, before),
         listEvents: (a, after, n) => store.listEvents(a, after, n),
         claimDue: (t, l, n) => store.claimDue(t, l, n),
         finish: (id, a, o) => store.finish(id, a, o),

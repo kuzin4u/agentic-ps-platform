@@ -28,11 +28,13 @@ import {
   type MandateRelinquishPayload,
   type MandateRequestedPayload,
   type MandateRevocationPayload,
+  type MandateRevokedAllPayload,
   type MandateStatus,
+  type PrincipalRevocationPayload,
   type MandateSubject,
   type MandateTerms,
 } from "./model.js";
-import { ConsentRowConflict, type ConsentStore, type MandateIndexRow } from "./store.js";
+import { ConsentRowConflict, PairRevoked, type ConsentStore, type MandateIndexRow, type PairSign, type PrincipalPair } from "./store.js";
 import { assertNarrows, ConsentRequestRejected, pickSubject, pickTerms } from "./terms.js";
 import type { Params } from "../shared/config.js";
 import type { ClientRef } from "../participants/limits.js";
@@ -134,11 +136,12 @@ export class ConsentJournal {
 
   /**
    * beforeWrite — перед каждой попыткой вставки: ядро повторяет вставку при гонке конца цепочки (РП33 доп. п. 8).
-   * event — запись пишется вместе с событием агенту, атомарно (РП39 п. 1).
+   * event — запись пишется вместе с событием агенту, атомарно (РП39 п. 1). sign — подпись мандата: строка SIGN в
+   * порядке пары под локом пары в той же транзакции (РП46 (а) п. 2).
    */
-  private chainJournal(chain: string, beforeWrite?: () => void, event?: EventDraft): AsyncHashChainJournal {
+  private chainJournal(chain: string, beforeWrite?: () => void, event?: EventDraft, sign?: PairSign): AsyncHashChainJournal {
     const inner = event
-      ? this.store.journalWithEvent(chain, { ...event, push: this.pushFor(event.agent_code, event.type) })
+      ? this.store.journalWithEvent(chain, { ...event, push: this.pushFor(event.agent_code, event.type) }, sign)
       : this.store.journal(chain);
     const store: AsyncJournalStore = beforeWrite
       ? {
@@ -342,7 +345,19 @@ export class ConsentJournal {
     // Отзыв с другого экземпляра, записанный между проверкой статуса и вставкой, даёт REQUESTED, REVOKED, SIGNED —
     // свёртка пропускает решение, мандат REVOKED (РП38 п. 5). Внутри процесса отзыв ждёт лок записи: решения после отзыва нет.
     const kind = d.decision === "SIGN" ? "MANDATE_SIGNED" : "MANDATE_REJECTED";
-    await this.chainJournal(row.chain, undefined, mandateEvent(row.agent_code, kind, id)).append(kind, id, d, id);
+    // Подпись — в порядке пары клиента (РП46 (а)): пара — банк подписи и principal_ref корня; у CART — пара корня.
+    const root_id = m.head.parent_ref ?? id;
+    const sign: PairSign | undefined =
+      d.decision === "SIGN"
+        ? { pair: { participant_code: d.participant_code, principal_ref: principalOf(m.entries, root_id) }, mandate_id: id, root_id, at: this.now().toISOString() }
+        : undefined;
+    try {
+      await this.chainJournal(row.chain, undefined, mandateEvent(row.agent_code, kind, id), sign).append(kind, id, d, id);
+    } catch (err) {
+      // Метка revoke-all зафиксирована между чтением статуса и локом пары: корень отозван — CART не подписывается.
+      if (err instanceof PairRevoked) throw new ConsentSignRejected("MANDATE_NOT_PENDING", id, "REVOKED");
+      throw err;
+    }
     return { id, status: await this.statusAfterWrite(id, row.agent_code), replayed: false };
   }
 
@@ -366,6 +381,49 @@ export class ConsentJournal {
       await this.chainJournal(row.chain, undefined, mandateEvent(row.agent_code, "MANDATE_REVOKED", id)).append("MANDATE_REVOKED", id, d, id);
       return { id, status: await this.statusAfterWrite(id, row.agent_code), replayed: false };
     });
+  }
+
+  /**
+   * Отзыв всех полномочий клиента одним действием (РП45 п. 4, РП46 (а)): подпись записи банка → метка пары под локом
+   * пары (повтор revocation_ref — прежняя метка) → MANDATE_REVOKED с записью банка и событием mandate.revoked каждому
+   * ACTIVE-мандату пары, подписанному до метки (номер SIGN меньше номера метки): сначала CART, затем корни — иначе CART
+   * отзывается свёрткой родителя без записи и события (РП35). Статус для решения о записи — без метки (с меткой все
+   * они уже REVOKED). Сбой посередине — исключение (503), повтор того же revocation_ref дописывает остальные.
+   * PENDING_SIGNATURE не трогается: полномочия возникают только подписью банка.
+   */
+  async revokeAll(
+    d: PrincipalRevocationPayload,
+    verifySignature: (d: PrincipalRevocationPayload) => boolean,
+  ): Promise<{ readonly principal_ref: string; readonly revocation_ref: string; readonly revoked: number; readonly replayed: boolean }> {
+    if (!verifySignature(d)) throw new ConsentSignRejected("SIGNATURE_INVALID", d.principal_ref);
+    const pair: PrincipalPair = { participant_code: d.participant_code, principal_ref: d.principal_ref };
+    const record = canonicalJson(d);
+    const mark = await this.store.insertRevokeAll(pair, d.revocation_ref, record, this.now().toISOString());
+    // Тот же revocation_ref с другой записью — метка прежняя: действие то же (отозвано всё до метки), запись банка — первая.
+    const replayed = mark.record !== record;
+    const loaded = [];
+    for (const s of await this.store.pairSigns(pair, mark.n)) {
+      const row = await this.store.getMandate(s.mandate_id);
+      if (!row) throw new ConsentStateUnknown(s.mandate_id, "строка SIGN пары без мандата в индексе (РП46 (а))");
+      const m = await this.loadFrom(row, await this.snapshot(row.id, row.chain), row.agent_code, false);
+      if (!m) throw new ConsentStateUnknown(s.mandate_id, "строка SIGN пары без записи мандата (РП46 (а))");
+      loaded.push(m);
+    }
+    loaded.sort((a, b) => Number(!a.head.parent_ref) - Number(!b.head.parent_ref));
+    const revoke_all = JSON.parse(mark.record) as PrincipalRevocationPayload;
+    let revoked = 0;
+    for (const m of loaded) {
+      const id = m.row.id;
+      const wrote = await this.locked(id, async () => {
+        const cur = await this.loadFrom(m.row, await this.snapshot(id, m.row.chain), m.row.agent_code, false);
+        if (!cur || cur.status !== "ACTIVE") return false;
+        const payload: MandateRevokedAllPayload = { mandate_id: id, revoke_all };
+        await this.chainJournal(m.row.chain, undefined, mandateEvent(m.row.agent_code, "MANDATE_REVOKED", id)).append("MANDATE_REVOKED", id, payload, id);
+        return true;
+      });
+      if (wrote) revoked++;
+    }
+    return { principal_ref: d.principal_ref, revocation_ref: d.revocation_ref, revoked, replayed };
   }
 
   /**
@@ -583,7 +641,12 @@ export class ConsentJournal {
   }
 
   /** Мандат по снимку цепочки: статус мандата и, у CART, статус родителя — по одним и тем же записям (РП35). */
-  private async loadFrom(row: MandateIndexRow, entries: readonly JournalEntry[], agent_code: string): Promise<LoadedMandate | undefined> {
+  private async loadFrom(
+    row: MandateIndexRow,
+    entries: readonly JournalEntry[],
+    agent_code: string,
+    withMark = true,
+  ): Promise<LoadedMandate | undefined> {
     const id = row.id;
     if (row.agent_code !== agent_code) return undefined;
     const head = entries.find((e) => e.ref === id && e.kind === "MANDATE_REQUESTED");
@@ -608,10 +671,25 @@ export class ConsentJournal {
     }
     const now = this.now();
     const own = deriveStatus(id, entries, now);
-    // CART под INTENT — статус вместе с родителем, одним проходом по той же цепочке (РП35).
-    if (!head.parent_ref) return { row, head, subj, status: own, entries };
-    const parent = deriveStatus(head.parent_ref, entries, now);
+    // CART под INTENT — статус вместе с родителем, одним проходом по той же цепочке (РП35). Метка revoke-all — на корень.
+    if (!head.parent_ref) return { row, head, subj, status: withMark ? await this.marked(id, entries, own) : own, entries };
+    const raw = deriveStatus(head.parent_ref, entries, now);
+    const parent = withMark ? await this.marked(head.parent_ref, entries, raw) : raw;
     return { row, head, subj, status: withParentStatus(own, parent), entries };
+  }
+
+  /**
+   * Статус корня с меткой revoke-all (РП46 (а) п. 3, 5): подписанный корень (ACTIVE, EXHAUSTED) отозван, если номер
+   * последней метки пары больше номера его SIGN. Порядок — из базы, часы не участвуют. Подписан, а строки SIGN нет
+   * (подпись до РП46) — ConsentStateUnknown, а не «метка не касается» (п. 6). Сбой чтения — исключение (fail-closed).
+   */
+  private async marked(root_id: string, entries: readonly JournalEntry[], status: MandateStatus): Promise<MandateStatus> {
+    if (status !== "ACTIVE" && status !== "EXHAUSTED") return status;
+    const participant_code = signerOf(entries, root_id);
+    if (!participant_code) throw new ConsentStateUnknown(root_id, "подписанный мандат без подписи участника");
+    const p = await this.store.pairPosition({ participant_code, principal_ref: principalOf(entries, root_id) }, root_id);
+    if (p.sign === undefined) throw new ConsentStateUnknown(root_id, "подписанный мандат без строки SIGN порядка пары (РП46 (а) п. 6)");
+    return p.mark !== undefined && p.mark > p.sign ? "REVOKED" : status;
   }
 
   private toMandate(id: string, head: JournalEntry, subj: MandateSubject, status: MandateStatus): Mandate {
@@ -654,6 +732,14 @@ function signerOf(entries: readonly JournalEntry[], id: string): string | undefi
   const e = entries.find((x) => x.ref === id && x.kind === "MANDATE_SIGNED");
   const p = e && objectPayload(e) ? e.payload.participant_code : undefined;
   return typeof p === "string" && p !== "" ? p : undefined;
+}
+
+/** principal_ref записи MANDATE_REQUESTED мандата id (клиент мандата, РП45 п. 1). */
+function principalOf(entries: readonly JournalEntry[], id: string): string {
+  const e = entries.find((x) => x.ref === id && x.kind === "MANDATE_REQUESTED");
+  const p = e && objectPayload(e) ? e.payload.principal_ref : undefined;
+  if (typeof p !== "string" || p === "") throw new ConsentStateUnknown(id, "principal_ref записи не читается");
+  return p;
 }
 
 /** Отзыв и отказ пишутся только пока полномочия есть или ожидаются (РП38 п. 4). */

@@ -5,10 +5,12 @@
 import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { ED25519, parseKey } from "../../registry/keys.js";
 import {
+  participantPrincipalRevocationSigningInput,
   participantRevocationSigningInput,
   participantSigningInput,
   STAND_ISSUER_CODE,
   STAND_REVOCATION_ORDER,
+  type ParticipantPrincipalRevocationRecord,
   type ParticipantRevocationRecord,
   type ParticipantSignedRecord,
   type TrustedParticipantKey,
@@ -25,6 +27,8 @@ export interface IssuerEmulator {
   signRecord(record: ParticipantSignedRecord): string;
   /** Подпись записи об отзыве клиентом (base64url, РП38). */
   signRevocation(record: ParticipantRevocationRecord): string;
+  /** Подпись записи отзыва всех полномочий клиента (base64url, РП45 п. 4). */
+  signPrincipalRevocation(record: ParticipantPrincipalRevocationRecord): string;
   /** Подпись записи лимитов клиента (base64url, РП45 п. 1). */
   signLimits(record: LimitsRecord): string;
 }
@@ -46,6 +50,7 @@ export function createIssuerEmulator(): IssuerEmulator {
     },
     signRecord: (record) => sign(null, participantSigningInput(record), secret).toString("base64url"),
     signRevocation: (record) => sign(null, participantRevocationSigningInput(record), secret).toString("base64url"),
+    signPrincipalRevocation: (record) => sign(null, participantPrincipalRevocationSigningInput(record), secret).toString("base64url"),
     signLimits: (record) => sign(null, participantLimitsSigningInput(record), secret).toString("base64url"),
   };
 }
