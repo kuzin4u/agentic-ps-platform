@@ -46,8 +46,10 @@ CREATE TRIGGER participant_notifications_no_truncate
   FOR EACH STATEMENT EXECUTE FUNCTION consent_append_only();
 
 -- Отметка разбора записи операции уведомителем — в той же транзакции, что её уведомления: запись разобрана целиком или нет.
+-- Без внешнего ключа на adp_operations: он закрыл бы TRUNCATE adp_operations раньше её триггера (К3.1а; запрет очистки
+-- проверяется триггером sql/103). op_ref берётся только из прочитанной записи операции.
 CREATE TABLE participant_notify_seen (
-  op_ref text PRIMARY KEY REFERENCES adp_operations (op_ref),
+  op_ref text PRIMARY KEY CHECK (op_ref <> ''),
   at     text NOT NULL
 );
 
