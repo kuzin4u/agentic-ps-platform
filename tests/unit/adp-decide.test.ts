@@ -132,7 +132,8 @@ function setup(
   const broken = new Set<string>();
   const io = { n: 0 };
   const state = new StateService(spy<AsyncHoldLedger>(ledger, broken, io), journal, { reservationTtlSec: 600 });
-  const operations = spy(new MemoryOperationStore(), broken, io);
+  const records = new MemoryOperationStore();
+  const operations = spy(records, broken, io);
   const logs: { fields: Record<string, unknown>; msg: string }[] = [];
   const adp = new Adp({
     agents,
@@ -148,7 +149,7 @@ function setup(
     log: (_l, fields, m) => logs.push({ fields, msg: m }),
   });
   const available = async (id = M) => (await ledger.available(accountId(id))).amount;
-  return { adp, agents, journal, ledger, state, broken, io, logs, available };
+  return { adp, agents, journal, ledger, state, broken, io, logs, available, records };
 }
 
 /** Решение ADP — только согласованная пара (РП19); иначе parseDecision бросает. */
@@ -791,6 +792,72 @@ describe("П3 на пути ADP — дописывание MANDATE_EXHAUSTED б�
     ]);
     expect(r).toEqual({ ok: false, code: "LIMIT_EXCEEDED" });
     release();
+  });
+});
+
+describe("признаки уведомителя в записи операции (РП46 доп. п. 7, 9 (о1); A3 п. 5.3)", () => {
+  const DAY = { per_period: 300_000, period: "DAY", currency: "RUB" };
+  const limits = (rec: unknown): ClientLimitsSource => ({ get: async () => (rec === undefined ? [] : [version(rec)]) });
+  const day = (now: Date) => periodStart("DAY", "Europe/Moscow", now);
+  const NOW = new Date("2026-10-20T09:00:00Z");
+  const ACCOUNT = clientAccountId({ ...CLIENT, period: "DAY", period_start: day(NOW) });
+
+  it("обращений к хранилищу — как в части 2: первое решение периода 11, обычное 8, отказ по лимиту клиента 10", async () => {
+    const { adp, io } = setup({ client: limits(DAY), now: () => NOW });
+    await adp.decide(msg({ op_ref: "w1", amount: 1_000 }));
+    expect(io.n).toBe(11);
+    await adp.decide(msg({ op_ref: "w2", amount: 1_000 }));
+    expect(io.n).toBe(11 + 8);
+    const lim = setup({ client: limits({ ...DAY, per_period: 500 }), now: () => NOW });
+    await lim.adp.decide(msg({ op_ref: "d1", amount: 1_000 }));
+    expect(lim.io.n).toBe(10);
+  });
+
+  it("APPROVE с лимитом клиента — клиент мандата, агент, счёт периода и остаток клиента после резерва", async () => {
+    const { adp, records } = setup({ client: limits(DAY), now: () => NOW });
+    await adp.decide(msg({ op_ref: "a1", amount: 100_000 }));
+    expect(records.get("a1")?.notify).toEqual({ ...CLIENT, agent_code: AGENT, client_account: ACCOUNT, client_left_after: 200_000 });
+    await adp.decide(msg({ op_ref: "a2", amount: 200_000 }));
+    expect(records.get("a2")?.notify).toMatchObject({ client_account: ACCOUNT, client_left_after: 0 });
+  });
+
+  it("APPROVE без записи лимитов — без счёта клиента", async () => {
+    const { adp, records } = setup();
+    await adp.decide(msg({ op_ref: "a3", amount: 1_000 }));
+    expect(records.get("a3")?.notify).toEqual({ ...CLIENT, agent_code: AGENT });
+  });
+
+  it("LIMIT_EXCEEDED — чей предел: мандат, per_operation и per_period клиента, подтверждение по меньшему остатку", async () => {
+    const mandate = setup();
+    await mandate.adp.decide(msg({ op_ref: "m1", amount: LIMIT + 1 }));
+    expect(mandate.records.get("m1")?.notify).toEqual({ ...CLIENT, agent_code: AGENT, limit_source: "MANDATE" });
+    const perOp = setup({ client: limits({ per_operation: 500, currency: "RUB" }) });
+    await perOp.adp.decide(msg({ op_ref: "c1", amount: 1_000 }));
+    expect(perOp.records.get("c1")?.notify?.limit_source).toBe("CLIENT");
+    const perPeriod = setup({ client: limits({ ...DAY, per_period: 500 }), now: () => NOW });
+    await perPeriod.adp.decide(msg({ op_ref: "c2", amount: 1_000 }));
+    expect(perPeriod.records.get("c2")?.notify?.limit_source).toBe("CLIENT");
+    // Выше порога: остатка мандата хватает, клиента — нет → CLIENT; не хватает мандата → MANDATE.
+    const conf = setup({ client: limits({ ...DAY, per_period: 50_000, confirm_above: 10_000 }), now: () => NOW });
+    expect(await reasonOf(conf.adp, msg({ op_ref: "c3", amount: 60_000 }))).toBe("LIMIT_EXCEEDED");
+    expect(conf.records.get("c3")?.notify?.limit_source).toBe("CLIENT");
+    const confM = setup({ client: limits({ ...DAY, per_period: 900_000, confirm_above: 10_000 }), now: () => NOW });
+    expect(await reasonOf(confM.adp, msg({ op_ref: "c4", amount: LIMIT + 1 }))).toBe("LIMIT_EXCEEDED");
+    expect(confM.records.get("c4")?.notify?.limit_source).toBe("MANDATE");
+  });
+
+  it("прочие отказы — без признака источника; до чтения мандата и без клиента — без признаков", async () => {
+    const { adp, records, journal, agents } = setup();
+    journal.set(M, { status: "REVOKED" });
+    await adp.decide(msg({ op_ref: "r1" }));
+    expect(records.get("r1")?.notify).toEqual({ ...CLIENT, agent_code: AGENT });
+    agents.map.set(AGENT, "SUSPENDED");
+    await adp.decide(msg({ op_ref: "r2" }));
+    expect(records.get("r2")?.notify).toBeUndefined();
+    const orphan = setup();
+    orphan.journal.set(M, { client: null });
+    await orphan.adp.decide(msg({ op_ref: "r3" }));
+    expect(orphan.records.get("r3")?.notify).toBeUndefined();
   });
 });
 

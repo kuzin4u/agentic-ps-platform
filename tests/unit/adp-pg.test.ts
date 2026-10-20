@@ -56,6 +56,31 @@ describe.skipIf(!DATABASE_URL)("запись операции ADP на PostgreSQ
     expect(await s2.begin(op, H, AT)).toEqual({ op_ref: op, msg_hash: H, decision: APPROVE, mandate_id: "mnd_1", holds: ["h1", "h2"], at: AT });
   });
 
+  it("признаки уведомителя — тем же UPDATE, что решение; решением не меняются (РП46 доп. п. 9 (о1))", async () => {
+    const op = opRef();
+    await s1.begin(op, H, AT);
+    const notify = {
+      participant_code: "bank:a",
+      principal_ref: "prn_1",
+      agent_code: "nspk:agent:buyref-01:v3",
+      limit_source: "CLIENT" as const,
+      client_account: "client:bank:a:prn_1:DAY:2026-10-20",
+      client_left_after: 0,
+    };
+    await s1.finish({ op_ref: op, msg_hash: H, decision: APPROVE, mandate_id: "mnd_1", holds: ["h1"], at: AT, notify });
+    await s2.finish({ op_ref: op, msg_hash: H, decision: APPROVE, mandate_id: "mnd_1", holds: ["h1"], at: AT, notify: { ...notify, client_left_after: 5 } });
+    const r = await db.pool.query(
+      "SELECT participant_code, principal_ref, agent_code, limit_source, client_account, client_left_after FROM adp_operations WHERE op_ref = $1",
+      [op],
+    );
+    expect(r.rows[0]).toEqual({ ...notify, client_left_after: "0" });
+    const bare = opRef();
+    await s1.begin(bare, H, AT);
+    await s1.finish({ op_ref: bare, msg_hash: H, decision: APPROVE, mandate_id: null, holds: [], at: AT });
+    const b = await db.pool.query("SELECT participant_code, limit_source FROM adp_operations WHERE op_ref = $1", [bare]);
+    expect(b.rows[0]).toEqual({ participant_code: null, limit_source: null });
+  });
+
   it("finish с другим хэшем не меняет запись «в работе»", async () => {
     const op = opRef();
     await s1.begin(op, H, AT);
