@@ -19,6 +19,11 @@ import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 import { A, decide, intent, mk, setup, T0, type Ctx } from "../support/state.js";
 
 const RUB = (amount: number) => ({ amount, currency: "RUB" });
+/**
+ * Случайная непрозрачная ссылка без цифр: семь цифр подряд правило ссылок отклоняет (похоже на номер карты, инвариант 1),
+ * и тест на случайном UUID падал изредка (К3.5а, CI 39425809302).
+ */
+const opaque = (prefix: string): string => `${prefix}${randomUUID().slice(0, 8).replace(/[0-9]/g, (d) => "ghijklmnop"[Number(d)]!)}`;
 
 async function revokeAll(c: Ctx, principal_ref: string, revocation_ref: string) {
   const r = { participant_code: c.emu.participant_code, kid: c.emu.trustedKey.kid, principal_ref, revocation_ref, revoked_at: T0.toISOString() };
@@ -46,7 +51,7 @@ function suite(make: () => Promise<{ store: ConsentStore; notifications: Partici
   it("MANDATE_EXHAUSTED — client.mandate_exhausted в той же записи, одно на мандат", async () => {
     const { store, notifications } = await make();
     const c = setup({ store });
-    const principal = `prn_ex_${randomUUID().slice(0, 8)}`;
+    const principal = opaque("prn_ex_");
     const id = await exhaust(c, principal);
     expect((await c.consent.get(id, A))?.status).toBe("EXHAUSTED");
     // Повтор записи исчерпания (уже EXHAUSTED) — без записи и без уведомления.
@@ -60,10 +65,10 @@ function suite(make: () => Promise<{ store: ConsentStore; notifications: Partici
   it("revoke-all — client.revoked_all после записей; повтор того же revocation_ref — без второго уведомления", async () => {
     const { store, notifications } = await make();
     const c = setup({ store });
-    const principal = `prn_ra_${randomUUID().slice(0, 8)}`;
+    const principal = opaque("prn_ra_");
     const m = await mk(c, intent({ principal_ref: principal }));
     expect(await decide(c, m)).toBe(200);
-    const ref = `rev-all-${randomUUID().slice(0, 8)}`;
+    const ref = opaque("rev-all-");
     expect(await revokeAll(c, principal, ref)).toBe(200);
     expect(await revokeAll(c, principal, ref)).toBe(200);
     const mine = (await feed(notifications, c.emu.participant_code)).filter((n) => n.data.principal_ref === principal);
@@ -101,7 +106,7 @@ describe.skipIf(!DATABASE_URL)("уведомления клиента из жу�
     const c2 = setup({ store: new PgConsentStore(db.reopen()), emu });
     const n1 = new PgParticipantNotificationStore(db.pool);
     const n2 = new PgParticipantNotificationStore(db.reopen());
-    const principal = `prn_locks_${randomUUID().slice(0, 8)}`;
+    const principal = opaque("prn_locks_");
     // Подписанные мандаты одного клиента: исчерпание — лок агента, затем участника; подпись — лок пары, затем агента.
     const signed = await Promise.all([1, 2, 3, 4].map(async () => {
       const m = await mk(c1, intent({ principal_ref: principal }));
@@ -121,7 +126,7 @@ describe.skipIf(!DATABASE_URL)("уведомления клиента из жу�
         const m = await mk(c2, intent({ principal_ref: principal }));
         await decide(c2, m);
       }),
-      revokeAll(c1, principal, `rev-${randomUUID().slice(0, 8)}`),
+      revokeAll(c1, principal, opaque("rev-")),
       settle(n1),
       settle(n2),
     ]);
