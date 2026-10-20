@@ -1,7 +1,7 @@
 // П3 Бюджет мандата на удержаниях agentic-core (РП41, PS-09 К1.2): счёт = мандат, резерв → закрепление → освобождение.
 // Условие по остатку и изменение — одна операция ядра (PgHoldLedger / AsyncMemoryHoldLedger); своих реализаций и прямых
 // запросов к таблицам удержаний нет (РП41 п. 2). Любое неподтверждённое состояние — STATE_UNAVAILABLE (A3 п. 4.5).
-import { HoldError, isCurrencyCode, type AsyncHoldLedger, type Hold, type Money } from "@kuzin4u/agentic-core";
+import { HoldError, isCurrencyCode, type Account, type AsyncHoldLedger, type Hold, type Money } from "@kuzin4u/agentic-core";
 import type { MandateExhaustedPayload, MandateStatus } from "../consent/model.js";
 
 /**
@@ -103,6 +103,8 @@ const isUnits = (v: unknown): v is number => typeof v === "number" && Number.isS
  */
 const reserved = (hold: Hold): StateResult =>
   hold.committed === 0 && hold.released === hold.amount ? fail("RESERVATION_RELEASED") : { ok: true, hold };
+/** Попытки привести предел счёта клиента к записи (РП46 (г)): гонка с резервом или открытием — перечитать. */
+const CLIENT_LIMIT_ATTEMPTS = 3;
 const holdCode = (e: unknown): HoldError["code"] | undefined => (e instanceof HoldError ? e.code : undefined);
 
 export class StateService {
@@ -188,8 +190,7 @@ export class StateService {
   /**
    * Резерв лимита клиента за период (РП45 п. 1): второй счёт удержаний ядра, условие по остатку и изменение — одна
    * операция ядра, поэтому и на двух экземплярах сумма одобрений по всем мандатам клиента не выше предела (инвариант 4).
-   * Счёт открывается пределом действующей записи; открыт с меньшим — расширение действует со следующего периода
-   * (setLimit ядра нет, agentic-core #36); с большим — сужение: до удержания сужения (часть 2) не подтверждено.
+   * Предел счёта приводится к действующей записи лимитов до резерва (applyClientLimit, РП46 (г)).
    */
   async reserveClient(a: ClientAccount, money: Money, op_key: string): Promise<StateResult> {
     if (!isUnits(money.amount) || !isCurrencyCode(money.currency) || typeof op_key !== "string" || op_key === "") {
@@ -200,21 +201,8 @@ export class StateService {
     if (a.limit.currency !== money.currency) return this.unavailable(undefined, fields, "П3: валюта лимита клиента ≠ валюте операции");
     if (a.limit.amount === 0) return fail("LIMIT_EXCEEDED");
     const id = clientAccountId(a);
-    try {
-      await this.ledger.openAccount(id, a.limit);
-    } catch (e) {
-      if (holdCode(e) !== "ACCOUNT_CONFLICT") return this.unavailable(e, fields, "П3: счёт лимита клиента не открыт — резерва нет");
-      let acc;
-      try {
-        acc = await this.ledger.account(id);
-      } catch (e2) {
-        return this.unavailable(e2, fields, "П3: счёт лимита клиента не прочитан — резерва нет");
-      }
-      if (acc.currency !== a.limit.currency || acc.limit > a.limit.amount) {
-        // Сужение в периоде — удержанием сужения (РП45 п. 1, часть 2); до него — отказ, а не прежний предел.
-        return this.unavailable(undefined, { ...fields, limit: acc.limit, now: a.limit.amount }, "П3: лимит клиента сужен в периоде — до удержания сужения резерва нет");
-      }
-    }
+    const applied = await this.applyClientLimit(id, a.limit, fields);
+    if (applied) return applied;
     const expires_at = this.now().getTime() + this.opts.reservationTtlSec * 1000;
     try {
       return reserved(await this.ledger.reserve(id, money, clientHoldRef(a, op_key), expires_at));
@@ -224,19 +212,61 @@ export class StateService {
   }
 
   /**
-   * Остаток лимита клиента за период для ответа без резерва (подтверждение, РП44 п. 1): счёта ещё нет — предел;
-   * сбой — undefined (не подтверждено).
+   * Предел счёта клиента — по действующей записи (РП46 (г)): сначала account, setLimit — только при расхождении (обычный
+   * путь — account и reserve). Расширение и сужение — сразу; запись ниже использованного — предел committed + reserved
+   * (остаток 0, резерв — LIMIT_EXCEEDED), а уже суженный до использованного счёт setLimit не вызывает. После освобождения
+   * удержаний предел снова приводится к записи — освобождённое запись не превышает. LIMIT_BELOW_USED (между чтением и
+   * setLimit прошёл резерв) и ACCOUNT_CONFLICT открытия (счёт открыл другой экземпляр) — перечитать, не больше трёх раз.
+   */
+  private async applyClientLimit(id: string, limit: Money, fields: Record<string, unknown>): Promise<StateResult | undefined> {
+    for (let attempt = 0; attempt < CLIENT_LIMIT_ATTEMPTS; attempt++) {
+      let acc: Account;
+      try {
+        acc = await this.ledger.account(id);
+      } catch (e) {
+        if (holdCode(e) !== "UNKNOWN_ACCOUNT") return this.unavailable(e, fields, "П3: счёт лимита клиента не прочитан — резерва нет");
+        try {
+          await this.ledger.openAccount(id, limit);
+          return undefined;
+        } catch (e2) {
+          if (holdCode(e2) === "ACCOUNT_CONFLICT") continue;
+          return this.unavailable(e2, fields, "П3: счёт лимита клиента не открыт — резерва нет");
+        }
+      }
+      // Смена валюты лимита в периоде — со следующего периода (РП45 доп. п. 7): здесь не ожидается — не подтверждено.
+      if (acc.currency !== limit.currency) {
+        return this.unavailable(undefined, { ...fields, currency: acc.currency }, "П3: валюта счёта клиента ≠ валюте записи лимитов");
+      }
+      const target = Math.max(limit.amount, acc.committed + acc.reserved);
+      if (acc.limit === target) return undefined;
+      try {
+        await this.ledger.setLimit(id, { amount: target, currency: limit.currency });
+        return undefined;
+      } catch (e) {
+        if (holdCode(e) !== "LIMIT_BELOW_USED") return this.unavailable(e, fields, "П3: предел счёта клиента не изменён — резерва нет");
+      }
+    }
+    return this.unavailable(undefined, fields, "П3: предел счёта клиента не приведён к записи за три попытки — резерва нет");
+  }
+
+  /**
+   * Остаток лимита клиента за период для ответа без резерва (подтверждение, РП44 п. 1) — по записи, а не по пределу
+   * счёта: max(0, предел записи − committed − reserved) (РП46 (г) п. 3). Счёта ещё нет — предел; сбой, другая валюта
+   * счёта — undefined (не подтверждено).
    */
   async clientLeft(a: ClientAccount): Promise<number | undefined> {
     if (a.limit.amount === 0) return 0;
     try {
-      return Math.max(0, (await this.ledger.available(clientAccountId(a))).amount);
+      const acc = await this.ledger.account(clientAccountId(a));
+      if (acc.currency !== a.limit.currency) return undefined;
+      return Math.max(0, a.limit.amount - acc.committed - acc.reserved);
     } catch (e) {
       if (holdCode(e) === "UNKNOWN_ACCOUNT") return a.limit.amount;
       this.log("warn", { principal_ref: a.principal_ref, code: holdCode(e) ?? "storage" }, "П3: остаток лимита клиента не прочитан");
       return undefined;
     }
   }
+
 
   /**
    * Закрепление (РП41 п. 7): одно на удержание, всегда с освобождением остатка — commit ядра не идемпотентен.

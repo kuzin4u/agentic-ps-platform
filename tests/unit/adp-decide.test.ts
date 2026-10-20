@@ -949,7 +949,7 @@ describe("порт лимитов клиента обязателен (реше�
   });
 });
 
-describe("лимит клиента: CART, отзыв после резерва, сужение через ADP (РП45 п. 1, доп. п. 6; /audit № 4)", () => {
+describe("лимит клиента: CART, отзыв после резерва, сужение и расширение через ADP (РП45 п. 1, РП46 (г); /audit № 4)", () => {
   const C = "mnd_00000000-0000-4000-8000-0000000000c1";
   const NOW = new Date("2026-10-19T10:00:00Z");
   const DAY = (per_period: number) => ({ per_period, period: "DAY", currency: "RUB" });
@@ -982,15 +982,27 @@ describe("лимит клиента: CART, отзыв после резерва,
     expect((await ledger.available(clientAcc)).amount).toBe(300_000);
   });
 
-  it("сужение per_period в периоде через ADP — STATE_UNAVAILABLE до удержания сужения (доп. п. 6), резервов нет", async () => {
+  it("сужение per_period в периоде через ADP — сразу (setLimit, РП46 (г)): под новым пределом — APPROVE, сверх — LIMIT_EXCEEDED", async () => {
     const src = mutable(version(DAY(300_000)));
-    const { adp, journal, available } = setup({ client: src, now: () => NOW });
+    const { adp, journal, ledger, available } = setup({ client: src, now: () => NOW });
     journal.set("mnd_00000000-0000-4000-8000-0000000000c2");
     expect(pair(await adp.decide(msg({ op_ref: "nar-1", amount: 50_000 }))).decision).toBe("APPROVE");
     src.vs = [...src.vs, version(DAY(100_000), "2026-10-19T09:30:00Z")];
     const m2 = "mnd_00000000-0000-4000-8000-0000000000c2";
-    expect(await reasonOf(adp, msg({ op_ref: "nar-2", amount: 10_000, aoi: { indicator: true, agent_code: AGENT, mandate_id: m2 } }))).toBe("STATE_UNAVAILABLE");
+    const aoi = { indicator: true, agent_code: AGENT, mandate_id: m2 };
+    expect(await reasonOf(adp, msg({ op_ref: "nar-2", amount: 60_000, aoi }))).toBe("LIMIT_EXCEEDED");
     expect(await available(m2)).toBe(LIMIT);
+    expect(pair(await adp.decide(msg({ op_ref: "nar-3", amount: 50_000, aoi }))).decision).toBe("APPROVE");
+    expect(await ledger.account(clientAcc)).toMatchObject({ limit: 100_000, reserved: 100_000 });
+  });
+
+  it("расширение per_period в периоде через ADP — сразу (РП46 (г), снимает остаточный риск 2 РП45)", async () => {
+    const src = mutable(version(DAY(100_000)));
+    const { adp, ledger } = setup({ client: src, now: () => NOW });
+    expect(pair(await adp.decide(msg({ op_ref: "wid-1", amount: 100_000 }))).decision).toBe("APPROVE");
+    src.vs = [...src.vs, version(DAY(250_000), "2026-10-19T09:30:00Z")];
+    expect(pair(await adp.decide(msg({ op_ref: "wid-2", amount: 150_000 }))).decision).toBe("APPROVE");
+    expect(await ledger.account(clientAcc)).toMatchObject({ limit: 250_000, reserved: 250_000 });
   });
 
   it.todo(
