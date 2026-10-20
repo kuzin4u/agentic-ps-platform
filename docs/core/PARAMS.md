@@ -32,15 +32,16 @@
 | `issuer_mode_default` | ON_BEHALF | Режим эмитента по умолчанию | РП3 |
 | `cx_outcome_timeout_days` | 30 | Срок, за который поставщик условного исполнения сообщает итог сделки | договор с ПУИ |
 | `client_limit_period_tz` | `Europe/Moscow` | Часовой пояс календарного периода лимита клиента (`Limits.period` = `DAY` / `MONTH`, РП45 п. 1): граница суток и месяца — в этом поясе; счёт удержаний клиента — на период | соглашение с банком; план «Запад» — свой пояс |
+| `participant_notify_max_delay_sec` | 60 | Наибольшая задержка уведомления клиента через банк по решению ADP (РП46 доп. п. 7): период прохода уведомителя по сохранённым записям операций вне пути авторизации; боевое значение — по соглашению с банком (ч. 4 ст. 9 161-ФЗ: уведомление «незамедлительно») | соглашение с банком |
+| `participant_notify_horizon_sec` | 86 400 | Горизонт прохода уведомителя (РП46 доп. п. 9 (о2)): записи операций старше — не разбираются. Уведомитель не работал дольше горизонта — уведомлений по старым решениям нет (SPEC §5); дольше половины горизонта — признак `PARTICIPANT_NOTIFY_LAGGING` в самопроверке | соглашение с банком |
+| `participant_notify_allow_hosts` | `["issuer-emulator.stand"]` | Разрешённые хосты адреса вебхука участника (`notify_url` в записи доверенного участника, РП46 доп. п. 9 (о4)) — точное имя DNS, без масок; проверка адреса — как РП40 п. 2–4. Пустой список — вебхук запрещён всем, уведомления — только лентой | соглашение с банком |
 
-
-**Вводится с кодом PS-20 ч. 3** (РП46 доп. п. 7): `participant_notify_max_delay_sec` — наибольшая задержка уведомления клиента через банк по решению ADP (период прохода уведомителя по записям операций вне пути авторизации); значение — решением владельца с записью в журнал, ориентир — соглашение с банком (ч. 4 ст. 9 161-ФЗ: уведомление «незамедлительно»). До кода строки в таблице нет: таблица сверяется с загрузчиком.
 
 ## Границы
 
 | Правило | Почему |
 |---|---|
-| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
+| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `participant_notify_max_delay_sec`, `participant_notify_horizon_sec`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
 | Целые ≥ 0: `bypass_overhead_ms`, `event_reorder_window_ms`, `key_overlap_days` | ноль допустим |
 | `split_min_ops` ≥ 2 | дробление — от двух операций |
 | `aoi_rollout_phase` ∈ 1…3 | A1 п. 8.3 |
@@ -48,9 +49,11 @@
 | `bypass_overhead_ms` < `adp_p99_ms` | РП4, РП20 |
 | `adp_timeout_ms` > `adp_p99_ms` | ПИ §3, РП20 |
 | `key_overlap_days` < `key_ttl_days` | перекрытие ключей короче их жизни |
+| `participant_notify_horizon_sec` ≥ 2 × `participant_notify_max_delay_sec` | признак отставания — половина горизонта; она не короче наибольшей задержки уведомления (РП46 доп. п. 9 (о2)) |
 | `idempotency_ttl_sec` — целое ≥ 60 | не меньше аренды захвата ключа ядра (60 с, условие К6 agentic-core: аренда ≤ ttl; РП30 п. 3) |
 | `unavailable_retry_after_sec` — целое 0…30 | 0 — «повторить сразу» (ПАО `minimum: 0`); верхняя граница — `maxRetryAfterSec` клиента ПАО agentic-core (30): больший `Retry-After` эталонный клиент отвергает (РП24) |
 | `event_subscription_allow_hosts` — массив имён DNS в нижнем регистре (метки `a-z0-9-`, не IP), без повторов; пустой допустим | пустой — fail-closed: подписка запрещена всем (РП40 п. 2) |
+| `participant_notify_allow_hosts` — по тем же правилам, что `event_subscription_allow_hosts` | пустой — fail-closed: вебхук запрещён всем (РП46 доп. п. 9 (о4)) |
 | `client_limit_period_tz` — имя часового пояса IANA, известное `Intl` | неизвестное — отказ запуска, не UTC по умолчанию (инвариант 3) |
 
 ## Журнал изменений
@@ -66,3 +69,6 @@
 | 18.10.2026 | `event_delivery_timeout_ms` | — | 5 000 | PS-08 К1.3а, push-доставка событий; решение владельца (РП40 п. 4) |
 | 18.10.2026 | `event_subscription_allow_hosts` | — | `["agent-emulator.stand"]` | PS-08 К1.3а, SSRF адреса подписки; решение владельца (РП40 п. 2, 8) |
 | 19.10.2026 | `client_limit_period_tz` | — | `Europe/Moscow` | PS-20 К1.2, календарный период лимита клиента; решение владельца (РП45 п. 1) |
+| 20.10.2026 | `participant_notify_max_delay_sec` | — | 60 | PS-20 ч. 3 К3.1, уведомления клиента через банк; решение владельца 20.10 (РП46 доп. п. 7); боевое — по соглашению с банком |
+| 20.10.2026 | `participant_notify_horizon_sec` | — | 86 400 | PS-20 ч. 3 К3.1, горизонт прохода уведомителя; решение владельца 20.10 (РП46 доп. п. 9 (о2)); боевое — по соглашению с банком |
+| 20.10.2026 | `participant_notify_allow_hosts` | — | `["issuer-emulator.stand"]` | PS-20 ч. 3 К3.1, адрес вебхука участника; решение владельца 20.10 (РП46 доп. п. 9 (о4)) |

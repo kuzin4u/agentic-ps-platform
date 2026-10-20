@@ -55,6 +55,12 @@ export interface Params {
   readonly cx_outcome_timeout_days: number;
   /** Часовой пояс календарного периода лимита клиента DAY/MONTH (IANA, РП45 п. 1). */
   readonly client_limit_period_tz: string;
+  /** Наибольшая задержка уведомления клиента через банк по решению ADP, с (РП46 доп. п. 7): период прохода уведомителя. */
+  readonly participant_notify_max_delay_sec: number;
+  /** Горизонт прохода уведомителя по записям операций, с (РП46 доп. п. 9 (о2)): старше — не разбираются. */
+  readonly participant_notify_horizon_sec: number;
+  /** Разрешённые хосты адреса вебхука участника (РП46 доп. п. 9 (о4)); пустой — вебхук запрещён всем. */
+  readonly participant_notify_allow_hosts: readonly string[];
 }
 
 type Rule = (v: unknown) => unknown;
@@ -144,6 +150,9 @@ const RULES: Record<keyof Params, Rule> = {
   issuer_mode_default: oneOf(ISSUER_MODES),
   cx_outcome_timeout_days: int(1),
   client_limit_period_tz: timeZone,
+  participant_notify_max_delay_sec: int(1),
+  participant_notify_horizon_sec: int(1),
+  participant_notify_allow_hosts: hostList,
 };
 
 /** Служебные ключи файла, не параметры. */
@@ -180,6 +189,10 @@ export function parseParams(raw: unknown): Params {
     if (p.adp_timeout_ms <= p.adp_p99_ms) problems.push("adp_timeout_ms не больше adp_p99_ms");
     if (p.bypass_overhead_ms >= p.adp_p99_ms) problems.push("bypass_overhead_ms не меньше adp_p99_ms");
     if (p.key_overlap_days >= p.key_ttl_days) problems.push("key_overlap_days не меньше key_ttl_days");
+    // Признак отставания — половина горизонта (РП46 доп. п. 9 (о2)); она не короче наибольшей задержки уведомления.
+    if (p.participant_notify_horizon_sec < 2 * p.participant_notify_max_delay_sec) {
+      problems.push("participant_notify_horizon_sec меньше двух participant_notify_max_delay_sec");
+    }
   }
   if (problems.length) throw new ParamsError(problems);
   return Object.freeze(out) as unknown as Params;
