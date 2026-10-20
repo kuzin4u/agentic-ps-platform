@@ -196,7 +196,7 @@ export class PgCredentialStore implements CredentialStore {
 
   async consume(credential_ref: string, op_ref: string): Promise<boolean> {
     const r = await this.client.query(
-      "UPDATE agent_credentials SET status = 'USED', op_ref = $2 WHERE credential_ref = $1 RETURNING credential_ref",
+      "UPDATE agent_credentials SET status = 'USED', op_ref = $2 WHERE credential_ref = $1 AND status = 'ISSUED' RETURNING credential_ref",
       [credential_ref, op_ref],
     );
     return r.rows.length === 1;
