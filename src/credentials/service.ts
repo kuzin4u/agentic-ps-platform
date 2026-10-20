@@ -86,9 +86,10 @@ export class Credentials {
   /**
    * POST /pao/v1/credentials (РП47 п. 4–5). agent_code — из проверенного обращения. Повтор по заказу — тот же реквизит
    * с той же криптограммой (пересчёт с valid_to записи); тот же order_ref с другими значениями — IDEMPOTENCY_CONFLICT.
-   * Исключения журнала (цепочка, состояние) — вызывающему: код по consentErrorReply.
+   * Исключения журнала (цепочка, состояние) — вызывающему: код по consentErrorReply. beforeWrite — проверка предела
+   * обработчика ПАО перед каждой записью (РП33 доп. п. 8).
    */
-  async issue(agent_code: string, req: CredentialRequest): Promise<IssueResult> {
+  async issue(agent_code: string, req: CredentialRequest, beforeWrite: () => void = () => {}): Promise<IssueResult> {
     if (req.kind !== "CARD") return refuse("CREDENTIAL_INVALID", "A3 п. 2", "СБП — с PS-21; реквизит по карте — kind CARD");
     const read = await this.opts.mandates.get(req.mandate_id, agent_code);
     if (!read) return refuse("MANDATE_NOT_FOUND", "A7 п. 9.1");
@@ -103,7 +104,7 @@ export class Credentials {
     }
     if (!read.client) return refuse("STATE_UNAVAILABLE", "A3 п. 4.5");
     try {
-      return await this.issueFor(agent_code, req, m, read.client);
+      return await this.issueFor(agent_code, req, m, read.client, beforeWrite);
     } catch (err) {
       if (!(err instanceof Unavailable)) throw err;
       this.log({ agent_code, mandate_id: req.mandate_id, code: err.code }, "П5: реквизит не выдан — компонент недоступен");
@@ -111,12 +112,18 @@ export class Credentials {
     }
   }
 
-  private async issueFor(agent_code: string, req: CredentialRequest, m: Mandate, client: ClientRef): Promise<IssueResult> {
+  private async issueFor(
+    agent_code: string,
+    req: CredentialRequest,
+    m: Mandate,
+    client: ClientRef,
+    beforeWrite: () => void,
+  ): Promise<IssueResult> {
     const mandate_id = req.mandate_id;
     const prior = await this.store((s) => s.credentialByOrder(agent_code, mandate_id, req.order_ref));
     if (prior) return this.repeat(prior, req);
 
-    const token = await this.token(agent_code, mandate_id, m, client);
+    const token = await this.token(agent_code, mandate_id, m, client, beforeWrite);
     const now = this.now();
     const ttl = now.getTime() + this.opts.params.cryptogram_ttl_sec * 1000;
     const valid_to = new Date(Math.min(ttl, Date.parse(m.valid_to))).toISOString();
@@ -139,6 +146,7 @@ export class Credentials {
       op_ref: null,
       created_at: now.toISOString(),
     };
+    beforeWrite();
     const stored = await this.store((s) => s.putCredential(rec));
     // Одновременная выдача того же заказа на другом экземпляре записала первой — её реквизит, как повтор.
     if (stored.credential_ref !== rec.credential_ref) return this.repeat(stored, req);
@@ -169,12 +177,19 @@ export class Credentials {
   }
 
   /** Токен CART (РП47 п. 2): записанный или новый; одновременный выпуск — записанный первым. */
-  private async token(agent_code: string, mandate_id: string, m: Mandate, client: ClientRef): Promise<TokenRecord> {
+  private async token(
+    agent_code: string,
+    mandate_id: string,
+    m: Mandate,
+    client: ClientRef,
+    beforeWrite: () => void,
+  ): Promise<TokenRecord> {
     const prior = await this.store((s) => s.tokenByMandate(mandate_id));
     if (prior) return prior;
     const funding_ref = await this.upstream(() => this.opts.funding.fundingRef(client));
     const domain = { agent_code, mandate_id, merchant_scope: [...m.merchant_scope], valid_to: m.valid_to };
     const { token_ref } = await this.upstream(() => this.opts.tsp.issueToken({ funding_ref, domain }));
+    beforeWrite();
     return this.store((s) => s.putToken({ ...domain, token_ref, funding_ref, created_at: this.now().toISOString() }));
   }
 

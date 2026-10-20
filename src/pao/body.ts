@@ -2,7 +2,8 @@
 // Схема — вручную; совпадение обязательных полей с agent-protocol.yaml сверяет tests/contract/pao-bodies.test.ts.
 // Лишние поля игнорируются (ПАО §7): класс и уровень в теле не читаются, они — только из реестра (инвариант 5).
 import { parseRfc3339 } from "../consent/model.js";
-import type { MandateRequest } from "../shared/pao.js";
+import { isCurrencyCode } from "@kuzin4u/agentic-core";
+import type { CredentialRequest, MandateRequest } from "../shared/pao.js";
 import type { AgentSubscription } from "../registry/model.js";
 import { EVENT_TYPES } from "./subscription.js";
 
@@ -147,4 +148,37 @@ export function subscriptionBody(raw: string): AgentSubscription | undefined {
   if (!events.every((e) => (EVENT_TYPES as readonly unknown[]).includes(e))) return undefined;
   if (new Set(events).size !== events.length) return undefined;
   return { url, events: events as AgentSubscription["events"] };
+}
+
+/** Обязательные поля `CredentialRequest` (ПАО 1.4.0); сверка с YAML — tests/contract/pao-bodies.test.ts. */
+export const CREDENTIAL_REQUEST_REQUIRED = ["mandate_id", "order_ref", "merchant_id", "amount_max", "currency", "kind"] as const;
+
+/** Длина ссылок заказа и продавца: они попадают в запись реквизита и в HMAC криптограммы (РП47 п. 3, 10). */
+export const CREDENTIAL_REF_MAX = 128;
+
+const ref = (v: unknown): v is string => typeof v === "string" && v !== "" && v.length <= CREDENTIAL_REF_MAX;
+
+/**
+ * Тело `POST /pao/v1/credentials` по схеме `CredentialRequest` (строки, `amount_max` — целое ≥ 1 в минимальных единицах,
+ * `currency` — ISO 4217, `kind` — перечень) или undefined — тогда REQUEST_INVALID. Смысл (мандат, область, предел) — П5.
+ */
+export function credentialRequestBody(raw: string): CredentialRequest | undefined {
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (!isObj(v)) return undefined;
+  const mandate_id = own(v, "mandate_id");
+  const order_ref = own(v, "order_ref");
+  const merchant_id = own(v, "merchant_id");
+  const amount_max = own(v, "amount_max");
+  const currency = own(v, "currency");
+  const kind = own(v, "kind");
+  if (!ref(mandate_id) || !ref(order_ref) || !ref(merchant_id)) return undefined;
+  if (typeof amount_max !== "number" || !Number.isSafeInteger(amount_max) || amount_max < 1) return undefined;
+  if (!isCurrencyCode(currency)) return undefined;
+  if (kind !== "CARD" && kind !== "SBP") return undefined;
+  return { mandate_id, order_ref, merchant_id, amount_max, currency, kind };
 }
