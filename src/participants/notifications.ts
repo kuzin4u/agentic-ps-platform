@@ -4,6 +4,7 @@
 // principal_ref, mandate_id, agent_code, op_ref, revocation_ref (инвариант 1, правило совместимости 3).
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@kuzin4u/agentic-core";
+import type { SqlClient } from "@kuzin4u/agentic-core";
 import type { LimitSource, OperationNotify, OperationRecord, TxSqlClient } from "../adp/operations.js";
 import type { Decision } from "../shared/canonical.generated.js";
 
@@ -40,6 +41,20 @@ export interface StoredNotification {
   readonly type: NotificationType;
   readonly at: string;
   readonly data: NotificationData;
+}
+
+/**
+ * Уведомление в транзакции записи журнала (РП46 (б) п. 2): client.mandate_exhausted — вместе с MANDATE_EXHAUSTED. Лок
+ * участника берётся после лока агента (порядок «пара → агент → участник», РП46 доп. п. 5).
+ */
+export interface ParticipantNotice {
+  readonly participant_code: string;
+  readonly drafts: readonly NotificationDraft[];
+}
+
+/** Приёмник уведомлений в памяти для журнала согласий: вставка без await — атомарно с записью в одном процессе. */
+export interface NotificationSink {
+  insertNow(participant_code: string, drafts: readonly NotificationDraft[], at: string): void;
 }
 
 /** Решённая запись операции с клиентом мандата — вход уведомителя. */
@@ -150,12 +165,12 @@ export class MemoryParticipantNotificationStore implements ParticipantNotificati
   }
 
   async settle(op: NotifyOp, drafts: readonly NotificationDraft[], at: string): Promise<void> {
-    this.#insert(op.notify.participant_code, drafts, at);
+    this.insertNow(op.notify.participant_code, drafts, at);
     this.#seen.add(op.op_ref);
   }
 
   async append(participant_code: string, drafts: readonly NotificationDraft[], at: string): Promise<void> {
-    this.#insert(participant_code, drafts, at);
+    this.insertNow(participant_code, drafts, at);
   }
 
   async page(participant_code: string, after: string | undefined, limit: number): Promise<readonly StoredNotification[]> {
@@ -169,7 +184,8 @@ export class MemoryParticipantNotificationStore implements ParticipantNotificati
     return feed.slice(from, from + limit).map((n) => structuredClone(n));
   }
 
-  #insert(participant_code: string, drafts: readonly NotificationDraft[], at: string): void {
+  /** Вставка без await (NotificationSink): журнал согласий в памяти пишет уведомление вместе с записью. */
+  insertNow(participant_code: string, drafts: readonly NotificationDraft[], at: string): void {
     const feed = this.#feeds.get(participant_code) ?? [];
     for (const d of drafts) {
       const notification_id = notificationIdFor(participant_code, d.type, d.key);
@@ -289,16 +305,7 @@ export class PgParticipantNotificationStore implements ParticipantNotificationSt
     try {
       try {
         await tx.query("BEGIN");
-        await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [notifyLockKey(participant_code)]);
-        await this.hooks.locked?.(participant_code);
-        for (const d of drafts) {
-          await tx.query(
-            `INSERT INTO participant_notifications (participant_code, seq, notification_id, type, at, data)
-             SELECT $1, COALESCE(max(seq), 0) + 1, $2, $3, $4, $5 FROM participant_notifications WHERE participant_code = $1
-             ON CONFLICT (notification_id) DO NOTHING`,
-            [participant_code, notificationIdFor(participant_code, d.type, d.key), d.type, at, canonicalJson(d.data)],
-          );
-        }
+        await insertNotificationsTx(tx, participant_code, drafts, at, this.hooks);
         if (op_ref !== undefined) {
           await tx.query("INSERT INTO participant_notify_seen (op_ref, at) VALUES ($1, $2) ON CONFLICT (op_ref) DO NOTHING", [op_ref, at]);
         }
@@ -313,6 +320,29 @@ export class PgParticipantNotificationStore implements ParticipantNotificationSt
     } finally {
       tx.release(broken);
     }
+  }
+}
+
+/**
+ * Уведомления в открытой транзакции: лок участника до фиксации, seq = max + 1, ON CONFLICT (notification_id) DO NOTHING —
+ * второе уведомление на то же событие не пишется. Общая для уведомителя, revoke-all и записи MANDATE_EXHAUSTED.
+ */
+export async function insertNotificationsTx(
+  tx: SqlClient,
+  participant_code: string,
+  drafts: readonly NotificationDraft[],
+  at: string,
+  hooks: PgNotificationHooks = {},
+): Promise<void> {
+  await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [notifyLockKey(participant_code)]);
+  await hooks.locked?.(participant_code);
+  for (const d of drafts) {
+    await tx.query(
+      `INSERT INTO participant_notifications (participant_code, seq, notification_id, type, at, data)
+       SELECT $1, COALESCE(max(seq), 0) + 1, $2, $3, $4, $5 FROM participant_notifications WHERE participant_code = $1
+       ON CONFLICT (notification_id) DO NOTHING`,
+      [participant_code, notificationIdFor(participant_code, d.type, d.key), d.type, at, canonicalJson(d.data)],
+    );
   }
 }
 

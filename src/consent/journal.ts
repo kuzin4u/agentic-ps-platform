@@ -38,6 +38,7 @@ import { ConsentRowConflict, PairRevoked, type ConsentStore, type MandateIndexRo
 import { assertNarrows, ConsentRequestRejected, pickSubject, pickTerms } from "./terms.js";
 import type { Params } from "../shared/config.js";
 import type { ClientRef } from "../participants/limits.js";
+import type { ParticipantNotice } from "../participants/notifications.js";
 import { toPaoEvent, type EventDraft, type PaoEventType } from "../pao/events.js";
 import type { Event } from "../shared/pao.js";
 
@@ -139,9 +140,15 @@ export class ConsentJournal {
    * event — запись пишется вместе с событием агенту, атомарно (РП39 п. 1). sign — подпись мандата: строка SIGN в
    * порядке пары под локом пары в той же транзакции (РП46 (а) п. 2).
    */
-  private chainJournal(chain: string, beforeWrite?: () => void, event?: EventDraft, sign?: PairSign): AsyncHashChainJournal {
+  private chainJournal(
+    chain: string,
+    beforeWrite?: () => void,
+    event?: EventDraft,
+    sign?: PairSign,
+    notice?: ParticipantNotice,
+  ): AsyncHashChainJournal {
     const inner = event
-      ? this.store.journalWithEvent(chain, { ...event, push: this.pushFor(event.agent_code, event.type) }, sign)
+      ? this.store.journalWithEvent(chain, { ...event, push: this.pushFor(event.agent_code, event.type) }, sign, notice)
       : this.store.journal(chain);
     const store: AsyncJournalStore = beforeWrite
       ? {
@@ -423,6 +430,15 @@ export class ConsentJournal {
       });
       if (wrote) revoked++;
     }
+    // Клиенту через банк — после всех записей (iii), отдельной транзакцией под локом участника; повтор revocation_ref —
+    // то же уведомление (ключ — revocation_ref), второго нет (РП46 (б) п. 2, доп. п. 7). Сбой — 503, банк повторяет.
+    await this.store.appendNotice(
+      {
+        participant_code: d.participant_code,
+        drafts: [{ type: "client.revoked_all", key: d.revocation_ref, data: { principal_ref: d.principal_ref, revocation_ref: d.revocation_ref } }],
+      },
+      this.now().toISOString(),
+    );
     return { principal_ref: d.principal_ref, revocation_ref: d.revocation_ref, revoked, replayed };
   }
 
@@ -456,7 +472,16 @@ export class ConsentJournal {
       const m = row && (await this.load(id, row.agent_code));
       if (!row || !m || m.status !== "ACTIVE") return false;
       const event = mandateEvent(row.agent_code, "MANDATE_EXHAUSTED", id);
-      await this.chainJournal(row.chain, undefined, event).append("MANDATE_EXHAUSTED", id, payload, id);
+      // Клиенту через банк подписи корня — в той же транзакции (РП46 (б) п. 2); банка подписи нет — уведомлять некому.
+      const participant_code = signerOf(m.entries, m.head.parent_ref ?? id);
+      const { principal_ref } = m.head.payload as MandateRequestedPayload;
+      const notice: ParticipantNotice | undefined = participant_code
+        ? {
+            participant_code,
+            drafts: [{ type: "client.mandate_exhausted", key: id, data: { principal_ref, mandate_id: id, agent_code: row.agent_code } }],
+          }
+        : undefined;
+      await this.chainJournal(row.chain, undefined, event, undefined, notice).append("MANDATE_EXHAUSTED", id, payload, id);
       return true;
     });
   }

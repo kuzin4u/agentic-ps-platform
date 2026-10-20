@@ -108,7 +108,10 @@ export function createStand(): Stand {
   const emulator = createIssuerEmulator();
   const trusted = new TrustedParticipants([emulator.trustedKey], { stand: true });
   // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6).
-  const consentStore = new MemoryConsentStore();
+  // Outbox участника стенда — в памяти; журнал согласий пишет в него client.mandate_exhausted и client.revoked_all.
+  const operations = new MemoryOperationStore();
+  const notifications = new MemoryParticipantNotificationStore(operations);
+  const consentStore = new MemoryConsentStore({ notifications });
   const consent: ConsentJournal = new ConsentJournal(consentStore, {
     now,
     revocationOrder: () => trusted.revocationOrder(),
@@ -138,8 +141,6 @@ export function createStand(): Stand {
     stand: true,
   });
   // Записи операций ADP стенда — память; уведомитель участников читает их вне пути авторизации (РП46 доп. п. 7).
-  const operations = new MemoryOperationStore();
-  const notifications = new MemoryParticipantNotificationStore(operations);
   const notifier = new ParticipantNotifier(notifications, {
     horizonSec: params.participant_notify_horizon_sec,
     now: () => now().getTime(),

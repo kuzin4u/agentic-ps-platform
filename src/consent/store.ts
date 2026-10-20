@@ -15,6 +15,7 @@ import {
 } from "@kuzin4u/agentic-core";
 import type { DeliveryOutcome, DeliveryRow, DueDelivery, EventDeliveryStore } from "../pao/delivery.js";
 import { EventCursorUnknown, eventIdFor, eventSeqLockKey, type EventDraft, type PaoEventType, type StoredEvent } from "../pao/events.js";
+import { insertNotificationsTx, type NotificationSink, type ParticipantNotice } from "../participants/notifications.js";
 
 export interface MandateIndexRow {
   readonly id: string;
@@ -95,9 +96,12 @@ export interface ConsentStore extends EventDeliveryStore {
   /**
    * То же хранилище, но каждая вставка записи пишет и событие агенту — атомарно (РП39 п. 1): записи без события и
    * события без записи нет. Повтор вставки ядром при гонке конца цепочки — новая попытка целиком. draft.push — и строка
-   * попытки push-доставки в той же транзакции (РП40 п. 5).
+   * попытки push-доставки в той же транзакции (РП40 п. 5). notice — уведомление клиента через банк в той же транзакции
+   * (client.mandate_exhausted, РП46 (б) п. 2): лок участника — после лока агента (доп. п. 5).
    */
-  journalWithEvent(chain: string, draft: EventDraft, sign?: PairSign): AsyncJournalStore;
+  journalWithEvent(chain: string, draft: EventDraft, sign?: PairSign, notice?: ParticipantNotice): AsyncJournalStore;
+  /** Уведомление клиента через банк вне записи журнала (client.revoked_all): своя транзакция под локом участника. */
+  appendNotice(notice: ParticipantNotice, at: string): Promise<void>;
   /** Номер SIGN мандата и последней метки пары — одно чтение (РП46 (а) п. 5). */
   pairPosition(pair: PrincipalPair, mandate_id: string): Promise<PairPosition>;
   /** Метка пары под локом пары; повтор revocation_ref — прежняя метка, без новой строки (РП46 (а) п. 4). */
@@ -125,6 +129,9 @@ const eventOf = (draft: EventDraft, chain: string, e: JournalEntry, seq: number)
   });
 
 export class MemoryConsentStore implements ConsentStore {
+  /** notifications — Outbox участника в памяти (стенд); без него уведомления клиента через банк не пишутся (dev без базы). */
+  constructor(private readonly opts: { readonly notifications?: NotificationSink } = {}) {}
+
   private readonly mandates = new Map<string, MandateIndexRow>();
   private readonly subjects = new Map<string, MandateSubjectRow>();
   private readonly chains = new Map<string, AsyncJournalStore>();
@@ -153,7 +160,7 @@ export class MemoryConsentStore implements ConsentStore {
     if (!s) this.chains.set(chain, (s = new AsyncMemoryJournalStore(chainGenesis(chain))));
     return s;
   }
-  journalWithEvent(chain: string, draft: EventDraft, sign?: PairSign): AsyncJournalStore {
+  journalWithEvent(chain: string, draft: EventDraft, sign?: PairSign, notice?: ParticipantNotice): AsyncJournalStore {
     const inner = this.journal(chain);
     return {
       ...(inner.genesis !== undefined ? { genesis: inner.genesis } : {}),
@@ -171,11 +178,15 @@ export class MemoryConsentStore implements ConsentStore {
         this.events.set(draft.agent_code, own);
         this.byEventId.set(ev.event_id, ev);
         if (draft.push) this.deliveries.set(ev.event_id, newDelivery(ev));
+        if (notice) this.opts.notifications?.insertNow(notice.participant_code, notice.drafts, e.at);
       },
     };
   }
   async pairPosition(pair: PrincipalPair, mandate_id: string): Promise<PairPosition> {
     return this.position(pair, mandate_id);
+  }
+  async appendNotice(notice: ParticipantNotice, at: string): Promise<void> {
+    this.opts.notifications?.insertNow(notice.participant_code, notice.drafts, at);
   }
   async insertRevokeAll(pair: PrincipalPair, revocation_ref: string, record: string, at: string): Promise<RevokeAllMark> {
     const prior = (this.order.get(pairKey(pair)) ?? []).find((r) => r.kind === "REVOKE_ALL" && r.ref === revocation_ref);
@@ -286,18 +297,37 @@ export class PgConsentStore implements ConsentStore {
   journal(chain: string): AsyncJournalStore {
     return new PgJournalStore(this.client, chain);
   }
-  journalWithEvent(chain: string, draft: EventDraft, sign?: PairSign): AsyncJournalStore {
+  journalWithEvent(chain: string, draft: EventDraft, sign?: PairSign, notice?: ParticipantNotice): AsyncJournalStore {
     const read = new PgJournalStore(this.client, chain);
     return {
       genesis: read.genesis,
       last: () => read.last(),
       all: () => read.all(),
-      append: (e) => this.appendWithEvent(chain, e, draft, sign),
+      append: (e) => this.appendWithEvent(chain, e, draft, sign, notice),
     };
   }
 
   async pairPosition(pair: PrincipalPair, mandate_id: string): Promise<PairPosition> {
     return position(this.client, pair, mandate_id);
+  }
+
+  async appendNotice(notice: ParticipantNotice, at: string): Promise<void> {
+    const tx = await this.client.connect();
+    let broken: Error | undefined;
+    try {
+      try {
+        await tx.query("BEGIN");
+        await insertNotificationsTx(tx, notice.participant_code, notice.drafts, at);
+        await tx.query("COMMIT");
+      } catch (err) {
+        await tx.query("ROLLBACK").catch((rb: unknown) => {
+          broken = rb instanceof Error ? rb : new Error(String(rb));
+        });
+        throw err;
+      }
+    } finally {
+      tx.release(broken);
+    }
   }
 
   /** Одна транзакция: лок пары, прежняя метка с тем же revocation_ref или новая с номером max + 1, COMMIT. */
@@ -358,7 +388,7 @@ export class PgConsentStore implements ConsentStore {
    * sign — подпись мандата (РП46 (а) п. 2): первым — лок пары (метка revoke-all ждёт фиксации подписи, и наоборот),
    * у CART — проверка корня по метке, строка SIGN с номером max + 1 — до COMMIT.
    */
-  private async appendWithEvent(chain: string, e: JournalEntry, draft: EventDraft, sign?: PairSign): Promise<void> {
+  private async appendWithEvent(chain: string, e: JournalEntry, draft: EventDraft, sign?: PairSign, notice?: ParticipantNotice): Promise<void> {
     const tx = await this.client.connect();
     let broken: Error | undefined;
     try {
@@ -397,6 +427,8 @@ export class PgConsentStore implements ConsentStore {
             [sign.pair.participant_code, sign.pair.principal_ref, sign.mandate_id, sign.at],
           );
         }
+        // Уведомление клиента через банк — в той же транзакции, лок участника последним: «пара → агент → участник».
+        if (notice) await insertNotificationsTx(tx, notice.participant_code, notice.drafts, e.at);
         await this.hooks.inTx?.("commit", draft);
         await tx.query("COMMIT");
       } catch (err) {
