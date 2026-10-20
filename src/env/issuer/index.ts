@@ -17,6 +17,7 @@ import {
   type TrustedParticipantKey,
 } from "../../participants/trusted.js";
 import { participantLimitsSigningInput, type LimitsRecord } from "../../participants/limits.js";
+import { opaqueRef } from "../../credentials/model.js";
 import { PARTICIPANT_COMPONENTS } from "../../participants/verify.js";
 
 export const component = "env/issuer";
@@ -35,6 +36,11 @@ export interface IssuerEmulator {
   signLimits(record: LimitsRecord): string;
   /** Заголовки подписанного запроса участника без тела (RFC 9421, РП46 (в)): чтения ПИ-8. */
   signRequest(method: string, path: string, query: string, at: Date): Record<string, string>;
+  /**
+   * Ссылка банка на карту клиента для выпуска агентского токена (ПИ-4, РП47 п. 2): одна на клиента, без номера карты
+   * (инвариант 1). Клиент другого банка — исключение.
+   */
+  fundingRef(client: { readonly participant_code: string; readonly principal_ref: string }): Promise<string>;
 }
 
 export function createIssuerEmulator(): IssuerEmulator {
@@ -43,6 +49,7 @@ export function createIssuerEmulator(): IssuerEmulator {
   const parsed = parseKey([ED25519], "ed25519", public_key);
   if (!parsed) throw new Error("эмулятор эмитента: ключ не разобран");
   const secret: KeyObject = privateKey;
+  const funding = new Map<string, string>();
   return {
     participant_code: STAND_ISSUER_CODE,
     trustedKey: {
@@ -68,5 +75,11 @@ export function createIssuerEmulator(): IssuerEmulator {
         PARTICIPANT_COMPONENTS,
       ).headers,
     signLimits: (record) => sign(null, participantLimitsSigningInput(record), secret).toString("base64url"),
+    async fundingRef({ participant_code, principal_ref }) {
+      if (participant_code !== STAND_ISSUER_CODE) throw new Error("эмулятор эмитента: клиент другого банка");
+      let ref = funding.get(principal_ref);
+      if (ref === undefined) funding.set(principal_ref, (ref = opaqueRef("fnd_")));
+      return ref;
+    },
   };
 }
