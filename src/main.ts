@@ -3,6 +3,7 @@ import { buildServer, parseEnv, parseTrustedProxies, type PlatformEnv } from "./
 import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
 import { MemoryLimitsStore, PgLimitsStore } from "./participants/limits.js";
 import { ParticipantNotifier, PgParticipantNotificationStore, startParticipantNotifier } from "./participants/notifications.js";
+import { WebhookDeliverer } from "./participants/webhook.js";
 import { loadTrustedParticipants, type TrustedParticipants } from "./participants/trusted.js";
 import { ParticipantRequestVerifier } from "./participants/verify.js";
 import { EventDeliverer, httpsTransport, startEventDelivery } from "./pao/delivery.js";
@@ -223,11 +224,27 @@ async function serve(): Promise<void> {
   const stopNotify = notifier
     ? startParticipantNotifier(notifier, PARTICIPANT_NOTIFY_EVERY_MS, (err) => app.log.error({ err }, "П10: сбой прохода уведомителя"))
     : async () => {};
+  // Вебхук-сигнал банкам (РП46 (б) п. 3): адрес — из записи доверенного участника, проверка — как push агенту (РП40).
+  const stopWebhook = notifyStore
+    ? startEventDelivery(
+        new WebhookDeliverer({
+          store: notifyStore,
+          notifyUrl: (code) => trusted.notifyUrl(code),
+          resolveHost: systemResolver,
+          transport: httpsTransport,
+          params,
+          log: (level, fields, msg) => app.log[level](fields, msg),
+        }),
+        EVENT_DELIVERY_EVERY_MS,
+        (err) => app.log.error({ err }, "П10: сбой прохода вебхука"),
+      )
+    : async () => {};
   app.addHook("onClose", async () => {
     await stopPurge();
     await stopDelivery();
     await stopExpiry();
     await stopNotify();
+    await stopWebhook();
     await pool?.end();
   });
   // Штатная остановка: сервер, очистка nonce и пул закрываются вместе (РП30 п. 4).

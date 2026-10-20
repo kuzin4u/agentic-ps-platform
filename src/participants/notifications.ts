@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { canonicalJson } from "@kuzin4u/agentic-core";
 import type { SqlClient } from "@kuzin4u/agentic-core";
 import type { LimitSource, OperationNotify, OperationRecord, TxSqlClient } from "../adp/operations.js";
+import type { DeliveryOutcome, DeliveryState } from "../pao/delivery.js";
 import type { Decision } from "../shared/canonical.generated.js";
 
 export const NOTIFICATION_TYPES = [
@@ -119,6 +120,23 @@ export class NotificationCursorUnknown extends Error {
   }
 }
 
+/** Строка попытки вебхука, взятая обработчиком: attempts уже включает эту попытку; claim — номер взятия (как РП40 доп. п. 6–8). */
+export interface DueNotice {
+  readonly notification: StoredNotification;
+  readonly attempts: number;
+  readonly claim: number;
+}
+
+export interface NoticeDeliveryRow {
+  readonly notification_id: string;
+  readonly participant_code: string;
+  readonly state: DeliveryState;
+  readonly attempts: number;
+  readonly claims: number;
+  readonly next_at_ms: number;
+  readonly last_reason: string | null;
+}
+
 /** Хранилище уведомлений участника; сбой — исключение. */
 export interface ParticipantNotificationStore {
   /** Неразобранные решённые записи с клиентом, по которым могут быть уведомления, с at ≥ sinceAt, по возрастанию at. */
@@ -131,6 +149,26 @@ export interface ParticipantNotificationStore {
   append(participant_code: string, drafts: readonly NotificationDraft[], at: string): Promise<void>;
   /** Лента участника после курсора, по возрастанию seq; чужой или неизвестный курсор — NotificationCursorUnknown. */
   page(participant_code: string, after: string | undefined, limit: number): Promise<readonly StoredNotification[]>;
+  /**
+   * Попытки вебхука (РП46 (б) п. 3): строка на каждое уведомление — в транзакции уведомления; взять готовые PENDING с
+   * арендой (attempts + 1, claims + 1, next_at_ms — конец аренды), как доставка событий агенту (РП40 п. 5, доп. п. 7).
+   */
+  claimDue(nowMs: number, leaseUntilMs: number, limit: number): Promise<readonly DueNotice[]>;
+  /** Итог попытки при совпадении номера взятия и PENDING; иначе ничего (строку уже взял другой после аренды). */
+  finishDelivery(notification_id: string, claim: number, outcome: DeliveryOutcome): Promise<void>;
+  /** Строка попытки по уведомлению — для тестов и разбора. */
+  delivery(notification_id: string): Promise<NoticeDeliveryRow | undefined>;
+}
+
+/** Итог попытки в памяти — как в журнале согласий: возврат (refund, SKIPPED) — attempts − 1. */
+function finishedNotice(cur: NoticeDeliveryRow, o: DeliveryOutcome): NoticeDeliveryRow {
+  if (o.state === "DELIVERED") return { ...cur, state: "DELIVERED", last_reason: null };
+  if (o.state === "PENDING") {
+    const attempts = o.refund ? Math.max(0, cur.attempts - 1) : cur.attempts;
+    return { ...cur, state: "PENDING", attempts, next_at_ms: o.next_at_ms, last_reason: o.reason };
+  }
+  const attempts = o.state === "SKIPPED" ? Math.max(0, cur.attempts - 1) : cur.attempts;
+  return { ...cur, state: o.state, attempts, last_reason: o.reason };
 }
 
 /** Записи операций в памяти — источник уведомителя стенда (MemoryOperationStore.records). */
@@ -148,6 +186,7 @@ export class MemoryParticipantNotificationStore implements ParticipantNotificati
   readonly #byId = new Map<string, StoredNotification>();
   readonly #feeds = new Map<string, StoredNotification[]>();
   readonly #seen = new Set<string>();
+  readonly #deliveries = new Map<string, NoticeDeliveryRow>();
 
   constructor(private readonly operations: OperationRecords) {}
 
@@ -193,8 +232,40 @@ export class MemoryParticipantNotificationStore implements ParticipantNotificati
       const n: StoredNotification = { participant_code, seq: feed.length + 1, notification_id, type: d.type, at, data: { ...d.data } };
       feed.push(n);
       this.#byId.set(notification_id, n);
+      this.#deliveries.set(notification_id, {
+        notification_id,
+        participant_code,
+        state: "PENDING",
+        attempts: 0,
+        claims: 0,
+        next_at_ms: Date.parse(at),
+        last_reason: null,
+      });
     }
     this.#feeds.set(participant_code, feed);
+  }
+
+  async claimDue(nowMs: number, leaseUntilMs: number, limit: number): Promise<readonly DueNotice[]> {
+    const due = [...this.#deliveries.values()]
+      .filter((d) => d.state === "PENDING" && d.next_at_ms <= nowMs)
+      .sort((a, b) => a.next_at_ms - b.next_at_ms)
+      .slice(0, limit);
+    return due.map((d) => {
+      const next = { ...d, attempts: d.attempts + 1, claims: d.claims + 1, next_at_ms: leaseUntilMs };
+      this.#deliveries.set(d.notification_id, next);
+      return { notification: structuredClone(this.#byId.get(d.notification_id)!), attempts: next.attempts, claim: next.claims };
+    });
+  }
+
+  async finishDelivery(notification_id: string, claim: number, outcome: DeliveryOutcome): Promise<void> {
+    const cur = this.#deliveries.get(notification_id);
+    if (!cur || cur.state !== "PENDING" || cur.claims !== claim) return;
+    this.#deliveries.set(notification_id, finishedNotice(cur, outcome));
+  }
+
+  async delivery(notification_id: string): Promise<NoticeDeliveryRow | undefined> {
+    const d = this.#deliveries.get(notification_id);
+    return d && { ...d };
   }
 }
 
@@ -299,6 +370,77 @@ export class PgParticipantNotificationStore implements ParticipantNotificationSt
     }));
   }
 
+  async claimDue(nowMs: number, leaseUntilMs: number, limit: number): Promise<readonly DueNotice[]> {
+    const r = await this.client.query<{
+      participant_code: string;
+      seq: string;
+      notification_id: string;
+      type: NotificationType;
+      at: string;
+      data: string;
+      attempts: number;
+      claims: number;
+    }>(
+      `WITH c AS (
+         SELECT notification_id FROM participant_notification_deliveries
+         WHERE state = 'PENDING' AND next_at_ms <= $1 ORDER BY next_at_ms LIMIT $3 FOR UPDATE SKIP LOCKED
+       ), u AS (
+         UPDATE participant_notification_deliveries d SET attempts = d.attempts + 1, claims = d.claims + 1, next_at_ms = $2
+         FROM c WHERE d.notification_id = c.notification_id RETURNING d.notification_id, d.attempts, d.claims
+       )
+       SELECT n.participant_code, n.seq, n.notification_id, n.type, n.at, n.data, u.attempts, u.claims
+       FROM u JOIN participant_notifications n ON n.notification_id = u.notification_id`,
+      [nowMs, leaseUntilMs, limit],
+    );
+    return r.rows.map((x) => ({
+      notification: {
+        participant_code: x.participant_code,
+        seq: Number(x.seq),
+        notification_id: x.notification_id,
+        type: x.type,
+        at: x.at,
+        data: JSON.parse(x.data) as NotificationData,
+      },
+      attempts: Number(x.attempts),
+      claim: Number(x.claims),
+    }));
+  }
+
+  async finishDelivery(notification_id: string, claim: number, outcome: DeliveryOutcome): Promise<void> {
+    const refund = outcome.state === "SKIPPED" || (outcome.state === "PENDING" && outcome.refund === true);
+    await this.client.query(
+      `UPDATE participant_notification_deliveries
+       SET state = $3, attempts = GREATEST(0, attempts - $4), next_at_ms = COALESCE($5, next_at_ms), last_reason = $6
+       WHERE notification_id = $1 AND claims = $2 AND state = 'PENDING'`,
+      [
+        notification_id,
+        claim,
+        outcome.state,
+        refund ? 1 : 0,
+        outcome.state === "PENDING" ? outcome.next_at_ms : null,
+        outcome.state === "DELIVERED" ? null : outcome.reason,
+      ],
+    );
+  }
+
+  async delivery(notification_id: string): Promise<NoticeDeliveryRow | undefined> {
+    const r = await this.client.query<{
+      notification_id: string;
+      participant_code: string;
+      state: DeliveryState;
+      attempts: number;
+      claims: number;
+      next_at_ms: string;
+      last_reason: string | null;
+    }>(
+      `SELECT notification_id, participant_code, state, attempts, claims, next_at_ms, last_reason
+         FROM participant_notification_deliveries WHERE notification_id = $1`,
+      [notification_id],
+    );
+    const x = r.rows[0];
+    return x && { ...x, attempts: Number(x.attempts), claims: Number(x.claims), next_at_ms: Number(x.next_at_ms) };
+  }
+
   private async tx(participant_code: string, drafts: readonly NotificationDraft[], at: string, op_ref?: string): Promise<void> {
     const tx = await this.client.connect();
     let broken: Error | undefined;
@@ -337,12 +479,21 @@ export async function insertNotificationsTx(
   await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [notifyLockKey(participant_code)]);
   await hooks.locked?.(participant_code);
   for (const d of drafts) {
-    await tx.query(
+    const ins = await tx.query<{ notification_id: string }>(
       `INSERT INTO participant_notifications (participant_code, seq, notification_id, type, at, data)
        SELECT $1, COALESCE(max(seq), 0) + 1, $2, $3, $4, $5 FROM participant_notifications WHERE participant_code = $1
-       ON CONFLICT (notification_id) DO NOTHING`,
+       ON CONFLICT (notification_id) DO NOTHING
+       RETURNING notification_id`,
       [participant_code, notificationIdFor(participant_code, d.type, d.key), d.type, at, canonicalJson(d.data)],
     );
+    // Строка попытки вебхука — только у новой строки Outbox (повтор события — без второй попытки, РП46 (б) п. 3).
+    if (ins.rows[0]) {
+      await tx.query(
+        `INSERT INTO participant_notification_deliveries (notification_id, participant_code, state, attempts, next_at_ms)
+         VALUES ($1, $2, 'PENDING', 0, $3)`,
+        [ins.rows[0].notification_id, participant_code, Date.parse(at)],
+      );
+    }
   }
 }
 

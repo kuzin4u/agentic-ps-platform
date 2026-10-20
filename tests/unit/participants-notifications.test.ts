@@ -317,6 +317,28 @@ describe.skipIf(!DATABASE_URL)("уведомления клиента через
     expect(got.map((x) => x.seq), "номера ленты участника с пропуском или повтором").toEqual(got.map((_, i) => i + 1));
   });
 
+  it("попытка вебхука — строка на новое уведомление в той же транзакции, повтор события — без второй строки; взятие с двух экземпляров — одно", async () => {
+    const participant = `bank:hook-${process.pid}`;
+    const s1 = new PgParticipantNotificationStore(db.pool);
+    const s2 = new PgParticipantNotificationStore(db.reopen());
+    const op = await decided({ ops, store: s1 }, DECLINE("LIMIT_EXCEEDED"), { notify: client({ participant_code: participant, limit_source: "MANDATE" }) });
+    const p = (await s1.pending(iso(NOW - HORIZON * 1000), 1_000)).find((x) => x.op_ref === op)!;
+    await s1.settle(p, draftsFor(p), iso(NOW));
+    await s2.settle(p, draftsFor(p), iso(NOW));
+    const [n] = await feed(s1, participant);
+    expect(await s1.delivery(n!.notification_id)).toMatchObject({ participant_code: participant, state: "PENDING", attempts: 0, claims: 0 });
+    const rows = await db.pool.query("SELECT count(*)::int AS n FROM participant_notification_deliveries WHERE participant_code = $1", [participant]);
+    expect(rows.rows[0].n, "вторая строка попытки на то же уведомление").toBe(1);
+    const due = Date.parse(iso(NOW)) + 1;
+    const [a, b] = await Promise.all([s1.claimDue(due, due + 10_000, 100), s2.claimDue(due, due + 10_000, 100)]);
+    const mine = [...a, ...b].filter((d) => d.notification.participant_code === participant);
+    expect(mine, "одну строку взяли два экземпляра").toHaveLength(1);
+    await s2.finishDelivery(n!.notification_id, mine[0]!.claim + 1, { state: "DELIVERED" });
+    expect((await s1.delivery(n!.notification_id))?.state, "итог чужого взятия записан").toBe("PENDING");
+    await s1.finishDelivery(n!.notification_id, mine[0]!.claim, { state: "DELIVERED" });
+    expect(await s1.delivery(n!.notification_id)).toMatchObject({ state: "DELIVERED", attempts: 1, claims: 1 });
+  });
+
   it("Outbox участника и отметка разбора — только вставка (триггеры)", async () => {
     await expect(db.pool.query("UPDATE participant_notifications SET type = type")).rejects.toThrow();
     await expect(db.pool.query("DELETE FROM participant_notify_seen")).rejects.toThrow();

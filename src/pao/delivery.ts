@@ -219,7 +219,7 @@ export class EventDeliverer {
  * stop() снимает таймер и дожидается идущего прохода. Проходы не накладываются.
  */
 export function startEventDelivery(
-  deliverer: EventDeliverer,
+  deliverer: { runOnce(): Promise<unknown> },
   everyMs: number,
   onError: (err: unknown) => void,
 ): () => Promise<void> {

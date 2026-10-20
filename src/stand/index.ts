@@ -9,9 +9,16 @@ import { ConsentJournal, MemoryConsentStore } from "../consent/index.js";
 import type { MandateDecisionPayload } from "../consent/model.js";
 import { createAgentReceiver, type AgentReceiver } from "../env/agent/index.js";
 import { createIssuerEmulator } from "../env/issuer/index.js";
+import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
-import { MemoryParticipantNotificationStore, ParticipantNotifier, type NotifierResult } from "../participants/notifications.js";
+import {
+  MemoryParticipantNotificationStore,
+  ParticipantNotifier,
+  type NoticeDeliveryRow,
+  type NotifierResult,
+} from "../participants/notifications.js";
+import { WebhookDeliverer } from "../participants/webhook.js";
 import { TrustedParticipants, type TrustedParticipantKey } from "../participants/trusted.js";
 import { ParticipantRequestVerifier } from "../participants/verify.js";
 import { paoIdempotency } from "../pao/idempotency.js";
@@ -80,6 +87,15 @@ export interface Stand {
    * операций ADP вне пути авторизации. Таймера на стенде нет — тест вызывает проход сам.
    */
   notifyParticipants(): Promise<NotifierResult>;
+  /**
+   * Проход вебхука-сигнала банку стенда по часам стенда (РП46 (б) п. 3): все готовые попытки до пустой очереди; число
+   * попыток. Повтор — по nextAttemptDelayMs ядра, тест двигает часы. Приёмник — issuerWebhook.
+   */
+  deliverParticipantNotifications(): Promise<number>;
+  /** Строка попытки вебхука по уведомлению — для тестов. */
+  notificationDelivery(notification_id: string): Promise<NoticeDeliveryRow | undefined>;
+  /** Приёмник вебхука банка стенда: ответы по очереди, полученные и обработанные сигналы. */
+  readonly issuerWebhook: IssuerWebhookReceiver;
   /** Приложение банка: подпись и отзыв мандата клиентом (РП12, РП36, РП38). */
   readonly issuer: StandIssuer;
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
@@ -111,7 +127,8 @@ export function createStand(): Stand {
   // Журнал согласий — память ядра (РП30 п. 6), часы стенда.
   // Банк стенда — эмулятор эмитента с ключом в памяти; другого доверенного участника на стенде нет (РП36 доп.).
   const emulator = createIssuerEmulator();
-  const trusted = new TrustedParticipants([emulator.trustedKey], { stand: true });
+  // Адрес вебхука банка стенда — в записи доверенного участника (РП46 доп. п. 9 (о4)).
+  const trusted = new TrustedParticipants([{ ...emulator.trustedKey, notify_url: STAND_ISSUER_NOTIFY_URL }], { stand: true });
   // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6).
   // Outbox участника стенда — в памяти; журнал согласий пишет в него client.mandate_exhausted и client.revoked_all.
   const operations = new MemoryOperationStore();
@@ -149,6 +166,17 @@ export function createStand(): Stand {
   const notifier = new ParticipantNotifier(notifications, {
     horizonSec: params.participant_notify_horizon_sec,
     now: () => now().getTime(),
+  });
+  // Вебхук-сигнал банку стенда: проверка адреса та же, что в рабочем сервере, подменены разрешение имени и транспорт.
+  const issuerWebhook = createIssuerWebhookReceiver();
+  const webhook = new WebhookDeliverer({
+    store: notifications,
+    notifyUrl: (code) => trusted.notifyUrl(code),
+    resolveHost: dns.resolve,
+    transport: issuerWebhook.transport,
+    params,
+    now: () => now().getTime(),
+    stand: true,
   });
   const app = buildServer({
     env: "dev",
@@ -274,6 +302,13 @@ export function createStand(): Stand {
     },
     delivery: (id) => consentStore.delivery(id),
     notifyParticipants: () => notifier.runOnce(),
+    async deliverParticipantNotifications() {
+      let total = 0;
+      for (let n = await webhook.runOnce(); n > 0; n = await webhook.runOnce()) total += n;
+      return total;
+    },
+    notificationDelivery: (id) => notifications.delivery(id),
+    issuerWebhook,
     issuer,
     setClock: (d) => (clock = d),
     now,

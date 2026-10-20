@@ -61,7 +61,8 @@ CREATE TRIGGER participant_notify_seen_no_truncate
   FOR EACH STATEMENT EXECUTE FUNCTION consent_append_only();
 
 -- Попытки вебхука-сигнала участнику (РП46 (б) п. 3; как pao_event_deliveries, РП40 п. 5, доп. п. 6–8). Изменяемая, отдельно
--- от Outbox. Строка создаётся в транзакции уведомления, если у участника есть notify_url.
+-- от Outbox. Строка создаётся в транзакции уведомления на каждое уведомление; у участника без notify_url — SKIPPED при первом
+-- взятии (адрес — из записи участника на момент отправки, как подписка агента, РП40 доп. п. 11).
 CREATE TABLE participant_notification_deliveries (
   notification_id  text    PRIMARY KEY REFERENCES participant_notifications (notification_id),
   participant_code text    NOT NULL,
