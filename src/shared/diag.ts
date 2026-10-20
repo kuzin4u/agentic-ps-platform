@@ -74,6 +74,8 @@ export const STARTUP_CODES = [
   "STARTUP_PARTICIPANTS_INVALID",
   "STARTUP_PAO_SPEC_MISMATCH",
   "STARTUP_DIAG_INCOMPLETE",
+  // Признак, а не отказ запуска: готовность не снимает (РП46 доп. п. 9 (о2)); тот же код — в журнале прохода уведомителя.
+  "PARTICIPANT_NOTIFY_LAGGING",
 ] as const;
 
 export const PLATFORM_DIAG_CODES = [...PLATFORM_STATE_CODES, ...STARTUP_CODES] as const;
@@ -119,4 +121,7 @@ export const PLATFORM_DIAG: Readonly<Record<PlatformCode, DiagEntry>> = {
     "Версия ПАО или PAO_SPEC_SHA256 agentic-core не равны Платформе: дефект сборки, подключить ядро с той же копией ПАО.", "РП42 п. 4; РП16", "0.7.0"),
   STARTUP_DIAG_INCOMPLETE: platform("STARTUP_DIAG_INCOMPLETE", ["platform"], "after_fix", DOWN,
     "Реестр кодов неполон или запись не по формату К17 (checkDiagRegistry): дефект сборки, дописать запись.", "РП42 п. 3–4", "0.7.0"),
+  PARTICIPANT_NOTIFY_LAGGING: platform("PARTICIPANT_NOTIFY_LAGGING", ["platform"], "after_human",
+    "Уведомления о покупках через помощника могут прийти с задержкой.",
+    "Уведомитель участников не разобрал запись операции старше половины горизонта (participant_notify_horizon_sec): проверить процесс уведомителя и PostgreSQL; за горизонтом уведомлений по старым решениям не будет.", "РП46 доп. п. 7, 9 (о2); A3 п. 5.3", "0.11.0"),
 };

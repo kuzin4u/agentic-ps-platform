@@ -90,6 +90,11 @@ export class MemoryOperationStore implements OperationStore {
     return undefined;
   }
 
+  /** Все записи — источник уведомителя в памяти (РП46 доп. п. 7); копии, хранилище не меняется. */
+  *records(): Iterable<OperationRecord> {
+    for (const r of this.#map.values()) yield structuredClone(r);
+  }
+
   /** Запись по op_ref — для уведомителя в памяти и тестов; нет — undefined. */
   get(op_ref: string): OperationRecord | undefined {
     const r = this.#map.get(op_ref);

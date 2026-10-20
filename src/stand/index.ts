@@ -11,6 +11,7 @@ import { createAgentReceiver, type AgentReceiver } from "../env/agent/index.js";
 import { createIssuerEmulator } from "../env/issuer/index.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
+import { MemoryParticipantNotificationStore, ParticipantNotifier, type NotifierResult } from "../participants/notifications.js";
 import { TrustedParticipants, type TrustedParticipantKey } from "../participants/trusted.js";
 import { ParticipantRequestVerifier } from "../participants/verify.js";
 import { paoIdempotency } from "../pao/idempotency.js";
@@ -69,6 +70,11 @@ export interface Stand {
   deliverEvents(): Promise<number>;
   /** Строка попытки push по событию (состояние, попытки, причина) — для тестов. */
   delivery(event_id: string): Promise<DeliveryRow | undefined>;
+  /**
+   * Проход уведомителя участников по часам стенда (РП46 доп. п. 7): уведомления клиента через банк по решённым записям
+   * операций ADP вне пути авторизации. Таймера на стенде нет — тест вызывает проход сам.
+   */
+  notifyParticipants(): Promise<NotifierResult>;
   /** Приложение банка: подпись и отзыв мандата клиентом (РП12, РП36, РП38). */
   readonly issuer: StandIssuer;
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
@@ -131,6 +137,13 @@ export function createStand(): Stand {
     now: () => now().getTime(),
     stand: true,
   });
+  // Записи операций ADP стенда — память; уведомитель участников читает их вне пути авторизации (РП46 доп. п. 7).
+  const operations = new MemoryOperationStore();
+  const notifications = new MemoryParticipantNotificationStore(operations);
+  const notifier = new ParticipantNotifier(notifications, {
+    horizonSec: params.participant_notify_horizon_sec,
+    now: () => now().getTime(),
+  });
   const app = buildServer({
     env: "dev",
     pao: { verifier, keys, idempotency, params, consent, subscriptions, resolveHost: dns.resolve, stand: true },
@@ -142,7 +155,7 @@ export function createStand(): Stand {
         agents: registry,
         mandates: { get: (id, agent_code) => consent.adpMandate(id, agent_code) },
         state,
-        operations: new MemoryOperationStore(),
+        operations,
         params,
         // Все версии записей банка: лимит за период — по истории (расширение со следующего периода).
         clientLimits: { get: (c) => limits.history(c) },
@@ -237,6 +250,7 @@ export function createStand(): Stand {
       return total;
     },
     delivery: (id) => consentStore.delivery(id),
+    notifyParticipants: () => notifier.runOnce(),
     issuer,
     setClock: (d) => (clock = d),
     now,

@@ -2,6 +2,7 @@ import pg from "pg";
 import { buildServer, parseEnv, parseTrustedProxies, type PlatformEnv } from "./server.js";
 import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
 import { MemoryLimitsStore, PgLimitsStore } from "./participants/limits.js";
+import { ParticipantNotifier, PgParticipantNotificationStore, startParticipantNotifier } from "./participants/notifications.js";
 import { loadTrustedParticipants, type TrustedParticipants } from "./participants/trusted.js";
 import { ParticipantRequestVerifier } from "./participants/verify.js";
 import { EventDeliverer, httpsTransport, startEventDelivery } from "./pao/delivery.js";
@@ -82,6 +83,22 @@ const checks: StartupCheck[] = [
     },
   },
   {
+    // Отставание уведомителя участников (РП46 доп. п. 9 (о2)): признак, готовность не снимает; без базы — уведомителя нет.
+    check: "participants.notify",
+    fail: "STARTUP_DB_MIGRATIONS",
+    run: async () => {
+      if (!databaseUrl) return "skip";
+      const probe = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+      probe.on("error", (err) => console.error("PostgreSQL (уведомитель): сбой соединения пула", err));
+      try {
+        const notifier = new ParticipantNotifier(new PgParticipantNotificationStore(probe), { horizonSec: params.participant_notify_horizon_sec });
+        return (await notifier.lagging()) ? { warn: "PARTICIPANT_NOTIFY_LAGGING" } : "ok";
+      } finally {
+        await probe.end();
+      }
+    },
+  },
+  {
     // Доверенные ключи участников до PS-20 (РП36 п. 4): ключ эмулятора стенда и второй боевой участник — отказ запуска.
     check: "participants",
     fail: "STARTUP_PARTICIPANTS_INVALID",
@@ -150,6 +167,8 @@ async function serve(): Promise<void> {
 
   /** Проход доставки событий раз в секунду: меньше первой задержки повтора ядра (1 с). */
   const EVENT_DELIVERY_EVERY_MS = 1000;
+  /** Проход уведомителя участников: не реже наименьшего participant_notify_max_delay_sec (1 с). */
+  const PARTICIPANT_NOTIFY_EVERY_MS = 1000;
 
   // Push-доставка с повтором (РП40 п. 4–5): системное разрешение имени и HTTPS с проверенным IP; стендовых портов нет.
   const deliverer = new EventDeliverer({
@@ -187,10 +206,23 @@ async function serve(): Promise<void> {
     app.log.error({ err }, "ПАО: сбой прохода доставки событий"),
   );
   const stopExpiry = startReservationExpiry(state, RESERVATION_EXPIRE_EVERY_MS);
+  // Уведомитель участников (РП46 доп. п. 7): раз в секунду — не реже participant_notify_max_delay_sec (≥ 1 с); только с
+  // PostgreSQL — записи операций ADP рабочего сервера в базе.
+  const stopNotify = pool
+    ? startParticipantNotifier(
+        new ParticipantNotifier(new PgParticipantNotificationStore(pool), {
+          horizonSec: params.participant_notify_horizon_sec,
+          log: (level, fields, msg) => app.log[level](fields, msg),
+        }),
+        PARTICIPANT_NOTIFY_EVERY_MS,
+        (err) => app.log.error({ err }, "П10: сбой прохода уведомителя"),
+      )
+    : async () => {};
   app.addHook("onClose", async () => {
     await stopPurge();
     await stopDelivery();
     await stopExpiry();
+    await stopNotify();
     await pool?.end();
   });
   // Штатная остановка: сервер, очистка nonce и пул закрываются вместе (РП30 п. 4).
