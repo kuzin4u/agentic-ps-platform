@@ -165,7 +165,7 @@ Signature: sig1=:MEQCIF...:
 | MANDATE_REVOKED | 409 | Мандат отозван | never |
 | MANDATE_SCOPE | 409 | Продавец, категория или сумма вне мандата | after_human |
 | PRINCIPAL_SIGNATURE_PENDING | 409 | Мандат ещё не подписан | after_human |
-| LIMIT_EXCEEDED | 409 | Ограничение инструмента или лимит клиента в банке (`per_operation`, `per_period` — РП45 п. 1; повтор не поможет до нового периода или правки лимита в банке) | after_human |
+| LIMIT_EXCEEDED | 409 | Ограничение инструмента или лимит клиента в банке (`per_operation`, `per_period` — РП45 п. 1; сужение лимита в банке действует сразу, в том числе в текущем периоде, РП46 (г); повтор не поможет до нового периода или правки лимита в банке) | after_human |
 | STATE_UNAVAILABLE | 503 | Состояние не подтверждено | same_key |
 | CONFIRMATION_REQUIRED | 428 | Нужно подтверждение | after_human |
 | CREDENTIAL_INVALID | 409 | Реквизит использован, истёк, не для этого продавца | after_fix |
