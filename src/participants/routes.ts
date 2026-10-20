@@ -17,6 +17,7 @@ import type { Params } from "../shared/config.js";
 import type { StateService } from "../state/service.js";
 import { limitsBody, type LimitsStore } from "./limits.js";
 import type { TrustedParticipants } from "./trusted.js";
+import type { ParticipantRequestVerifier } from "./verify.js";
 
 export interface ParticipantDeps {
   readonly trusted: TrustedParticipants;
@@ -28,6 +29,8 @@ export interface ParticipantDeps {
   readonly limits?: LimitsStore;
   /** Часы Платформы для received_at записи лимитов. */
   readonly now?: () => Date;
+  /** Подпись запроса участника у чтений ПИ-8 (RFC 9421, РП46 (в)); без неё маршрута GET лимитов нет. */
+  readonly requests?: ParticipantRequestVerifier;
 }
 
 /** Коды ответа ПИ-8 подписи (processing-interface.yaml); тело ошибки — `{code}`, причина — в журнале процесса. */
@@ -38,6 +41,7 @@ const HTTP: Readonly<Record<string, number>> = {
   MANDATE_HASH_MISMATCH: 409,
   MANDATE_NOT_PENDING: 409,
   LIMITS_VERSION_CONFLICT: 409,
+  LIMITS_NOT_FOUND: 404,
   LIMITS_UNSUPPORTED: 422,
   QUALIFIED_SIGNATURE_REQUIRED: 422,
   STATE_UNAVAILABLE: 503,
@@ -269,6 +273,44 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       return reply.code(200).send({ principal_ref: record.principal_ref, version: record.version });
     } catch (err) {
       req.log.error({ err, participant_code: record.participant_code }, "ПИ-8: сбой хранилища лимитов");
+      return fail("UPSTREAM_UNAVAILABLE");
+    }
+  });
+
+  const requests = deps.requests;
+  if (!requests) return;
+  // Чтение действующей записи лимитов (РП46 (в)): подпись запроса участника (RFC 9421) → только своя пара — участник из
+  // проверенной подписи; пара другого банка — 404, как нет записи (не раскрываем, что клиент есть у другого банка).
+  app.get<{ Params: { ref: string } }>("/participants/v1/principals/:ref/limits", async (req, reply) => {
+    const fail = (code: keyof typeof HTTP) => {
+      const http = HTTP[code]!;
+      if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+      return reply.code(http).send({ code });
+    };
+    const url = req.raw.url ?? "";
+    const q = url.indexOf("?");
+    const auth = await requests.verify({
+      method: req.method,
+      path: q < 0 ? url : url.slice(0, q),
+      query: q < 0 ? "" : url.slice(q + 1),
+      headers: req.headers,
+      body: "",
+    });
+    if (!auth.ok) {
+      if (auth.code === "UPSTREAM_UNAVAILABLE") {
+        req.log.error({ err: auth.cause }, "ПИ-8: GET лимитов — сбой хранилища nonce");
+        return fail("UPSTREAM_UNAVAILABLE");
+      }
+      req.log.info("ПИ-8: GET лимитов — подпись запроса участника не проверена");
+      return fail("SIGNATURE_INVALID");
+    }
+    if (!isOpaqueRef(req.params.ref)) return fail("REQUEST_INVALID");
+    try {
+      const cur = await limits.current({ participant_code: auth.participant_code, principal_ref: req.params.ref });
+      if (!cur) return fail("LIMITS_NOT_FOUND");
+      return reply.code(200).send(cur);
+    } catch (err) {
+      req.log.error({ err, participant_code: auth.participant_code }, "ПИ-8: сбой хранилища лимитов");
       return fail("UPSTREAM_UNAVAILABLE");
     }
   });

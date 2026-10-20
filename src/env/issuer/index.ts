@@ -2,7 +2,8 @@
 // Приложение банка на стенде (РП36 п. 4): клиент подписывает мандат простой ЭП по договору с банком, банк подписывает
 // своим тестовым ключом запись о решении или об отзыве (РП38) над хэшем мандата. Пара ключей — только в памяти процесса,
 // на диск не пишется.
-import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
+import { signRequest } from "@kuzin4u/agentic-core";
 import { ED25519, parseKey } from "../../registry/keys.js";
 import {
   participantPrincipalRevocationSigningInput,
@@ -16,6 +17,7 @@ import {
   type TrustedParticipantKey,
 } from "../../participants/trusted.js";
 import { participantLimitsSigningInput, type LimitsRecord } from "../../participants/limits.js";
+import { PARTICIPANT_COMPONENTS } from "../../participants/verify.js";
 
 export const component = "env/issuer";
 
@@ -31,6 +33,8 @@ export interface IssuerEmulator {
   signPrincipalRevocation(record: ParticipantPrincipalRevocationRecord): string;
   /** Подпись записи лимитов клиента (base64url, РП45 п. 1). */
   signLimits(record: LimitsRecord): string;
+  /** Заголовки подписанного запроса участника без тела (RFC 9421, РП46 (в)): чтения ПИ-8. */
+  signRequest(method: string, path: string, query: string, at: Date): Record<string, string>;
 }
 
 export function createIssuerEmulator(): IssuerEmulator {
@@ -51,6 +55,18 @@ export function createIssuerEmulator(): IssuerEmulator {
     signRecord: (record) => sign(null, participantSigningInput(record), secret).toString("base64url"),
     signRevocation: (record) => sign(null, participantRevocationSigningInput(record), secret).toString("base64url"),
     signPrincipalRevocation: (record) => sign(null, participantPrincipalRevocationSigningInput(record), secret).toString("base64url"),
+    signRequest: (method, path, query, at) =>
+      signRequest(
+        {
+          method,
+          path,
+          query,
+          body: "",
+          headers: { "x-participant-code": STAND_ISSUER_CODE, "x-timestamp": at.toISOString(), "x-nonce": randomUUID() },
+        },
+        { kid: parsed.kid, alg: "ed25519", sign: (data) => sign(null, data, secret) },
+        PARTICIPANT_COMPONENTS,
+      ).headers,
     signLimits: (record) => sign(null, participantLimitsSigningInput(record), secret).toString("base64url"),
   };
 }

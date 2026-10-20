@@ -119,6 +119,12 @@ export class TrustedParticipants {
     return this.verifyInput(record.participant_code, record.kid, participantLimitsSigningInput(record), signature);
   }
 
+  /** Подпись Ed25519 над готовыми байтами (основа подписи запроса RFC 9421, РП46 (в)); неизвестный ключ — false. */
+  verifyRaw(participant_code: string, kid: string, data: Buffer, sig: Buffer): boolean {
+    const key = this.keys.get(keyId(participant_code, kid));
+    return key !== undefined && sig.length === 64 && verify(null, data, key, sig);
+  }
+
   private verifyInput(participant_code: string, kid: string, input: Buffer, signature: string): boolean {
     const key = this.keys.get(keyId(participant_code, kid));
     if (!key) return false;

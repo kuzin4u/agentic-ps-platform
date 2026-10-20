@@ -327,6 +327,60 @@ paths:
           description: "`LIMITS_UNSUPPORTED` — неизвестное поле limits или period"
         '503':
           description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
+    get:
+      summary: ПИ-8 Действующая запись лимитов клиента (эмитент, РП46 (в))
+      description: "Подпись HTTP-запроса участника по профилю ПАО §2 (RFC 9421): Signature-Input ровно (\"@method\" \"@path\" \"@query\" \"content-digest\" \"x-participant-code\" \"x-timestamp\" \"x-nonce\"), alg ed25519, ключ — из доверенных ключей участников, окно — signature_skew_sec, nonce однократный. Участник — из проверенной подписи: банк читает только своих клиентов, пара другого банка — 404, как нет записи. Ответ — действующая запись (наибольшая версия) как прислал банк, с его подписью и received_at."
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        description: principal_ref клиента
+        schema:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      - name: x-participant-code
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: x-timestamp
+        in: header
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - name: x-nonce
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: content-digest
+        in: header
+        required: true
+        description: digest пустого тела
+        schema:
+          type: string
+      - name: signature-input
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: signature
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: "Действующая запись: {participant_code, kid, principal_ref, version, limits, issued_at, signature, received_at}"
+        '400':
+          description: "`REQUEST_INVALID` — ref не по маске (после проверенной подписи)"
+        '401':
+          description: "`SIGNATURE_INVALID` — нет подписи, неизвестный участник или ключ, состав не по профилю, вне окна, повтор nonce"
+        '404':
+          description: "`LIMITS_NOT_FOUND` — у этого банка записи для клиента нет (в том числе клиент другого банка)"
+        '503':
+          description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
   /participants/v1/instruments/{funding_ref}/limits:
     put:
       summary: ПИ-8 Ограничения инструмента (эмитент; PS-14 — funding_ref из записи реквизита)
