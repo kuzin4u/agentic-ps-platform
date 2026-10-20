@@ -289,7 +289,7 @@ export class PgParticipantNotificationStore implements ParticipantNotificationSt
     try {
       try {
         await tx.query("BEGIN");
-        void notifyLockKey; // ПОЛОМКА К3.4 (временно, откат следом): без лока прохода
+        await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [notifyLockKey(participant_code)]);
         await this.hooks.locked?.(participant_code);
         for (const d of drafts) {
           await tx.query(
