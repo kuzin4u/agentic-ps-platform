@@ -365,7 +365,7 @@ export class PgConsentStore implements ConsentStore {
       try {
         await tx.query("BEGIN");
         if (sign) {
-          // ПОЛОМКА К1.3б (временно): подпись без лока пары — порядок «подпись ↔ метка» не по фиксации.
+          await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [pairLockKey(sign.pair)]);
           if (sign.root_id !== sign.mandate_id) {
             const p = await position(tx, sign.pair, sign.root_id);
             if (p.mark !== undefined && (p.sign === undefined || p.mark > p.sign)) throw new PairRevoked(sign.mandate_id);
