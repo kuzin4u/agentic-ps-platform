@@ -346,8 +346,12 @@ export class StateService {
       case "BAD_AMOUNT":
       case "BAD_CURRENCY":
         return fail("REQUEST_INVALID");
+      case "ACCOUNT_CONFLICT":
+      case "LIMIT_BELOW_USED":
+        // Нарушение целостности (резерв не меняет предел — LIMIT_BELOW_USED здесь не ожидается, ядро v0.11.0): без догадки.
+        return this.unavailable(e, fields, "П3: резерв не выполнен — нарушение целостности счёта");
       default:
-        // ACCOUNT_CONFLICT — нарушение целостности; прочее — сбой хранилища или неизвестная ошибка: без догадки.
+        // Сбой хранилища или неизвестная ошибка: без догадки.
         return this.unavailable(e, fields, "П3: резерв не выполнен");
     }
   }
