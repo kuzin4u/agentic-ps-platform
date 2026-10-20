@@ -141,9 +141,16 @@ describe("П5 выдача реквизита (РП47)", () => {
     expect(b).toMatchObject({ ok: true, credential: { status: "EXPIRED", payload: a.credential.payload } });
   });
 
-  it("kind SBP — CREDENTIAL_INVALID (СБП — с PS-21)", async () => {
+  it("kind SBP — CREDENTIAL_INVALID (СБП — с PS-21), но после мандата и области (РП47 п. 4, ревью КТ1 З3)", async () => {
     const { c } = setup();
     expect(await c.issue(AGENT, req({ kind: "SBP" }))).toMatchObject({ ok: false, code: "CREDENTIAL_INVALID" });
+    // Порядок: неизвестный мандат + SBP — MANDATE_NOT_FOUND; не подписан + SBP — по статусу; вне области + SBP — MANDATE_SCOPE.
+    expect(await setup({ read: null }).c.issue(AGENT, req({ kind: "SBP" }))).toMatchObject({ ok: false, code: "MANDATE_NOT_FOUND" });
+    expect(await setup({ mandate: cart({ status: "PENDING_SIGNATURE" }) }).c.issue(AGENT, req({ kind: "SBP" }))).toMatchObject({
+      ok: false,
+      code: "PRINCIPAL_SIGNATURE_PENDING",
+    });
+    expect(await c.issue(AGENT, req({ kind: "SBP", merchant_id: "MER-9" }))).toMatchObject({ ok: false, code: "MANDATE_SCOPE" });
   });
 
   it("мандат не найден или чужой — MANDATE_NOT_FOUND", async () => {

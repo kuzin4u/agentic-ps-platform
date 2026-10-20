@@ -90,7 +90,6 @@ export class Credentials {
    * обработчика ПАО перед каждой записью (РП33 доп. п. 8).
    */
   async issue(agent_code: string, req: CredentialRequest, beforeWrite: () => void = () => {}): Promise<IssueResult> {
-    if (req.kind !== "CARD") return refuse("CREDENTIAL_INVALID", "A3 п. 2", "СБП — с PS-21; реквизит по карте — kind CARD");
     const read = await this.opts.mandates.get(req.mandate_id, agent_code);
     if (!read) return refuse("MANDATE_NOT_FOUND", "A7 п. 9.1");
     const m = read.mandate;
@@ -102,6 +101,8 @@ export class Credentials {
     if (!m.merchant_scope.includes(req.merchant_id) || req.currency !== m.currency || req.amount_max > m.amount_limit) {
       return refuse("MANDATE_SCOPE", "A7 п. 5");
     }
+    // Вид реквизита — после мандата и области, как в РП47 п. 4 (решение владельца по ревью КТ1 З3).
+    if (req.kind !== "CARD") return refuse("CREDENTIAL_INVALID", "A3 п. 2", "СБП — с PS-21; реквизит по карте — kind CARD");
     if (!read.client) return refuse("STATE_UNAVAILABLE", "A3 п. 4.5");
     try {
       return await this.issueFor(agent_code, req, m, read.client, beforeWrite);

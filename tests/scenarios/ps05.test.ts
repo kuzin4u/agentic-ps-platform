@@ -173,6 +173,9 @@ describe("ПС05 на стенде: агентский токен и крипт�
   it("мандат не найден или не по форме — 404; тело не по схеме — 400 REQUEST_INVALID; без ключа — 400 IDEMPOTENCY_REQUIRED", async () => {
     const unknown = await call("POST", "/pao/v1/credentials", credReq({ mandate_id: "mnd_00000000-0000-8000-8000-000000000000" }));
     expect([unknown.statusCode, unknown.json().code]).toEqual([404, "MANDATE_NOT_FOUND"]);
+    // Вид реквизита — после мандата (РП47 п. 4, ревью КТ1 З3): несуществующий мандат + SBP — 404, а не CREDENTIAL_INVALID.
+    const sbp = await call("POST", "/pao/v1/credentials", credReq({ mandate_id: "mnd_00000000-0000-8000-8000-000000000000", kind: "SBP" }));
+    expect([sbp.statusCode, sbp.json().code]).toEqual([404, "MANDATE_NOT_FOUND"]);
     const form = await call("POST", "/pao/v1/credentials", credReq({ mandate_id: "MND-1" }));
     expect([form.statusCode, form.json().code]).toEqual([404, "MANDATE_NOT_FOUND"]);
     for (const bad of [credReq({ amount_max: 0 }), credReq({ currency: "rub" }), credReq({ kind: "PAN" }), credReq({ order_ref: "" }), "[]"]) {

@@ -164,7 +164,8 @@ describe("тело POST /pao/v1/credentials — по схеме CredentialReques
     for (const kind of schema.properties.kind.enum as string[]) expect(credentialRequestBody(JSON.stringify({ ...valid, kind }))).toBeDefined();
     expect(credentialRequestBody(JSON.stringify({ ...valid, kind: "PAN" }))).toBeUndefined();
     for (const amount_max of [0, 1.5, "1", -1]) expect(credentialRequestBody(JSON.stringify({ ...valid, amount_max }))).toBeUndefined();
-    expect(credentialRequestBody(JSON.stringify({ ...valid, pan: "x" }))).toEqual(valid);
+    // Реквизиты карты в теле отклоняет маршрут (422 CREDENTIALS_FORBIDDEN, pao-credentials-forbidden.test.ts), не разбор.
+    expect(credentialRequestBody(JSON.stringify({ ...valid, extra: "x" }))).toEqual(valid);
   });
 
   it("ответы метода — 201, 409, 422, 428, 503 и ключ идемпотентности", () => {

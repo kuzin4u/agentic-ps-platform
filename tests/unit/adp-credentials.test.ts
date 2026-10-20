@@ -24,6 +24,8 @@ interface World {
   setNow: (t: number) => void;
   /** ADP с теми же журналом, П3 и записями операций, но своим портом П5 или журналом согласий. */
   adpWith: (over: { credentials?: AdpCredentials; mandates?: AdpMandates }) => Adp;
+  /** Число вызовов резерва счетов мандата (П3): тест различает «зарезервировал и освободил» и «отказал до резерва». */
+  reserves: () => number;
 }
 
 /**
@@ -69,11 +71,20 @@ async function world(opts: { cartLimit?: number; confirmAbove?: number; clientPe
     opts.clientPerPeriod === undefined
       ? []
       : [{ limits: { per_period: opts.clientPerPeriod, period: "DAY", currency: "RUB" }, received_at: "2026-10-18T00:00:00Z" }];
+  let reserves = 0;
+  const state: AdpOptions["state"] = {
+    reserve: (...a) => (reserves++, c.state.reserve(...a)),
+    reserveClient: (...a) => c.state.reserveClient(...a),
+    release: (...a) => c.state.release(...a),
+    hold: (...a) => c.state.hold(...a),
+    amountLeft: (...a) => c.state.amountLeft(...a),
+    clientLeft: (...a) => c.state.clientLeft(...a),
+  };
   const adpOpts: AdpOptions = {
     agents: { get: (code) => (code === A || code === B ? { status: "ACTIVE", level: 2 } : undefined) },
     mandates: { get: (id, a) => c.consent.adpMandate(id, a) },
     clientLimits: { get: async () => versions },
-    state: c.state,
+    state,
     operations: new MemoryOperationStore(),
     credentials: store,
     params: {
@@ -93,7 +104,7 @@ async function world(opts: { cartLimit?: number; confirmAbove?: number; clientPe
     return r.credential;
   };
   const adpWith = (over: { credentials?: AdpCredentials; mandates?: AdpMandates }) => new Adp({ ...adpOpts, ...over });
-  return { c, store, adp, parent: p.id, cart: cart.id, issue, logs, setNow: (t) => (now = t), adpWith };
+  return { c, store, adp, parent: p.id, cart: cart.id, issue, logs, setNow: (t) => (now = t), adpWith, reserves: () => reserves };
 }
 
 const auth = (w: World, cred: Credential, over: Partial<CanonicalMessage> = {}, amount = 20_000): CanonicalMessage => ({
@@ -261,6 +272,8 @@ describe("ADP п. 2 и 4: агентский токен (РП47 п. 6–8)", () 
       },
     };
     expect(parseDecision(await w.adpWith({ mandates }).decide(auth(w, cred)), "adp").reason).toBe("MANDATE_REVOKED");
+    // Отказ — после резерва (CART и родитель), а не до него (повторный проход ревью КТ1, п. 1).
+    expect(w.reserves()).toBe(2);
     expect(await status(w)).toBe("ISSUED");
     expect(await left(w, w.cart)).toBe(30_000);
     expect(await left(w, w.parent)).toBe(50_000);
@@ -270,7 +283,10 @@ describe("ADP п. 2 и 4: агентский токен (РП47 п. 6–8)", () 
     const w = await world();
     expect(parseDecision(await w.adp.decide(auth(w, await w.issue("ORD-1"), {}, 20_000)), "adp").decision).toBe("APPROVE");
     const second = await w.issue("ORD-2");
+    const before = w.reserves();
     expect(await reason(w, auth(w, second, {}, 20_000))).toBe("LIMIT_EXCEEDED");
+    // Отказ — на резерве счёта CART (повторный проход ревью КТ1, п. 2).
+    expect(w.reserves() - before).toBe(1);
     expect(await status(w, "ORD-2")).toBe("ISSUED");
   });
 

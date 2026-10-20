@@ -11,7 +11,7 @@ import type { AgentRecord, AgentSubscription } from "../registry/model.js";
 import type { Params } from "../shared/config.js";
 import type { AgentSelf } from "../shared/pao.js";
 import type { Credentials } from "../credentials/service.js";
-import { credentialRequestBody, keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
+import { credentialRequestBody, hasPaymentDetails, keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
 import { consentErrorReply } from "./consent-errors.js";
 import { EVENT_ID, EventCursorUnknown } from "./events.js";
 import { paoError, type PaoErrorReply } from "./errors.js";
@@ -170,11 +170,18 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     reply: FastifyReply,
     parse: (raw: string) => T | undefined,
     handler: (agent: AgentRecord, input: T, ctx: MutatingCtx) => PaoReply | Promise<PaoReply>,
+    opts: { readonly forbidPaymentDetails?: boolean } = {},
   ): Promise<FastifyReply> {
     const agent = req.paoAgent as AgentRecord;
     const key = req.headers["idempotency-key"];
     if (typeof key !== "string" || key === "") return send(reply, paoError("IDEMPOTENCY_REQUIRED"));
     const raw = typeof req.body === "string" ? req.body : "";
+    // Реквизиты карты в теле — 422 CREDENTIALS_FORBIDDEN до схемы и захвата ключа: номер не попадает ни в хранилище
+    // идемпотентности, ни в журнал процесса (инвариант 1); в журнал — только код агента.
+    if (opts.forbidPaymentDetails && hasPaymentDetails(raw)) {
+      req.log.warn({ agent_code: agent.agent_code }, "ПАО: в теле запроса платёжные реквизиты — отклонено");
+      return send(reply, paoError("CREDENTIALS_FORBIDDEN", "A3 п. 2"));
+    }
     const input = parse(raw);
     if (input === undefined) return send(reply, paoError("REQUEST_INVALID"));
     const { path, query } = target(req);
@@ -264,7 +271,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
           req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
           return reply4xx(e);
         }
-      }),
+      }, { forbidPaymentDetails: true }),
     );
   }
 
