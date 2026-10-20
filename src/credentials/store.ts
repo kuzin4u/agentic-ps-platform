@@ -1,5 +1,6 @@
 // Хранилище П5 (РП47 п. 10): записи токенов и реквизитов. В памяти (dev без базы, стенд) и на PostgreSQL
 // (sql/108_agent_credentials.sql). Значения криптограммы и номера карты нет (инвариант 1).
+import type { SqlClient } from "@kuzin4u/agentic-core";
 import type { CredentialRecord, TokenRecord } from "./model.js";
 
 /** Сбой любого метода — исключение (→ STATE_UNAVAILABLE). */
@@ -83,5 +84,121 @@ export class MemoryCredentialStore implements CredentialStore {
     if (!c || c.status !== "ISSUED") return false;
     this.#credentials.set(credential_ref, { ...c, status: "USED", op_ref });
     return true;
+  }
+}
+
+interface TokenRow extends Record<string, unknown> {
+  token_ref: string;
+  agent_code: string;
+  mandate_id: string;
+  merchant_scope: string[];
+  valid_to: string;
+  funding_ref: string;
+  created_at: string;
+}
+
+interface CredentialRow extends Record<string, unknown> {
+  credential_ref: string;
+  agent_code: string;
+  mandate_id: string;
+  token_ref: string;
+  order_ref: string;
+  merchant_id: string;
+  amount_max: string;
+  currency: string;
+  valid_to: string;
+  cryptogram_sha256: string;
+  status: CredentialRecord["status"];
+  op_ref: string | null;
+  created_at: string;
+}
+
+const TOKEN_COLS = "token_ref, agent_code, mandate_id, merchant_scope, valid_to, funding_ref, created_at";
+const CREDENTIAL_COLS =
+  "credential_ref, agent_code, mandate_id, token_ref, order_ref, merchant_id, amount_max, currency, valid_to, cryptogram_sha256, status, op_ref, created_at";
+
+/** bigint приходит строкой: вне точного диапазона — не подтверждено (инвариант 3), а не округление. */
+function credentialOf(row: CredentialRow): CredentialRecord {
+  const amount_max = Number(row.amount_max);
+  if (!Number.isSafeInteger(amount_max)) throw new Error("agent_credentials: amount_max вне точного диапазона");
+  return { ...row, amount_max, currency: row.currency.trim(), cryptogram_sha256: row.cryptogram_sha256.trim() };
+}
+
+/**
+ * Хранилище П5 на PostgreSQL (sql/108_agent_credentials.sql). Запись токена и реквизита — INSERT … ON CONFLICT DO NOTHING
+ * по уникальным ключам, затем чтение записанного: одновременная выдача с двух экземпляров даёт одну строку. Погашение —
+ * один условный UPDATE … WHERE status = 'ISSUED': из одновременных проходит ровно один (РП47 п. 8); триггер не даёт
+ * вернуть USED в ISSUED и изменить ключевые поля.
+ */
+export class PgCredentialStore implements CredentialStore {
+  constructor(private readonly client: SqlClient) {}
+
+  async tokenByMandate(mandate_id: string): Promise<TokenRecord | undefined> {
+    const r = await this.client.query<TokenRow>(`SELECT ${TOKEN_COLS} FROM agent_tokens WHERE mandate_id = $1`, [mandate_id]);
+    return r.rows[0];
+  }
+
+  async tokenByRef(token_ref: string): Promise<TokenRecord | undefined> {
+    const r = await this.client.query<TokenRow>(`SELECT ${TOKEN_COLS} FROM agent_tokens WHERE token_ref = $1`, [token_ref]);
+    return r.rows[0];
+  }
+
+  async putToken(rec: TokenRecord): Promise<TokenRecord> {
+    await this.client.query(
+      `INSERT INTO agent_tokens (${TOKEN_COLS}) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) ON CONFLICT (mandate_id) DO NOTHING`,
+      [rec.token_ref, rec.agent_code, rec.mandate_id, JSON.stringify(rec.merchant_scope), rec.valid_to, rec.funding_ref, rec.created_at],
+    );
+    const t = await this.tokenByMandate(rec.mandate_id);
+    if (!t) throw new Error("agent_tokens: токен мандата не найден после вставки");
+    return t;
+  }
+
+  async credentialByOrder(agent_code: string, mandate_id: string, order_ref: string): Promise<CredentialRecord | undefined> {
+    const r = await this.client.query<CredentialRow>(
+      `SELECT ${CREDENTIAL_COLS} FROM agent_credentials WHERE agent_code = $1 AND mandate_id = $2 AND order_ref = $3`,
+      [agent_code, mandate_id, order_ref],
+    );
+    return r.rows[0] && credentialOf(r.rows[0]);
+  }
+
+  async putCredential(rec: CredentialRecord): Promise<CredentialRecord> {
+    await this.client.query(
+      `INSERT INTO agent_credentials (${CREDENTIAL_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (agent_code, mandate_id, order_ref) DO NOTHING`,
+      [
+        rec.credential_ref,
+        rec.agent_code,
+        rec.mandate_id,
+        rec.token_ref,
+        rec.order_ref,
+        rec.merchant_id,
+        rec.amount_max,
+        rec.currency,
+        rec.valid_to,
+        rec.cryptogram_sha256,
+        rec.status,
+        rec.op_ref,
+        rec.created_at,
+      ],
+    );
+    const c = await this.credentialByOrder(rec.agent_code, rec.mandate_id, rec.order_ref);
+    if (!c) throw new Error("agent_credentials: реквизит заказа не найден после вставки");
+    return c;
+  }
+
+  async credentialByCryptogram(token_ref: string, cryptogram_sha256: string): Promise<CredentialRecord | undefined> {
+    const r = await this.client.query<CredentialRow>(
+      `SELECT ${CREDENTIAL_COLS} FROM agent_credentials WHERE token_ref = $1 AND cryptogram_sha256 = $2`,
+      [token_ref, cryptogram_sha256],
+    );
+    return r.rows[0] && credentialOf(r.rows[0]);
+  }
+
+  async consume(credential_ref: string, op_ref: string): Promise<boolean> {
+    const r = await this.client.query(
+      "UPDATE agent_credentials SET status = 'USED', op_ref = $2 WHERE credential_ref = $1 AND status = 'ISSUED' RETURNING credential_ref",
+      [credential_ref, op_ref],
+    );
+    return r.rows.length === 1;
   }
 }

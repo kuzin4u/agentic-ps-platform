@@ -26,7 +26,7 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 
     await db?.close();
   });
 
-  it("применены 001–004, 100_consent, 101_events, 102_event_deliveries, 103_adp_operations, 104_adp_split_window, 105_participant_limits, 106_principal_order и 107_participant_notifications, таблицы nonce, идемпотентности и согласий есть; повторный запуск ничего не применяет", async () => {
+  it("применены 001–004, 100_consent, 101_events, 102_event_deliveries, 103_adp_operations, 104_adp_split_window, 105_participant_limits, 106_principal_order, 107_participant_notifications и 108_agent_credentials, таблицы nonce, идемпотентности и согласий есть; повторный запуск ничего не применяет", async () => {
     const applied = (await db.pool.query<{ name: string }>("SELECT name FROM core_migrations ORDER BY name")).rows;
     expect(applied.map((r) => r.name)).toEqual([
       "001_journal.sql",
@@ -41,13 +41,14 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 
       "105_participant_limits.sql",
       "106_principal_order.sql",
       "107_participant_notifications.sql",
+      "108_agent_credentials.sql",
     ]);
     const tables = (
       await db.pool.query<{ t: string }>(
         "SELECT table_name AS t FROM information_schema.tables WHERE table_schema = current_schema() ORDER BY 1",
       )
     ).rows.map((r) => r.t);
-    expect(tables).toEqual(expect.arrayContaining(["core_idempotency", "core_nonces", "consent_mandates", "consent_subjects", "pao_events", "pao_event_deliveries", "adp_operations", "participant_limits", "principal_order", "participant_notifications", "participant_notify_seen", "participant_notification_deliveries"]));
+    expect(tables).toEqual(expect.arrayContaining(["core_idempotency", "core_nonces", "consent_mandates", "consent_subjects", "pao_events", "pao_event_deliveries", "adp_operations", "participant_limits", "principal_order", "participant_notifications", "participant_notify_seen", "participant_notification_deliveries", "agent_tokens", "agent_credentials"]));
     expect(await applyMigrations(db.pool, migrationsDir())).toEqual([]);
     expect(await applyPlatformMigrations(db.pool)).toEqual([]);
   });

@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
+import { parseDecision } from "../../src/shared/codes.js";
 import type { Credential, MandateRequest } from "../../src/shared/pao.js";
 import { createStand, type Stand } from "../../src/stand/index.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
@@ -139,6 +141,27 @@ describe("ПС05 на стенде: агентский токен и крипт�
     const res = await call("POST", "/pao/v1/credentials", credReq({ mandate_id: cart, amount_max: 10_000 }));
     expect([res.statusCode, res.json().code, res.json().retry]).toEqual([409, "MANDATE_SCOPE", "after_human"]);
     expect(stand.tsp.issued.size).toBe(before);
+  });
+
+  it("реквизит в авторизации через ADP стенда: APPROVE и погашение; та же криптограмма ещё раз — CREDENTIAL_INVALID; повтор выдачи — USED", async () => {
+    const res = await call("POST", "/pao/v1/credentials", credReq({ order_ref: "ORD-ps05-adp", amount_max: 50_000 }));
+    const c = res.json() as Credential;
+    const msg = (op_ref: string): CanonicalMessage => ({
+      op_ref,
+      msg_type: "AUTH_REQUEST",
+      channel: "CARD",
+      amount: 40_000,
+      currency: "RUB",
+      merchant: { id: "MER-1042" },
+      instrument: { kind: "AGENT_TOKEN", token_ref: c.payload.token_ref as string, cryptogram: c.payload.cryptogram as string },
+      aoi: c.aoi,
+    });
+    const decide = async (op_ref: string) =>
+      parseDecision((await stand.app.inject({ method: "POST", url: "/adp/v1/decide", payload: msg(op_ref) })).json(), "adp");
+    expect((await decide("OPKC-PS05-1")).decision).toBe("APPROVE");
+    expect(await decide("OPKC-PS05-2")).toMatchObject({ decision: "DECLINE", reason: "CREDENTIAL_INVALID" });
+    const again = await call("POST", "/pao/v1/credentials", credReq({ order_ref: "ORD-ps05-adp", amount_max: 50_000 }));
+    expect([again.statusCode, (again.json() as Credential).status, (again.json() as Credential).payload]).toEqual([201, "USED", c.payload]);
   });
 
   it("мандат не найден или не по форме — 404; тело не по схеме — 400 REQUEST_INVALID; без ключа — 400 IDEMPOTENCY_REQUIRED", async () => {

@@ -184,9 +184,10 @@ export function createStand(): Stand {
   });
   // Агентские реквизиты (П5, РП47): токен-сервис — эмулятор с ключом в памяти, funding_ref — от банка стенда.
   const tsp = createTokenServiceEmulator();
+  const credentialStore = new MemoryCredentialStore();
   const credentials = new Credentials({
     mandates: { get: (id, agent_code) => consent.credentialMandate(id, agent_code) },
-    store: new MemoryCredentialStore(),
+    store: credentialStore,
     tsp,
     funding: emulator,
     params,
@@ -217,6 +218,8 @@ export function createStand(): Stand {
         params,
         // Все версии записей банка: лимит за период — по истории (расширение со следующего периода).
         clientLimits: { get: (c) => limits.history(c) },
+        // Домен токена, криптограмма и погашение — то же хранилище П5, что выдаёт реквизиты (РП47 п. 6–8).
+        credentials: credentialStore,
         // Часы стенда (setClock): период лимита клиента и окно дробления — по тем же часам, что резервы и подписи.
         now,
       }),
