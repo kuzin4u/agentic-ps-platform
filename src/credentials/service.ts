@@ -194,12 +194,13 @@ export class Credentials {
 
   /**
    * GET /pao/v1/credentials/{ref} (РП49 (г)): свой реквизит — тот же Credential, что при повторе (криптограмма пересчитана
-   * с valid_to записи и сверена с хэшем, status текущий). Чужой и неизвестный неразличимы — CREDENTIAL_INVALID.
+   * с valid_to записи и сверена с хэшем, status текущий). Чужой и неизвестный неразличимы — CREDENTIAL_INVALID: хранилище
+   * ищет по паре (credential_ref, agent_code), чужой для него — «не найдено».
    */
   async get(agent_code: string, credential_ref: string): Promise<IssueResult> {
     try {
-      const rec = await this.store((s) => s.credentialByRef(credential_ref));
-      if (!rec || rec.agent_code !== agent_code) return refuse("CREDENTIAL_INVALID");
+      const rec = await this.store((s) => s.credentialByRef(credential_ref, agent_code));
+      if (!rec) return refuse("CREDENTIAL_INVALID");
       return { ok: true, credential: this.view(rec, await this.recompute(rec)) };
     } catch (err) {
       if (!(err instanceof Unavailable)) throw err;

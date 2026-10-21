@@ -14,8 +14,11 @@ export interface CredentialStore {
   credentialByOrder(agent_code: string, mandate_id: string, order_ref: string): Promise<CredentialRecord | undefined>;
   /** Атомарно: реквизита заказа нет — записать; есть — вернуть записанный. */
   putCredential(rec: CredentialRecord): Promise<CredentialRecord>;
-  /** Реквизит по credential_ref (GET /pao/v1/credentials/{ref}, РП49 (г)); нет — undefined. */
-  credentialByRef(credential_ref: string): Promise<CredentialRecord | undefined>;
+  /**
+   * Реквизит агента по credential_ref (GET /pao/v1/credentials/{ref}, РП49 (г)) — одним запросом по паре: чужой для
+   * хранилища — «не найдено», как неизвестный (тот же путь и то же время ответа); нет — undefined.
+   */
+  credentialByRef(credential_ref: string, agent_code: string): Promise<CredentialRecord | undefined>;
   /** Реквизит по токену и SHA-256 криптограммы (ADP п. 4); нет — undefined. */
   credentialByCryptogram(token_ref: string, cryptogram_sha256: string): Promise<CredentialRecord | undefined>;
   /**
@@ -74,9 +77,9 @@ export class MemoryCredentialStore implements CredentialStore {
     return structuredClone(rec);
   }
 
-  async credentialByRef(credential_ref: string): Promise<CredentialRecord | undefined> {
+  async credentialByRef(credential_ref: string, agent_code: string): Promise<CredentialRecord | undefined> {
     const c = this.#credentials.get(credential_ref);
-    return c && structuredClone(c);
+    return c && c.agent_code === agent_code ? structuredClone(c) : undefined;
   }
 
   async credentialByCryptogram(token_ref: string, cryptogram_sha256: string): Promise<CredentialRecord | undefined> {
@@ -193,8 +196,11 @@ export class PgCredentialStore implements CredentialStore {
     return c;
   }
 
-  async credentialByRef(credential_ref: string): Promise<CredentialRecord | undefined> {
-    const r = await this.client.query<CredentialRow>(`SELECT ${CREDENTIAL_COLS} FROM agent_credentials WHERE credential_ref = $1`, [credential_ref]);
+  async credentialByRef(credential_ref: string, agent_code: string): Promise<CredentialRecord | undefined> {
+    const r = await this.client.query<CredentialRow>(
+      `SELECT ${CREDENTIAL_COLS} FROM agent_credentials WHERE credential_ref = $1 AND agent_code = $2`,
+      [credential_ref, agent_code],
+    );
     return r.rows[0] && credentialOf(r.rows[0]);
   }
 

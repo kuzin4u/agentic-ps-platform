@@ -51,7 +51,10 @@ async function gateway() {
   /** tspDown — отказ токен-сервиса; tspHang — без ответа; tamper — пересчёт не совпадает с хэшем (сменился ключ). */
   const sw = { tspDown: false, tspHang: false, tamper: false };
   const lines: string[] = [];
+  /** Сдвиг часов Платформы (EXPIRED по valid_to, РП49 (г)). */
+  const clock = { shiftMs: 0 };
   const credentials = new Credentials({
+    now: () => new Date(Date.now() + clock.shiftMs),
     mandates: {
       get: async (id, code) =>
         id === CART && code === CODE
@@ -99,7 +102,7 @@ async function gateway() {
   await app.ready();
   const post = (raw: string, key: string) =>
     signedInject(app, side, CODE, { method: "POST", path: "/pao/v1/credentials", body: raw, headers: { "idempotency-key": key } });
-  return { app, post, saved, store, tsp, sw, lines, credentials, side };
+  return { app, post, saved, store, tsp, sw, lines, credentials, side, registry, clock };
 }
 
 describe("POST /pao/v1/credentials под тем же Idempotency-Key (РП48 (в))", () => {
@@ -291,6 +294,49 @@ describe("GET /pao/v1/credentials/{ref} — реквизит по ссылке (
     expect(foreign.json()).toMatchObject({ code: "CREDENTIAL_INVALID", retry: "after_fix" });
     expect(foreign.body).toBe(unknown.body);
     expect(foreign.body).not.toContain(c.payload.token_ref as string);
+    await g.app.close();
+  });
+
+  it("чужой и неизвестный — один путь: один запрос хранилища по паре (ref, агент) с ответом «не найдено», токен-сервис не вызывается", async () => {
+    const g = await gateway();
+    await g.post(body(), randomUUID());
+    const own = await g.store.credentialByOrder(CODE, CART, "ORD-k");
+    await g.store.putCredential({ ...own!, credential_ref: "crd_foreign", agent_code: "nspk:agent:other:v1", order_ref: "ORD-f", cryptogram_sha256: "f".repeat(64) });
+    const byRef = vi.spyOn(g.store, "credentialByRef");
+    const cryptogram = vi.spyOn(g.tsp, "cryptogram");
+    for (const ref of ["crd_foreign", "crd_unknown"]) {
+      byRef.mockClear();
+      expect((await get(g, ref)).statusCode).toBe(409);
+      expect(byRef.mock.calls).toEqual([[ref, CODE]]);
+      expect(await byRef.mock.results[0]?.value).toBeUndefined();
+    }
+    expect(cryptogram).not.toHaveBeenCalled();
+    // Чужой реквизит в хранилище есть, но не для этого агента (РП49 (г)).
+    expect(await g.store.credentialByRef("crd_foreign", "nspk:agent:other:v1")).toMatchObject({ credential_ref: "crd_foreign" });
+    await g.app.close();
+  });
+
+  it("истёк по часам Платформы — 200, тот же Credential, status EXPIRED", async () => {
+    const g = await gateway();
+    const c = (await g.post(body(), randomUUID())).json() as Credential;
+    g.clock.shiftMs = Date.parse(c.payload.valid_to as string) - Date.now() + 1_000;
+    const r = await get(g, c.credential_ref);
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ ...c, status: "EXPIRED" });
+    await g.app.close();
+  });
+
+  it("приостановленный агент — 403 AGENT_SUSPENDED; обращение без подписи — 401", async () => {
+    const g = await gateway();
+    const c = (await g.post(body(), randomUUID())).json() as Credential;
+    const bare = await g.app.inject({ method: "GET", url: `/pao/v1/credentials/${c.credential_ref}` });
+    expect(bare.statusCode).toBe(401);
+    expect(bare.body).not.toContain(c.payload.cryptogram as string);
+    g.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    const denied = await get(g, c.credential_ref);
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toMatchObject({ code: "AGENT_SUSPENDED" });
+    expect(denied.body).not.toContain(c.payload.cryptogram as string);
     await g.app.close();
   });
 

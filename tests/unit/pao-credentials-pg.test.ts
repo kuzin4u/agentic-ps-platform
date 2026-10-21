@@ -104,8 +104,9 @@ function platform() {
   };
   const post = (app: FastifyInstance, body: string, key: string) =>
     signedInject(app, side, A, { method: "POST", path: "/pao/v1/credentials", body, headers: { "idempotency-key": key } });
+  const get = (app: FastifyInstance, ref: string) => signedInject(app, side, A, { method: "GET", path: `/pao/v1/credentials/${ref}` });
   const callsOf = (app: FastifyInstance) => calls.get(app) as Calls;
-  return { instance, post, callsOf, tspCalls, close: () => Promise.all(apps.map((a) => a.close())) };
+  return { instance, post, get, callsOf, tspCalls, close: () => Promise.all(apps.map((a) => a.close())) };
 }
 
 /** Свой CART на тест: записи реквизитов и токенов разных тестов одной схемы не пересекаются. */
@@ -163,6 +164,11 @@ describe.skipIf(!DATABASE_URL)("реквизит под одним Idempotency-K
     const rows = await credentialRows(cart);
     expect(rows).toHaveLength(1);
     expect(JSON.stringify(rows)).not.toContain(cryptogram);
+    // Реквизит по ссылке на другом экземпляре (РП49 (г)) — тот же ответ побайтно; неизвестная ссылка — 409.
+    const byRef = await p.get(two, c.credential_ref);
+    expect(byRef.statusCode).toBe(200);
+    expect(byRef.body).toBe(a.body);
+    expect((await p.get(two, "crd_unknown")).statusCode).toBe(409);
   });
 
   it("одновременно 10 одинаковых обращений под одним ключом на двух экземплярах — одна запись; все 201 — одна криптограмма, остальные 503 same_key", async () => {
