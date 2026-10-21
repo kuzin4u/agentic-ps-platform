@@ -1,7 +1,7 @@
 // П9 Проверка тела изменяющих методов по схеме метода (РП31 п. 1): до обработчика и до захвата ключа идемпотентности.
 // Схема — вручную; совпадение обязательных полей с agent-protocol.yaml сверяет tests/contract/pao-bodies.test.ts.
 // Лишние поля игнорируются (ПАО §7): класс и уровень в теле не читаются, они — только из реестра (инвариант 5).
-import { MANDATE_ID, parseRfc3339 } from "../consent/model.js";
+import { parseRfc3339 } from "../consent/model.js";
 import { isCurrencyCode } from "@kuzin4u/agentic-core";
 import type { CredentialRequest, MandateRequest } from "../shared/pao.js";
 import type { AgentSubscription } from "../registry/model.js";
@@ -206,9 +206,6 @@ export const PAYMENT_DETAIL_FIELDS: readonly string[] = [
 
 const FIELD_KEY = (k: string): string => k.toLowerCase().replace(/[_-]/g, "");
 
-/** Поля со ссылкой на мандат: значение по форме MANDATE_ID присвоено Платформой. */
-const MANDATE_REF_FIELDS: readonly string[] = ["mandate_id", "parent_id"];
-
 /** Контрольная сумма Луна (ISO/IEC 7812-1): серия 13–19 цифр, похожая на номер карты. */
 function luhn(digits: string): boolean {
   let sum = 0;
@@ -223,20 +220,44 @@ function luhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
-/** Серии 13–19 цифр (в том числе через одиночный пробел или дефис) с верной суммой Луна. */
-const PAN_LIKE = /\d(?:[ -]?\d){12,18}/g;
-const hasPanLike = (s: string): boolean =>
-  [...s.matchAll(PAN_LIKE)].some((m) => {
-    const d = m[0].replace(/[ -]/g, "");
-    return d.length >= 13 && d.length <= 19 && luhn(d);
-  });
+/**
+ * Фрагменты в форме UUID (8-4-4-4-12 шестнадцатеричных) — не номер карты, в любом поле (РП49 (а) п. 3): правило «группы
+ * по 4» иначе находит в них серию 13–19 цифр, проходящую Луна (в том числе в id мандата `mnd_<UUID>`).
+ */
+const UUID_LIKE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+/** Максимальная цифровая серия: цифры через не больше чем одиночный пробел или дефис, с краёв — не цифра. */
+const DIGIT_RUN = /\d+(?:[ -]\d+)*/g;
+
+const panLength = (n: number): boolean => n >= 13 && n <= 19;
+
+/**
+ * Похоже на номер карты (РП49 (а) п. 2, 2а): внутри серии — группа между разделителями, сплошная 13–19 цифр, или окно
+ * подряд идущих групп по 4 цифры (последняя — 1–4), всего 13–19; и верная сумма Луна.
+ */
+function runHasPan(run: string): boolean {
+  const groups = run.split(/[ -]/);
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i] as string;
+    if (panLength(g.length) && luhn(g)) return true;
+    let digits = "";
+    for (let j = i; j < groups.length; j++) {
+      const gj = groups[j] as string;
+      if (gj.length > 4) break;
+      digits += gj;
+      if (j > i && panLength(digits.length) && luhn(digits)) return true;
+      if (gj.length < 4 || digits.length >= 19) break;
+    }
+  }
+  return false;
+}
+
+const hasPanLike = (s: string): boolean => [...s.replace(UUID_LIKE, "#").matchAll(DIGIT_RUN)].some((m) => runHasPan(m[0]));
 
 /**
  * В теле есть платёжные реквизиты карты (ПАО §6 CREDENTIALS_FORBIDDEN, решение владельца по ревью КТ1 З2): поле с именем
- * из PAYMENT_DETAIL_FIELDS на любом уровне или значение (строка, число, имя поля) с серией 13–19 цифр по Луну. Проверка —
- * до разбора по схеме и до захвата ключа идемпотентности: номер не попадает ни в хранилища, ни в журнал процесса.
- * Тело не JSON — по сериям в тексте. id мандата по форме MANDATE_ID (UUID, присвоен Платформой) не сканируется: серия
- * его цифр через дефисы может пройти проверку Луна, а данных карты в нём нет.
+ * из PAYMENT_DETAIL_FIELDS на любом уровне или значение (строка, число, имя поля) с серией по runHasPan. Проверка — до
+ * разбора по схеме и до захвата ключа идемпотентности: номер не попадает ни в хранилища, ни в журнал процесса. Тело не
+ * JSON — по сериям в тексте.
  */
 export function hasPaymentDetails(raw: string): boolean {
   let v: unknown;
@@ -254,7 +275,7 @@ export function hasPaymentDetails(raw: string): boolean {
         ([k, val]) =>
           PAYMENT_DETAIL_FIELDS.includes(FIELD_KEY(k)) ||
           hasPanLike(k) ||
-          (!(MANDATE_REF_FIELDS.includes(k) && typeof val === "string" && MANDATE_ID.test(val)) && walk(val)),
+          walk(val),
       );
     }
     return false;
