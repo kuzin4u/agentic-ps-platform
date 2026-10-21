@@ -91,8 +91,7 @@ function platform() {
       pao: {
         verifier,
         keys,
-        // ПОЛОМКА К3е (временная, через CI): второму экземпляру — своя идемпотентность в памяти.
-        idempotency: apps.length === 0 ? paoIdempotency({ client: pool, ttlSec: params.idempotency_ttl_sec }) : paoIdempotency({ ttlSec: params.idempotency_ttl_sec }),
+        idempotency: paoIdempotency({ client: pool, ttlSec: params.idempotency_ttl_sec }),
         params,
         consent: memoryConsent(),
         credentials: counted,
