@@ -214,7 +214,8 @@ describe("П5 выдача реквизита (РП47)", () => {
   it.each(["fundingRef", "issueToken", "cryptogram"] as const)(
     "внешний вызов %s дольше P5_UPSTREAM_TIMEOUT_MS — UPSTREAM_UNAVAILABLE, ни токен, ни реквизит не записаны; следующая выдача проходит (РП48 (в))",
     async (hung) => {
-      expect(3 * P5_UPSTREAM_TIMEOUT_MS).toBeLessThan(PAO_HANDLER_BUDGET_MS);
+      // До четырёх вызовов (четвёртый — пересчёт при одновременной выдаче, РП48 (в) п. 4).
+      expect(4 * P5_UPSTREAM_TIMEOUT_MS).toBeLessThan(PAO_HANDLER_BUDGET_MS);
       vi.useFakeTimers();
       try {
         const issuer = createIssuerEmulator();
