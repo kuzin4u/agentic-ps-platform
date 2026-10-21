@@ -301,7 +301,7 @@ export class Adp {
         // Ложный признак эквайрера отклоняет и покупку человека (остаточный риск РП48 (а)) — счётчик показывает источник.
         const acquirer_id = msg.merchant?.acquirer_id ?? null;
         const merchant_id = msg.merchant?.id ?? null;
-        const pair = `${acquirer_id ?? ""}\n${merchant_id ?? ""}`;
+        const pair = JSON.stringify([acquirer_id, merchant_id]);
         const count = (this.cardTokenAoi.get(pair) ?? 0) + 1;
         this.cardTokenAoi.set(pair, count);
         this.log(

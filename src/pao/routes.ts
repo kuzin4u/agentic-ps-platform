@@ -216,8 +216,15 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         },
       );
       if (!run.replayed) r = fresh ?? run.result;
-      else if (opts.replay && run.result.status < 300) r = await opts.replay(agent, input, run.result);
-      else r = run.result;
+      else if (opts.replay && run.result.status < 300) {
+        r = await opts.replay(agent, input, run.result);
+        // Пересборка даёт либо тот же статус, либо 5xx (повтор позже): окончательный отказ при сохранённом 2xx нарушил
+        // бы идемпотентность (РП30 п. 3) — агент бросил бы выданный реквизит. Иное — не подтверждено, инцидент.
+        if (r.status < 500 && r.status !== run.result.status) {
+          req.log.warn({ agent_code: agent.agent_code, status: r.status, incident: true }, "ПАО: пересборка повтора дала другой статус");
+          r = reply4xx(paoError("STATE_UNAVAILABLE", "A3 п. 4.5"));
+        }
+      } else r = run.result;
     } catch (err) {
       if (err instanceof IdempotencyConflict) return send(reply, paoError("IDEMPOTENCY_CONFLICT"));
       if (err instanceof UnstoredReply) return send(reply, err.reply);
