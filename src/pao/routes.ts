@@ -430,9 +430,8 @@ const reply4xx = (e: PaoErrorReply): PaoReply => ({ status: e.http, body: e.body
 
 /** Реквизит для хранения под ключом (РП48 (в)): без значения криптограммы — его в базе Платформы нет (РП47 п. 3, 10). */
 function withoutCryptogram(c: Credential): Credential {
-  const payload = { ...c.payload };
-  delete payload.cryptogram;
-  return { ...c, payload };
+  // ПОЛОМКА К3а (временная, через CI): криптограмма остаётся в хранимом ответе.
+  return { ...c, payload: { ...c.payload } };
 }
 
 /** Ответ 5xx обработчика — тело ПАО §6: не сохраняется под ключом (РП30 п. 3), но уходит агенту с кодом обработчика. */
