@@ -1,12 +1,12 @@
-// ADP на настоящем журнале согласий и П3 в памяти ядра (PS-10 К1.4, РП43 п. 5–6): INTENT — один резерв, CART — два
-// («CART → родитель», откат первого при отказе второго), verify.amount_left у CART — меньшее из CART и родителя.
+// ADP на настоящем журнале согласий и П3 в памяти ядра (PS-10 К1.4, РП43 п. 5–6): агентский токен — только по CART (РП49 (б)), CART — два резерва
+// («CART → родитель», откат первого при отказе второго), verify.amount_left у CART — меньшее из CART и родителя; INTENT напрямую — отказ.
 import { describe, expect, it } from "vitest";
 import { Adp, MemoryOperationStore } from "../../src/adp/index.js";
 import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
 import { parseDecision } from "../../src/shared/codes.js";
 import { accountId } from "../../src/state/index.js";
 import { agentToken, agentTokenCredentials } from "../support/agent-token.js";
-import { A, decide, intent, mk, setup, type Ctx } from "../support/state.js";
+import { A, cartUnder, decide, mk, setup, type Ctx } from "../support/state.js";
 
 let seq = 0;
 const auth = (mandate_id: string, amount: number): CanonicalMessage => agentToken({
@@ -32,32 +32,22 @@ function adpFor(c: Ctx): Adp {
   });
 }
 
-async function cartUnder(c: Ctx, parent: string, amount: number): Promise<string> {
-  const cart = await mk(
-    c,
-    intent({
-      type: "CART",
-      parent_id: parent,
-      subject: "корзина SHOP-1042",
-      amount_limit: amount,
-      cart: { merchant_id: "MER-1042", items: [{ sku: "milk-2l", qty: 1, price: amount }], total: amount },
-    }),
-  );
-  await decide(c, cart);
-  return cart.id;
-}
-
 const left = async (c: Ctx, id: string) => (await c.ledger.available(accountId(id))).amount;
 
 describe("ADP ← журнал согласий и П3 (РП43 п. 5–6)", () => {
-  it("INTENT: APPROVE, один резерв, verify.amount_left уменьшился", async () => {
+  it("INTENT напрямую агентским токеном — STATE_UNAVAILABLE без резерва (РП49 (б)); по CART под ним — APPROVE, verify.amount_left уменьшился", async () => {
     const c = setup();
     const p = await mk(c);
     await decide(c, p);
-    const d = await adpFor(c).decide(auth(p.id, 20_000));
+    // Ветка INTENT в ADP (один резерв) до PS-21 недостижима: токен только по CART (STATUS «Открыто»).
+    expect(parseDecision(await adpFor(c).decide(auth(p.id, 20_000)), "adp")).toEqual({ decision: "DECLINE", reason: "STATE_UNAVAILABLE" });
+    expect(await left(c, p.id)).toBe(50_000);
+    const cart = await cartUnder(c, p.id, 50_000);
+    const d = await adpFor(c).decide(auth(cart, 20_000));
     expect(parseDecision(d, "adp").decision).toBe("APPROVE");
     expect(d.agent_level).toBe(2);
-    expect(await left(c, p.id)).toBe(30_000);
+    expect([await left(c, cart), await left(c, p.id)]).toEqual([30_000, 30_000]);
+    expect((await c.consent.verify(cart, A))?.amount_left).toBe(30_000);
     expect((await c.consent.verify(p.id, A))?.amount_left).toBe(30_000);
   });
 
@@ -91,7 +81,9 @@ describe("ADP ← журнал согласий и П3 (РП43 п. 5–6)", () =
     await decide(c, p);
     const cart = await cartUnder(c, p.id, 12_900);
     expect((await c.consent.verify(cart, A))?.amount_left).toBe(12_900);
-    expect(parseDecision(await adpFor(c).decide(auth(p.id, 45_000)), "adp").decision).toBe("APPROVE");
+    // Родитель расходует другая CART (прежде — оплата по INTENT напрямую, РП49 (б)).
+    const other = await cartUnder(c, p.id, 45_000);
+    expect(parseDecision(await adpFor(c).decide(auth(other, 45_000)), "adp").decision).toBe("APPROVE");
     expect((await c.consent.verify(cart, A))?.amount_left).toBe(5_000);
   });
 });

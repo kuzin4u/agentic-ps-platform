@@ -347,6 +347,12 @@ export class Adp {
     const m = await this.mandate(mandate_id, agent_code, msg.op_ref);
     if (m === "unavailable") return no("STATE_UNAVAILABLE", mandate_id);
     if (!m) return no("MANDATE_NOT_FOUND", mandate_id);
+    // Мандат домена токена — только CART (РП49 (б)): токен выпускается только по CART (РП47 п. 2), другой тип — нарушение
+    // целостности записей Платформы, а не ошибка агента. До статуса: отозванный INTENT не должен дать MANDATE_REVOKED.
+    if (kind === "AGENT_TOKEN" && m.type !== "CART") {
+      this.log("warn", { op_ref: msg.op_ref, agent_code, mandate_id, incident: true }, "ADP: мандат домена токена не CART");
+      return no("STATE_UNAVAILABLE", mandate_id);
+    }
     if (m.client) notify = { participant_code: m.client.participant_code, principal_ref: m.client.principal_ref, agent_code };
     const statusReason = this.statusReason(m);
     if (statusReason) return no(statusReason, mandate_id);

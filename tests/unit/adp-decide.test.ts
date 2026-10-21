@@ -28,6 +28,14 @@ import { accountId, clientAccountId, STATE_CODES, StateService, type MandateBudg
 const AGENT = "nspk:agent:buyref-01:v3";
 const OTHER = "nspk:agent:other-02:v1";
 const M = "mnd_00000000-0000-4000-8000-000000000001";
+/**
+ * Корень INTENT мандата M: агентский токен — только по CART (РП49 (б)), поэтому M — CART под ROOT. Предел корня больше
+ * любого предела M в тестах: решает предел M, как прежде у INTENT M; ветка INTENT в ADP недостижима до PS-21 (STATUS).
+ */
+const ROOT = "mnd_00000000-0000-4000-8000-0000000000f0";
+const ROOT_LIMIT = 1_000_000_000;
+/** Номер чтения журнала при сверке п. 12 у CART: 1 — M (п. 5), 2 — корень (счёт родителя), 3 — M (п. 12). */
+const READ_P12 = 3;
 const LIMIT = 300_000;
 const THRESHOLD = 1_000_000;
 /** Клиент мандата из журнала (РП45 п. 1): банк подписи корня и principal_ref. */
@@ -94,6 +102,11 @@ class Journal implements AdpMandates, MandateBudgetSource {
     });
     return this;
   }
+  /** CART под корнем ROOT (РП49 (б)); корень создаётся, если его нет. */
+  cart(id: string, over: Partial<Row> = {}): this {
+    if (!this.map.has(ROOT)) this.set(ROOT, { amount_limit: ROOT_LIMIT });
+    return this.set(id, { type: "CART", parent_id: ROOT, ...over });
+  }
   async get(id: string, agent_code: string): Promise<AdpMandate | undefined> {
     this.calls++;
     if (this.failing) throw new Error("журнал недоступен");
@@ -130,7 +143,7 @@ function setup(
   opts: { phase?: 1 | 2 | 3; client?: ClientLimitsSource; threshold?: number; splitMinOps?: number; now?: () => Date } = {},
 ) {
   const agents = new Agents();
-  const journal = new Journal().set(M);
+  const journal = new Journal().cart(M);
   const ledger = new AsyncMemoryHoldLedger();
   const broken = new Set<string>();
   const io = { n: 0 };
@@ -325,23 +338,26 @@ describe("мандат и область (SPEC §6 п. 5–6, РП43 п. 2–3)"
 
   it.each(Object.entries(STATUS_TO_PI))("статус %s — %s, резерва нет", async (status, reason) => {
     const { adp, journal, available } = setup();
-    journal.set(M, { status: status as MandateStatus });
+    journal.cart(M, { status: status as MandateStatus });
     expect(await reasonOf(adp, msg())).toBe(reason);
     await expect(available()).rejects.toThrow();
   });
 
   it("статус вне перечня (данные, не тип) — STATE_UNAVAILABLE, не «действует» (инвариант 3)", async () => {
     const { adp, journal, available } = setup();
-    journal.set(M, { status: "FROZEN" as MandateStatus });
+    journal.cart(M, { status: "FROZEN" as MandateStatus });
     expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
     await expect(available()).rejects.toThrow();
   });
 
   it("тип мандата вне перечня — STATE_UNAVAILABLE, не резерв «как INTENT» (/audit PS-10 № 2)", async () => {
-    const { adp, journal, available } = setup();
+    const { adp, journal, available, logs } = setup();
     journal.set(M, { type: "SUBSCRIPTION" as "INTENT" });
     expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
     await expect(available()).rejects.toThrow();
+    // У AGENT_TOKEN отказ даёт уже проверка «мандат токена — CART» (РП49 (б)); ветка п. 6 «тип вне перечня» до PS-21
+    // (ACCOUNT_LINK) недостижима — STATUS «Открыто».
+    expect(logs.some((l) => l.msg === "ADP: мандат домена токена не CART" && l.fields.incident === true)).toBe(true);
   });
 
   it("нарушенная цепочка журнала — STATE_UNAVAILABLE и инцидент (РП43 п. 4, /audit PS-10 № 3)", async () => {
@@ -396,7 +412,7 @@ describe("мандат и область (SPEC §6 п. 5–6, РП43 п. 2–3)"
 
   it("сумма выше порога — CONFIRMATION_REQUIRED со split_detected: false; с confirmation_ref до PS-19 — то же (РП44 п. 6–7)", async () => {
     const { adp, journal } = setup();
-    journal.set(M, { amount_limit: 2 * THRESHOLD });
+    journal.cart(M, { amount_limit: 2 * THRESHOLD });
     const d = await adp.decide(msg({ op_ref: "a", amount: THRESHOLD + 1 }));
     expect(pair(d)).toEqual({ decision: "CONFIRMATION_REQUIRED", reason: "CONFIRMATION_REQUIRED" });
     expect(d.split_detected).toBe(false);
@@ -439,7 +455,7 @@ describe("меньшее из порогов (SPEC §6 п. 10, РП44 п. 5, A3 
 
   it("клиентский выше рыночного — действует рыночный", async () => {
     const { adp, journal } = setup({ client: client({ confirm_above: 5 * THRESHOLD, currency: "RUB" }) });
-    journal.set(M, { amount_limit: 2 * THRESHOLD });
+    journal.cart(M, { amount_limit: 2 * THRESHOLD });
     expect(await reasonOf(adp, msg({ op_ref: "a", amount: THRESHOLD + 1 }))).toBe("CONFIRMATION_REQUIRED");
     expect(pair(await adp.decide(msg({ op_ref: "b", amount: THRESHOLD }))).decision).toBe("APPROVE");
   });
@@ -474,7 +490,7 @@ describe("меньшее из порогов (SPEC §6 п. 10, РП44 п. 5, A3 
 
   it("операция не в RUB — порог не определён: STATE_UNAVAILABLE, не сравнение копеек с центами", async () => {
     const { adp, journal } = setup();
-    journal.set(M, { currency: "USD" });
+    journal.cart(M, { currency: "USD" });
     expect(await reasonOf(adp, msg({ currency: "USD" }))).toBe("STATE_UNAVAILABLE");
   });
 
@@ -502,7 +518,7 @@ describe("дробление по мандату в окне (SPEC §6 п. 9, Р
   function split() {
     let ms = Date.parse("2026-10-19T10:00:00Z");
     const s = setup({ threshold: 300_000, now: () => new Date(ms) });
-    s.journal.set(M, { amount_limit: 1_000_000 });
+    s.journal.cart(M, { amount_limit: 1_000_000 });
     return { ...s, tick: (sec: number) => (ms += sec * 1000) };
   }
   const op = (op_ref: string, amount = PART, over: Partial<CanonicalMessage> = {}) => msg({ op_ref, amount, ...over });
@@ -522,7 +538,8 @@ describe("дробление по мандату в окне (SPEC §6 п. 9, Р
     await adp.decide(op("a"));
     await adp.decide(op("b"));
     const rec = logs.find((l) => l.fields.split_detected === true);
-    expect(rec?.fields).toEqual({ op_ref: "b", mandate_id: M, window_key: M, ops: 2, sum: 2 * PART, currency: "RUB", split_detected: true });
+    // Ключ окна у CART — корневой INTENT (РП44 п. 2).
+    expect(rec?.fields).toEqual({ op_ref: "b", mandate_id: M, window_key: ROOT, ops: 2, sum: 2 * PART, currency: "RUB", split_detected: true });
     expect(JSON.stringify(rec)).not.toMatch(/tok_|token_ref|cryptogram|funding_ref/);
     expect(rec?.fields).not.toHaveProperty("incident");
   });
@@ -576,7 +593,7 @@ describe("дробление по мандату в окне (SPEC §6 п. 9, Р
 
   it("доля и остаток меньше суммы — LIMIT_EXCEEDED (проверки 7–8 раньше 9), резерва нет", async () => {
     const { adp, journal, available } = split();
-    journal.set(M, { amount_limit: 300_000 });
+    journal.cart(M, { amount_limit: 300_000 });
     await adp.decide(op("a"));
     expect(await reasonOf(adp, op("b"))).toBe("LIMIT_EXCEEDED");
     expect(await available()).toBe(300_000 - PART);
@@ -597,7 +614,10 @@ describe("дробление по мандату в окне (SPEC §6 п. 9, Р
   it("окна по разным мандатам не смешиваются", async () => {
     const { adp, journal } = split();
     const M2 = "mnd_00000000-0000-4000-8000-0000000000cc";
-    journal.set(M2, { amount_limit: 1_000_000 });
+    const ROOT2 = "mnd_00000000-0000-4000-8000-0000000000dd";
+    // Разные мандаты — разные корни: у CART окно — по корню (РП44 п. 2).
+    journal.set(ROOT2, { amount_limit: ROOT_LIMIT });
+    journal.cart(M2, { amount_limit: 1_000_000, parent_id: ROOT2 });
     await adp.decide(op("a"));
     expect(pair(await adp.decide(op("b", PART, { aoi: { indicator: true, agent_code: AGENT, mandate_id: M2 } }))).decision).toBe("APPROVE");
   });
@@ -781,7 +801,7 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
 
   it("одновременно тот же op_ref с другим продавцом — второй STATE_UNAVAILABLE, не APPROVE на чужое удержание", async () => {
     const { adp, journal } = setup();
-    journal.set(M, { merchant_scope: ["MER-1042", "MER-77"] });
+    journal.cart(M, { merchant_scope: ["MER-1042", "MER-77"] });
     const [a, b] = await Promise.all([adp.decide(msg()), adp.decide(msg({ merchant: { id: "MER-77" } }))]);
     expect(pair(a).decision).toBe("APPROVE");
     expect(pair(b)).toEqual({ decision: "DECLINE", reason: "STATE_UNAVAILABLE" });
@@ -790,7 +810,7 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
   it("запись «в работе» с другого экземпляра — STATE_UNAVAILABLE без резерва", async () => {
     const operations = new MemoryOperationStore();
     await operations.begin(msg().op_ref, "x", "2026-10-19T10:00:00Z");
-    const journal = new Journal().set(M);
+    const journal = new Journal().cart(M);
     const ledger = new AsyncMemoryHoldLedger();
     const adp = new Adp({
       agents: new Agents(),
@@ -809,21 +829,21 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
 describe("сверка статуса после резерва (РП43 п. 5, РП41 п. 8, A3 п. 6.3)", () => {
   it("отзыв между проверкой и резервом — MANDATE_REVOKED, удержание освобождено", async () => {
     const { adp, journal, available } = setup();
-    journal.onGet = (n) => (n === 2 ? "REVOKED" : undefined);
+    journal.onGet = (n) => (n === READ_P12 ? "REVOKED" : undefined);
     expect(await reasonOf(adp, msg())).toBe("MANDATE_REVOKED");
     expect(await available()).toBe(LIMIT);
   });
 
   it("второе чтение не удалось — STATE_UNAVAILABLE, удержание освобождено", async () => {
     const { adp, journal, available } = setup();
-    journal.onGet = (n) => (n === 2 ? "fail" : undefined);
+    journal.onGet = (n) => (n === READ_P12 ? "fail" : undefined);
     expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
     expect(await available()).toBe(LIMIT);
   });
 
   it("освобождение не удалось — отказ остаётся, удержание держит бюджет (безопасная сторона), запись в журнал", async () => {
     const { adp, journal, broken, available, logs } = setup();
-    journal.onGet = (n) => (n === 2 ? "REVOKED" : undefined);
+    journal.onGet = (n) => (n === READ_P12 ? "REVOKED" : undefined);
     broken.add("release");
     expect(await reasonOf(adp, msg())).toBe("MANDATE_REVOKED");
     expect(await available()).toBe(LIMIT - 189_000);
@@ -833,7 +853,7 @@ describe("сверка статуса после резерва (РП43 п. 5, �
 
 describe("П3 на пути ADP — дописывание MANDATE_EXHAUSTED без ожидания (РП43 п. 9)", () => {
   it("reserve с waitExhausted: false отвечает LIMIT_EXCEEDED, не дожидаясь записи журнала", async () => {
-    const journal = new Journal().set(M);
+    const journal = new Journal().cart(M);
     const ledger = new AsyncMemoryHoldLedger();
     let release!: () => void;
     const pending = new Promise<void>((r) => (release = r));
@@ -858,15 +878,17 @@ describe("признаки уведомителя в записи операци
   const NOW = new Date("2026-10-20T09:00:00Z");
   const ACCOUNT = clientAccountId({ ...CLIENT, period: "DAY", period_start: day(NOW) });
 
-  it("обращений к хранилищу — как в части 2: первое решение периода 11, обычное 8, отказ по лимиту клиента 10", async () => {
+  it("обращений к хранилищу — как в части 2 плюс счёт родителя CART: первое решение периода 15, обычное 10, отказ по лимиту клиента 14", async () => {
     const { adp, io } = setup({ client: limits(DAY), now: () => NOW });
     await adp.decide(msg({ op_ref: "w1", amount: 1_000 }));
-    expect(io.n).toBe(11);
+    const n1 = io.n;
     await adp.decide(msg({ op_ref: "w2", amount: 1_000 }));
-    expect(io.n).toBe(11 + 8);
+    const n2 = io.n - n1;
     const lim = setup({ client: limits({ ...DAY, per_period: 500 }), now: () => NOW });
     await lim.adp.decide(msg({ op_ref: "d1", amount: 1_000 }));
-    expect(lim.io.n).toBe(10);
+    // У INTENT (часть 2) — 11, 8, 10; у CART (РП49 (б)) прибавляются обращения к счёту родителя: +4, +2, +4. Признаки
+    // уведомителя по-прежнему без новых обращений.
+    expect([n1, n2, lim.io.n]).toEqual([11 + 4, 8 + 2, 10 + 4]);
   });
 
   it("APPROVE с лимитом клиента — клиент мандата, агент, счёт периода и остаток клиента после резерва", async () => {
@@ -904,14 +926,14 @@ describe("признаки уведомителя в записи операци
 
   it("прочие отказы — без признака источника; до чтения мандата и без клиента — без признаков", async () => {
     const { adp, records, journal, agents } = setup();
-    journal.set(M, { status: "REVOKED" });
+    journal.cart(M, { status: "REVOKED" });
     await adp.decide(msg({ op_ref: "r1" }));
     expect(records.get("r1")?.notify).toEqual({ ...CLIENT, agent_code: AGENT });
     agents.map.set(AGENT, "SUSPENDED");
     await adp.decide(msg({ op_ref: "r2" }));
     expect(records.get("r2")?.notify).toBeUndefined();
     const orphan = setup();
-    orphan.journal.set(M, { client: null });
+    orphan.journal.cart(M, { client: null });
     await orphan.adp.decide(msg({ op_ref: "r3" }));
     expect(orphan.records.get("r3")?.notify).toBeUndefined();
   });
@@ -978,7 +1000,7 @@ describe("лимиты клиента в ADP (SPEC §6 п. 6–7, 10–11; РП4
 
   it("per_period — второй счёт тем же op_ref по всем мандатам клиента; отказ — резерв мандата освобождён", async () => {
     const { adp, journal, ledger, available } = setup({ client: limitsOf({ ...DAY, per_period: 300_000 }) });
-    journal.set(M2);
+    journal.cart(M2);
     const d1 = await adp.decide(msg({ op_ref: "p1", amount: 200_000 }));
     expect(pair(d1).decision).toBe("APPROVE");
     // reservation_id — удержание мандата; удержание клиента — в записи операции следом.
@@ -1012,7 +1034,7 @@ describe("лимиты клиента в ADP (SPEC §6 п. 6–7, 10–11; РП4
     down.failing = true;
     expect(await reasonOf(setup({ client: down }).adp, msg())).toBe("STATE_UNAVAILABLE");
     const orphan = setup({ client: limitsOf(DAY) });
-    orphan.journal.set(M, { client: null });
+    orphan.journal.cart(M, { client: null });
     expect(await reasonOf(orphan.adp, msg())).toBe("STATE_UNAVAILABLE");
     expect(await reasonOf(setup({ client: limitsOf({ ...DAY, currency: "USD" }) }).adp, msg())).toBe("STATE_UNAVAILABLE");
   });
@@ -1023,7 +1045,7 @@ describe("лимит за период: снятие или смена вида 
   const history = (...vs: { limits: unknown; received_at: string }[]): ClientLimitsSource => ({ get: async () => vs });
   const DAY2 = { per_period: 200_000, period: "DAY", currency: "RUB" };
   const MONTH2 = { per_period: 200_000, period: "MONTH", currency: "RUB" };
-  const withMandate2 = (j: { set: (id: string, over?: object) => unknown }) => j.set("mnd_00000000-0000-4000-8000-000000000009");
+  const withMandate2 = (j: { cart: (id: string, over?: object) => unknown }) => j.cart("mnd_00000000-0000-4000-8000-000000000009");
   const on = (op_ref: string, mandate_id = M) => msg({ op_ref, amount: 150_000, aoi: { indicator: true, agent_code: AGENT, mandate_id } });
 
   it("обход (а): новая версия без per_period — до конца суток прежний дневной лимит, с 00:00 МСК — снят", async () => {
@@ -1085,6 +1107,8 @@ describe("лимит клиента: CART, отзыв после резерва,
 
   it("CART: порядок CART → родитель → клиент; отказ клиента освобождает оба удержания мандатов", async () => {
     const { adp, journal, ledger, available } = setup({ client: mutable(version(DAY(100_000))), now: () => NOW });
+    // M здесь — родитель INTENT (как до РП49 (б)): CART C под ним.
+    journal.set(M);
     journal.set(C, { type: "CART", parent_id: M, amount_limit: 200_000 });
     const d = await adp.decide(msg({ op_ref: "cart-1", amount: 150_000, aoi: { indicator: true, agent_code: AGENT, mandate_id: C } }));
     expect(pair(d).reason).toBe("LIMIT_EXCEEDED");
@@ -1099,7 +1123,7 @@ describe("лимит клиента: CART, отзыв после резерва,
 
   it("отзыв после резерва (п. 12) освобождает и удержание клиента", async () => {
     const { adp, journal, ledger, available } = setup({ client: mutable(version(DAY(300_000))), now: () => NOW });
-    journal.onGet = (n) => (n === 2 ? "REVOKED" : undefined);
+    journal.onGet = (n) => (n === READ_P12 ? "REVOKED" : undefined);
     expect(await reasonOf(adp, msg({ op_ref: "rev-1", amount: 100_000 }))).toBe("MANDATE_REVOKED");
     expect(await available()).toBe(LIMIT);
     expect((await ledger.available(clientAcc)).amount).toBe(300_000);
@@ -1108,7 +1132,7 @@ describe("лимит клиента: CART, отзыв после резерва,
   it("сужение per_period в периоде через ADP — сразу (setLimit, РП46 (г)): под новым пределом — APPROVE, сверх — LIMIT_EXCEEDED", async () => {
     const src = mutable(version(DAY(300_000)));
     const { adp, journal, ledger, available } = setup({ client: src, now: () => NOW });
-    journal.set("mnd_00000000-0000-4000-8000-0000000000c2");
+    journal.cart("mnd_00000000-0000-4000-8000-0000000000c2");
     expect(pair(await adp.decide(msg({ op_ref: "nar-1", amount: 50_000 }))).decision).toBe("APPROVE");
     src.vs = [...src.vs, version(DAY(100_000), "2026-10-19T09:30:00Z")];
     const m2 = "mnd_00000000-0000-4000-8000-0000000000c2";

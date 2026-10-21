@@ -151,11 +151,24 @@ const mandate = (): string => `mnd_00000000-0000-4000-8000-${String(++mseq).padS
 /** Журнал согласий: здесь проверяется неделимость на PG, свёртка журнала — в adp-wiring.test.ts. */
 class Mandates implements AdpMandates, MandateBudgetSource {
   readonly map = new Map<string, AdpMandate>();
+  readonly roots = new Map<string, string>();
+  /**
+   * CART под своим корнем INTENT (РП49 (б): агентский токен — только по CART). Предел корня больше предела CART —
+   * решает предел CART, как прежде у INTENT; ключ окна дробления у CART — корень (РП44 п. 2), он у каждого мандата свой.
+   */
   add(limit: number, scope: string[] = ["MER-1042"]): string {
+    const root = mandate();
     const id = mandate();
     // Клиент — свой на мандат: лимиты клиента здесь не заданы (они — adp-client-pg.test.ts).
-    this.map.set(id, { status: "ACTIVE", type: "INTENT", merchant_scope: scope, currency: "RUB", amount_limit: limit, client: { participant_code: "bank:pg", principal_ref: `prn_${mseq}` } });
+    const client = { participant_code: "bank:pg", principal_ref: `prn_${mseq}` };
+    this.map.set(root, { status: "ACTIVE", type: "INTENT", merchant_scope: scope, currency: "RUB", amount_limit: 1_000 * limit, client });
+    this.map.set(id, { status: "ACTIVE", type: "CART", parent_id: root, merchant_scope: scope, currency: "RUB", amount_limit: limit, client });
+    this.roots.set(id, root);
     return id;
+  }
+  /** Ключ окна дробления мандата — его корень INTENT. */
+  root(id: string): string {
+    return this.roots.get(id) as string;
   }
   async get(id: string, agent_code: string): Promise<AdpMandate | undefined> {
     return agent_code === AGENT ? this.map.get(id) : undefined;
@@ -240,7 +253,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
       else expect([parseDecision(d, "adp").reason, d.split_detected]).toEqual(["LIMIT_EXCEEDED", undefined]);
     }
     expect((await ledger.account(accountId(M))).reserved).toBe(300_000);
-    const w = await db.pool.query<{ n: string }>("SELECT count(*) AS n FROM adp_operations WHERE window_key = $1", [M]);
+    const w = await db.pool.query<{ n: string }>("SELECT count(*) AS n FROM adp_operations WHERE window_key = $1", [mandates.root(M)]);
     expect(Number(w.rows[0]?.n), "в окно вошли только одобренные").toBe(3);
   });
 
@@ -259,7 +272,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
       const r = await watcher.query<{ n: string }>(
         `SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
             AND ((classid::bigint << 32) | objid::bigint) = $1::bigint`,
-        [splitWindowLockKey(M)],
+        [splitWindowLockKey(mandates.root(M))],
       );
       return Number(r.rows[0]?.n) > 0;
     };
@@ -289,7 +302,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
     const holder = await db.pool.connect();
     try {
       await holder.query("BEGIN");
-      await holder.query("SELECT pg_advisory_xact_lock($1::bigint)", [splitWindowLockKey(M)]);
+      await holder.query("SELECT pg_advisory_xact_lock($1::bigint)", [splitWindowLockKey(mandates.root(M))]);
       const d = await a.decide(auth(M, "OPKC-LOCK-PG-1", 170_000));
       expect([d.decision, d.reason]).toEqual(["DECLINE", "STATE_UNAVAILABLE"]);
     } finally {

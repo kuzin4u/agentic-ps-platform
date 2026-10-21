@@ -72,6 +72,25 @@ export async function mk(c: Ctx, req: MandateRequest = intent()): Promise<{ id: 
   return { id: m.id, hash: m.hash };
 }
 
+/**
+ * CART под подписанным INTENT, подписан (РП49 (б): агентский токен — только по CART). Для тестов ADP, где прежде платили
+ * по INTENT напрямую: предел CART — свой, бюджет родителя — общий.
+ */
+export async function cartUnder(c: Ctx, parent: string, amount: number): Promise<string> {
+  const cart = await mk(
+    c,
+    intent({
+      type: "CART",
+      parent_id: parent,
+      subject: "корзина SHOP-1042",
+      amount_limit: amount,
+      cart: { merchant_id: "MER-1042", items: [{ sku: "milk-2l", qty: 1, price: amount }], total: amount },
+    }),
+  );
+  await decide(c, cart);
+  return cart.id;
+}
+
 export async function decide(c: Ctx, m: { id: string; hash: string }, decision: "SIGN" | "REJECT" = "SIGN"): Promise<number> {
   const r: ParticipantSignedRecord = {
     participant_code: c.emu.participant_code,

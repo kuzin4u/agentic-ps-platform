@@ -292,6 +292,30 @@ describe("ADP п. 2 и 4: агентский токен (РП47 п. 6–8)", () 
     expect(await status(w, "ORD-2")).toBe("ISSUED");
   });
 
+  it("мандат домена токена не CART (запись токена с INTENT) — STATE_UNAVAILABLE и инцидент до статуса и резерва (РП49 (б))", async () => {
+    const w = await world();
+    const cred = await w.issue();
+    // Запись токена испорчена: в домене — родитель INTENT (обычным путём недостижимо, РП47 п. 2).
+    const credentials = delegate(w.store, { tokenByRef: async (t) => ((r) => r && { ...r, mandate_id: w.parent })(await w.store.tokenByRef(t)) });
+    const m = auth(w, cred, { aoi: { indicator: true, agent_code: A, mandate_id: w.parent } });
+    expect(parseDecision(await w.adpWith({ credentials }).decide(m), "adp").reason).toBe("STATE_UNAVAILABLE");
+    // До статуса: отозванный INTENT даёт ту же причину, а не MANDATE_REVOKED.
+    const mandates: AdpMandates = {
+      async get(id, a) {
+        const r = await w.c.consent.adpMandate(id, a);
+        return r && id === w.parent ? { ...r, status: "REVOKED" } : r;
+      },
+    };
+    const m2 = auth(w, cred, { aoi: { indicator: true, agent_code: A, mandate_id: w.parent } });
+    expect(parseDecision(await w.adpWith({ credentials, mandates }).decide(m2), "adp").reason).toBe("STATE_UNAVAILABLE");
+    const incidents = w.logs.filter((l) => l.startsWith("ADP: мандат домена токена не CART") && l.includes('"incident":true'));
+    expect(incidents).toHaveLength(2);
+    expect(incidents.join("\n")).not.toContain(cred.payload.token_ref as string);
+    expect(w.reserves()).toBe(0);
+    expect(await status(w)).toBe("ISSUED");
+    expect(await left(w, w.parent)).toBe(50_000);
+  });
+
   it("AGENT_TOKEN с aoi без mandate_id — AOI_MISMATCH на п. 2 (мандат признака ≠ домену), не MANDATE_NOT_FOUND", async () => {
     const w = await world();
     const cred = await w.issue();
@@ -330,6 +354,16 @@ describe("ADP: агентский токен без aoi — по домену т
     // Однократность — та же, что с признаком: вторая авторизация той же криптограммой без резерва.
     expect(await reason(w, noAoi(w, cred, {}, 5_000))).toBe("CREDENTIAL_INVALID");
     expect(await left(w, w.cart)).toBe(10_000);
+  });
+
+  it("очередь 2: мандат домена токена не CART — STATE_UNAVAILABLE и инцидент без резерва (РП49 (б))", async () => {
+    const w = await world({ phase: 2 });
+    const cred = await w.issue();
+    const credentials = delegate(w.store, { tokenByRef: async (t) => ((r) => r && { ...r, mandate_id: w.parent })(await w.store.tokenByRef(t)) });
+    expect(parseDecision(await w.adpWith({ credentials }).decide(noAoi(w, cred)), "adp").reason).toBe("STATE_UNAVAILABLE");
+    expect(w.logs.filter((l) => l.startsWith("ADP: мандат домена токена не CART"))).toHaveLength(1);
+    expect(w.reserves()).toBe(0);
+    expect(await status(w)).toBe("ISSUED");
   });
 
   it("очередь 3 — AOI_MISSING до токена и резерва; реквизит не погашен", async () => {
