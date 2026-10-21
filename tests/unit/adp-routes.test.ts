@@ -66,6 +66,13 @@ describe("POST /adp/v1/decide (ПИ-1)", () => {
     expect(res.json()).toEqual({ decision: "BYPASS", reason: null, decided_in_ms: 0 });
   });
 
+  it("CARD_TOKEN с aoi.indicator: false без кода и мандата — 200 BYPASS без точки решения (РП49 (в))", async () => {
+    const app = buildServer({ env: "dev", adp: {} });
+    const res = await post(app, { ...plain(), aoi: { indicator: false } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ decision: "BYPASS", reason: null, decided_in_ms: 0 });
+  });
+
   it("неагентская с некорректной суммой и без msg_type — BYPASS: остальное тело не разбирается (доп. РП43 п. 20)", async () => {
     const app = buildServer({ env: "dev", adp: {} });
     const res = await post(app, { instrument: { kind: "CARD_TOKEN" }, amount: -5 });

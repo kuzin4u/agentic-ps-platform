@@ -209,6 +209,39 @@ describe("BYPASS — первая проверка (РП4, РП43 п. 1, инв�
     expect(isBypass({ instrument: { kind: "AGENT_TOKEN" }, aoi: { indicator: false } })).toBe(false);
   });
 
+  // Ворота (в) — ревью К2а № 2: всё, кроме трёх видов «признака нет» у CARD_TOKEN, — не BYPASS (входы — JSON процессинга).
+  const gate = (instrument: unknown, aoi?: unknown) => isBypass({ instrument, ...(aoi === undefined ? {} : { aoi }) } as unknown as Parameters<typeof isBypass>[0]);
+  it.each([
+    ["ACCOUNT_LINK с indicator: false", { kind: "ACCOUNT_LINK" }, { indicator: false }],
+    ["неизвестный kind с indicator: false", { kind: "NEW_KIND" }, { indicator: false }],
+    ["неизвестный kind без aoi", { kind: "NEW_KIND" }, undefined],
+    ["kind в другом регистре", { kind: "card_token" }, undefined],
+    ["instrument — строка", "CARD_TOKEN", undefined],
+    ["indicator: \"false\"", { kind: "CARD_TOKEN" }, { indicator: "false" }],
+    ["indicator: 0", { kind: "CARD_TOKEN" }, { indicator: 0 }],
+    ["indicator: null", { kind: "CARD_TOKEN" }, { indicator: null }],
+    ["agent_code: \"\"", { kind: "CARD_TOKEN" }, { indicator: false, agent_code: "" }],
+    ["mandate_id: \"\"", { kind: "CARD_TOKEN" }, { indicator: false, mandate_id: "" }],
+    ["aoi — массив", { kind: "CARD_TOKEN" }, []],
+    ["aoi — строка", { kind: "CARD_TOKEN" }, "x"],
+    ["aoi — 0", { kind: "CARD_TOKEN" }, 0],
+    ["aoi — false", { kind: "CARD_TOKEN" }, false],
+    ["aoi — true", { kind: "CARD_TOKEN" }, true],
+  ])("ворота: %s — не BYPASS", (_n, instrument, aoi) => {
+    expect(gate(instrument, aoi)).toBe(false);
+  });
+
+  it("ворота: лишние поля aoi (deal_ref, fulfilment_ref) при indicator: false признак противоречивым не делают — BYPASS (STATUS «Открыто»)", () => {
+    expect(gate({ kind: "CARD_TOKEN" }, { indicator: false, deal_ref: "D1", fulfilment_ref: "F1", extra: 1 })).toBe(true);
+  });
+
+  it("ворота: aoi не объект при CARD_TOKEN — AOI_MISSING в решении, без падения", async () => {
+    const { adp } = setup();
+    for (const aoi of [[], "x", 0, true]) {
+      expect(await reasonOf(adp, raw({ op_ref: `OPKC-G-${String(aoi)}`, aoi: aoi as unknown as CanonicalMessage["aoi"] }))).toBe("AOI_MISSING");
+    }
+  });
+
   it("CARD_TOKEN с indicator: false без кода и мандата — BYPASS при сбое хранилищ, без обращений и вне счётчика РП48 (а) (РП49 (в))", async () => {
     const { adp, agents, journal, broken, io, logs } = setup();
     agents.failing = true;
