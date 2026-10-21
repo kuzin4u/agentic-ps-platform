@@ -61,6 +61,7 @@ async function gateway() {
           calls.push(input);
           return { ok: false, code: "MANDATE_NOT_FOUND" };
         },
+        replay: async () => ({ ok: false, code: "STATE_UNAVAILABLE" }),
       },
     }),
   );

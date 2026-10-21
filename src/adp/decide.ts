@@ -138,6 +138,8 @@ export class Adp {
   private readonly now: () => Date;
   /** Решения в работе по op_ref внутри процесса: одновременный повтор ждёт первое и получает его ответ. */
   private readonly inflight = new Map<string, Promise<Decision>>();
+  /** Инциденты «CARD_TOKEN с признаком» по паре эквайрер + продавец (РП48 (а)): в памяти процесса, с перезапуском — с нуля. */
+  private readonly cardTokenAoi = new Map<string, number>();
 
   constructor(private readonly opts: AdpOptions) {
     this.log = opts.log ?? (() => {});
@@ -258,17 +260,25 @@ export class Adp {
         this.log("warn", { op_ref: msg.op_ref, kind, incident: true }, "ADP: неизвестный вид инструмента без признака");
         return no("AOI_MISSING");
       }
-      // 1а. Агентский инструмент без признака: очередь 3 — обязательный отказ (A1 п. 8.3); 1–2 — домен токена, PS-14.
-      return no(this.opts.params.aoi_rollout_phase === 3 ? "AOI_MISSING" : "CREDENTIAL_INVALID");
+      // 1а. Агентский инструмент без признака: очередь 3 — обязательный отказ (A1 п. 8.3); 1–2 — агент и мандат по домену
+      // токена на п. 2 (РП22 п. 6, РП48 (г)); ACCOUNT_LINK — до PS-21 не подтверждено.
+      if (this.opts.params.aoi_rollout_phase === 3) return no("AOI_MISSING");
+      if (kind !== "AGENT_TOKEN") return no("CREDENTIAL_INVALID");
+    } else if (aoi.indicator !== true || !wellFormedCode(aoi.agent_code)) {
+      return no("AOI_MISSING");
     }
-    if (aoi.indicator !== true || !wellFormedCode(aoi.agent_code)) return no("AOI_MISSING");
-    const agent_code = aoi.agent_code;
+    // Код агента признака проверен выше; без признака агент — из домена токена на п. 2.
+    const aoiCode = aoi === undefined ? undefined : aoi.agent_code;
 
     // 2. Домен токена (РП47 п. 6): только AGENT_TOKEN, до реестра; домен — из записи токена Платформы, а не из aoi.
-    // ACCOUNT_LINK — до PS-21 не подтверждено (РП43 п. 7). Неизвестный вид с aoi — реквизит не опознан: CREDENTIAL_INVALID
-    // и инцидент (доп. РП43 п. 13). CARD_TOKEN с aoi — без п. 2 и 4 (РП47 п. 9; решение — PS-14 ч. 2).
+    // Без признака (очередь 1–2) агент и мандат — из домена: сверять не с чем (РП48 (г)). ACCOUNT_LINK — до PS-21 не
+    // подтверждено (РП43 п. 7). Неизвестный вид с aoi — реквизит не опознан: CREDENTIAL_INVALID и инцидент (доп. РП43
+    // п. 13). CARD_TOKEN с aoi — не реквизит П5 (нет домена и криптограммы): CREDENTIAL_INVALID и инцидент со счётчиком
+    // по эквайреру и продавцу (РП48 (а)); без aoi он — BYPASS выше (инвариант 2).
     const credentials = this.opts.credentials;
     const token_ref = msg.instrument?.token_ref;
+    let agent_code: string;
+    let mandate_id: unknown;
     if (kind === "AGENT_TOKEN") {
       if (!credentials || typeof token_ref !== "string" || token_ref === "") return no("CREDENTIAL_INVALID");
       let token: { readonly agent_code: string; readonly mandate_id: string } | undefined;
@@ -279,13 +289,27 @@ export class Adp {
         return no("STATE_UNAVAILABLE");
       }
       if (!token) return no("CREDENTIAL_INVALID");
-      if (token.agent_code !== agent_code || token.mandate_id !== aoi.mandate_id) {
+      if (aoi !== undefined && (token.agent_code !== aoiCode || token.mandate_id !== aoi.mandate_id)) {
         // Недостоверный код агента или мандат в признаке (A1 п. 8.2); в журнал — коды, без реквизитов инструмента.
-        this.log("warn", { op_ref: msg.op_ref, agent_code, incident: true }, "ADP: признак не совпадает с доменом токена");
+        this.log("warn", { op_ref: msg.op_ref, agent_code: aoiCode, incident: true }, "ADP: признак не совпадает с доменом токена");
         return no("AOI_MISMATCH");
       }
-    } else if (kind !== "CARD_TOKEN") {
-      if (!agentInstrument) {
+      agent_code = token.agent_code;
+      mandate_id = token.mandate_id;
+    } else {
+      if (kind === "CARD_TOKEN") {
+        // Ложный признак эквайрера отклоняет и покупку человека (остаточный риск РП48 (а)) — счётчик показывает источник.
+        const acquirer_id = msg.merchant?.acquirer_id ?? null;
+        const merchant_id = msg.merchant?.id ?? null;
+        const pair = JSON.stringify([acquirer_id, merchant_id]);
+        const count = (this.cardTokenAoi.get(pair) ?? 0) + 1;
+        this.cardTokenAoi.set(pair, count);
+        this.log(
+          "warn",
+          { op_ref: msg.op_ref, acquirer_id, merchant_id, agent_code: aoiCode, count, incident: true },
+          "ADP: CARD_TOKEN с признаком агента — не агентский реквизит",
+        );
+      } else if (!agentInstrument) {
         this.log("warn", { op_ref: msg.op_ref, kind, incident: true }, "ADP: неизвестный вид инструмента при признаке");
       }
       return no("CREDENTIAL_INVALID");
@@ -319,7 +343,6 @@ export class Adp {
     }
 
     // 5. Мандат агента (чужой = неизвестный), статус — по свёртке журнала (инвариант 5).
-    const mandate_id = aoi.mandate_id;
     if (typeof mandate_id !== "string" || mandate_id === "") return no("MANDATE_NOT_FOUND");
     const m = await this.mandate(mandate_id, agent_code, msg.op_ref);
     if (m === "unavailable") return no("STATE_UNAVAILABLE", mandate_id);

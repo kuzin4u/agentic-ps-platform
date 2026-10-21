@@ -205,6 +205,8 @@ describe("POST /pao/v1/agent/keys", () => {
     expect(first.statusCode).toBe(201);
     expect(again.statusCode).toBe(201);
     expect(again.json()).toEqual(first.json());
+    // Побайтно: первый ответ — тот же канонический JSON ядра, что и повтор (ревью КТ1 PS-14 ч. 2 № 2).
+    expect(again.body).toBe(first.body);
     expect(keysOf(A)).toHaveLength(2);
   });
 

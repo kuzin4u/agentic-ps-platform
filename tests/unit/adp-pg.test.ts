@@ -18,6 +18,7 @@ import {
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import { parseDecision } from "../../src/shared/codes.js";
 import { accountId, StateService, type MandateBudget, type MandateBudgetSource } from "../../src/state/index.js";
+import { agentToken, agentTokenCredentials } from "../support/agent-token.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
 const H = "a".repeat(64);
@@ -165,16 +166,17 @@ class Mandates implements AdpMandates, MandateBudgetSource {
   }
 }
 
-const auth = (mandate_id: string, op_ref: string, amount: number, merchant = "MER-1042"): CanonicalMessage => ({
-  op_ref,
-  msg_type: "AUTH_REQUEST",
-  channel: "CARD",
-  amount,
-  currency: "RUB",
-  merchant: { id: merchant },
-  instrument: { kind: "CARD_TOKEN", token_ref: "tok_card_1" },
-  aoi: { indicator: true, agent_code: AGENT, mandate_id },
-});
+const auth = (mandate_id: string, op_ref: string, amount: number, merchant = "MER-1042"): CanonicalMessage =>
+  agentToken({
+    op_ref,
+    msg_type: "AUTH_REQUEST",
+    channel: "CARD",
+    amount,
+    currency: "RUB",
+    merchant: { id: merchant },
+    instrument: { kind: "CARD_TOKEN", token_ref: "tok_card_1" },
+    aoi: { indicator: true, agent_code: AGENT, mandate_id },
+  });
 
 describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два экземпляра (РП43 п. 5, доп. п. 16; инвариант 4)", () => {
   let db: TestDb;
@@ -189,6 +191,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
       mandates,
       clientLimits: { get: async () => [] },
       state: new StateService(new PgHoldLedger(pool), mandates, { reservationTtlSec: 600 }),
+      credentials: agentTokenCredentials,
       // Предел ожидания блокировки окна в бою — adp_timeout_ms; в залпах на CI — с запасом, чтобы не мерить скорость CI.
       operations: new PgOperationStore(pool, { lockTimeoutMs: p.lockTimeoutMs ?? 5_000, ...(hooks ? { hooks } : {}) }),
       params: {
@@ -305,6 +308,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
       mandates,
       clientLimits: { get: async () => [] },
       state: new StateService(new PgHoldLedger(db.pool), mandates, { reservationTtlSec: 600 }),
+      credentials: agentTokenCredentials,
       operations: new PgOperationStore(db.pool, { lockTimeoutMs: 150 }),
       params: { aoi_rollout_phase: 3, confirm_above_kop: 300_000, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
       now: () => new Date(ms),

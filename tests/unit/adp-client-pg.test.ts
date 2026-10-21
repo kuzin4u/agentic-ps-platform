@@ -16,6 +16,7 @@ import {
   type MandateBudget,
   type MandateBudgetSource,
 } from "../../src/state/index.js";
+import { agentToken, agentTokenCredentials } from "../support/agent-token.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
 const AGENT = "nspk:agent:buyref-01:v3";
@@ -43,16 +44,17 @@ class Mandates implements AdpMandates, MandateBudgetSource {
   }
 }
 
-const auth = (mandate_id: string, op_ref: string, amount: number): CanonicalMessage => ({
-  op_ref,
-  msg_type: "AUTH_REQUEST",
-  channel: "CARD",
-  amount,
-  currency: "RUB",
-  merchant: { id: "MER-1042", mcc: "5411" },
-  instrument: { kind: "CARD_TOKEN", token_ref: "tok_card_1" },
-  aoi: { indicator: true, agent_code: AGENT, mandate_id },
-});
+const auth = (mandate_id: string, op_ref: string, amount: number): CanonicalMessage =>
+  agentToken({
+    op_ref,
+    msg_type: "AUTH_REQUEST",
+    channel: "CARD",
+    amount,
+    currency: "RUB",
+    merchant: { id: "MER-1042", mcc: "5411" },
+    instrument: { kind: "CARD_TOKEN", token_ref: "tok_card_1" },
+    aoi: { indicator: true, agent_code: AGENT, mandate_id },
+  });
 
 describe.skipIf(!DATABASE_URL)("лимит клиента на PostgreSQL: два экземпляра (РП45 п. 1, инвариант 4)", () => {
   let db: TestDb;
@@ -67,6 +69,7 @@ describe.skipIf(!DATABASE_URL)("лимит клиента на PostgreSQL: дв�
       agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
       mandates,
       state: new StateService(new PgHoldLedger(pool), mandates, { reservationTtlSec: 600 }),
+      credentials: agentTokenCredentials,
       operations: new PgOperationStore(pool, { lockTimeoutMs: 5_000 }),
       // Проверяется одно правило — лимит клиента: порог и правило доли вне залпа.
       params: { aoi_rollout_phase: 3, confirm_above_kop: 10_000_000, split_window_sec: 600, split_min_ops: 41, client_limit_period_tz: TZ },

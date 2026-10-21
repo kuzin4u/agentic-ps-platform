@@ -23,7 +23,7 @@ interface World {
   logs: string[];
   setNow: (t: number) => void;
   /** ADP с теми же журналом, П3 и записями операций, но своим портом П5 или журналом согласий. */
-  adpWith: (over: { credentials?: AdpCredentials; mandates?: AdpMandates }) => Adp;
+  adpWith: (over: Partial<Pick<AdpOptions, "credentials" | "mandates" | "agents">>) => Adp;
   /** Число вызовов резерва счетов мандата (П3): тест различает «зарезервировал и освободил» и «отказал до резерва». */
   reserves: () => number;
 }
@@ -39,7 +39,9 @@ const delegate = (s: CredentialStore, over: Partial<AdpCredentials> = {}): AdpCr
   ...over,
 });
 
-async function world(opts: { cartLimit?: number; confirmAbove?: number; clientPerPeriod?: number } = {}): Promise<World> {
+async function world(
+  opts: { cartLimit?: number; confirmAbove?: number; clientPerPeriod?: number; phase?: 1 | 2 | 3 } = {},
+): Promise<World> {
   let now = T0.getTime();
   const c = setup({ now: () => new Date(now) });
   const p = await mk(c, intent({ amount_limit: 50_000 }));
@@ -88,7 +90,7 @@ async function world(opts: { cartLimit?: number; confirmAbove?: number; clientPe
     operations: new MemoryOperationStore(),
     credentials: store,
     params: {
-      aoi_rollout_phase: 3,
+      aoi_rollout_phase: opts.phase ?? 3,
       confirm_above_kop: opts.confirmAbove ?? 1_000_000,
       split_window_sec: 600,
       split_min_ops: 100,
@@ -103,7 +105,7 @@ async function world(opts: { cartLimit?: number; confirmAbove?: number; clientPe
     if (!r.ok) throw new Error(`реквизит не выдан: ${r.code}`);
     return r.credential;
   };
-  const adpWith = (over: { credentials?: AdpCredentials; mandates?: AdpMandates }) => new Adp({ ...adpOpts, ...over });
+  const adpWith = (over: Partial<Pick<AdpOptions, "credentials" | "mandates" | "agents">>) => new Adp({ ...adpOpts, ...over });
   return { c, store, adp, parent: p.id, cart: cart.id, issue, logs, setNow: (t) => (now = t), adpWith, reserves: () => reserves };
 }
 
@@ -307,5 +309,77 @@ describe("ADP п. 2 и 4: агентский токен (РП47 п. 6–8)", () 
     expect(dump).not.toContain(cred.payload.token_ref as string);
     expect(dump).not.toContain(cred.payload.cryptogram as string);
     expect(dump).not.toMatch(/\d{13,19}/);
+  });
+});
+
+describe("ADP: агентский токен без aoi — по домену токена при очереди 1–2 (РП48 (г), РП22 п. 6)", () => {
+  const noAoi = (w: World, cred: Credential, over: Partial<CanonicalMessage> = {}, amount = 20_000): CanonicalMessage => {
+    const m = auth(w, cred, over, amount);
+    delete m.aoi;
+    return m;
+  };
+
+  it.each([1, 2] as const)("очередь %i: агент и мандат — из записи токена; APPROVE, резерв CART и родителя, реквизит погашен", async (phase) => {
+    const w = await world({ phase });
+    const cred = await w.issue();
+    const m = noAoi(w, cred);
+    expect(parseDecision(await w.adp.decide(m), "adp").decision).toBe("APPROVE");
+    expect(await left(w, w.cart)).toBe(10_000);
+    expect(await left(w, w.parent)).toBe(30_000);
+    expect(await w.store.credentialByOrder(A, w.cart, "ORD-1")).toMatchObject({ status: "USED", op_ref: m.op_ref });
+    // Однократность — та же, что с признаком: вторая авторизация той же криптограммой без резерва.
+    expect(await reason(w, noAoi(w, cred, {}, 5_000))).toBe("CREDENTIAL_INVALID");
+    expect(await left(w, w.cart)).toBe(10_000);
+  });
+
+  it("очередь 3 — AOI_MISSING до токена и резерва; реквизит не погашен", async () => {
+    const w = await world({ phase: 3 });
+    const cred = await w.issue();
+    expect(await reason(w, noAoi(w, cred))).toBe("AOI_MISSING");
+    expect(w.reserves()).toBe(0);
+    expect(await status(w)).toBe("ISSUED");
+  });
+
+  it("очередь 2: токена нет, криптограммы нет или она чужая — CREDENTIAL_INVALID без резерва", async () => {
+    const w = await world({ phase: 2 });
+    const cred = await w.issue();
+    const other = await w.issue("ORD-2", 10_000);
+    expect(await reason(w, noAoi(w, cred, { instrument: { kind: "AGENT_TOKEN", token_ref: "tok_unknown", cryptogram: "x" } }))).toBe("CREDENTIAL_INVALID");
+    expect(await reason(w, noAoi(w, cred, { instrument: { kind: "AGENT_TOKEN", token_ref: cred.payload.token_ref as string } }))).toBe("CREDENTIAL_INVALID");
+    expect(
+      await reason(w, noAoi(w, cred, { instrument: { kind: "AGENT_TOKEN", token_ref: cred.payload.token_ref as string, cryptogram: "x" } })),
+    ).toBe("CREDENTIAL_INVALID");
+    // Криптограмма другого заказа того же токена — свой реквизит: сумма 20 000 > amount_max 10 000 — предел инструмента.
+    expect(await reason(w, noAoi(w, other))).toBe("LIMIT_EXCEEDED");
+    expect(await status(w)).toBe("ISSUED");
+  });
+
+  it("очередь 2: ACCOUNT_LINK без aoi — CREDENTIAL_INVALID до PS-21", async () => {
+    const w = await world({ phase: 2 });
+    const cred = await w.issue();
+    expect(await reason(w, noAoi(w, cred, { instrument: { kind: "ACCOUNT_LINK", account_link_ref: "acl_1" } }))).toBe("CREDENTIAL_INVALID");
+    expect(w.reserves()).toBe(0);
+  });
+
+  it("очередь 2: агент домена приостановлен — AGENT_SUSPENDED (реестр — по коду из домена, инвариант 5)", async () => {
+    const w = await world({ phase: 2 });
+    const cred = await w.issue();
+    const adp = w.adpWith({ agents: { get: (code) => (code === A ? { status: "SUSPENDED", level: 2 } : undefined) } });
+    expect(parseDecision(await adp.decide(noAoi(w, cred)), "adp").reason).toBe("AGENT_SUSPENDED");
+    expect(await status(w)).toBe("ISSUED");
+  });
+
+  it("очередь 2: сбой чтения токена — STATE_UNAVAILABLE до резерва", async () => {
+    const w = await world({ phase: 2 });
+    const cred = await w.issue();
+    const adp = w.adpWith({
+      credentials: delegate(w.store, {
+        tokenByRef: async () => {
+          throw new Error("нет связи");
+        },
+      }),
+    });
+    expect(parseDecision(await adp.decide(noAoi(w, cred)), "adp").reason).toBe("STATE_UNAVAILABLE");
+    expect(w.reserves()).toBe(0);
   });
 });

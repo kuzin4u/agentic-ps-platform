@@ -9,7 +9,7 @@ import type { ConsentJournal } from "../consent/journal.js";
 import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
 import type { Params } from "../shared/config.js";
-import type { AgentSelf } from "../shared/pao.js";
+import type { AgentSelf, Credential } from "../shared/pao.js";
 import type { Credentials } from "../credentials/service.js";
 import { credentialRequestBody, hasPaymentDetails, keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
 import { consentErrorReply } from "./consent-errors.js";
@@ -49,7 +49,7 @@ export interface PaoDeps {
    * Агентские реквизиты (П5, РП47); без них POST /pao/v1/credentials не регистрируется: токен-сервис оператора (ПИ-4)
    * в рабочем сервере не подключён — только стенд и тесты.
    */
-  readonly credentials?: Pick<Credentials, "issue">;
+  readonly credentials?: Pick<Credentials, "issue" | "replay">;
   /** Стенд (РП40 п. 8): только он принимает стендовые порты; в рабочем сервере стендовый порт — отказ запуска. */
   readonly stand?: boolean;
   /** Монотонные часы предела обработчика (РП33 доп.); по умолчанию performance.now — в тестах подменяются. */
@@ -60,6 +60,17 @@ export interface PaoDeps {
 interface MutatingCtx {
   readonly keyHash: string;
   readonly beforeWrite: () => void;
+}
+
+/** Ответ обработчика: агенту — status и body; под ключом — stored, если тело хранить нельзя (РП48 (в): криптограмма). */
+interface HandlerReply extends PaoReply {
+  readonly stored?: PaoReply;
+}
+
+interface MutatingOpts<T> {
+  readonly forbidPaymentDetails?: boolean;
+  /** Повтор под ключом с сохранённым 2xx: ответ собирается заново из сохранённого (РП48 (в)); без него — сохранённый как есть. */
+  readonly replay?: (agent: AgentRecord, input: T, stored: PaoReply) => Promise<PaoReply>;
 }
 
 /** Окно грубого лимита (РП32 п. 2, 4): 30 с — Retry-After не больше maxRetryAfterSec клиента ядра (РП24). */
@@ -169,8 +180,8 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     req: FastifyRequest,
     reply: FastifyReply,
     parse: (raw: string) => T | undefined,
-    handler: (agent: AgentRecord, input: T, ctx: MutatingCtx) => PaoReply | Promise<PaoReply>,
-    opts: { readonly forbidPaymentDetails?: boolean } = {},
+    handler: (agent: AgentRecord, input: T, ctx: MutatingCtx) => HandlerReply | Promise<HandlerReply>,
+    opts: MutatingOpts<T> = {},
   ): Promise<FastifyReply> {
     const agent = req.paoAgent as AgentRecord;
     const key = req.headers["idempotency-key"];
@@ -187,20 +198,38 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     const { path, query } = target(req);
     const keyHash = idempotencyKeyHash(key);
     let r: PaoReply;
+    // Ответ первого исполнения, когда под ключом хранится другое тело (stored, РП48 (в)): агенту — он целиком. Без stored
+    // агенту — ответ ядра (канонический JSON), как и при повторе: первый ответ и повтор совпадают побайтно.
+    let fresh: PaoReply | undefined;
     try {
-      r = (
-        await deps.idempotency(agent.agent_code).run(
-          keyHash,
-          { method: req.method, path, query, body: raw },
-          async () => {
-            // Предел — от захвата ключа: аренда отсчитывается от него же.
-            const out = await handler(agent, input, { keyHash, beforeWrite: handlerDeadline(PAO_HANDLER_BUDGET_MS, clock) });
-            // 5xx не сохраняется (РП30 п. 3): исключение снимает захват, повтор исполняется заново; ответ — как вернул обработчик.
-            if (out.status >= 500) throw new UnstoredReply({ http: out.status, body: out.body as PaoErrorReply["body"] });
-            return out;
-          },
-        )
-      ).result;
+      const run = await deps.idempotency(agent.agent_code).run(
+        keyHash,
+        { method: req.method, path, query, body: raw },
+        async () => {
+          // Предел — от захвата ключа: аренда отсчитывается от него же.
+          const out = await handler(agent, input, { keyHash, beforeWrite: handlerDeadline(PAO_HANDLER_BUDGET_MS, clock) });
+          // 5xx не сохраняется (РП30 п. 3): исключение снимает захват, повтор исполняется заново; ответ — как вернул обработчик.
+          if (out.status >= 500) throw new UnstoredReply({ http: out.status, body: out.body as PaoErrorReply["body"] });
+          if (out.stored === undefined) return { status: out.status, body: out.body };
+          fresh = { status: out.status, body: out.body };
+          return out.stored;
+        },
+      );
+      if (!run.replayed) r = fresh ?? run.result;
+      else if (opts.replay && run.result.status < 300) {
+        r = await opts.replay(agent, input, run.result);
+        // Пересборка даёт либо тот же статус, либо 5xx (повтор позже): окончательный отказ при сохранённом 2xx нарушил
+        // бы идемпотентность (РП30 п. 3) — агент бросил бы выданный реквизит. Иное — не подтверждено, инцидент.
+        if (r.status < 500 && r.status !== run.result.status) {
+          const code = (r.body as { readonly code?: unknown } | null)?.code;
+          const credential_ref = (run.result.body as { readonly credential_ref?: unknown } | null)?.credential_ref;
+          req.log.warn(
+            { agent_code: agent.agent_code, status: r.status, code, credential_ref, incident: true },
+            "ПАО: пересборка повтора дала другой статус",
+          );
+          r = reply4xx(paoError("STATE_UNAVAILABLE", "A3 п. 4.5"));
+        }
+      } else r = run.result;
     } catch (err) {
       if (err instanceof IdempotencyConflict) return send(reply, paoError("IDEMPOTENCY_CONFLICT"));
       if (err instanceof UnstoredReply) return send(reply, err.reply);
@@ -210,6 +239,8 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       else if (!(err instanceof IdempotencyInProgress)) req.log.error({ err }, "ПАО: сбой хранилища идемпотентности или обработчика");
       return send(reply, paoError("UPSTREAM_UNAVAILABLE"));
     }
+    // 5xx пересборки при повторе — с Retry-After, как 5xx обработчика.
+    if (r.status >= 500) return send(reply, { http: r.status, body: r.body as PaoErrorReply["body"] });
     return reply.code(r.status).send(r.body);
   }
 
@@ -255,6 +286,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
 
   // Агентский реквизит на заказ (ПАО §4, РП47 п. 4–5): agent_code — из проверенного обращения (инвариант 5); отказ П5 —
   // код ПАО, причина — в журнал процесса; отказ журнала — по consentErrorReply. 5xx не сохраняется под ключом (РП30 п. 3).
+  // Под ключом — ответ без криптограммы; повтор под ключом пересчитывает её по записи реквизита (РП48 (в)).
   const credentials = deps.credentials;
   if (credentials) {
     app.post("/pao/v1/credentials", async (req, reply) =>
@@ -262,7 +294,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         if (!MANDATE_ID.test(input.mandate_id)) return reply4xx(paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
         try {
           const r = await credentials.issue(agent.agent_code, input, ctx.beforeWrite);
-          if (r.ok) return { status: 201, body: r.credential };
+          if (r.ok) return { status: 201, body: r.credential, stored: { status: 201, body: withoutCryptogram(r.credential) } };
           req.log.info({ agent_code: agent.agent_code, mandate_id: input.mandate_id, code: r.code }, "ПАО: реквизит не выдан");
           return reply4xx(paoError(r.code, r.norm, r.message));
         } catch (err) {
@@ -271,7 +303,20 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
           req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
           return reply4xx(e);
         }
-      }, { forbidPaymentDetails: true }),
+      }, {
+        forbidPaymentDetails: true,
+        replay: async (agent, input, stored) => {
+          const ref = (stored.body as { readonly credential_ref?: unknown } | null)?.credential_ref;
+          if (typeof ref !== "string") {
+            req.log.warn({ agent_code: agent.agent_code, incident: true }, "ПАО: сохранённый ответ реквизита без credential_ref");
+            return reply4xx(paoError("STATE_UNAVAILABLE", "A3 п. 4.5"));
+          }
+          const r = await credentials.replay(agent.agent_code, input, ref);
+          if (r.ok) return { status: stored.status, body: r.credential };
+          req.log.info({ agent_code: agent.agent_code, mandate_id: input.mandate_id, code: r.code }, "ПАО: повтор реквизита под ключом не собран");
+          return reply4xx(paoError(r.code, r.norm, r.message));
+        },
+      }),
     );
   }
 
@@ -387,6 +432,13 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
 const emptyBody = (raw: string): true | undefined => (raw === "" ? true : undefined);
 
 const reply4xx = (e: PaoErrorReply): PaoReply => ({ status: e.http, body: e.body });
+
+/** Реквизит для хранения под ключом (РП48 (в)): без значения криптограммы — его в базе Платформы нет (РП47 п. 3, 10). */
+function withoutCryptogram(c: Credential): Credential {
+  const payload = { ...c.payload };
+  delete payload.cryptogram;
+  return { ...c, payload };
+}
 
 /** Ответ 5xx обработчика — тело ПАО §6: не сохраняется под ключом (РП30 п. 3), но уходит агенту с кодом обработчика. */
 class UnstoredReply extends Error {

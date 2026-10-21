@@ -1,14 +1,16 @@
 // П5 выдача реквизита (РП47 п. 1–5): токен на CART, криптограмма на заказ, повтор по order_ref, коды отказов.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   Credentials,
   MemoryCredentialStore,
+  P5_UPSTREAM_TIMEOUT_MS,
   sha256Hex,
   type CredentialMandate,
   type CredentialStore,
 } from "../../src/credentials/index.js";
 import { createTokenServiceEmulator } from "../../src/env/tsp/index.js";
 import { createIssuerEmulator } from "../../src/env/issuer/index.js";
+import { PAO_HANDLER_BUDGET_MS } from "../../src/pao/idempotency.js";
 import type { CredentialRequest, Mandate } from "../../src/shared/pao.js";
 
 const AGENT = "nspk:agent:buyref-01:v1";
@@ -208,6 +210,46 @@ describe("П5 выдача реквизита (РП47)", () => {
     expect(await c.issue(AGENT, req())).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
     expect(logs.some((l) => l.startsWith("П5: пересчёт криптограммы не совпал с записью") && l.includes('"incident":true'))).toBe(true);
   });
+
+  it.each(["fundingRef", "issueToken", "cryptogram"] as const)(
+    "внешний вызов %s дольше P5_UPSTREAM_TIMEOUT_MS — UPSTREAM_UNAVAILABLE, ни токен, ни реквизит не записаны; следующая выдача проходит (РП48 (в))",
+    async (hung) => {
+      // До четырёх вызовов (четвёртый — пересчёт при одновременной выдаче, РП48 (в) п. 4).
+      expect(4 * P5_UPSTREAM_TIMEOUT_MS).toBeLessThan(PAO_HANDLER_BUDGET_MS);
+      vi.useFakeTimers();
+      try {
+        const issuer = createIssuerEmulator();
+        const tsp = createTokenServiceEmulator();
+        const store = new MemoryCredentialStore();
+        const sw = { hang: true };
+        const hang = <T>(f: () => Promise<T>, name: string): Promise<T> => (sw.hang && hung === name ? new Promise<T>(() => {}) : f());
+        const c = new Credentials({
+          mandates: { get: async () => ({ mandate: cart(), client: { participant_code: issuer.participant_code, principal_ref: "pr_alpha" }, token_consent: true }) },
+          store,
+          tsp: { issueToken: (i) => hang(() => tsp.issueToken(i), "issueToken"), cryptogram: (i) => hang(() => tsp.cryptogram(i), "cryptogram") },
+          funding: { fundingRef: (cl) => hang(() => issuer.fundingRef(cl), "fundingRef") },
+          params: { cryptogram_ttl_sec: TTL },
+          now: () => new Date(T0),
+        });
+        const p = c.issue(AGENT, req());
+        await vi.advanceTimersByTimeAsync(P5_UPSTREAM_TIMEOUT_MS - 1);
+        let settled = false;
+        void p.then(() => (settled = true));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await p).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
+        expect(await store.credentialByOrder(AGENT, CART, "ORD-a")).toBeUndefined();
+        if (hung !== "cryptogram") expect(await store.tokenByMandate(CART)).toBeUndefined();
+        sw.hang = false;
+        expect((await c.issue(AGENT, req())).ok).toBe(true);
+        // Таймеры вызовов сняты после ответа (clearTimeout в finally): висящих нет.
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("сбой хранилища — STATE_UNAVAILABLE; токен-сервис недоступен — UPSTREAM_UNAVAILABLE", async () => {
     const broken = new MemoryCredentialStore();
