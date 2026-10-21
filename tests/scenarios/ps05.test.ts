@@ -104,6 +104,29 @@ describe("ПС05 на стенде: агентский токен и крипт�
     expect(b.json()).toEqual(a);
   });
 
+  it("повтор под тем же Idempotency-Key — тот же реквизит и та же криптограмма; после погашения — USED (РП48 (в))", async () => {
+    const key = randomUUID();
+    const order = credReq({ order_ref: "ORD-ps05-key", amount_max: 30_000 });
+    const a = await call("POST", "/pao/v1/credentials", order, key);
+    const b = await call("POST", "/pao/v1/credentials", order, key);
+    expect([a.statusCode, b.statusCode]).toEqual([201, 201]);
+    expect(b.json()).toEqual(a.json());
+    const c = a.json() as Credential;
+    const msg: CanonicalMessage = {
+      op_ref: "OPKC-PS05-KEY",
+      msg_type: "AUTH_REQUEST",
+      channel: "CARD",
+      amount: 30_000,
+      currency: "RUB",
+      merchant: { id: "MER-1042" },
+      instrument: { kind: "AGENT_TOKEN", token_ref: c.payload.token_ref as string, cryptogram: c.payload.cryptogram as string },
+      aoi: c.aoi,
+    };
+    expect(parseDecision((await stand.app.inject({ method: "POST", url: "/adp/v1/decide", payload: msg })).json(), "adp").decision).toBe("APPROVE");
+    const after = await call("POST", "/pao/v1/credentials", order, key);
+    expect([after.statusCode, after.json()]).toEqual([201, { ...c, status: "USED" }]);
+  });
+
   it("тот же order_ref с другой суммой — 409 IDEMPOTENCY_CONFLICT", async () => {
     const res = await call("POST", "/pao/v1/credentials", credReq({ amount_max: 100_000 }));
     expect(res.statusCode).toBe(409);

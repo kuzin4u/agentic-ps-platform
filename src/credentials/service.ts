@@ -67,6 +67,14 @@ function statusRefusal(status: Mandate["status"]): IssueResult | null {
   }
 }
 
+/**
+ * Предел одного внешнего вызова П5 (РП48 (в)): выдача под ключом идемпотентности делает до трёх вызовов (банк — funding_ref,
+ * токен-сервис — токен и криптограмма), 3 × предел меньше предела обработчика ПАО (PAO_HANDLER_BUDGET_MS) и аренды ключа.
+ * Константа кода, как аренда: граница отказа, а не настройка поведения. Сам вызов не отменяется — ответ после предела
+ * отбрасывается; повтор выдачи безопасен (уникальность заказа и токен на CART, РП47 п. 5, 10).
+ */
+export const P5_UPSTREAM_TIMEOUT_MS = 5_000;
+
 /** Сбой хранилища П5 — не подтверждено; токен-сервиса или банка — внешний компонент недоступен. */
 class Unavailable extends Error {
   constructor(readonly code: "STATE_UNAVAILABLE" | "UPSTREAM_UNAVAILABLE", cause: unknown) {
@@ -159,6 +167,32 @@ export class Credentials {
     if (prior.merchant_id !== req.merchant_id || prior.amount_max !== req.amount_max || prior.currency !== req.currency) {
       return refuse("IDEMPOTENCY_CONFLICT");
     }
+    return { ok: true, credential: this.view(prior, await this.recompute(prior)) };
+  }
+
+  /**
+   * Повтор под Idempotency-Key (РП48 (в)): под ключом сохранён ответ без криптограммы, тело запроса то же (хэш тела —
+   * у ядра). Реквизит — по заказу из тела, сверка с credential_ref сохранённого ответа; криптограмма пересчитана, status —
+   * текущий, как у повтора по заказу. Мандат не перепроверяется: повтор под ключом — прежний ответ, а не новая выдача.
+   * Записи нет или она другая — не подтверждено и инцидент (инвариант 3).
+   */
+  async replay(agent_code: string, req: CredentialRequest, credential_ref: string): Promise<IssueResult> {
+    try {
+      const prior = await this.store((s) => s.credentialByOrder(agent_code, req.mandate_id, req.order_ref));
+      if (!prior || prior.credential_ref !== credential_ref) {
+        this.log({ agent_code, credential_ref, incident: true }, "П5: повтор под ключом — запись реквизита не найдена");
+        return refuse("STATE_UNAVAILABLE", "A3 п. 4.5");
+      }
+      return { ok: true, credential: this.view(prior, await this.recompute(prior)) };
+    } catch (err) {
+      if (!(err instanceof Unavailable)) throw err;
+      this.log({ agent_code, credential_ref, code: err.code }, "П5: повтор под ключом — компонент недоступен");
+      return refuse(err.code);
+    }
+  }
+
+  /** Пересчёт криптограммы с valid_to записи; не совпала с хэшем записи — ключ токен-сервиса сменился (инвариант 3). */
+  private async recompute(prior: CredentialRecord): Promise<string> {
     const cryptogram = await this.upstream(() =>
       this.opts.tsp.cryptogram({
         token_ref: prior.token_ref,
@@ -174,7 +208,7 @@ export class Credentials {
       this.log({ credential_ref: prior.credential_ref, incident: true }, "П5: пересчёт криптограммы не совпал с записью");
       throw new Unavailable("UPSTREAM_UNAVAILABLE", undefined);
     }
-    return { ok: true, credential: this.view(prior, cryptogram) };
+    return cryptogram;
   }
 
   /** Токен CART (РП47 п. 2): записанный или новый; одновременный выпуск — записанный первым. */
@@ -214,12 +248,20 @@ export class Credentials {
     }
   }
 
+  /** Внешний вызов (банк, токен-сервис) — не дольше P5_UPSTREAM_TIMEOUT_MS; сбой и таймаут — UPSTREAM_UNAVAILABLE. */
   private async upstream<T>(f: () => Promise<T>): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    const limit = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`П5: внешний вызов дольше ${P5_UPSTREAM_TIMEOUT_MS} мс`)), P5_UPSTREAM_TIMEOUT_MS);
+      timer.unref();
+    });
     try {
-      return await f();
+      return await Promise.race([f(), limit]);
     } catch (err) {
       if (err instanceof Unavailable) throw err;
       throw new Unavailable("UPSTREAM_UNAVAILABLE", err);
+    } finally {
+      clearTimeout(timer);
     }
   }
 }

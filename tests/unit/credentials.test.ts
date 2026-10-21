@@ -1,14 +1,16 @@
 // П5 выдача реквизита (РП47 п. 1–5): токен на CART, криптограмма на заказ, повтор по order_ref, коды отказов.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   Credentials,
   MemoryCredentialStore,
+  P5_UPSTREAM_TIMEOUT_MS,
   sha256Hex,
   type CredentialMandate,
   type CredentialStore,
 } from "../../src/credentials/index.js";
 import { createTokenServiceEmulator } from "../../src/env/tsp/index.js";
 import { createIssuerEmulator } from "../../src/env/issuer/index.js";
+import { PAO_HANDLER_BUDGET_MS } from "../../src/pao/idempotency.js";
 import type { CredentialRequest, Mandate } from "../../src/shared/pao.js";
 
 const AGENT = "nspk:agent:buyref-01:v1";
@@ -207,6 +209,35 @@ describe("П5 выдача реквизита (РП47)", () => {
     expect((await c.issue(AGENT, req())).ok).toBe(true);
     expect(await c.issue(AGENT, req())).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
     expect(logs.some((l) => l.startsWith("П5: пересчёт криптограммы не совпал с записью") && l.includes('"incident":true'))).toBe(true);
+  });
+
+  it("внешний вызов дольше P5_UPSTREAM_TIMEOUT_MS — UPSTREAM_UNAVAILABLE, реквизит не записан; три вызова — меньше предела обработчика ПАО (РП48 (в))", async () => {
+    expect(3 * P5_UPSTREAM_TIMEOUT_MS).toBeLessThan(PAO_HANDLER_BUDGET_MS);
+    vi.useFakeTimers();
+    try {
+      const issuer = createIssuerEmulator();
+      const tsp = createTokenServiceEmulator();
+      const store = new MemoryCredentialStore();
+      const c = new Credentials({
+        mandates: { get: async () => ({ mandate: cart(), client: { participant_code: issuer.participant_code, principal_ref: "pr_alpha" }, token_consent: true }) },
+        store,
+        tsp: { issueToken: (i) => tsp.issueToken(i), cryptogram: () => new Promise<string>(() => {}) },
+        funding: issuer,
+        params: { cryptogram_ttl_sec: TTL },
+        now: () => new Date(T0),
+      });
+      const p = c.issue(AGENT, req());
+      await vi.advanceTimersByTimeAsync(P5_UPSTREAM_TIMEOUT_MS - 1);
+      let settled = false;
+      void p.then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await p).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
+      expect(await store.credentialByOrder(AGENT, CART, "ORD-a")).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("сбой хранилища — STATE_UNAVAILABLE; токен-сервис недоступен — UPSTREAM_UNAVAILABLE", async () => {
