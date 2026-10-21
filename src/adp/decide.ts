@@ -9,7 +9,7 @@ import type { Mandate } from "../shared/pao.js";
 import type { AgentRecord } from "../registry/model.js";
 import { parseAgentCode } from "../registry/code.js";
 import { ConsentIntegrityError } from "../consent/model.js";
-import { sha256Hex, type CredentialRecord } from "../credentials/model.js";
+import { sha256Hex, type CredentialRecord, type TokenRecord } from "../credentials/model.js";
 import type { CredentialStore } from "../credentials/store.js";
 import type { StateService } from "../state/index.js";
 import { STATE_TO_PI, STATUS_TO_PI } from "./codes.js";
@@ -287,9 +287,11 @@ export class Adp {
     const token_ref = msg.instrument?.token_ref;
     let agent_code: string;
     let mandate_id: unknown;
+    // Наборы MCC домена токена (РП49 (д)) — для п. 6; null — токен выпущен до sql/110.
+    let tokenMcc: TokenRecord["merchant_mcc"] = null;
     if (kind === "AGENT_TOKEN") {
       if (!credentials || typeof token_ref !== "string" || token_ref === "") return no("CREDENTIAL_INVALID");
-      let token: { readonly agent_code: string; readonly mandate_id: string } | undefined;
+      let token: Pick<TokenRecord, "agent_code" | "mandate_id" | "merchant_mcc"> | undefined;
       try {
         token = await credentials.tokenByRef(token_ref);
       } catch {
@@ -304,6 +306,7 @@ export class Adp {
       }
       agent_code = token.agent_code;
       mandate_id = token.mandate_id;
+      tokenMcc = token.merchant_mcc;
     } else {
       if (kind === "CARD_TOKEN") {
         // Ложный признак эквайрера отклоняет и покупку человека (остаточный риск РП48 (а)) — счётчик показывает источник.
@@ -370,6 +373,21 @@ export class Adp {
     const merchant = msg.merchant?.id;
     if (merchant === undefined || !m.merchant_scope.includes(merchant)) return no("MANDATE_SCOPE", mandate_id);
     if (msg.currency !== m.currency) return no("MANDATE_SCOPE", mandate_id);
+    // MCC сообщения — в наборе продавца из домена токена (РП49 (д) п. 4), только AGENT_TOKEN. Набора нет (токен до sql/110,
+    // п. 5) или нет записи продавца области («Нюансы РП49» п. 7) — порча записей Платформы: не подтверждено и инцидент.
+    // Object.hasOwn — запись самого продавца, а не свойство прототипа.
+    if (kind === "AGENT_TOKEN") {
+      const set =
+        tokenMcc !== null && typeof tokenMcc === "object" && !Array.isArray(tokenMcc) && Object.hasOwn(tokenMcc, merchant)
+          ? tokenMcc[merchant]
+          : undefined;
+      if (!Array.isArray(set)) {
+        this.log("warn", { op_ref: msg.op_ref, agent_code, mandate_id, incident: true }, "ADP: в домене токена нет набора MCC продавца");
+        return no("STATE_UNAVAILABLE", mandate_id);
+      }
+      const mcc = msg.merchant?.mcc;
+      if (typeof mcc !== "string" || !set.includes(mcc)) return no("MANDATE_SCOPE", mandate_id);
+    }
 
     // Тип мандата вне перечня (данные, а не тип) — не подтверждено, а не «как INTENT» (инвариант 3, как доп. РП43 п. 19).
     if (m.type !== "INTENT" && m.type !== "CART") return no("STATE_UNAVAILABLE", mandate_id);

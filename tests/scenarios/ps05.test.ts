@@ -120,7 +120,7 @@ describe("ПС05 на стенде: агентский токен и крипт�
       channel: "CARD",
       amount: 30_000,
       currency: "RUB",
-      merchant: { id: "MER-1042" },
+      merchant: { id: "MER-1042", mcc: "5462" },
       instrument: { kind: "AGENT_TOKEN", token_ref: c.payload.token_ref as string, cryptogram: c.payload.cryptogram as string },
       aoi: c.aoi,
     };
@@ -177,7 +177,7 @@ describe("ПС05 на стенде: агентский токен и крипт�
       channel: "CARD",
       amount: 40_000,
       currency: "RUB",
-      merchant: { id: "MER-1042" },
+      merchant: { id: "MER-1042", mcc: "5462" },
       instrument: { kind: "AGENT_TOKEN", token_ref: c.payload.token_ref as string, cryptogram: c.payload.cryptogram as string },
       aoi: c.aoi,
     });

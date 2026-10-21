@@ -18,7 +18,7 @@ const raw = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
   channel: "CARD",
   amount: 10_000,
   currency: "RUB",
-  merchant: { id: "MER-1042" },
+  merchant: { id: "MER-1042", mcc: "5462" },
   instrument: { kind: "CARD_TOKEN", token_ref: "tok_card_1" },
   aoi: { indicator: true, agent_code: A, mandate_id: "mnd_x" },
   ...over,

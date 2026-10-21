@@ -69,7 +69,7 @@ const auth = (mandate_id: string, token_ref: string, cryptogram: string, op_ref:
   channel: "CARD",
   amount,
   currency: "RUB",
-  merchant: { id: "MER-1042" },
+  merchant: { id: "MER-1042", mcc: "5462" },
   instrument: { kind: "AGENT_TOKEN", token_ref, cryptogram },
   aoi: { indicator: true, agent_code: AGENT, mandate_id },
 });
@@ -163,9 +163,13 @@ describe.skipIf(!DATABASE_URL)("одноразовость криптограм�
     const M = mandates.add(10_000);
     const s1 = new PgCredentialStore(db.pool);
     const s2 = new PgCredentialStore(pool2);
-    const token = (ref: string) => ({ token_ref: ref, agent_code: AGENT, mandate_id: M, merchant_scope: ["MER-1042"], valid_to: VALID_TO, funding_ref: "fnd_pg", created_at: AT, merchant_mcc: { "MER-1042": ["5462"] } });
+    // Наборы MCC у экземпляров разные (справочник сменился между чтениями): в домене — набор записавшего первым, целиком.
+    const mccOf = { tok_ag_one: "5462", tok_ag_two: "5411" } as const;
+    const token = (ref: keyof typeof mccOf) => ({ token_ref: ref, agent_code: AGENT, mandate_id: M, merchant_scope: ["MER-1042"], valid_to: VALID_TO, funding_ref: "fnd_pg", created_at: AT, merchant_mcc: { "MER-1042": [mccOf[ref]] } });
     const [t1, t2] = await Promise.all([s1.putToken(token("tok_ag_one")), s2.putToken(token("tok_ag_two"))]);
     expect(t1).toEqual(t2);
+    expect(t1.merchant_mcc).toEqual({ "MER-1042": [mccOf[t1.token_ref as keyof typeof mccOf]] });
+    expect((await s2.tokenByMandate(M))?.merchant_mcc).toEqual(t1.merchant_mcc);
     const rec = (ref: string, h: string): CredentialRecord => ({
       credential_ref: ref,
       agent_code: AGENT,

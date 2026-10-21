@@ -111,7 +111,7 @@ describe("ПС02: отзыв ключа и распространение", () =
       channel: "CARD",
       amount: 15_000,
       currency: "RUB",
-      merchant: { id: "MER-1042" },
+      merchant: { id: "MER-1042", mcc: "5462" },
       instrument: { kind: "AGENT_TOKEN", token_ref: cred.payload.token_ref as string, cryptogram: cred.payload.cryptogram as string },
       aoi: cred.aoi,
     };

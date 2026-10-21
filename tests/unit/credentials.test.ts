@@ -81,7 +81,7 @@ function setup(
     params: { cryptogram_ttl_sec: TTL },
     now: () => new Date(now),
   });
-  return { c, tsp, store, setNow: (t: number) => (now = t) };
+  return { c, tsp, store, issuer, setNow: (t: number) => (now = t) };
 }
 
 describe("П5 выдача реквизита (РП47)", () => {
@@ -323,11 +323,55 @@ describe("П5 выдача: справочник продавцов и MCC в д
     expect(await store.tokenByMandate(CART)).toBeUndefined();
   });
 
-  it("справочник не прочитан — 503 STATE_UNAVAILABLE, токен не выпущен", async () => {
-    const { c, tsp } = setup({ merchants: { mccOf: () => Promise.reject(new Error("down")) } });
+  it("справочник не прочитан — 503 STATE_UNAVAILABLE, банк и токен-сервис не вызваны (ревью КТ1 № 5 (а))", async () => {
+    const { c, tsp, issuer } = setup({ merchants: { mccOf: () => Promise.reject(new Error("down")) } });
+    const funding = vi.spyOn(issuer, "fundingRef");
     expect(await c.issue(AGENT, req())).toMatchObject({ ok: false, code: "STATE_UNAVAILABLE" });
+    expect(funding).not.toHaveBeenCalled();
     expect(tsp.issued.size).toBe(0);
   });
+
+  /** Выдача с логом инцидентов и счётчиком банка: справочник — как задан. */
+  const withLog = (merchants: MerchantDirectory, mandate = cart()) => {
+    const issuer = createIssuerEmulator();
+    const tsp = createTokenServiceEmulator();
+    const logs: string[] = [];
+    const funding = vi.fn((cl: Parameters<typeof issuer.fundingRef>[0]) => issuer.fundingRef(cl));
+    const c = new Credentials({
+      mandates: { get: async () => ({ mandate, client: { participant_code: issuer.participant_code, principal_ref: "pr_alpha" }, token_consent: true }) },
+      store: new MemoryCredentialStore(),
+      tsp,
+      funding: { fundingRef: funding },
+      merchants,
+      params: { cryptogram_ttl_sec: TTL },
+      now: () => new Date(T0),
+      log: (f, m) => logs.push(`${m} ${JSON.stringify(f)}`),
+    });
+    const incident = () => logs.some((l) => l.startsWith("П5: MCC справочника продавцов не по форме") && l.includes('"incident":true'));
+    return { c, tsp, funding, incident };
+  };
+
+  it("сначала форма по всем продавцам, затем наличие: первого нет, у второго MCC не по форме — 503 и инцидент, а не MANDATE_SCOPE (ревью КТ1 № 3)", async () => {
+    const w = withLog(directory({ "MER-1042": ["54"] }), cart({ merchant_scope: ["MER-9", "MER-1042"] }));
+    expect(await w.c.issue(AGENT, req())).toMatchObject({ ok: false, code: "STATE_UNAVAILABLE" });
+    expect(w.incident()).toBe(true);
+    expect(w.funding).not.toHaveBeenCalled();
+    expect(w.tsp.issued.size).toBe(0);
+    // Все по форме, первого нет — MANDATE_SCOPE без инцидента.
+    const ok = withLog(directory({ "MER-1042": ["5462"] }), cart({ merchant_scope: ["MER-9", "MER-1042"] }));
+    expect(await ok.c.issue(AGENT, req())).toMatchObject({ ok: false, code: "MANDATE_SCOPE" });
+    expect(ok.incident()).toBe(false);
+  });
+
+  it.each([["5462"], [{ 0: "5462" }], [null], [5462]])(
+    "справочник вернул не массив (%j) — справочник не прочитан: 503 и инцидент, а не 500 (ревью КТ1 № 2)",
+    async (bad) => {
+      const w = withLog({ mccOf: async () => bad as unknown as readonly string[] });
+      expect(await w.c.issue(AGENT, req())).toMatchObject({ ok: false, code: "STATE_UNAVAILABLE" });
+      expect(w.incident()).toBe(true);
+      expect(w.funding).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([["546"], ["54620"], ["54a2"], [" 5462"], ["５４６２"], [5462]])(
     "MCC справочника не из четырёх цифр (%j) — справочник не прочитан: STATE_UNAVAILABLE и инцидент, до банка и токен-сервиса",

@@ -206,7 +206,8 @@ const auth = (mandate_id: string, op_ref: string, amount: number, merchant = "ME
     channel: "CARD",
     amount,
     currency: "RUB",
-    merchant: { id: merchant },
+    // MCC витрины — в наборе домена токена помощника (РП49 (д)); проверка MCC — не предмет этого файла.
+    merchant: { id: merchant, mcc: "5462" },
     instrument: { kind: "CARD_TOKEN", token_ref: "tok_card_1" },
     aoi: { indicator: true, agent_code: AGENT, mandate_id },
   });

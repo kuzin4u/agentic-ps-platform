@@ -23,6 +23,12 @@ export function agentToken(m: CanonicalMessage): CanonicalMessage {
   const mandate_id = m.aoi.mandate_id as string;
   const token_ref = `tok_agent_${sha(JSON.stringify([agent_code, mandate_id])).slice(0, 16)}`;
   const merchant_id = m.merchant?.id as string;
+  // Наборы MCC копятся по сообщениям того же токена (параллельные сообщения с разными продавцами не затирают друг друга);
+  // сообщение без MCC набор не пополняет — ADP отклонит его по п. 6, как настоящий токен.
+  const mcc = m.merchant?.mcc;
+  const prior = tokens.get(token_ref)?.merchant_mcc ?? {};
+  const own = Object.hasOwn(prior, merchant_id) ? (prior[merchant_id] as readonly string[]) : [];
+  const set = typeof mcc === "string" && !own.includes(mcc) ? [...own, mcc] : own;
   tokens.set(token_ref, {
     token_ref,
     agent_code,
@@ -31,8 +37,9 @@ export function agentToken(m: CanonicalMessage): CanonicalMessage {
     valid_to: "2099-01-01T00:00:00Z",
     funding_ref: "fnd_test",
     created_at: "2026-10-01T00:00:00Z",
-    // Набор MCC — продавца и MCC сообщения: проверка MCC по домену (РП49 (д)) этим сообщениям не мешает.
-    merchant_mcc: { [merchant_id]: [m.merchant?.mcc as string] },
+    // Набор MCC — продавца и MCC сообщения: проверка MCC по домену (РП49 (д)) этим сообщениям не мешает. Отрицательные
+    // проверки MCC — только на настоящих записях токена (adp-credentials.test.ts, ревью КТ1 № 4).
+    merchant_mcc: Object.fromEntries([...Object.entries(prior), [merchant_id, set]]),
   });
   const cryptogram = sha(JSON.stringify([token_ref, m.op_ref, merchant_id, m.amount, m.currency]));
   const cryptogram_sha256 = sha(cryptogram);

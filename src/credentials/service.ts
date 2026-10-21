@@ -261,25 +261,31 @@ export class Credentials {
   }
 
   /**
-   * Наборы MCC продавцов области CART (РП49 (д) п. 1–2): продавца нет или набор пуст — MANDATE_SCOPE (A7 п. 5); сбой
-   * чтения или MCC не из четырёх цифр — справочник не прочитан, STATE_UNAVAILABLE («Нюансы РП49» п. 9; не по форме —
-   * ещё и инцидент: дефект справочника оператора, а не агента).
+   * Наборы MCC продавцов области CART (РП49 (д) п. 1–2). Сначала читаются записи всех продавцов и проверяется их форма
+   * (не массив или MCC не из четырёх цифр — справочник не прочитан: STATE_UNAVAILABLE и инцидент, «Нюансы РП49» п. 9),
+   * затем наличие (продавца нет или набор пуст — MANDATE_SCOPE, A7 п. 5): дефект справочника оператора не прячется за
+   * отказом агенту (ревью КТ1 № 3). Сбой чтения — STATE_UNAVAILABLE.
    */
   private async merchantMcc(m: Mandate): Promise<{ readonly ok: true; readonly merchant_mcc: MerchantMcc } | Refusal> {
-    const out: [string, readonly string[]][] = [];
+    const read: [string, unknown][] = [];
     for (const merchant_id of m.merchant_scope) {
-      let set: readonly string[] | undefined;
       try {
-        set = await this.opts.merchants.mccOf(merchant_id);
+        read.push([merchant_id, await this.opts.merchants.mccOf(merchant_id)]);
       } catch (err) {
         throw new Unavailable("STATE_UNAVAILABLE", err);
       }
-      if (set === undefined || set.length === 0) return refuse("MANDATE_SCOPE", "A7 п. 5");
-      if (!set.every((mcc) => typeof mcc === "string" && MCC.test(mcc))) {
+    }
+    for (const [merchant_id, set] of read) {
+      if (set === undefined) continue;
+      if (!Array.isArray(set) || !set.every((mcc) => typeof mcc === "string" && MCC.test(mcc))) {
         this.log({ mandate_id: m.id, merchant_id, incident: true }, "П5: MCC справочника продавцов не по форме");
         throw new Unavailable("STATE_UNAVAILABLE", undefined);
       }
-      out.push([merchant_id, [...set]]);
+    }
+    const out: [string, readonly string[]][] = [];
+    for (const [merchant_id, set] of read) {
+      if (!Array.isArray(set) || set.length === 0) return refuse("MANDATE_SCOPE", "A7 п. 5");
+      out.push([merchant_id, [...(set as string[])]]);
     }
     // fromEntries — собственные свойства: merchant_id «__proto__» не меняет прототип записи.
     return { ok: true, merchant_mcc: Object.fromEntries(out) };

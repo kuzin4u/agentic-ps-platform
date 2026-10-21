@@ -72,7 +72,7 @@ export function standPay(stand: Stand, side: AgentSide, code: string, principal_
         channel: "CARD",
         amount,
         currency: "RUB",
-        merchant: { id: "MER-1042", mcc: "5411" },
+        merchant: { id: "MER-1042", mcc: "5462" },
         instrument: { kind: "AGENT_TOKEN", token_ref: c.payload.token_ref as string, cryptogram: c.payload.cryptogram as string },
         aoi: c.aoi,
       };
