@@ -22,6 +22,7 @@ import type { AgentStatus } from "../../src/registry/model.js";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import { DECISION_REASONS, parseDecision } from "../../src/shared/codes.js";
 import { periodStart } from "../../src/participants/limits.js";
+import { agentToken, agentTokenCredentials } from "../support/agent-token.js";
 import { accountId, clientAccountId, STATE_CODES, StateService, type MandateBudget, type MandateBudgetSource } from "../../src/state/index.js";
 
 const AGENT = "nspk:agent:buyref-01:v3";
@@ -36,7 +37,8 @@ const NO_LIMITS: ClientLimitsSource = { get: async () => [] };
 /** Версия записи лимитов в истории порта: получена давно — действует в текущем периоде. */
 const version = (limits: unknown, received_at = "2026-09-01T00:00:00Z") => ({ limits, received_at });
 
-const msg = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
+/** Сообщение как пришло от процессинга; агентская операция в msg — с AGENT_TOKEN (agentToken, РП48 (а)). */
+const raw = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
   op_ref: "OPKC-20261019-000001",
   msg_type: "AUTH_REQUEST",
   channel: "CARD",
@@ -48,8 +50,9 @@ const msg = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
   ts: "2026-10-19T10:00:00Z",
   ...over,
 });
+const msg = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => agentToken(raw(over));
 const plain = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => {
-  const m = msg(over);
+  const m = raw(over);
   delete m.aoi;
   return m;
 };
@@ -140,6 +143,7 @@ function setup(
     mandates: journal,
     state,
     operations,
+    credentials: agentTokenCredentials,
     params: { aoi_rollout_phase: opts.phase ?? 3, confirm_above_kop: opts.threshold ?? THRESHOLD,
       split_window_sec: 600,
       split_min_ops: opts.splitMinOps ?? 2, client_limit_period_tz: "Europe/Moscow",
@@ -199,7 +203,7 @@ describe("признак (SPEC §6 п. 1, A1 п. 3.2, РП43 п. 2)", () => {
     expect(pair(await adp.decide(plain({ instrument: { kind } })))).toEqual({ decision: "DECLINE", reason: "AOI_MISSING" });
   });
 
-  it.each([1, 2] as const)("AGENT_TOKEN без aoi, очередь %i — домен токена не подключён (PS-14): CREDENTIAL_INVALID", async (phase) => {
+  it.each([1, 2] as const)("AGENT_TOKEN без aoi и без token_ref, очередь %i — домен не определён: CREDENTIAL_INVALID (РП48 (г))", async (phase) => {
     const { adp } = setup({ phase });
     expect(await reasonOf(adp, plain({ instrument: { kind: "AGENT_TOKEN" } }))).toBe("CREDENTIAL_INVALID");
   });
@@ -226,6 +230,44 @@ describe("признак (SPEC §6 п. 1, A1 п. 3.2, РП43 п. 2)", () => {
   });
 });
 
+describe("CARD_TOKEN с признаком агента — CREDENTIAL_INVALID на п. 2 (РП48 (а))", () => {
+  const cardWithAoi = (over: Partial<CanonicalMessage> = {}) => raw(over);
+
+  it.each([1, 2, 3] as const)("очередь %i: отказ до реестра, журнала и резерва; инцидент без token_ref", async (phase) => {
+    const { adp, agents, journal, logs, available } = setup({ phase });
+    expect(pair(await adp.decide(cardWithAoi()))).toEqual({ decision: "DECLINE", reason: "CREDENTIAL_INVALID" });
+    expect([agents.calls, journal.calls]).toEqual([0, 0]);
+    // Резерва нет: счёт мандата не открывался.
+    await expect(available()).rejects.toThrow();
+    const inc = logs.find((l) => l.msg.startsWith("ADP: CARD_TOKEN с признаком агента"));
+    expect(inc?.fields).toMatchObject({ incident: true, merchant_id: "MER-1042", acquirer_id: null, agent_code: AGENT, count: 1 });
+    expect(JSON.stringify(logs)).not.toContain("tok_card_1");
+  });
+
+  it("счётчик — по паре эквайрер + продавец: растёт по своей паре, другая пара — с единицы", async () => {
+    const { adp, logs } = setup();
+    const m = (op_ref: string, acquirer_id: string, id: string) => cardWithAoi({ op_ref, merchant: { id, acquirer_id } });
+    await adp.decide(m("c1", "ACQ-1", "MER-1042"));
+    await adp.decide(m("c2", "ACQ-1", "MER-1042"));
+    await adp.decide(m("c3", "ACQ-2", "MER-1042"));
+    await adp.decide(m("c4", "ACQ-1", "MER-2"));
+    const counts = logs
+      .filter((l) => l.msg.startsWith("ADP: CARD_TOKEN с признаком агента"))
+      .map((l) => [l.fields.acquirer_id, l.fields.merchant_id, l.fields.count]);
+    expect(counts).toEqual([
+      ["ACQ-1", "MER-1042", 1],
+      ["ACQ-1", "MER-1042", 2],
+      ["ACQ-2", "MER-1042", 1],
+      ["ACQ-1", "MER-2", 1],
+    ]);
+  });
+
+  it("CARD_TOKEN без признака — по-прежнему BYPASS (инвариант 2)", async () => {
+    const { adp } = setup();
+    expect(pair(await adp.decide(plain()))).toMatchObject({ decision: "BYPASS" });
+  });
+});
+
 describe("агент — из реестра (SPEC §6 п. 3, A1 п. 5.3, инвариант 5)", () => {
   it("нет в реестре — AGENT_UNKNOWN; EXCLUDED — AGENT_UNKNOWN; SUSPENDED — AGENT_SUSPENDED", async () => {
     const { adp, agents } = setup();
@@ -249,7 +291,7 @@ describe("агент — из реестра (SPEC §6 п. 3, A1 п. 5.3, инв
     expect(logs.some((l) => l.fields.incident === true && l.fields.kind === "NEW_KIND")).toBe(true);
   });
 
-  it("агентский токен с aoi до PS-14 — CREDENTIAL_INVALID (проверки 2 и 4 не подтверждены, РП43 п. 7), и до реестра", async () => {
+  it("агентский токен с aoi, которого нет в П5, — CREDENTIAL_INVALID на п. 2, до реестра (РП47 п. 6)", async () => {
     const { adp, agents } = setup();
     agents.map.clear();
     expect(await reasonOf(adp, msg({ instrument: { kind: "AGENT_TOKEN", token_ref: "tok_ag_1" } }))).toBe("CREDENTIAL_INVALID");
@@ -683,6 +725,7 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
       mandates: journal,
       state,
       operations: new MemoryOperationStore(),
+      credentials: agentTokenCredentials,
       params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
       clientLimits: NO_LIMITS,
       log: (_l, fields, m) => logs.push({ fields, msg: m }),
@@ -742,6 +785,7 @@ describe("повтор op_ref (ПИ-1, РП43 п. 5)", () => {
       mandates: journal,
       state: new StateService(ledger, journal, { reservationTtlSec: 600 }),
       operations,
+      credentials: agentTokenCredentials,
       params: { aoi_rollout_phase: 3, confirm_above_kop: THRESHOLD, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
       clientLimits: NO_LIMITS,
     });

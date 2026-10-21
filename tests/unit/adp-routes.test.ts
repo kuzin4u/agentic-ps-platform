@@ -8,9 +8,11 @@ import { buildServer } from "../../src/server.js";
 import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
 import { parseDecision } from "../../src/shared/codes.js";
 import { createStand } from "../../src/stand/index.js";
+import { agentToken, agentTokenCredentials } from "../support/agent-token.js";
 import { A, decide, mk, setup } from "../support/state.js";
 
-const auth = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
+/** Как пришло от процессинга; агентская — с AGENT_TOKEN (agentToken, РП48 (а)). */
+const raw = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
   op_ref: "OPKC-ROUTE-1",
   msg_type: "AUTH_REQUEST",
   channel: "CARD",
@@ -21,8 +23,9 @@ const auth = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
   aoi: { indicator: true, agent_code: A, mandate_id: "mnd_x" },
   ...over,
 });
+const auth = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => agentToken(raw(over));
 const plain = (): CanonicalMessage => {
-  const m = auth();
+  const m = raw();
   delete m.aoi;
   return m;
 };
@@ -35,6 +38,7 @@ function server() {
     clientLimits: { get: async () => [] },
     state: c.state,
     operations: new MemoryOperationStore(),
+    credentials: agentTokenCredentials,
     params: { aoi_rollout_phase: 3, confirm_above_kop: 1_000_000, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
   });
   return { c, adp, app: buildServer({ env: "dev", adp: { adp } }) };
@@ -110,13 +114,16 @@ describe("POST /adp/v1/decide (ПИ-1)", () => {
 });
 
 describe("стенд и main.ts (доп. РП43 п. 21)", () => {
-  it("createStand отдаёт POST /adp/v1/decide: неагентская — BYPASS, неизвестный агент — DECLINE AGENT_UNKNOWN", async () => {
+  it("createStand отдаёт POST /adp/v1/decide: неагентская — BYPASS; CARD_TOKEN с признаком и токен не из П5 — DECLINE CREDENTIAL_INVALID", async () => {
     const stand = createStand();
     try {
       const b = await post(stand.app, plain());
       expect(b.json().decision).toBe("BYPASS");
-      const d = await post(stand.app, auth({ aoi: { indicator: true, agent_code: "nspk:agent:nobody:v1", mandate_id: "mnd_x" } }));
-      expect(parseDecision(d.json(), "adp")).toEqual({ decision: "DECLINE", reason: "AGENT_UNKNOWN" });
+      const card = await post(stand.app, raw({ aoi: { indicator: true, agent_code: "nspk:agent:nobody:v1", mandate_id: "mnd_x" } }));
+      expect(parseDecision(card.json(), "adp")).toEqual({ decision: "DECLINE", reason: "CREDENTIAL_INVALID" });
+      // Токен, которого П5 стенда не выдавал (домен неизвестен), — тоже до реестра (РП47 п. 6).
+      const d = await post(stand.app, auth({ op_ref: "OPKC-ROUTE-2", aoi: { indicator: true, agent_code: "nspk:agent:nobody:v1", mandate_id: "mnd_x" } }));
+      expect(parseDecision(d.json(), "adp")).toEqual({ decision: "DECLINE", reason: "CREDENTIAL_INVALID" });
     } finally {
       await stand.close();
     }

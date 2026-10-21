@@ -5,10 +5,9 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
 import { parseDecision } from "../../src/shared/codes.js";
-import type { MandateRequest } from "../../src/shared/pao.js";
 import { createStand, type Stand } from "../../src/stand/index.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
-import { signedInject } from "../support/signed-inject.js";
+import { standPay } from "../support/stand-pay.js";
 
 const CODE = "nspk:agent:ps-nine:v1";
 const PRINCIPAL = "prn_ps_nine";
@@ -32,51 +31,26 @@ describe("ПС09 на стенде: LIMIT_EXCEEDED и уведомление э�
   });
   afterAll(async () => stand.close());
 
+  const pay = () => standPay(stand, side, CODE, PRINCIPAL);
+  /** CART под INTENT того же предела: агентская оплата идёт по CART (РП47 п. 2); уведомления — по мандату операции. */
   const mandate = async (amount_limit: number): Promise<string> => {
-    const req: MandateRequest = {
-      type: "INTENT",
-      subject: "продукты",
-      amount_limit,
-      currency: "RUB",
-      valid_to: "2026-10-26T00:00:00Z",
-      merchant_scope: ["MER-1042"],
-      principal_ref: PRINCIPAL,
-      mode: "IMMEDIATE",
-    };
-    const res = await signedInject(stand.app, side, CODE, {
-      method: "POST",
-      path: "/pao/v1/mandates",
-      body: JSON.stringify(req),
-      headers: { "idempotency-key": randomUUID() },
-      now: stand.now(),
-    });
-    expect(res.statusCode).toBe(201);
-    const id = (res.json() as { id: string }).id;
-    expect((await stand.issuer.sign(id)).statusCode).toBe(200);
-    return id;
+    const p = pay();
+    return p.cart(await p.mandate({ amount_limit }), amount_limit);
   };
-  const auth = (mandate_id: string, amount: number, op_ref = `OPKC-PS09-${randomUUID()}`): CanonicalMessage => ({
-    op_ref,
-    msg_type: "AUTH_REQUEST",
-    channel: "CARD",
-    amount,
-    currency: "RUB",
-    merchant: { id: "MER-1042", mcc: "5411" },
-    instrument: { kind: "CARD_TOKEN", token_ref: "tok_card_1" },
-    aoi: { indicator: true, agent_code: CODE, mandate_id },
-  });
+  const auth = (mandate_id: string, amount: number, op_ref?: string) => pay().auth(mandate_id, amount, op_ref);
   const decide = async (m: CanonicalMessage) =>
     parseDecision((await stand.app.inject({ method: "POST", url: "/adp/v1/decide", payload: m })).json(), "adp");
   const feed = async (): Promise<Feed["notifications"]> => ((await stand.issuer.getNotifications()).body as Feed).notifications;
 
   it("остаток мандата меньше суммы — DECLINE LIMIT_EXCEEDED; уведомление в ленте банка только после прохода уведомителя, повтор op_ref — без второго", async () => {
     const m = await mandate(100_000);
-    expect(await decide(auth(m, 60_000))).toEqual({ decision: "APPROVE", reason: null });
+    expect(await decide(await auth(m, 60_000))).toEqual({ decision: "APPROVE", reason: null });
     const op = `OPKC-PS09-${randomUUID()}`;
-    expect(await decide(auth(m, 60_000, op))).toEqual({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
+    const declined = await auth(m, 60_000, op);
+    expect(await decide(declined)).toEqual({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
     // Вне пути авторизации: до прохода уведомителя ленты по решению нет.
     expect((await feed()).filter((n) => n.data.mandate_id === m)).toEqual([]);
-    expect(await decide(auth(m, 60_000, op))).toEqual({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
+    expect(await decide(declined)).toEqual({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
     await stand.notifyParticipants();
     const mine = (await feed()).filter((n) => n.data.mandate_id === m);
     expect(sorted(mine.map((n) => [n.type, n.data.op_ref ?? null, n.data.reason ?? null]))).toEqual([
@@ -93,8 +67,8 @@ describe("ПС09 на стенде: LIMIT_EXCEEDED и уведомление э�
   it("лимит клиента за сутки исчерпан резервом — client.limit_exhausted; следующий отказ — limit_declined с reason CLIENT", async () => {
     expect((await stand.issuer.setLimits(PRINCIPAL, { per_period: 50_000, period: "DAY", currency: "RUB" }, 1)).statusCode).toBe(200);
     const m = await mandate(500_000);
-    expect(await decide(auth(m, 50_000))).toEqual({ decision: "APPROVE", reason: null });
-    expect(await decide(auth(m, 1_000))).toEqual({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
+    expect(await decide(await auth(m, 50_000))).toEqual({ decision: "APPROVE", reason: null });
+    expect(await decide(await auth(m, 1_000))).toEqual({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
     await stand.notifyParticipants();
     const mine = (await feed()).filter((n) => n.data.mandate_id === m);
     expect(sorted(mine.map((n) => [n.type, n.data.reason ?? null]))).toEqual([

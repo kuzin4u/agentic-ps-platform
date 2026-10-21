@@ -138,6 +138,8 @@ export class Adp {
   private readonly now: () => Date;
   /** Решения в работе по op_ref внутри процесса: одновременный повтор ждёт первое и получает его ответ. */
   private readonly inflight = new Map<string, Promise<Decision>>();
+  /** Инциденты «CARD_TOKEN с признаком» по паре эквайрер + продавец (РП48 (а)): в памяти процесса, с перезапуском — с нуля. */
+  private readonly cardTokenAoi = new Map<string, number>();
 
   constructor(private readonly opts: AdpOptions) {
     this.log = opts.log ?? (() => {});
@@ -271,7 +273,8 @@ export class Adp {
     // 2. Домен токена (РП47 п. 6): только AGENT_TOKEN, до реестра; домен — из записи токена Платформы, а не из aoi.
     // Без признака (очередь 1–2) агент и мандат — из домена: сверять не с чем (РП48 (г)). ACCOUNT_LINK — до PS-21 не
     // подтверждено (РП43 п. 7). Неизвестный вид с aoi — реквизит не опознан: CREDENTIAL_INVALID и инцидент (доп. РП43
-    // п. 13). CARD_TOKEN с aoi — без п. 2 и 4 (РП47 п. 9; решение — PS-14 ч. 2).
+    // п. 13). CARD_TOKEN с aoi — не реквизит П5 (нет домена и криптограммы): CREDENTIAL_INVALID и инцидент со счётчиком
+    // по эквайреру и продавцу (РП48 (а)); без aoi он — BYPASS выше (инвариант 2).
     const credentials = this.opts.credentials;
     const token_ref = msg.instrument?.token_ref;
     let agent_code: string;
@@ -293,15 +296,23 @@ export class Adp {
       }
       agent_code = token.agent_code;
       mandate_id = token.mandate_id;
-    } else if (kind !== "CARD_TOKEN" || aoi === undefined) {
-      if (!agentInstrument) {
+    } else {
+      if (kind === "CARD_TOKEN") {
+        // Ложный признак эквайрера отклоняет и покупку человека (остаточный риск РП48 (а)) — счётчик показывает источник.
+        const acquirer_id = msg.merchant?.acquirer_id ?? null;
+        const merchant_id = msg.merchant?.id ?? null;
+        const pair = `${acquirer_id ?? ""}\n${merchant_id ?? ""}`;
+        const count = (this.cardTokenAoi.get(pair) ?? 0) + 1;
+        this.cardTokenAoi.set(pair, count);
+        this.log(
+          "warn",
+          { op_ref: msg.op_ref, acquirer_id, merchant_id, agent_code: aoiCode, count, incident: true },
+          "ADP: CARD_TOKEN с признаком агента — не агентский реквизит",
+        );
+      } else if (!agentInstrument) {
         this.log("warn", { op_ref: msg.op_ref, kind, incident: true }, "ADP: неизвестный вид инструмента при признаке");
       }
       return no("CREDENTIAL_INVALID");
-    } else {
-      if (aoiCode === undefined) return no("AOI_MISSING");
-      agent_code = aoiCode;
-      mandate_id = aoi.mandate_id;
     }
 
     // 3. Агент — из реестра (инвариант 5). Исключённый — вне реестра (A1 п. 5.3); сбой реестра — не подтверждено.

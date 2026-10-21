@@ -2,10 +2,10 @@
 // повтор пересчитывает её по записи реквизита (та же криптограмма, текущий status). Сбой пересчёта — 5xx без записи.
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AsyncIdempotencyStore } from "@kuzin4u/agentic-core";
 import { ConsentJournal, MemoryConsentStore } from "../../src/consent/index.js";
-import { Credentials, MemoryCredentialStore } from "../../src/credentials/index.js";
+import { Credentials, MemoryCredentialStore, P5_UPSTREAM_TIMEOUT_MS } from "../../src/credentials/index.js";
 import { createIssuerEmulator } from "../../src/env/issuer/index.js";
 import { createTokenServiceEmulator } from "../../src/env/tsp/index.js";
 import { paoIdempotency, type PaoReply } from "../../src/pao/idempotency.js";
@@ -48,7 +48,8 @@ async function gateway() {
   const issuer = createIssuerEmulator();
   const tsp = createTokenServiceEmulator();
   const store = new MemoryCredentialStore();
-  const sw = { tspDown: false };
+  /** tspDown — отказ токен-сервиса; tspHang — без ответа; tamper — пересчёт не совпадает с хэшем (сменился ключ). */
+  const sw = { tspDown: false, tspHang: false, tamper: false };
   const lines: string[] = [];
   const credentials = new Credentials({
     mandates: {
@@ -60,7 +61,11 @@ async function gateway() {
     store,
     tsp: {
       issueToken: (i) => tsp.issueToken(i),
-      cryptogram: (i) => (sw.tspDown ? Promise.reject(new Error("down")) : tsp.cryptogram(i)),
+      cryptogram: async (i) => {
+        if (sw.tspDown) throw new Error("down");
+        if (sw.tspHang) return new Promise<string>(() => {});
+        return (await tsp.cryptogram(i)) + (sw.tamper ? "x" : "");
+      },
     },
     funding: issuer,
     params: { cryptogram_ttl_sec: params.cryptogram_ttl_sec },
@@ -94,7 +99,7 @@ async function gateway() {
   await app.ready();
   const post = (raw: string, key: string) =>
     signedInject(app, side, CODE, { method: "POST", path: "/pao/v1/credentials", body: raw, headers: { "idempotency-key": key } });
-  return { app, post, saved, store, tsp, sw, lines };
+  return { app, post, saved, store, tsp, sw, lines, credentials };
 }
 
 describe("POST /pao/v1/credentials под тем же Idempotency-Key (РП48 (в))", () => {
@@ -173,6 +178,70 @@ describe("POST /pao/v1/credentials под тем же Idempotency-Key (РП48 (�
     const b = await g.post(body({ merchant_id: "MER-OTHER" }), key);
     expect([b.statusCode, b.body]).toEqual([409, a.body]);
     expect(g.saved).toHaveLength(1);
+    await g.app.close();
+  });
+
+  it("в записи по заказу другой credential_ref — 503 STATE_UNAVAILABLE и инцидент, значение не выдаётся", async () => {
+    const g = await gateway();
+    const key = randomUUID();
+    const c = (await g.post(body(), key)).json() as Credential;
+    const real = g.store.credentialByOrder.bind(g.store);
+    g.store.credentialByOrder = async (...a) => {
+      const r = await real(...a);
+      return r && { ...r, credential_ref: "crd_other" };
+    };
+    const r = await g.post(body(), key);
+    expect([r.statusCode, (r.json() as { code: string }).code]).toEqual([503, "STATE_UNAVAILABLE"]);
+    expect(r.body).not.toContain(c.payload.cryptogram as string);
+    expect(g.lines.some((l) => l.includes("повтор под ключом — запись реквизита не найдена") && l.includes('"incident":true'))).toBe(true);
+    await g.app.close();
+  });
+
+  it("пересчёт при повторе не совпал с хэшем записи (сменился ключ токен-сервиса) — 503 UPSTREAM_UNAVAILABLE и инцидент", async () => {
+    const g = await gateway();
+    const key = randomUUID();
+    await g.post(body(), key);
+    g.sw.tamper = true;
+    const r = await g.post(body(), key);
+    expect([r.statusCode, (r.json() as { code: string }).code]).toEqual([503, "UPSTREAM_UNAVAILABLE"]);
+    expect(r.headers["retry-after"]).toBeDefined();
+    expect(r.json()).not.toHaveProperty("payload");
+    expect(g.lines.some((l) => l.startsWith("П5: пересчёт криптограммы не совпал с записью") && l.includes('"incident":true'))).toBe(true);
+    await g.app.close();
+  });
+
+  it("пересборка бросила не-Unavailable — 503 UPSTREAM_UNAVAILABLE, ошибка в журнале процесса, значения в ответе нет", async () => {
+    const g = await gateway();
+    const key = randomUUID();
+    const c = (await g.post(body(), key)).json() as Credential;
+    g.credentials.replay = async () => {
+      throw new Error("сбой");
+    };
+    const r = await g.post(body(), key);
+    expect([r.statusCode, (r.json() as { code: string }).code]).toEqual([503, "UPSTREAM_UNAVAILABLE"]);
+    expect(r.body).not.toContain(c.payload.cryptogram as string);
+    expect(g.lines.some((l) => l.includes("сбой хранилища идемпотентности или обработчика"))).toBe(true);
+    await g.app.close();
+  });
+
+  it("токен-сервис не ответил при повторе за P5_UPSTREAM_TIMEOUT_MS — 503 UPSTREAM_UNAVAILABLE с Retry-After", async () => {
+    const g = await gateway();
+    const key = randomUUID();
+    await g.post(body(), key);
+    g.sw.tspHang = true;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = g.post(body(), key);
+      // Таймер вызова ставится после проверки подписи и чтения записи — ждём его настоящим setImmediate (он не подменён).
+      for (let i = 0; i < 1_000 && vi.getTimerCount() === 0; i++) await new Promise((r) => setImmediate(r));
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      await vi.advanceTimersByTimeAsync(P5_UPSTREAM_TIMEOUT_MS);
+      const r = await pending;
+      expect([r.statusCode, (r.json() as { code: string }).code]).toEqual([503, "UPSTREAM_UNAVAILABLE"]);
+      expect(r.headers["retry-after"]).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
     await g.app.close();
   });
 });

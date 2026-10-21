@@ -198,22 +198,24 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     const { path, query } = target(req);
     const keyHash = idempotencyKeyHash(key);
     let r: PaoReply;
-    // Ответ первого исполнения — агенту целиком; под ключом — его stored (РП48 (в)).
+    // Ответ первого исполнения, когда под ключом хранится другое тело (stored, РП48 (в)): агенту — он целиком. Без stored
+    // агенту — ответ ядра (канонический JSON), как и при повторе: первый ответ и повтор совпадают побайтно.
     let fresh: PaoReply | undefined;
     try {
       const run = await deps.idempotency(agent.agent_code).run(
-          keyHash,
-          { method: req.method, path, query, body: raw },
-          async () => {
-            // Предел — от захвата ключа: аренда отсчитывается от него же.
-            const out = await handler(agent, input, { keyHash, beforeWrite: handlerDeadline(PAO_HANDLER_BUDGET_MS, clock) });
-            // 5xx не сохраняется (РП30 п. 3): исключение снимает захват, повтор исполняется заново; ответ — как вернул обработчик.
-            if (out.status >= 500) throw new UnstoredReply({ http: out.status, body: out.body as PaoErrorReply["body"] });
-            fresh = { status: out.status, body: out.body };
-            return out.stored ?? fresh;
-          },
-        );
-      if (!run.replayed && fresh) r = fresh;
+        keyHash,
+        { method: req.method, path, query, body: raw },
+        async () => {
+          // Предел — от захвата ключа: аренда отсчитывается от него же.
+          const out = await handler(agent, input, { keyHash, beforeWrite: handlerDeadline(PAO_HANDLER_BUDGET_MS, clock) });
+          // 5xx не сохраняется (РП30 п. 3): исключение снимает захват, повтор исполняется заново; ответ — как вернул обработчик.
+          if (out.status >= 500) throw new UnstoredReply({ http: out.status, body: out.body as PaoErrorReply["body"] });
+          if (out.stored === undefined) return { status: out.status, body: out.body };
+          fresh = { status: out.status, body: out.body };
+          return out.stored;
+        },
+      );
+      if (!run.replayed) r = fresh ?? run.result;
       else if (opts.replay && run.result.status < 300) r = await opts.replay(agent, input, run.result);
       else r = run.result;
     } catch (err) {

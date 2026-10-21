@@ -5,10 +5,11 @@ import { Adp, MemoryOperationStore } from "../../src/adp/index.js";
 import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
 import { parseDecision } from "../../src/shared/codes.js";
 import { accountId } from "../../src/state/index.js";
+import { agentToken, agentTokenCredentials } from "../support/agent-token.js";
 import { A, decide, intent, mk, setup, type Ctx } from "../support/state.js";
 
 let seq = 0;
-const auth = (mandate_id: string, amount: number): CanonicalMessage => ({
+const auth = (mandate_id: string, amount: number): CanonicalMessage => agentToken({
   op_ref: `OPKC-WIRING-${++seq}`,
   msg_type: "AUTH_REQUEST",
   channel: "CARD",
@@ -26,6 +27,7 @@ function adpFor(c: Ctx): Adp {
     clientLimits: { get: async () => [] },
     state: c.state,
     operations: new MemoryOperationStore(),
+    credentials: agentTokenCredentials,
     params: { aoi_rollout_phase: 3, confirm_above_kop: 1_000_000, split_window_sec: 600, split_min_ops: 2, client_limit_period_tz: "Europe/Moscow" },
   });
 }
