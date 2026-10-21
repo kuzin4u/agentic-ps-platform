@@ -110,6 +110,17 @@ function suite(make: () => Promise<Ctx>): void {
     expect(mine[0]?.data).toEqual({ principal_ref: "prn_1", mandate_id: M1, agent_code: AGENT, op_ref: op, reason: "CLIENT" });
   });
 
+  it("предел инструмента — reason INSTRUMENT; запись без limit_source (решение до v0.14.0) — без reason (РП49 (е))", async () => {
+    const ctx = await make();
+    const before = (await feed(ctx.store)).length;
+    const inst = await decided(ctx, DECLINE("LIMIT_EXCEEDED"), { notify: client({ limit_source: "INSTRUMENT" }) });
+    const old = await decided(ctx, DECLINE("LIMIT_EXCEEDED"), { notify: client() });
+    await notifier(ctx.store).runOnce();
+    const mine = (await feed(ctx.store)).slice(before);
+    expect(mine.find((x) => x.data.op_ref === inst)?.data).toEqual({ principal_ref: "prn_1", mandate_id: M1, agent_code: AGENT, op_ref: inst, reason: "INSTRUMENT" });
+    expect(mine.find((x) => x.data.op_ref === old)?.data).toEqual({ principal_ref: "prn_1", mandate_id: M1, agent_code: AGENT, op_ref: old });
+  });
+
   it("остаток счёта клиента стал 0 — client.limit_exhausted одно на счёт периода", async () => {
     const ctx = await make();
     const account = `${ACCOUNT}:${opRef()}`;

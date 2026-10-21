@@ -20,8 +20,9 @@ const auth = (mandate_id: string, amount: number): CanonicalMessage => agentToke
   aoi: { indicator: true, agent_code: A, mandate_id },
 });
 
-function adpFor(c: Ctx): Adp {
+function adpFor(c: Ctx, logs: string[] = []): Adp {
   return new Adp({
+    log: (_l, _f, msg) => logs.push(msg),
     agents: { get: (code) => (code === A ? { status: "ACTIVE", level: 2 } : undefined) },
     mandates: { get: (id, a) => c.consent.adpMandate(id, a) },
     clientLimits: { get: async () => [] },
@@ -40,7 +41,9 @@ describe("ADP ← журнал согласий и П3 (РП43 п. 5–6)", () =
     const p = await mk(c);
     await decide(c, p);
     // Ветка INTENT в ADP (один резерв) до PS-21 недостижима: токен только по CART (STATUS «Открыто»).
-    expect(parseDecision(await adpFor(c).decide(auth(p.id, 20_000)), "adp")).toEqual({ decision: "DECLINE", reason: "STATE_UNAVAILABLE" });
+    const logs: string[] = [];
+    expect(parseDecision(await adpFor(c, logs).decide(auth(p.id, 20_000)), "adp")).toEqual({ decision: "DECLINE", reason: "STATE_UNAVAILABLE" });
+    expect(logs).toContain("ADP: мандат домена токена не CART");
     expect(await left(c, p.id)).toBe(50_000);
     const cart = await cartUnder(c, p.id, 50_000);
     const d = await adpFor(c).decide(auth(cart, 20_000));

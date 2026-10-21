@@ -85,11 +85,16 @@ export class AdpRequestInvalid extends Error {
 const AGENT_INSTRUMENTS: readonly string[] = ["AGENT_TOKEN", "ACCOUNT_LINK"];
 
 /**
- * Неагентская операция ⇔ нет aoi и instrument.kind = CARD_TOKEN (ПИ-1, РП4). Только два поля сообщения: без хранилищ,
- * записи операции, идемпотентности и разбора остального тела (РП43 п. 1). aoi: null — как отсутствие признака.
+ * Неагентская операция ⇔ instrument.kind = CARD_TOKEN и признака нет (ПИ-1, РП4). Только два поля сообщения: без
+ * хранилищ, записи операции, идемпотентности и разбора остального тела (РП43 п. 1). aoi: null — как отсутствие признака;
+ * aoi.indicator === false без кода агента и мандата (нет или null) — тоже (РП49 (в)): эквайрер может передавать поле
+ * признака во всех сообщениях. false с кодом агента или мандатом — противоречивый признак, агентская.
  */
 export function isBypass(msg: Pick<CanonicalMessage, "aoi" | "instrument">): boolean {
-  return (msg.aoi === undefined || msg.aoi === null) && msg.instrument?.kind === "CARD_TOKEN";
+  if (msg.instrument?.kind !== "CARD_TOKEN") return false;
+  const aoi = msg.aoi;
+  if (aoi === undefined || aoi === null) return true;
+  return aoi.indicator === false && (aoi.agent_code === undefined || aoi.agent_code === null) && (aoi.mandate_id === undefined || aoi.mandate_id === null);
 }
 
 /**
@@ -264,6 +269,9 @@ export class Adp {
       // токена на п. 2 (РП22 п. 6, РП48 (г)); ACCOUNT_LINK — до PS-21 не подтверждено.
       if (this.opts.params.aoi_rollout_phase === 3) return no("AOI_MISSING");
       if (kind !== "AGENT_TOKEN") return no("CREDENTIAL_INVALID");
+    } else if (kind === "CARD_TOKEN" && aoi.indicator === false) {
+      // Противоречивый признак: false с кодом агента или мандатом (без них — BYPASS выше). Сигнал ошибки эквайрера —
+      // в ветку CARD_TOKEN с признаком на п. 2: CREDENTIAL_INVALID и счётчик РП48 (а) (РП49 (в) п. 3, «да» владельца 21.10).
     } else if (aoi.indicator !== true || !wellFormedCode(aoi.agent_code)) {
       return no("AOI_MISSING");
     }
@@ -306,7 +314,8 @@ export class Adp {
         this.cardTokenAoi.set(pair, count);
         this.log(
           "warn",
-          { op_ref: msg.op_ref, acquirer_id, merchant_id, agent_code: aoiCode, count, incident: true },
+          // Код агента — только по форме: у противоречивого признака (РП49 (в)) он не проверен на п. 1 (инвариант 1).
+          { op_ref: msg.op_ref, acquirer_id, merchant_id, agent_code: wellFormedCode(aoiCode) ? aoiCode : null, count, incident: true },
           "ADP: CARD_TOKEN с признаком агента — не агентский реквизит",
         );
       } else if (!agentInstrument) {
@@ -376,8 +385,8 @@ export class Adp {
     }
     if (limits?.per_operation !== undefined && msg.amount > limits.per_operation) return no("LIMIT_EXCEEDED", mandate_id, "CLIENT");
     // 7. Ограничение инструмента (A3 п. 7.2, РП47 п. 7): сумма > amount_max или валюта ≠ валюте реквизита. Источник предела
-    // в уведомлении — не MANDATE и не CLIENT: client.limit_declined без reason (INSTRUMENT — PS-14 ч. 2, ПИ-8).
-    if (cred && (msg.amount > cred.amount_max || msg.currency !== cred.currency)) return no("LIMIT_EXCEEDED", mandate_id);
+    // в уведомлении — INSTRUMENT (РП49 (е), ПИ-8).
+    if (cred && (msg.amount > cred.amount_max || msg.currency !== cred.currency)) return no("LIMIT_EXCEEDED", mandate_id, "INSTRUMENT");
     const client = read?.period && m.client ? this.clientAccount(m.client, read.period) : undefined;
 
     // Счета резерва: CART — свой и родителя INTENT, всегда в порядке «CART → родитель» (РП43 п. 6); INTENT — один.

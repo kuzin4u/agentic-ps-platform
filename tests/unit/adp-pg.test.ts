@@ -80,6 +80,13 @@ describe.skipIf(!DATABASE_URL)("запись операции ADP на PostgreSQ
     await s1.finish({ op_ref: bare, msg_hash: H, decision: APPROVE, mandate_id: null, holds: [], at: AT });
     const b = await db.pool.query("SELECT participant_code, limit_source FROM adp_operations WHERE op_ref = $1", [bare]);
     expect(b.rows[0]).toEqual({ participant_code: null, limit_source: null });
+    // Предел инструмента — INSTRUMENT (РП49 (е)): CHECK sql/109 его принимает.
+    const inst = opRef();
+    await s1.begin(inst, H, AT);
+    const declined: Decision = { decision: "DECLINE", reason: "LIMIT_EXCEEDED", decided_in_ms: 3 };
+    await s1.finish({ op_ref: inst, msg_hash: H, decision: declined, mandate_id: "mnd_1", holds: [], at: AT, notify: { ...notify, limit_source: "INSTRUMENT" } });
+    const i = await db.pool.query("SELECT limit_source FROM adp_operations WHERE op_ref = $1", [inst]);
+    expect(i.rows[0]).toEqual({ limit_source: "INSTRUMENT" });
   });
 
   it("finish с другим хэшем не меняет запись «в работе»", async () => {
@@ -166,6 +173,19 @@ class Mandates implements AdpMandates, MandateBudgetSource {
     this.roots.set(id, root);
     return id;
   }
+  /** Корень INTENT со своим пределом и CART под ним (связывающий корень: сумма CART больше предела корня). */
+  addRoot(limit: number): string {
+    const root = mandate();
+    this.map.set(root, { status: "ACTIVE", type: "INTENT", merchant_scope: ["MER-1042"], currency: "RUB", amount_limit: limit, client: { participant_code: "bank:pg", principal_ref: `prn_${mseq}` } });
+    return root;
+  }
+  addCart(root: string, limit: number): string {
+    const id = mandate();
+    const r = this.map.get(root) as AdpMandate;
+    this.map.set(id, { ...r, type: "CART", parent_id: root, amount_limit: limit });
+    this.roots.set(id, root);
+    return id;
+  }
   /** Ключ окна дробления мандата — его корень INTENT. */
   root(id: string): string {
     return this.roots.get(id) as string;
@@ -239,6 +259,23 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
     const a = await ledger.account(accountId(M));
     expect(a.reserved + a.committed, "перерасход: закреплено + зарезервировано > предела").toBeLessThanOrEqual(a.limit);
     expect(a.reserved).toBe(300_000);
+  });
+
+  it("связывающий корень: две CART по 3 000 ₽ под INTENT 3 000 ₽, 20 по 1 000 ₽ с двух экземпляров — ровно 3 APPROVE, удержания CART у отказанных освобождены", async () => {
+    // Ревью К1б № 6 (решение владельца): решает счёт корня, а не CART — путь «CART прошёл, корень отказал» под гонкой.
+    const root = mandates.addRoot(300_000);
+    const [c1, c2] = [mandates.addCart(root, 300_000), mandates.addCart(root, 300_000)];
+    const ds = await Promise.all(Array.from({ length: 20 }, (_, i) => (i % 2 ? a1 : a2).decide(auth(i % 4 < 2 ? c1 : c2, `OPKC-ROOT-PG-${i}`, 100_000))));
+    const pairs = ds.map((d) => parseDecision(d, "adp"));
+    const approved = pairs.filter((p) => p.decision === "APPROVE").length;
+    expect(approved, `перерасход корня: одобрено ${approved} при месте для 3 (инвариант 4)`).toBe(3);
+    expect(pairs.filter((p) => p.reason === "LIMIT_EXCEEDED")).toHaveLength(17);
+    const r = await ledger.account(accountId(root));
+    expect(r.reserved + r.committed, "перерасход: закреплено + зарезервировано > предела корня").toBeLessThanOrEqual(r.limit);
+    expect(r.reserved).toBe(300_000);
+    // Отказ корня освобождает удержание CART: на счетах CART держится ровно одобренное.
+    const held = (await ledger.account(accountId(c1))).reserved + (await ledger.account(accountId(c2))).reserved;
+    expect(held, "удержание CART не освобождено после отказа корня (РП43 п. 6)").toBe(300_000);
   });
 
   it("бюджет и дробление в одном залпе (РП44 доп. п. 1): 20 по 1 000 ₽ при пределе и пороге 3 000 ₽ — ровно 3 APPROVE", async () => {

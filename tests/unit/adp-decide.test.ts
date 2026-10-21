@@ -199,7 +199,38 @@ describe("BYPASS — первая проверка (РП4, РП43 п. 1, инв�
     expect(isBypass({ instrument: { kind: "CARD_TOKEN" } })).toBe(true);
     expect(isBypass({ instrument: { kind: "AGENT_TOKEN" } })).toBe(false);
     expect(isBypass({ instrument: { kind: "ACCOUNT_LINK" } })).toBe(false);
-    expect(isBypass({ instrument: { kind: "CARD_TOKEN" }, aoi: { indicator: false } })).toBe(false);
+    // РП49 (в): indicator: false без кода агента и мандата — как отсутствие признака (было: агентская, РП43 п. 1).
+    expect(isBypass({ instrument: { kind: "CARD_TOKEN" }, aoi: { indicator: false } })).toBe(true);
+    expect(isBypass({ instrument: { kind: "CARD_TOKEN" }, aoi: { indicator: false, agent_code: null, mandate_id: null } as unknown as CanonicalMessage["aoi"] })).toBe(true);
+    // Противоречивый признак и признак без indicator — агентская; агентский инструмент с false — агентская.
+    expect(isBypass({ instrument: { kind: "CARD_TOKEN" }, aoi: { indicator: false, agent_code: AGENT } })).toBe(false);
+    expect(isBypass({ instrument: { kind: "CARD_TOKEN" }, aoi: { indicator: false, mandate_id: M } })).toBe(false);
+    expect(isBypass({ instrument: { kind: "CARD_TOKEN" }, aoi: {} })).toBe(false);
+    expect(isBypass({ instrument: { kind: "AGENT_TOKEN" }, aoi: { indicator: false } })).toBe(false);
+  });
+
+  it("CARD_TOKEN с indicator: false без кода и мандата — BYPASS при сбое хранилищ, без обращений и вне счётчика РП48 (а) (РП49 (в))", async () => {
+    const { adp, agents, journal, broken, io, logs } = setup();
+    agents.failing = true;
+    journal.failing = true;
+    for (const m of ["begin", "finish", "enterWindow", "get", "reserve", "available", "release", "account"]) broken.add(m);
+    expect(pair(await adp.decide(raw({ aoi: { indicator: false } })))).toEqual({ decision: "BYPASS", reason: null });
+    expect([agents.calls, journal.calls, io.n]).toEqual([0, 0, 0]);
+    expect(logs).toHaveLength(0);
+  });
+
+  it("CARD_TOKEN с indicator: false и кодом агента или мандатом — противоречивый признак: CREDENTIAL_INVALID и инцидент в счётчике (РП49 (в))", async () => {
+    const { adp, logs } = setup();
+    expect(await reasonOf(adp, raw({ aoi: { indicator: false, agent_code: AGENT } }))).toBe("CREDENTIAL_INVALID");
+    expect(await reasonOf(adp, raw({ op_ref: "OPKC-F2", aoi: { indicator: false, mandate_id: M } }))).toBe("CREDENTIAL_INVALID");
+    const counted = logs.filter((l) => l.msg === "ADP: CARD_TOKEN с признаком агента — не агентский реквизит" && l.fields.incident === true);
+    expect(counted.map((l) => l.fields.count)).toEqual([1, 2]);
+    expect(counted.map((l) => l.fields.agent_code)).toEqual([AGENT, null]);
+    // Код не по форме в журнал не попадает (инвариант 1).
+    expect(await reasonOf(adp, raw({ op_ref: "OPKC-F4", aoi: { indicator: false, agent_code: "x 2200 0000" } }))).toBe("CREDENTIAL_INVALID");
+    expect(logs.at(-1)?.fields.agent_code).toBeNull();
+    // Признак без indicator — AOI_MISSING, как прежде.
+    expect(await reasonOf(adp, raw({ op_ref: "OPKC-F3", aoi: {} }))).toBe("AOI_MISSING");
   });
 });
 
@@ -832,6 +863,8 @@ describe("сверка статуса после резерва (РП43 п. 5, �
     journal.onGet = (n) => (n === READ_P12 ? "REVOKED" : undefined);
     expect(await reasonOf(adp, msg())).toBe("MANDATE_REVOKED");
     expect(await available()).toBe(LIMIT);
+    // У CART — и удержание корня (ревью К1б № 2).
+    expect(await available(ROOT)).toBe(ROOT_LIMIT);
   });
 
   it("второе чтение не удалось — STATE_UNAVAILABLE, удержание освобождено", async () => {
@@ -839,6 +872,7 @@ describe("сверка статуса после резерва (РП43 п. 5, �
     journal.onGet = (n) => (n === READ_P12 ? "fail" : undefined);
     expect(await reasonOf(adp, msg())).toBe("STATE_UNAVAILABLE");
     expect(await available()).toBe(LIMIT);
+    expect(await available(ROOT)).toBe(ROOT_LIMIT);
   });
 
   it("освобождение не удалось — отказ остаётся, удержание держит бюджет (безопасная сторона), запись в журнал", async () => {
@@ -847,6 +881,7 @@ describe("сверка статуса после резерва (РП43 п. 5, �
     broken.add("release");
     expect(await reasonOf(adp, msg())).toBe("MANDATE_REVOKED");
     expect(await available()).toBe(LIMIT - 189_000);
+    expect(await available(ROOT)).toBe(ROOT_LIMIT - 189_000);
     expect(logs.some((l) => l.msg.includes("не освобождено"))).toBe(true);
   });
 });
@@ -1126,6 +1161,7 @@ describe("лимит клиента: CART, отзыв после резерва,
     journal.onGet = (n) => (n === READ_P12 ? "REVOKED" : undefined);
     expect(await reasonOf(adp, msg({ op_ref: "rev-1", amount: 100_000 }))).toBe("MANDATE_REVOKED");
     expect(await available()).toBe(LIMIT);
+    expect(await available(ROOT)).toBe(ROOT_LIMIT);
     expect((await ledger.available(clientAcc)).amount).toBe(300_000);
   });
 

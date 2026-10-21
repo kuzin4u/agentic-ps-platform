@@ -32,8 +32,11 @@ export interface OperationNotify {
   readonly client_left_after?: number;
 }
 
-/** Чей предел сработал у LIMIT_EXCEEDED: мандата (в том числе родителя CART) или лимита клиента за период. */
-export type LimitSource = "MANDATE" | "CLIENT";
+/**
+ * Чей предел сработал у LIMIT_EXCEEDED: мандата (в том числе родителя CART), лимита клиента или инструмента — amount_max
+ * реквизита (РП49 (е)).
+ */
+export type LimitSource = "MANDATE" | "CLIENT" | "INSTRUMENT";
 
 /** Вход операции в окно дробления (РП44 п. 4): ключ — корневой INTENT, сумма парой с валютой, время — часы Платформы. */
 export interface WindowEntry {

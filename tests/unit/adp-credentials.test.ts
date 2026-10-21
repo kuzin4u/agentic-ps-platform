@@ -26,6 +26,8 @@ interface World {
   adpWith: (over: Partial<Pick<AdpOptions, "credentials" | "mandates" | "agents">>) => Adp;
   /** Число вызовов резерва счетов мандата (П3): тест различает «зарезервировал и освободил» и «отказал до резерва». */
   reserves: () => number;
+  /** Записи операций ADP: признаки уведомителя (limit_source). */
+  records: MemoryOperationStore;
 }
 
 /**
@@ -74,6 +76,7 @@ async function world(
       ? []
       : [{ limits: { per_period: opts.clientPerPeriod, period: "DAY", currency: "RUB" }, received_at: "2026-10-18T00:00:00Z" }];
   let reserves = 0;
+  const records = new MemoryOperationStore();
   const state: AdpOptions["state"] = {
     reserve: (...a) => (reserves++, c.state.reserve(...a)),
     reserveClient: (...a) => c.state.reserveClient(...a),
@@ -87,7 +90,7 @@ async function world(
     mandates: { get: (id, a) => c.consent.adpMandate(id, a) },
     clientLimits: { get: async () => versions },
     state,
-    operations: new MemoryOperationStore(),
+    operations: records,
     credentials: store,
     params: {
       aoi_rollout_phase: opts.phase ?? 3,
@@ -106,7 +109,7 @@ async function world(
     return r.credential;
   };
   const adpWith = (over: Partial<Pick<AdpOptions, "credentials" | "mandates" | "agents">>) => new Adp({ ...adpOpts, ...over });
-  return { c, store, adp, parent: p.id, cart: cart.id, issue, logs, setNow: (t) => (now = t), adpWith, reserves: () => reserves };
+  return { c, store, adp, parent: p.id, cart: cart.id, issue, logs, setNow: (t) => (now = t), adpWith, reserves: () => reserves, records };
 }
 
 const auth = (w: World, cred: Credential, over: Partial<CanonicalMessage> = {}, amount = 20_000): CanonicalMessage => ({
@@ -209,7 +212,10 @@ describe("ADP п. 2 и 4: агентский токен (РП47 п. 6–8)", () 
   it("сумма > amount_max — LIMIT_EXCEEDED (меньшее из инструмента и мандата, A3 п. 7.2); другая валюта — MANDATE_SCOPE на п. 6; реквизит не погашен", async () => {
     const w = await world();
     const cred = await w.issue("ORD-1", 15_000);
-    expect(await reason(w, auth(w, cred, {}, 15_001))).toBe("LIMIT_EXCEEDED");
+    const over = auth(w, cred, {}, 15_001);
+    expect(await reason(w, over)).toBe("LIMIT_EXCEEDED");
+    // Чей предел — инструмента: client.limit_declined с reason INSTRUMENT (РП49 (е)).
+    expect(w.records.get(over.op_ref)?.notify?.limit_source).toBe("INSTRUMENT");
     // Валюта реквизита всегда = валюте CART (РП47 п. 4): другую валюту отсекает п. 6, условие п. 7 — страховка (ревью КТ1 Б2).
     expect(await reason(w, auth(w, cred, { currency: "USD" }, 1_000))).toBe("MANDATE_SCOPE");
     expect(await status(w)).toBe("ISSUED");
@@ -299,6 +305,8 @@ describe("ADP п. 2 и 4: агентский токен (РП47 п. 6–8)", () 
     const credentials = delegate(w.store, { tokenByRef: async (t) => ((r) => r && { ...r, mandate_id: w.parent })(await w.store.tokenByRef(t)) });
     const m = auth(w, cred, { aoi: { indicator: true, agent_code: A, mandate_id: w.parent } });
     expect(parseDecision(await w.adpWith({ credentials }).decide(m), "adp").reason).toBe("STATE_UNAVAILABLE");
+    // Клиент мандата из испорченной записи токена в запись операции не попадает: notify нет («Нюансы РП49» п. 2).
+    expect(w.records.get(m.op_ref)?.notify).toBeUndefined();
     // До статуса: отозванный INTENT даёт ту же причину, а не MANDATE_REVOKED.
     const mandates: AdpMandates = {
       async get(id, a) {
@@ -361,7 +369,9 @@ describe("ADP: агентский токен без aoi — по домену т
     const cred = await w.issue();
     const credentials = delegate(w.store, { tokenByRef: async (t) => ((r) => r && { ...r, mandate_id: w.parent })(await w.store.tokenByRef(t)) });
     expect(parseDecision(await w.adpWith({ credentials }).decide(noAoi(w, cred)), "adp").reason).toBe("STATE_UNAVAILABLE");
-    expect(w.logs.filter((l) => l.startsWith("ADP: мандат домена токена не CART"))).toHaveLength(1);
+    const incidents = w.logs.filter((l) => l.startsWith("ADP: мандат домена токена не CART") && l.includes('"incident":true'));
+    expect(incidents).toHaveLength(1);
+    expect(incidents.join("\n")).not.toContain(cred.payload.token_ref as string);
     expect(w.reserves()).toBe(0);
     expect(await status(w)).toBe("ISSUED");
   });
