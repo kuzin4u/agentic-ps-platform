@@ -1,7 +1,7 @@
 // Хранилище П5 (РП47 п. 10): записи токенов и реквизитов. В памяти (dev без базы, стенд) и на PostgreSQL
-// (sql/108_agent_credentials.sql). Значения криптограммы и номера карты нет (инвариант 1).
+// (sql/108_agent_credentials.sql, sql/110_agent_tokens_merchant_mcc.sql). Значения криптограммы и номера карты нет (инвариант 1).
 import type { SqlClient } from "@kuzin4u/agentic-core";
-import type { CredentialRecord, TokenRecord } from "./model.js";
+import type { CredentialRecord, MerchantMcc, TokenRecord } from "./model.js";
 
 /** Сбой любого метода — исключение (→ STATE_UNAVAILABLE). */
 export interface CredentialStore {
@@ -105,6 +105,8 @@ interface TokenRow extends Record<string, unknown> {
   valid_to: string;
   funding_ref: string;
   created_at: string;
+  /** NULL — токен выпущен до sql/110 (РП49 (д) п. 5). */
+  merchant_mcc: MerchantMcc | null;
 }
 
 interface CredentialRow extends Record<string, unknown> {
@@ -123,7 +125,7 @@ interface CredentialRow extends Record<string, unknown> {
   created_at: string;
 }
 
-const TOKEN_COLS = "token_ref, agent_code, mandate_id, merchant_scope, valid_to, funding_ref, created_at";
+const TOKEN_COLS = "token_ref, agent_code, mandate_id, merchant_scope, valid_to, funding_ref, created_at, merchant_mcc";
 const CREDENTIAL_COLS =
   "credential_ref, agent_code, mandate_id, token_ref, order_ref, merchant_id, amount_max, currency, valid_to, cryptogram_sha256, status, op_ref, created_at";
 
@@ -155,8 +157,17 @@ export class PgCredentialStore implements CredentialStore {
 
   async putToken(rec: TokenRecord): Promise<TokenRecord> {
     await this.client.query(
-      `INSERT INTO agent_tokens (${TOKEN_COLS}) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) ON CONFLICT (mandate_id) DO NOTHING`,
-      [rec.token_ref, rec.agent_code, rec.mandate_id, JSON.stringify(rec.merchant_scope), rec.valid_to, rec.funding_ref, rec.created_at],
+      `INSERT INTO agent_tokens (${TOKEN_COLS}) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8::jsonb) ON CONFLICT (mandate_id) DO NOTHING`,
+      [
+        rec.token_ref,
+        rec.agent_code,
+        rec.mandate_id,
+        JSON.stringify(rec.merchant_scope),
+        rec.valid_to,
+        rec.funding_ref,
+        rec.created_at,
+        rec.merchant_mcc === null ? null : JSON.stringify(rec.merchant_mcc),
+      ],
     );
     const t = await this.tokenByMandate(rec.mandate_id);
     if (!t) throw new Error("agent_tokens: токен мандата не найден после вставки");

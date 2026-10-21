@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { Adp, MemoryOperationStore, type AdpCredentials, type AdpMandates, type AdpOptions } from "../../src/adp/index.js";
 import { Credentials, MemoryCredentialStore, type CredentialStore } from "../../src/credentials/index.js";
 import { createTokenServiceEmulator } from "../../src/env/tsp/index.js";
+import { merchantDirectory } from "../../src/env/merchants/shops.js";
 import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
 import { parseDecision } from "../../src/shared/codes.js";
 import type { Credential } from "../../src/shared/pao.js";
@@ -66,6 +67,7 @@ async function world(
     store,
     tsp: createTokenServiceEmulator(),
     funding: c.emu,
+    merchants: merchantDirectory(),
     params: { cryptogram_ttl_sec: 900 },
     now: () => new Date(now),
   });

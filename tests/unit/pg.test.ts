@@ -26,7 +26,7 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 
     await db?.close();
   });
 
-  it("применены 001–004, 100_consent, 101_events, 102_event_deliveries, 103_adp_operations, 104_adp_split_window, 105_participant_limits, 106_principal_order, 107_participant_notifications, 108_agent_credentials и 109_limit_source_instrument, таблицы nonce, идемпотентности и согласий есть; повторный запуск ничего не применяет", async () => {
+  it("применены 001–004, 100_consent, 101_events, 102_event_deliveries, 103_adp_operations, 104_adp_split_window, 105_participant_limits, 106_principal_order, 107_participant_notifications, 108_agent_credentials, 109_limit_source_instrument и 110_agent_tokens_merchant_mcc, таблицы nonce, идемпотентности и согласий есть; повторный запуск ничего не применяет", async () => {
     const applied = (await db.pool.query<{ name: string }>("SELECT name FROM core_migrations ORDER BY name")).rows;
     expect(applied.map((r) => r.name)).toEqual([
       "001_journal.sql",
@@ -43,6 +43,7 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 
       "107_participant_notifications.sql",
       "108_agent_credentials.sql",
       "109_limit_source_instrument.sql",
+      "110_agent_tokens_merchant_mcc.sql",
     ]);
     const tables = (
       await db.pool.query<{ t: string }>(

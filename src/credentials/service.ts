@@ -5,10 +5,13 @@ import type { PaoErrorCode } from "../shared/pao-errors.generated.js";
 import type { Params } from "../shared/config.js";
 import type { ClientRef } from "../participants/limits.js";
 import {
+  MCC,
   opaqueRef,
   sha256Hex,
   type CredentialRecord,
   type FundingSource,
+  type MerchantDirectory,
+  type MerchantMcc,
   type TokenRecord,
   type TokenServicePort,
 } from "./model.js";
@@ -32,6 +35,8 @@ export interface CredentialsOptions {
   readonly store: CredentialStore;
   readonly tsp: TokenServicePort;
   readonly funding: FundingSource;
+  /** Справочник продавцов (РП49 (д)) — обязателен: забытый порт — ошибка сборки, а не «токен без MCC». */
+  readonly merchants: MerchantDirectory;
   readonly params: Pick<Params, "cryptogram_ttl_sec">;
   readonly now?: () => Date;
   readonly log?: (fields: Record<string, unknown>, msg: string) => void;
@@ -41,7 +46,9 @@ export type IssueResult =
   | { readonly ok: true; readonly credential: Credential }
   | { readonly ok: false; readonly code: PaoErrorCode; readonly norm?: string; readonly message?: string };
 
-const refuse = (code: PaoErrorCode, norm?: string, message?: string): IssueResult => ({
+type Refusal = Extract<IssueResult, { readonly ok: false }>;
+
+const refuse = (code: PaoErrorCode, norm?: string, message?: string): Refusal => ({
   ok: false,
   code,
   ...(norm !== undefined ? { norm } : {}),
@@ -134,6 +141,7 @@ export class Credentials {
     if (prior) return this.repeat(prior, req);
 
     const token = await this.token(agent_code, mandate_id, m, client, beforeWrite);
+    if ("ok" in token) return token;
     const now = this.now();
     const ttl = now.getTime() + this.opts.params.cryptogram_ttl_sec * 1000;
     const valid_to = new Date(Math.min(ttl, Date.parse(m.valid_to))).toISOString();
@@ -229,21 +237,52 @@ export class Credentials {
     return cryptogram;
   }
 
-  /** Токен CART (РП47 п. 2): записанный или новый; одновременный выпуск — записанный первым. */
+  /**
+   * Токен CART (РП47 п. 2): записанный или новый; одновременный выпуск — записанный первым. Справочник продавцов читается
+   * только при выпуске и до вызовов банка и токен-сервиса (РП49 (д) п. 2): отказ не оставляет выпущенного токена.
+   */
   private async token(
     agent_code: string,
     mandate_id: string,
     m: Mandate,
     client: ClientRef,
     beforeWrite: () => void,
-  ): Promise<TokenRecord> {
+  ): Promise<TokenRecord | Refusal> {
     const prior = await this.store((s) => s.tokenByMandate(mandate_id));
     if (prior) return prior;
+    const read = await this.merchantMcc(m);
+    if (!read.ok) return read;
+    const { merchant_mcc } = read;
     const funding_ref = await this.upstream(() => this.opts.funding.fundingRef(client));
-    const domain = { agent_code, mandate_id, merchant_scope: [...m.merchant_scope], valid_to: m.valid_to };
+    const domain = { agent_code, mandate_id, merchant_scope: [...m.merchant_scope], valid_to: m.valid_to, merchant_mcc };
     const { token_ref } = await this.upstream(() => this.opts.tsp.issueToken({ funding_ref, domain }));
     beforeWrite();
     return this.store((s) => s.putToken({ ...domain, token_ref, funding_ref, created_at: this.now().toISOString() }));
+  }
+
+  /**
+   * Наборы MCC продавцов области CART (РП49 (д) п. 1–2): продавца нет или набор пуст — MANDATE_SCOPE (A7 п. 5); сбой
+   * чтения или MCC не из четырёх цифр — справочник не прочитан, STATE_UNAVAILABLE («Нюансы РП49» п. 9; не по форме —
+   * ещё и инцидент: дефект справочника оператора, а не агента).
+   */
+  private async merchantMcc(m: Mandate): Promise<{ readonly ok: true; readonly merchant_mcc: MerchantMcc } | Refusal> {
+    const out: [string, readonly string[]][] = [];
+    for (const merchant_id of m.merchant_scope) {
+      let set: readonly string[] | undefined;
+      try {
+        set = await this.opts.merchants.mccOf(merchant_id);
+      } catch (err) {
+        throw new Unavailable("STATE_UNAVAILABLE", err);
+      }
+      if (set === undefined || set.length === 0) return refuse("MANDATE_SCOPE", "A7 п. 5");
+      if (!set.every((mcc) => typeof mcc === "string" && MCC.test(mcc))) {
+        this.log({ mandate_id: m.id, merchant_id, incident: true }, "П5: MCC справочника продавцов не по форме");
+        throw new Unavailable("STATE_UNAVAILABLE", undefined);
+      }
+      out.push([merchant_id, [...set]]);
+    }
+    // fromEntries — собственные свойства: merchant_id «__proto__» не меняет прототип записи.
+    return { ok: true, merchant_mcc: Object.fromEntries(out) };
   }
 
   /** Ответ ПАО: EXPIRED — по valid_to на часах Платформы; aoi — из записи, не из запроса (инвариант 5). */

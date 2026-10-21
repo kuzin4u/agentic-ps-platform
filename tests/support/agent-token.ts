@@ -22,6 +22,7 @@ export function agentToken(m: CanonicalMessage): CanonicalMessage {
   const agent_code = m.aoi.agent_code as string;
   const mandate_id = m.aoi.mandate_id as string;
   const token_ref = `tok_agent_${sha(JSON.stringify([agent_code, mandate_id])).slice(0, 16)}`;
+  const merchant_id = m.merchant?.id as string;
   tokens.set(token_ref, {
     token_ref,
     agent_code,
@@ -30,8 +31,9 @@ export function agentToken(m: CanonicalMessage): CanonicalMessage {
     valid_to: "2099-01-01T00:00:00Z",
     funding_ref: "fnd_test",
     created_at: "2026-10-01T00:00:00Z",
+    // Набор MCC — продавца и MCC сообщения: проверка MCC по домену (РП49 (д)) этим сообщениям не мешает.
+    merchant_mcc: { [merchant_id]: [m.merchant?.mcc as string] },
   });
-  const merchant_id = m.merchant?.id as string;
   const cryptogram = sha(JSON.stringify([token_ref, m.op_ref, merchant_id, m.amount, m.currency]));
   const cryptogram_sha256 = sha(cryptogram);
   credentials.set(`${token_ref} ${cryptogram_sha256}`, {
