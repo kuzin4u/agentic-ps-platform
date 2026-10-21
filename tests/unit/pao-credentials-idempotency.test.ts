@@ -336,6 +336,18 @@ describe("GET /pao/v1/credentials/{ref} — реквизит по ссылке (
     await g.app.close();
   });
 
+  it("хранилище не прочитано — 503 STATE_UNAVAILABLE с Retry-After, значения нет (РП49 (г) п. 3; ревью КТ2 № 4)", async () => {
+    const g = await gateway();
+    const c = (await g.post(body(), randomUUID())).json() as Credential;
+    vi.spyOn(g.store, "credentialByRef").mockRejectedValue(new Error("db"));
+    const r = await get(g, c.credential_ref);
+    expect(r.statusCode).toBe(503);
+    expect(r.json()).toMatchObject({ code: "STATE_UNAVAILABLE" });
+    expect(r.headers["retry-after"]).toBeDefined();
+    expect(r.body).not.toContain(c.payload.cryptogram as string);
+    await g.app.close();
+  });
+
   it("истёк по часам Платформы — 200, тот же Credential, status EXPIRED", async () => {
     const g = await gateway();
     const c = (await g.post(body(), randomUUID())).json() as Credential;

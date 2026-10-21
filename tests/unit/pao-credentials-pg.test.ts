@@ -168,7 +168,29 @@ describe.skipIf(!DATABASE_URL)("реквизит под одним Idempotency-K
     const byRef = await p.get(two, c.credential_ref);
     expect(byRef.statusCode).toBe(200);
     expect(byRef.body).toBe(a.body);
-    expect((await p.get(two, "crd_unknown")).statusCode).toBe(409);
+    // Неизвестная и чужая ссылки — по форме (crd_ + 24 буквы), чтобы дойти до хранилища PG (ревью КТ2 № 3): один ответ 409.
+    const unknown = await p.get(two, `crd_${"u".repeat(24)}`);
+    expect(unknown.statusCode).toBe(409);
+    const own = (await credentialRows(cart))[0] as Record<string, unknown>;
+    const foreignRef = `crd_${"f".repeat(23)}${String.fromCharCode(97 + (cseq % 26))}`;
+    await new PgCredentialStore(db.pool).putCredential({
+      credential_ref: foreignRef,
+      agent_code: "nspk:agent:other:v1",
+      mandate_id: cart,
+      token_ref: own.token_ref as string,
+      order_ref: `ORD-foreign-${cseq}`,
+      merchant_id: "MER-1042",
+      amount_max: 100_000,
+      currency: "RUB",
+      valid_to: own.valid_to as string,
+      cryptogram_sha256: "f".repeat(64),
+      status: "ISSUED",
+      op_ref: null,
+      created_at: own.created_at as string,
+    });
+    const foreign = await p.get(two, foreignRef);
+    expect(foreign.statusCode).toBe(409);
+    expect(foreign.body).toBe(unknown.body);
   });
 
   it("одновременно 10 одинаковых обращений под одним ключом на двух экземплярах — одна запись; все 201 — одна криптограмма, остальные 503 same_key", async () => {
