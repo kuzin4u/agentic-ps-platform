@@ -374,14 +374,16 @@ export class Adp {
     if (merchant === undefined || !m.merchant_scope.includes(merchant)) return no("MANDATE_SCOPE", mandate_id);
     if (msg.currency !== m.currency) return no("MANDATE_SCOPE", mandate_id);
     // MCC сообщения — в наборе продавца из домена токена (РП49 (д) п. 4), только AGENT_TOKEN. Набора нет (токен до sql/110,
-    // п. 5) или нет записи продавца области («Нюансы РП49» п. 7) — порча записей Платформы: не подтверждено и инцидент.
+    // п. 5), нет записи продавца области или она не по форме («Нюансы РП49» п. 7) — порча записей Платформы: не
+    // подтверждено и инцидент.
     // Object.hasOwn — запись самого продавца, а не свойство прототипа.
     if (kind === "AGENT_TOKEN") {
       const set =
         tokenMcc !== null && typeof tokenMcc === "object" && !Array.isArray(tokenMcc) && Object.hasOwn(tokenMcc, merchant)
           ? tokenMcc[merchant]
           : undefined;
-      if (!Array.isArray(set)) {
+      // Запись не по форме (не массив, пуста, есть не строки) — тоже порча: при выпуске такой набор не записывается.
+      if (!Array.isArray(set) || set.length === 0 || !set.every((x) => typeof x === "string")) {
         this.log("warn", { op_ref: msg.op_ref, agent_code, mandate_id, incident: true }, "ADP: в домене токена нет набора MCC продавца");
         return no("STATE_UNAVAILABLE", mandate_id);
       }
