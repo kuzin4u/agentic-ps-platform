@@ -27,7 +27,8 @@ export function agentToken(m: CanonicalMessage): CanonicalMessage {
   const token_ref = `tok_agent_${sha(JSON.stringify([agent_code, mandate_id])).slice(0, 16)}`;
   const merchant_id = m.merchant?.id as string;
   // Наборы MCC копятся по сообщениям того же токена (параллельные сообщения с разными продавцами не затирают друг друга);
-  // сообщение без MCC набор не пополняет — ADP отклонит его по п. 6, как настоящий токен.
+  // сообщение без MCC набор не пополняет: если у продавца уже есть набор — MANDATE_SCOPE по п. 6, как у настоящего токена;
+  // если это первое сообщение продавца — набор пуст, и ADP ответит STATE_UNAVAILABLE (порча домена), а не MANDATE_SCOPE.
   const mcc = m.merchant?.mcc;
   const prior = tokens.get(token_ref)?.merchant_mcc ?? {};
   const own = Object.hasOwn(prior, merchant_id) ? (prior[merchant_id] as readonly string[]) : [];
