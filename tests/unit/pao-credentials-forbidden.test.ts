@@ -66,6 +66,7 @@ async function gateway() {
           return { ok: false, code: "MANDATE_NOT_FOUND" };
         },
         replay: async () => ({ ok: false, code: "STATE_UNAVAILABLE" }),
+        get: async () => ({ ok: false, code: "CREDENTIAL_INVALID" }),
       },
     }),
   );

@@ -38,6 +38,7 @@ components:
           type: string
     Aoi:
       type: object
+      description: "Признак агентской операции (ПИ-2). Неагентская операция (ADP — BYPASS, мимо проверок): instrument.kind = CARD_TOKEN и признака нет — aoi нет, aoi: null или indicator: false без agent_code и mandate_id (нет или null); эквайрер может передавать поле признака во всех сообщениях (РП49 (в)). indicator: false с agent_code или mandate_id у CARD_TOKEN — противоречивый признак, агентская: DECLINE / CREDENTIAL_INVALID. Агентский инструмент (AGENT_TOKEN, ACCOUNT_LINK) — агентская при любом aoi; aoi без indicator — AOI_MISSING."
       properties:
         indicator:
           type: boolean

@@ -85,6 +85,7 @@ function platform() {
     const counted = {
       issue: (...a: Parameters<Credentials["issue"]>) => (n.issue++, credentials.issue(...a)),
       replay: (...a: Parameters<Credentials["replay"]>) => (n.replay++, credentials.replay(...a)),
+      get: (...a: Parameters<Credentials["get"]>) => credentials.get(...a),
     };
     const app = buildServer({
       env: "sandbox",

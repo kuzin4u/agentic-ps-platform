@@ -14,6 +14,8 @@ export interface CredentialStore {
   credentialByOrder(agent_code: string, mandate_id: string, order_ref: string): Promise<CredentialRecord | undefined>;
   /** Атомарно: реквизита заказа нет — записать; есть — вернуть записанный. */
   putCredential(rec: CredentialRecord): Promise<CredentialRecord>;
+  /** Реквизит по credential_ref (GET /pao/v1/credentials/{ref}, РП49 (г)); нет — undefined. */
+  credentialByRef(credential_ref: string): Promise<CredentialRecord | undefined>;
   /** Реквизит по токену и SHA-256 криптограммы (ADP п. 4); нет — undefined. */
   credentialByCryptogram(token_ref: string, cryptogram_sha256: string): Promise<CredentialRecord | undefined>;
   /**
@@ -70,6 +72,11 @@ export class MemoryCredentialStore implements CredentialStore {
     this.#byOrder.set(key, rec.credential_ref);
     this.#byCryptogram.set(ck, rec.credential_ref);
     return structuredClone(rec);
+  }
+
+  async credentialByRef(credential_ref: string): Promise<CredentialRecord | undefined> {
+    const c = this.#credentials.get(credential_ref);
+    return c && structuredClone(c);
   }
 
   async credentialByCryptogram(token_ref: string, cryptogram_sha256: string): Promise<CredentialRecord | undefined> {
@@ -184,6 +191,11 @@ export class PgCredentialStore implements CredentialStore {
     const c = await this.credentialByOrder(rec.agent_code, rec.mandate_id, rec.order_ref);
     if (!c) throw new Error("agent_credentials: реквизит заказа не найден после вставки");
     return c;
+  }
+
+  async credentialByRef(credential_ref: string): Promise<CredentialRecord | undefined> {
+    const r = await this.client.query<CredentialRow>(`SELECT ${CREDENTIAL_COLS} FROM agent_credentials WHERE credential_ref = $1`, [credential_ref]);
+    return r.rows[0] && credentialOf(r.rows[0]);
   }
 
   async credentialByCryptogram(token_ref: string, cryptogram_sha256: string): Promise<CredentialRecord | undefined> {

@@ -185,6 +185,9 @@ describe.skipIf(!DATABASE_URL)("одноразовость криптограм�
     expect(c1).toEqual(c2);
     const n = await db.pool.query<{ n: string }>("SELECT count(*) AS n FROM agent_credentials WHERE mandate_id = $1", [M]);
     expect(Number(n.rows[0]?.n)).toBe(1);
+    // Реквизит по ссылке (GET, РП49 (г)) — с другого экземпляра та же запись; неизвестная ссылка — undefined.
+    expect(await s2.credentialByRef(c1.credential_ref)).toEqual(c1);
+    expect(await s2.credentialByRef("crd_unknown")).toBeUndefined();
   });
 
   it("триггер: USED не возвращается в ISSUED, ключевые поля не меняются, удаление и TRUNCATE запрещены", async () => {

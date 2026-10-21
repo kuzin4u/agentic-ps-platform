@@ -227,6 +227,9 @@ describe("BYPASS — первая проверка (РП4, РП43 п. 1, инв�
     ["aoi — 0", { kind: "CARD_TOKEN" }, 0],
     ["aoi — false", { kind: "CARD_TOKEN" }, false],
     ["aoi — true", { kind: "CARD_TOKEN" }, true],
+    ["agent_code не строка", { kind: "CARD_TOKEN" }, { indicator: false, agent_code: 0 }],
+    ["instrument без kind", {}, undefined],
+    ["instrument: null", null, undefined],
   ])("ворота: %s — не BYPASS", (_n, instrument, aoi) => {
     expect(gate(instrument, aoi)).toBe(false);
   });
@@ -237,7 +240,7 @@ describe("BYPASS — первая проверка (РП4, РП43 п. 1, инв�
 
   it("ворота: aoi не объект при CARD_TOKEN — AOI_MISSING в решении, без падения", async () => {
     const { adp } = setup();
-    for (const aoi of [[], "x", 0, true]) {
+    for (const aoi of [[], "x", 0, true, false]) {
       expect(await reasonOf(adp, raw({ op_ref: `OPKC-G-${String(aoi)}`, aoi: aoi as unknown as CanonicalMessage["aoi"] }))).toBe("AOI_MISSING");
     }
   });

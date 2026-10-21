@@ -1,9 +1,9 @@
 // Сгенерировано scripts/gen-shared.mjs из docs/core/processing-interface.yaml — не править вручную.
-// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 dbc2c9fb4f251f4b4e5ae3cf5d40b6ce4d10afe8f9a8b685631a26d8c0150fbb
+// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 ccbbb58e7e35d1469a27535e094be923282ebb81e25b32a5824355d766892449
 // Номера полей и кодов внешних форматов здесь нет: только каноническая модель [альбом] (РП6).
 
 export const PI_VERSION = "1.0.0-draft";
-export const PI_SPEC_SHA256 = "dbc2c9fb4f251f4b4e5ae3cf5d40b6ce4d10afe8f9a8b685631a26d8c0150fbb";
+export const PI_SPEC_SHA256 = "ccbbb58e7e35d1469a27535e094be923282ebb81e25b32a5824355d766892449";
 
 export interface Instrument {
   kind: "AGENT_TOKEN" | "ACCOUNT_LINK" | "CARD_TOKEN";
@@ -20,6 +20,7 @@ export interface Merchant {
   name?: string;
 }
 
+/** Признак агентской операции (ПИ-2). Неагентская операция (ADP — BYPASS, мимо проверок): instrument.kind = CARD_TOKEN и признака нет — aoi нет, aoi: null или indicator: false без agent_code и mandate_id (нет или null); эквайрер может передавать поле признака во всех сообщениях (РП49 (в)). indicator: false с agent_code или mandate_id у CARD_TOKEN — противоречивый признак, агентская: DECLINE / CREDENTIAL_INVALID. Агентский инструмент (AGENT_TOKEN, ACCOUNT_LINK) — агентская при любом aoi; aoi без indicator — AOI_MISSING. */
 export interface Aoi {
   indicator?: boolean;
   agent_code?: string;
@@ -161,6 +162,7 @@ export const PI_SCHEMAS: Record<string, unknown> = {
   },
   "Aoi": {
     "type": "object",
+    "description": "Признак агентской операции (ПИ-2). Неагентская операция (ADP — BYPASS, мимо проверок): instrument.kind = CARD_TOKEN и признака нет — aoi нет, aoi: null или indicator: false без agent_code и mandate_id (нет или null); эквайрер может передавать поле признака во всех сообщениях (РП49 (в)). indicator: false с agent_code или mandate_id у CARD_TOKEN — противоречивый признак, агентская: DECLINE / CREDENTIAL_INVALID. Агентский инструмент (AGENT_TOKEN, ACCOUNT_LINK) — агентская при любом aoi; aoi без indicator — AOI_MISSING.",
     "properties": {
       "indicator": {
         "type": "boolean"

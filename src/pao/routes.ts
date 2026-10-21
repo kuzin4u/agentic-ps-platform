@@ -49,7 +49,7 @@ export interface PaoDeps {
    * Агентские реквизиты (П5, РП47); без них POST /pao/v1/credentials не регистрируется: токен-сервис оператора (ПИ-4)
    * в рабочем сервере не подключён — только стенд и тесты.
    */
-  readonly credentials?: Pick<Credentials, "issue" | "replay">;
+  readonly credentials?: Pick<Credentials, "issue" | "replay" | "get">;
   /** Стенд (РП40 п. 8): только он принимает стендовые порты; в рабочем сервере стендовый порт — отказ запуска. */
   readonly stand?: boolean;
   /** Монотонные часы предела обработчика (РП33 доп.); по умолчанию performance.now — в тестах подменяются. */
@@ -318,6 +318,16 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         },
       }),
     );
+
+    // Реквизит по ссылке (ПАО §4, РП49 (г)): только свой — агент из проверенного обращения (инвариант 5); чужой и
+    // неизвестный — один ответ 409 CREDENTIAL_INVALID. Тот же Credential, что при повторе: криптограмма — пересчётом.
+    app.get<{ Params: { ref: string } }>("/pao/v1/credentials/:ref", async (req, reply) => {
+      const agent = req.paoAgent as AgentRecord;
+      const r = await credentials.get(agent.agent_code, req.params.ref);
+      if (r.ok) return reply.code(200).send(r.credential);
+      req.log.info({ agent_code: agent.agent_code, code: r.code }, "ПАО: реквизит по ссылке не отдан");
+      return send(reply, paoError(r.code, r.norm, r.message));
+    });
   }
 
   // Отказ агента от полномочий (ПАО §3, A7 п. 6; РП38 п. 3–4): только свой мандат, под ключом идемпотентности; запись
