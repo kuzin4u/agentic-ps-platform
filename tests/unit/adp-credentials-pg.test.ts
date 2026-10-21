@@ -19,10 +19,19 @@ let seq = 0;
 
 class Mandates implements AdpMandates, MandateBudgetSource {
   readonly map = new Map<string, AdpMandate>();
+  readonly roots = new Map<string, string>();
+  /** CART под своим корнем INTENT (РП49 (б): агентский токен — только по CART); предел корня больше предела CART. */
   add(limit: number): string {
-    const id = `mnd_00000000-0000-4000-8000-${String(++seq).padStart(12, "0")}`;
-    this.map.set(id, { status: "ACTIVE", type: "INTENT", merchant_scope: ["MER-1042"], currency: "RUB", amount_limit: limit, client: { participant_code: "bank:pg", principal_ref: opaqueRef("prn_") } });
+    const next = () => `mnd_00000000-0000-4000-8000-${String(++seq).padStart(12, "0")}`;
+    const [root, id] = [next(), next()];
+    const client = { participant_code: "bank:pg", principal_ref: opaqueRef("prn_") };
+    this.map.set(root, { status: "ACTIVE", type: "INTENT", merchant_scope: ["MER-1042"], currency: "RUB", amount_limit: 1_000 * limit, client });
+    this.map.set(id, { status: "ACTIVE", type: "CART", parent_id: root, merchant_scope: ["MER-1042"], currency: "RUB", amount_limit: limit, client });
+    this.roots.set(id, root);
     return id;
+  }
+  root(id: string): string {
+    return this.roots.get(id) as string;
   }
   async get(id: string, agent_code: string): Promise<AdpMandate | undefined> {
     return agent_code === AGENT ? this.map.get(id) : undefined;
@@ -129,6 +138,8 @@ describe.skipIf(!DATABASE_URL)("одноразовость криптограм�
     ).toEqual(["CREDENTIAL_INVALID"]);
     const a = await new PgHoldLedger(db.pool).account(accountId(M));
     expect(a.reserved, "удержание проигравшей не освобождено (инвариант 4)").toBe(100_000);
+    // У CART — и счёт корня (РП43 п. 6): проигравшая освобождает оба удержания.
+    expect((await new PgHoldLedger(db.pool).account(accountId(mandates.root(M)))).reserved, "удержание корня проигравшей не освобождено").toBe(100_000);
     const winner = ds[0]?.decision === "APPROVE" ? "OPKC-CRED-PG-1" : "OPKC-CRED-PG-2";
     expect(await s1.credentialByCryptogram(cred.token_ref, sha256Hex("cg-race"))).toMatchObject({ status: "USED", op_ref: winner });
   });
@@ -145,6 +156,7 @@ describe.skipIf(!DATABASE_URL)("одноразовость криптограм�
     expect(ds.filter((d) => d.decision === "APPROVE"), "одна криптограмма одобрена больше одного раза").toHaveLength(1);
     expect(ds.filter((d) => d.decision !== "APPROVE").map((d) => d.reason)).toEqual(Array(9).fill("CREDENTIAL_INVALID"));
     expect((await new PgHoldLedger(db.pool).account(accountId(M))).reserved).toBe(50_000);
+    expect((await new PgHoldLedger(db.pool).account(accountId(mandates.root(M)))).reserved).toBe(50_000);
   });
 
   it("одновременная запись реквизита одного заказа и токена одного CART с двух экземпляров — одна строка", async () => {
@@ -173,6 +185,11 @@ describe.skipIf(!DATABASE_URL)("одноразовость криптограм�
     expect(c1).toEqual(c2);
     const n = await db.pool.query<{ n: string }>("SELECT count(*) AS n FROM agent_credentials WHERE mandate_id = $1", [M]);
     expect(Number(n.rows[0]?.n)).toBe(1);
+    // Реквизит по ссылке (GET, РП49 (г)) — с другого экземпляра та же запись; неизвестная ссылка — undefined.
+    expect(await s2.credentialByRef(c1.credential_ref, AGENT)).toEqual(c1);
+    expect(await s2.credentialByRef("crd_unknown", AGENT)).toBeUndefined();
+    // Пара (credential_ref, agent_code) — один запрос: чужой агент для хранилища — «не найдено», как неизвестный.
+    expect(await s2.credentialByRef(c1.credential_ref, "nspk:agent:other:v1")).toBeUndefined();
   });
 
   it("триггер: USED не возвращается в ISSUED, ключевые поля не меняются, удаление и TRUNCATE запрещены", async () => {

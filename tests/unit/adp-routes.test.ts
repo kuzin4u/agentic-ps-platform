@@ -9,7 +9,7 @@ import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
 import { parseDecision } from "../../src/shared/codes.js";
 import { createStand } from "../../src/stand/index.js";
 import { agentToken, agentTokenCredentials } from "../support/agent-token.js";
-import { A, decide, mk, setup } from "../support/state.js";
+import { A, cartUnder, decide, mk, setup } from "../support/state.js";
 
 /** Как пришло от процессинга; агентская — с AGENT_TOKEN (agentToken, РП48 (а)). */
 const raw = (over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
@@ -52,7 +52,9 @@ describe("POST /adp/v1/decide (ПИ-1)", () => {
     const { c, app } = server();
     const m = await mk(c);
     await decide(c, m);
-    const res = await post(app, auth({ aoi: { indicator: true, agent_code: A, mandate_id: m.id } }));
+    // Агентский токен — только по CART (РП49 (б)).
+    const cart = await cartUnder(c, m.id, 50_000);
+    const res = await post(app, auth({ aoi: { indicator: true, agent_code: A, mandate_id: cart } }));
     expect(res.statusCode).toBe(200);
     expect(parseDecision(res.json(), "adp").decision).toBe("APPROVE");
   });
@@ -60,6 +62,13 @@ describe("POST /adp/v1/decide (ПИ-1)", () => {
   it("неагентская — 200 BYPASS даже без точки решения (хранилищ нет)", async () => {
     const app = buildServer({ env: "dev", adp: {} });
     const res = await post(app, plain());
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ decision: "BYPASS", reason: null, decided_in_ms: 0 });
+  });
+
+  it("CARD_TOKEN с aoi.indicator: false без кода и мандата — 200 BYPASS без точки решения (РП49 (в))", async () => {
+    const app = buildServer({ env: "dev", adp: {} });
+    const res = await post(app, { ...plain(), aoi: { indicator: false } });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ decision: "BYPASS", reason: null, decided_in_ms: 0 });
   });

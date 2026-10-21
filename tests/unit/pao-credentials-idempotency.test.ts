@@ -51,7 +51,10 @@ async function gateway() {
   /** tspDown — отказ токен-сервиса; tspHang — без ответа; tamper — пересчёт не совпадает с хэшем (сменился ключ). */
   const sw = { tspDown: false, tspHang: false, tamper: false };
   const lines: string[] = [];
+  /** Сдвиг часов Платформы (EXPIRED по valid_to, РП49 (г)). */
+  const clock = { shiftMs: 0 };
   const credentials = new Credentials({
+    now: () => new Date(Date.now() + clock.shiftMs),
     mandates: {
       get: async (id, code) =>
         id === CART && code === CODE
@@ -99,7 +102,7 @@ async function gateway() {
   await app.ready();
   const post = (raw: string, key: string) =>
     signedInject(app, side, CODE, { method: "POST", path: "/pao/v1/credentials", body: raw, headers: { "idempotency-key": key } });
-  return { app, post, saved, store, tsp, sw, lines, credentials };
+  return { app, post, saved, store, tsp, sw, lines, credentials, side, registry, clock };
 }
 
 describe("POST /pao/v1/credentials под тем же Idempotency-Key (РП48 (в))", () => {
@@ -258,6 +261,131 @@ describe("POST /pao/v1/credentials под тем же Idempotency-Key (РП48 (�
     const inc = g.lines.find((l) => l.includes("пересборка повтора дала другой статус"));
     expect(inc).toBeDefined();
     expect(JSON.parse(inc as string)).toMatchObject({ incident: true, status: 409, code: "MANDATE_SCOPE", credential_ref: c.credential_ref });
+    await g.app.close();
+  });
+});
+
+describe("GET /pao/v1/credentials/{ref} — реквизит по ссылке (РП49 (г))", () => {
+  /** Ссылки по форме credential_ref (crd_ + 24 буквы): чужая и неизвестная доходят до хранилища. */
+  const FOREIGN = `crd_${"f".repeat(24)}`;
+  const UNKNOWN = `crd_${"u".repeat(24)}`;
+  const get = (g: Awaited<ReturnType<typeof gateway>>, ref: string) =>
+    signedInject(g.app, g.side, CODE, { method: "GET", path: `/pao/v1/credentials/${encodeURIComponent(ref)}` });
+
+  it("свой реквизит — 200, тот же Credential побайтно, что ответ выдачи; после погашения — та же криптограмма, status USED", async () => {
+    const g = await gateway();
+    const a = await g.post(body(), randomUUID());
+    const c = a.json() as Credential;
+    const r = await get(g, c.credential_ref);
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toBe(a.body);
+    expect(await g.store.consume(c.credential_ref, "OPKC-GET-1")).toBe(true);
+    const used = await get(g, c.credential_ref);
+    expect(used.json()).toEqual({ ...c, status: "USED" });
+    await g.app.close();
+  });
+
+  it("чужой и неизвестный — один ответ 409 CREDENTIAL_INVALID (чужой неотличим от неизвестного)", async () => {
+    const g = await gateway();
+    const c = (await g.post(body(), randomUUID())).json() as Credential;
+    const own = await g.store.credentialByOrder(CODE, CART, "ORD-k");
+    // Запись другого агента в том же хранилище.
+    await g.store.putCredential({ ...own!, credential_ref: FOREIGN, agent_code: "nspk:agent:other:v1", order_ref: "ORD-f", cryptogram_sha256: "f".repeat(64) });
+    const foreign = await get(g, FOREIGN);
+    const unknown = await get(g, UNKNOWN);
+    expect([foreign.statusCode, unknown.statusCode]).toEqual([409, 409]);
+    expect(foreign.json()).toMatchObject({ code: "CREDENTIAL_INVALID", retry: "after_fix" });
+    expect(foreign.body).toBe(unknown.body);
+    expect(foreign.body).not.toContain(c.payload.token_ref as string);
+    await g.app.close();
+  });
+
+  it("чужой и неизвестный — один путь: один запрос хранилища по паре (ref, агент) с ответом «не найдено», токен-сервис не вызывается", async () => {
+    const g = await gateway();
+    await g.post(body(), randomUUID());
+    const own = await g.store.credentialByOrder(CODE, CART, "ORD-k");
+    await g.store.putCredential({ ...own!, credential_ref: FOREIGN, agent_code: "nspk:agent:other:v1", order_ref: "ORD-f", cryptogram_sha256: "f".repeat(64) });
+    const byRef = vi.spyOn(g.store, "credentialByRef");
+    const cryptogram = vi.spyOn(g.tsp, "cryptogram");
+    for (const ref of [FOREIGN, UNKNOWN]) {
+      byRef.mockClear();
+      expect((await get(g, ref)).statusCode).toBe(409);
+      expect(byRef.mock.calls).toEqual([[ref, CODE]]);
+      expect(await byRef.mock.results[0]?.value).toBeUndefined();
+    }
+    expect(cryptogram).not.toHaveBeenCalled();
+    // Чужой реквизит в хранилище есть, но не для этого агента (РП49 (г)).
+    expect(await g.store.credentialByRef(FOREIGN, "nspk:agent:other:v1")).toMatchObject({ credential_ref: FOREIGN });
+    await g.app.close();
+  });
+
+  it.each([
+    ["нулевой символ", "crd_%00aaaaaaaaaaaaaaaaaaaaaaa"],
+    // Длиннее maxParamLength Fastify (100) путь отклоняет сам фреймворк (414) — до маршрута.
+    ["длинная строка", `crd_${"a".repeat(90)}`],
+    ["чужой префикс", `mnd_${"a".repeat(24)}`],
+    ["заглавные буквы", `crd_${"A".repeat(24)}`],
+  ])("ref не по форме (%s) — тот же 409, что у неизвестного, до хранилища", async (_n, ref) => {
+    const g = await gateway();
+    const unknown = await get(g, UNKNOWN);
+    const byRef = vi.spyOn(g.store, "credentialByRef");
+    const r = await signedInject(g.app, g.side, CODE, { method: "GET", path: `/pao/v1/credentials/${ref}` });
+    expect(r.statusCode).toBe(409);
+    expect(r.body).toBe(unknown.body);
+    expect(byRef).not.toHaveBeenCalled();
+    await g.app.close();
+  });
+
+  it("хранилище не прочитано — 503 STATE_UNAVAILABLE с Retry-After, значения нет (РП49 (г) п. 3; ревью КТ2 № 4)", async () => {
+    const g = await gateway();
+    const c = (await g.post(body(), randomUUID())).json() as Credential;
+    vi.spyOn(g.store, "credentialByRef").mockRejectedValue(new Error("db"));
+    const r = await get(g, c.credential_ref);
+    expect(r.statusCode).toBe(503);
+    expect(r.json()).toMatchObject({ code: "STATE_UNAVAILABLE" });
+    expect(r.headers["retry-after"]).toBeDefined();
+    expect(r.body).not.toContain(c.payload.cryptogram as string);
+    await g.app.close();
+  });
+
+  it("истёк по часам Платформы — 200, тот же Credential, status EXPIRED", async () => {
+    const g = await gateway();
+    const c = (await g.post(body(), randomUUID())).json() as Credential;
+    g.clock.shiftMs = Date.parse(c.payload.valid_to as string) - Date.now() + 1_000;
+    const r = await get(g, c.credential_ref);
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ ...c, status: "EXPIRED" });
+    await g.app.close();
+  });
+
+  it("приостановленный агент — 403 AGENT_SUSPENDED; обращение без подписи — 401", async () => {
+    const g = await gateway();
+    const c = (await g.post(body(), randomUUID())).json() as Credential;
+    const bare = await g.app.inject({ method: "GET", url: `/pao/v1/credentials/${c.credential_ref}` });
+    expect(bare.statusCode).toBe(401);
+    expect(bare.body).not.toContain(c.payload.cryptogram as string);
+    g.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    const denied = await get(g, c.credential_ref);
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toMatchObject({ code: "AGENT_SUSPENDED" });
+    expect(denied.body).not.toContain(c.payload.cryptogram as string);
+    await g.app.close();
+  });
+
+  it("токен-сервис недоступен — 503 UPSTREAM_UNAVAILABLE с Retry-After; пересчёт не совпал — 503 и инцидент, значение не выдаётся", async () => {
+    const g = await gateway();
+    const c = (await g.post(body(), randomUUID())).json() as Credential;
+    g.sw.tspDown = true;
+    const down = await get(g, c.credential_ref);
+    expect(down.statusCode).toBe(503);
+    expect(down.json()).toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
+    expect(down.headers["retry-after"]).toBeDefined();
+    g.sw.tspDown = false;
+    g.sw.tamper = true;
+    const tampered = await get(g, c.credential_ref);
+    expect(tampered.statusCode).toBe(503);
+    expect(tampered.body).not.toContain(c.payload.cryptogram as string);
+    expect(g.lines.some((l) => l.includes("пересчёт криптограммы не совпал с записью") && l.includes('"incident":true'))).toBe(true);
     await g.app.close();
   });
 });

@@ -85,6 +85,7 @@ function platform() {
     const counted = {
       issue: (...a: Parameters<Credentials["issue"]>) => (n.issue++, credentials.issue(...a)),
       replay: (...a: Parameters<Credentials["replay"]>) => (n.replay++, credentials.replay(...a)),
+      get: (...a: Parameters<Credentials["get"]>) => credentials.get(...a),
     };
     const app = buildServer({
       env: "sandbox",
@@ -103,8 +104,9 @@ function platform() {
   };
   const post = (app: FastifyInstance, body: string, key: string) =>
     signedInject(app, side, A, { method: "POST", path: "/pao/v1/credentials", body, headers: { "idempotency-key": key } });
+  const get = (app: FastifyInstance, ref: string) => signedInject(app, side, A, { method: "GET", path: `/pao/v1/credentials/${ref}` });
   const callsOf = (app: FastifyInstance) => calls.get(app) as Calls;
-  return { instance, post, callsOf, tspCalls, close: () => Promise.all(apps.map((a) => a.close())) };
+  return { instance, post, get, callsOf, tspCalls, close: () => Promise.all(apps.map((a) => a.close())) };
 }
 
 /** Свой CART на тест: записи реквизитов и токенов разных тестов одной схемы не пересекаются. */
@@ -162,6 +164,33 @@ describe.skipIf(!DATABASE_URL)("реквизит под одним Idempotency-K
     const rows = await credentialRows(cart);
     expect(rows).toHaveLength(1);
     expect(JSON.stringify(rows)).not.toContain(cryptogram);
+    // Реквизит по ссылке на другом экземпляре (РП49 (г)) — тот же ответ побайтно; неизвестная ссылка — 409.
+    const byRef = await p.get(two, c.credential_ref);
+    expect(byRef.statusCode).toBe(200);
+    expect(byRef.body).toBe(a.body);
+    // Неизвестная и чужая ссылки — по форме (crd_ + 24 буквы), чтобы дойти до хранилища PG (ревью КТ2 № 3): один ответ 409.
+    const unknown = await p.get(two, `crd_${"u".repeat(24)}`);
+    expect(unknown.statusCode).toBe(409);
+    const own = (await credentialRows(cart))[0] as Record<string, unknown>;
+    const foreignRef = `crd_${"f".repeat(23)}${String.fromCharCode(97 + (cseq % 26))}`;
+    await new PgCredentialStore(db.pool).putCredential({
+      credential_ref: foreignRef,
+      agent_code: "nspk:agent:other:v1",
+      mandate_id: cart,
+      token_ref: own.token_ref as string,
+      order_ref: `ORD-foreign-${cseq}`,
+      merchant_id: "MER-1042",
+      amount_max: 100_000,
+      currency: "RUB",
+      valid_to: own.valid_to as string,
+      cryptogram_sha256: "f".repeat(64),
+      status: "ISSUED",
+      op_ref: null,
+      created_at: own.created_at as string,
+    });
+    const foreign = await p.get(two, foreignRef);
+    expect(foreign.statusCode).toBe(409);
+    expect(foreign.body).toBe(unknown.body);
   });
 
   it("одновременно 10 одинаковых обращений под одним ключом на двух экземплярах — одна запись; все 201 — одна криптограмма, остальные 503 same_key", async () => {

@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.13.0** (агентские реквизиты, PS-14 ч. 2: повтор `POST /pao/v1/credentials` под тем же `Idempotency-Key` — та же криптограмма, значение под ключом не хранится; `CARD_TOKEN` с признаком агента отклоняется; агентский токен без признака — по домену токена при очереди 1–2). Что изменилось и что ломает — в
+Текущая версия — **v0.14.0** (агентские реквизиты, PS-14 ч. 3: `order_ref` с UUID больше не отклоняется как номер карты; `GET /pao/v1/credentials/{ref}` — свой реквизит по ссылке; агентский токен — только по CART; `client.limit_declined` с `reason: INSTRUMENT`; `CARD_TOKEN` с `indicator: false` без кода агента — мимо ADP). Что изменилось и что ломает — в
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.13.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.14.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.

@@ -30,10 +30,18 @@ const client = () => ({ participant_code: "bank:pg", principal_ref: `prn_pg_${++
 /** Журнал согласий: мандаты одного клиента; свёртка журнала — в consent-client.test.ts, здесь — неделимость на PG. */
 class Mandates implements AdpMandates, MandateBudgetSource {
   readonly map = new Map<string, AdpMandate>();
+  readonly roots = new Map<string, string>();
+  /** CART под своим корнем INTENT (РП49 (б): агентский токен — только по CART); предел корня больше предела CART. */
   add(limit: number, c: { participant_code: string; principal_ref: string }): string {
+    const root = mandate();
     const id = mandate();
-    this.map.set(id, { status: "ACTIVE", type: "INTENT", merchant_scope: ["MER-1042"], currency: "RUB", amount_limit: limit, client: c });
+    this.map.set(root, { status: "ACTIVE", type: "INTENT", merchant_scope: ["MER-1042"], currency: "RUB", amount_limit: 1_000 * limit, client: c });
+    this.map.set(id, { status: "ACTIVE", type: "CART", parent_id: root, merchant_scope: ["MER-1042"], currency: "RUB", amount_limit: limit, client: c });
+    this.roots.set(id, root);
     return id;
+  }
+  root(id: string): string {
+    return this.roots.get(id) as string;
   }
   async get(id: string, agent_code: string): Promise<AdpMandate | undefined> {
     return agent_code === AGENT ? this.map.get(id) : undefined;
@@ -105,6 +113,9 @@ describe.skipIf(!DATABASE_URL)("лимит клиента на PostgreSQL: дв�
     // Отказ по клиенту освобождает резерв мандата: на счетах мандатов держится ровно одобренное.
     const held = (await ledger.account(accountId(m1))).reserved + (await ledger.account(accountId(m2))).reserved;
     expect(held, "резерв мандата не освобождён после отказа лимита клиента").toBe(300_000);
+    // У CART — и счёт корня (РП43 п. 6): держится ровно одобренное.
+    const heldRoots = (await ledger.account(accountId(mandates.root(m1)))).reserved + (await ledger.account(accountId(mandates.root(m2)))).reserved;
+    expect(heldRoots, "резерв корня не освобождён после отказа лимита клиента").toBe(300_000);
   });
 
   it("StateService на двух пулах: 20 одновременных reserveClient по 1 000 ₽ при 3 000 ₽ — ровно 3", async () => {
