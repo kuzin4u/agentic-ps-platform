@@ -266,6 +266,9 @@ describe("POST /pao/v1/credentials под тем же Idempotency-Key (РП48 (�
 });
 
 describe("GET /pao/v1/credentials/{ref} — реквизит по ссылке (РП49 (г))", () => {
+  /** Ссылки по форме credential_ref (crd_ + 24 буквы): чужая и неизвестная доходят до хранилища. */
+  const FOREIGN = `crd_${"f".repeat(24)}`;
+  const UNKNOWN = `crd_${"u".repeat(24)}`;
   const get = (g: Awaited<ReturnType<typeof gateway>>, ref: string) =>
     signedInject(g.app, g.side, CODE, { method: "GET", path: `/pao/v1/credentials/${encodeURIComponent(ref)}` });
 
@@ -287,9 +290,9 @@ describe("GET /pao/v1/credentials/{ref} — реквизит по ссылке (
     const c = (await g.post(body(), randomUUID())).json() as Credential;
     const own = await g.store.credentialByOrder(CODE, CART, "ORD-k");
     // Запись другого агента в том же хранилище.
-    await g.store.putCredential({ ...own!, credential_ref: "crd_foreign", agent_code: "nspk:agent:other:v1", order_ref: "ORD-f", cryptogram_sha256: "f".repeat(64) });
-    const foreign = await get(g, "crd_foreign");
-    const unknown = await get(g, "crd_unknown");
+    await g.store.putCredential({ ...own!, credential_ref: FOREIGN, agent_code: "nspk:agent:other:v1", order_ref: "ORD-f", cryptogram_sha256: "f".repeat(64) });
+    const foreign = await get(g, FOREIGN);
+    const unknown = await get(g, UNKNOWN);
     expect([foreign.statusCode, unknown.statusCode]).toEqual([409, 409]);
     expect(foreign.json()).toMatchObject({ code: "CREDENTIAL_INVALID", retry: "after_fix" });
     expect(foreign.body).toBe(unknown.body);
@@ -301,10 +304,10 @@ describe("GET /pao/v1/credentials/{ref} — реквизит по ссылке (
     const g = await gateway();
     await g.post(body(), randomUUID());
     const own = await g.store.credentialByOrder(CODE, CART, "ORD-k");
-    await g.store.putCredential({ ...own!, credential_ref: "crd_foreign", agent_code: "nspk:agent:other:v1", order_ref: "ORD-f", cryptogram_sha256: "f".repeat(64) });
+    await g.store.putCredential({ ...own!, credential_ref: FOREIGN, agent_code: "nspk:agent:other:v1", order_ref: "ORD-f", cryptogram_sha256: "f".repeat(64) });
     const byRef = vi.spyOn(g.store, "credentialByRef");
     const cryptogram = vi.spyOn(g.tsp, "cryptogram");
-    for (const ref of ["crd_foreign", "crd_unknown"]) {
+    for (const ref of [FOREIGN, UNKNOWN]) {
       byRef.mockClear();
       expect((await get(g, ref)).statusCode).toBe(409);
       expect(byRef.mock.calls).toEqual([[ref, CODE]]);
@@ -312,7 +315,24 @@ describe("GET /pao/v1/credentials/{ref} — реквизит по ссылке (
     }
     expect(cryptogram).not.toHaveBeenCalled();
     // Чужой реквизит в хранилище есть, но не для этого агента (РП49 (г)).
-    expect(await g.store.credentialByRef("crd_foreign", "nspk:agent:other:v1")).toMatchObject({ credential_ref: "crd_foreign" });
+    expect(await g.store.credentialByRef(FOREIGN, "nspk:agent:other:v1")).toMatchObject({ credential_ref: FOREIGN });
+    await g.app.close();
+  });
+
+  it.each([
+    ["нулевой символ", "crd_%00aaaaaaaaaaaaaaaaaaaaaaa"],
+    // Длиннее maxParamLength Fastify (100) путь отклоняет сам фреймворк (414) — до маршрута.
+    ["длинная строка", `crd_${"a".repeat(90)}`],
+    ["чужой префикс", `mnd_${"a".repeat(24)}`],
+    ["заглавные буквы", `crd_${"A".repeat(24)}`],
+  ])("ref не по форме (%s) — тот же 409, что у неизвестного, до хранилища", async (_n, ref) => {
+    const g = await gateway();
+    const unknown = await get(g, UNKNOWN);
+    const byRef = vi.spyOn(g.store, "credentialByRef");
+    const r = await signedInject(g.app, g.side, CODE, { method: "GET", path: `/pao/v1/credentials/${ref}` });
+    expect(r.statusCode).toBe(409);
+    expect(r.body).toBe(unknown.body);
+    expect(byRef).not.toHaveBeenCalled();
     await g.app.close();
   });
 

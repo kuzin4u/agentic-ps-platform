@@ -10,6 +10,7 @@ import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
 import type { Params } from "../shared/config.js";
 import type { AgentSelf, Credential } from "../shared/pao.js";
+import { CREDENTIAL_REF } from "../credentials/model.js";
 import type { Credentials } from "../credentials/service.js";
 import { credentialRequestBody, hasPaymentDetails, keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
 import { consentErrorReply } from "./consent-errors.js";
@@ -323,6 +324,9 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     // неизвестный — один ответ 409 CREDENTIAL_INVALID. Тот же Credential, что при повторе: криптограмма — пересчётом.
     app.get<{ Params: { ref: string } }>("/pao/v1/credentials/:ref", async (req, reply) => {
       const agent = req.paoAgent as AgentRecord;
+      // Не по форме credential_ref — тот же ответ, что у неизвестного, до хранилища (решение владельца 21.10, ревью К2б):
+      // иначе %00 на PostgreSQL — ошибка text и 503 с Retry-After вместо окончательного отказа.
+      if (!CREDENTIAL_REF.test(req.params.ref)) return send(reply, paoError("CREDENTIAL_INVALID"));
       const r = await credentials.get(agent.agent_code, req.params.ref);
       if (r.ok) return reply.code(200).send(r.credential);
       req.log.info({ agent_code: agent.agent_code, code: r.code }, "ПАО: реквизит по ссылке не отдан");

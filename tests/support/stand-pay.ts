@@ -8,12 +8,6 @@ import type { Stand } from "../../src/stand/index.js";
 import type { AgentSide } from "./agent.js";
 import { signedInject } from "./signed-inject.js";
 
-/**
- * Номер заказа — короткий счётчик, а не UUID: цифры UUID через дефисы иногда складываются в серию 13–19 цифр с верной
- * суммой Луна — 422 CREDENTIALS_FORBIDDEN (РП47 доп. п. 2, ложные 422 по order_ref; плавающий отказ CI run 39585729745).
- */
-let orders = 0;
-
 export interface StandPay {
   /** Мандат (INTENT или CART под parent_id), подписанный банком стенда; id. */
   mandate(req: Partial<MandateRequest>): Promise<string>;
@@ -63,7 +57,8 @@ export function standPay(stand: Stand, side: AgentSide, code: string, principal_
     async auth(cart, amount, op_ref = `OPKC-PAY-${randomUUID()}`) {
       const res = await post("/pao/v1/credentials", {
         mandate_id: cart,
-        order_ref: `ORD-pay-${++orders}`,
+        // Номер заказа с UUID, как у агента (Р-160 исправлен РП49 (а); до него — счётчик, CI run 39585729745).
+        order_ref: `ORD-${randomUUID()}`,
         merchant_id: "MER-1042",
         amount_max: amount,
         currency: "RUB",

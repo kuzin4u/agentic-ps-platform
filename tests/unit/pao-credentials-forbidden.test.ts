@@ -116,6 +116,18 @@ describe("POST /pao/v1/credentials: реквизиты карты в теле �
     await g.app.close();
   });
 
+  it.each(Object.keys(valid))("настоящий номер карты в поле %s — сплошной, через пробелы и дефисы — 422, П5 не вызван (К3, РП49 (а))", async (field) => {
+    const g = await gateway();
+    for (const pan of [PAN, PAN_SPACED, PAN_DASHED, `ORD-${PAN_DASHED}`]) {
+      const res = await g.post({ ...valid, [field]: pan });
+      expect(res.statusCode).toBe(422);
+      expect(res.json()).toMatchObject({ code: "CREDENTIALS_FORBIDDEN" });
+    }
+    expect(g.calls).toHaveLength(0);
+    expect(g.lines.join("\n").replace(/[ -]/g, "")).not.toContain(PAN);
+    await g.app.close();
+  });
+
   it("ключ идемпотентности не занят: тот же ключ с телом без реквизитов доходит до П5", async () => {
     const g = await gateway();
     const key = randomUUID();
