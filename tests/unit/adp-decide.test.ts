@@ -1061,9 +1061,12 @@ describe("лимиты клиента в ADP (SPEC §6 п. 6–7, 10–11; РП4
     expect(pair(await ok.adp.decide(msg())).decision).toBe("APPROVE");
   });
 
-  it("merchant_categories: MCC вне списка или без MCC — MANDATE_SCOPE до резерва; в списке — APPROVE", async () => {
+  it("merchant_categories: MCC вне списка — MANDATE_SCOPE до резерва; в списке — APPROVE", async () => {
     const { adp, available } = setup({ client: limitsOf({ merchant_categories: ["5411"] }) });
+    // MCC 5462 — в наборе домена токена (п. 6 пройден), но не в категориях клиента: отказ — проверка клиента (РП45).
     expect(await reasonOf(adp, msg())).toBe("MANDATE_SCOPE");
+    // Без MCC для AGENT_TOKEN отвечает уже п. 6 (MCC по домену токена, РП49 (д)) — до проверки клиента; её ветка «без MCC»
+    // остаётся защитой для ACCOUNT_LINK (PS-21), «Нюансы РП49» п. 10. Здесь — не доказательство РП45.
     expect(await reasonOf(adp, msg({ op_ref: "no-mcc", merchant: { id: "MER-1042" } }))).toBe("MANDATE_SCOPE");
     await expect(available()).rejects.toThrow();
     expect(pair(await setup({ client: limitsOf({ merchant_categories: ["5411", "5462"] }) }).adp.decide(msg())).decision).toBe("APPROVE");

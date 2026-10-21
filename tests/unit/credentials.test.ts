@@ -7,9 +7,11 @@ import {
   sha256Hex,
   type CredentialMandate,
   type CredentialStore,
+  type MerchantDirectory,
 } from "../../src/credentials/index.js";
 import { createTokenServiceEmulator } from "../../src/env/tsp/index.js";
 import { createIssuerEmulator } from "../../src/env/issuer/index.js";
+import { merchantDirectory, SHOPS } from "../../src/env/merchants/shops.js";
 import { PAO_HANDLER_BUDGET_MS } from "../../src/pao/idempotency.js";
 import type { CredentialRequest, Mandate } from "../../src/shared/pao.js";
 
@@ -36,6 +38,12 @@ function cart(over: Partial<Mandate> = {}): Mandate {
   } as Mandate;
 }
 
+/** Справочник продавцов теста (РП49 (д)): MER-2 — второй продавец области с другим MCC. */
+const directory = (entries: Record<string, readonly string[]> = { "MER-1042": ["5462"], "MER-2": ["5411", "5499"] }): MerchantDirectory => {
+  const map = new Map(Object.entries(entries));
+  return { mccOf: async (id) => map.get(id) };
+};
+
 const req = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
   mandate_id: CART,
   order_ref: "ORD-a",
@@ -46,7 +54,9 @@ const req = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
   ...over,
 });
 
-function setup(opts: { mandate?: Mandate; read?: Partial<CredentialMandate> | null; store?: CredentialStore; tspDown?: boolean } = {}) {
+function setup(
+  opts: { mandate?: Mandate; read?: Partial<CredentialMandate> | null; store?: CredentialStore; tspDown?: boolean; merchants?: MerchantDirectory } = {},
+) {
   const issuer = createIssuerEmulator();
   const tsp = createTokenServiceEmulator();
   const store = opts.store ?? new MemoryCredentialStore();
@@ -67,10 +77,11 @@ function setup(opts: { mandate?: Mandate; read?: Partial<CredentialMandate> | nu
       ? { issueToken: () => Promise.reject(new Error("down")), cryptogram: () => Promise.reject(new Error("down")) }
       : tsp,
     funding: issuer,
+    merchants: opts.merchants ?? directory(),
     params: { cryptogram_ttl_sec: TTL },
     now: () => new Date(now),
   });
-  return { c, tsp, store, setNow: (t: number) => (now = t) };
+  return { c, tsp, store, issuer, setNow: (t: number) => (now = t) };
 }
 
 describe("П5 выдача реквизита (РП47)", () => {
@@ -90,6 +101,7 @@ describe("П5 выдача реквизита (РП47)", () => {
       mandate_id: CART,
       merchant_scope: ["MER-1042"],
       valid_to: "2026-10-21T10:00:00Z",
+      merchant_mcc: { "MER-1042": ["5462"] },
     });
     const input = { token_ref, order_ref: "ORD-a", merchant_id: "MER-1042", amount_max: 150_000, currency: "RUB", valid_to: credential.payload.valid_to as string };
     expect(tsp.verify(input, credential.payload.cryptogram as string)).toBe(true);
@@ -202,6 +214,7 @@ describe("П5 выдача реквизита (РП47)", () => {
       store: new MemoryCredentialStore(),
       tsp: { issueToken: (i) => tsp.issueToken(i), cryptogram: async (i) => ((await tsp.cryptogram(i)) + (++calls > 1 ? "x" : "")) },
       funding: issuer,
+      merchants: directory(),
       params: { cryptogram_ttl_sec: TTL },
       now: () => new Date(T0),
       log: (f, m) => logs.push(`${m} ${JSON.stringify(f)}`),
@@ -228,6 +241,7 @@ describe("П5 выдача реквизита (РП47)", () => {
           store,
           tsp: { issueToken: (i) => hang(() => tsp.issueToken(i), "issueToken"), cryptogram: (i) => hang(() => tsp.cryptogram(i), "cryptogram") },
           funding: { fundingRef: (cl) => hang(() => issuer.fundingRef(cl), "fundingRef") },
+          merchants: directory(),
           params: { cryptogram_ttl_sec: TTL },
           now: () => new Date(T0),
         });
@@ -279,5 +293,125 @@ describe("П5 выдача реквизита (РП47)", () => {
     expect(results.filter(Boolean)).toHaveLength(1);
     expect(await store.consume(r.credential.credential_ref, "op-3")).toBe(false);
     expect(await c.issue(AGENT, req())).toMatchObject({ ok: true, credential: { status: "USED" } });
+  });
+});
+
+describe("П5 выдача: справочник продавцов и MCC в домене токена (РП49 (д))", () => {
+  /** Справочник со счётчиком чтений. */
+  const counted = (inner: MerchantDirectory) => {
+    const reads: string[] = [];
+    return { reads, dir: { mccOf: (id: string) => (reads.push(id), inner.mccOf(id)) } satisfies MerchantDirectory };
+  };
+
+  it("наборы всех продавцов области CART — в домене токена, у токен-сервиса и в хранилище", async () => {
+    const { c, tsp, store } = setup({ mandate: cart({ merchant_scope: ["MER-1042", "MER-2"] }) });
+    const r = await c.issue(AGENT, req());
+    if (!r.ok) throw new Error("не выдан");
+    const token_ref = r.credential.payload.token_ref as string;
+    const sets = { "MER-1042": ["5462"], "MER-2": ["5411", "5499"] };
+    expect(tsp.issued.get(token_ref)?.domain.merchant_mcc).toEqual(sets);
+    expect((await store.tokenByRef(token_ref))?.merchant_mcc).toEqual(sets);
+  });
+
+  it.each([
+    ["продавца области нет в справочнике", { "MER-1042": ["5462"] }],
+    ["набор продавца пуст", { "MER-1042": ["5462"], "MER-2": [] }],
+  ])("%s — 409 MANDATE_SCOPE до банка и токен-сервиса, токен не записан", async (_, entries) => {
+    const { c, tsp, store } = setup({ mandate: cart({ merchant_scope: ["MER-1042", "MER-2"] }), merchants: directory(entries) });
+    expect(await c.issue(AGENT, req())).toMatchObject({ ok: false, code: "MANDATE_SCOPE", norm: "A7 п. 5" });
+    expect(tsp.issued.size).toBe(0);
+    expect(await store.tokenByMandate(CART)).toBeUndefined();
+  });
+
+  it("справочник не прочитан — 503 STATE_UNAVAILABLE, банк и токен-сервис не вызваны (ревью КТ1 № 5 (а))", async () => {
+    const { c, tsp, issuer } = setup({ merchants: { mccOf: () => Promise.reject(new Error("down")) } });
+    const funding = vi.spyOn(issuer, "fundingRef");
+    expect(await c.issue(AGENT, req())).toMatchObject({ ok: false, code: "STATE_UNAVAILABLE" });
+    expect(funding).not.toHaveBeenCalled();
+    expect(tsp.issued.size).toBe(0);
+  });
+
+  /** Выдача с логом инцидентов и счётчиком банка: справочник — как задан. */
+  const withLog = (merchants: MerchantDirectory, mandate = cart()) => {
+    const issuer = createIssuerEmulator();
+    const tsp = createTokenServiceEmulator();
+    const logs: string[] = [];
+    const funding = vi.fn((cl: Parameters<typeof issuer.fundingRef>[0]) => issuer.fundingRef(cl));
+    const c = new Credentials({
+      mandates: { get: async () => ({ mandate, client: { participant_code: issuer.participant_code, principal_ref: "pr_alpha" }, token_consent: true }) },
+      store: new MemoryCredentialStore(),
+      tsp,
+      funding: { fundingRef: funding },
+      merchants,
+      params: { cryptogram_ttl_sec: TTL },
+      now: () => new Date(T0),
+      log: (f, m) => logs.push(`${m} ${JSON.stringify(f)}`),
+    });
+    const incident = () => logs.some((l) => l.startsWith("П5: MCC справочника продавцов не по форме") && l.includes('"incident":true'));
+    return { c, tsp, funding, incident };
+  };
+
+  it("сначала форма по всем продавцам, затем наличие: первого нет, у второго MCC не по форме — 503 и инцидент, а не MANDATE_SCOPE (ревью КТ1 № 3)", async () => {
+    const w = withLog(directory({ "MER-1042": ["54"] }), cart({ merchant_scope: ["MER-9", "MER-1042"] }));
+    expect(await w.c.issue(AGENT, req())).toMatchObject({ ok: false, code: "STATE_UNAVAILABLE" });
+    expect(w.incident()).toBe(true);
+    expect(w.funding).not.toHaveBeenCalled();
+    expect(w.tsp.issued.size).toBe(0);
+    // Все по форме, первого нет — MANDATE_SCOPE без инцидента.
+    const ok = withLog(directory({ "MER-1042": ["5462"] }), cart({ merchant_scope: ["MER-9", "MER-1042"] }));
+    expect(await ok.c.issue(AGENT, req())).toMatchObject({ ok: false, code: "MANDATE_SCOPE" });
+    expect(ok.incident()).toBe(false);
+  });
+
+  it.each([["5462"], [{ 0: "5462" }], [null], [5462]])(
+    "справочник вернул не массив (%j) — справочник не прочитан: 503 и инцидент, а не 500 (ревью КТ1 № 2)",
+    async (bad) => {
+      const w = withLog({ mccOf: async () => bad as unknown as readonly string[] });
+      expect(await w.c.issue(AGENT, req())).toMatchObject({ ok: false, code: "STATE_UNAVAILABLE" });
+      expect(w.incident()).toBe(true);
+      expect(w.funding).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([["546"], ["54620"], ["54a2"], [" 5462"], ["５４６２"], [5462]])(
+    "MCC справочника не из четырёх цифр (%j) — справочник не прочитан: STATE_UNAVAILABLE и инцидент, до банка и токен-сервиса",
+    async (bad) => {
+      const issuer = createIssuerEmulator();
+      const tsp = createTokenServiceEmulator();
+      const logs: string[] = [];
+      let funding = 0;
+      const c = new Credentials({
+        mandates: { get: async () => ({ mandate: cart(), client: { participant_code: issuer.participant_code, principal_ref: "pr_alpha" }, token_consent: true }) },
+        store: new MemoryCredentialStore(),
+        tsp,
+        funding: { fundingRef: (cl) => (funding++, issuer.fundingRef(cl)) },
+        merchants: directory({ "MER-1042": ["5462", bad as string] }),
+        params: { cryptogram_ttl_sec: TTL },
+        now: () => new Date(T0),
+        log: (f, m) => logs.push(`${m} ${JSON.stringify(f)}`),
+      });
+      expect(await c.issue(AGENT, req())).toMatchObject({ ok: false, code: "STATE_UNAVAILABLE" });
+      expect(funding).toBe(0);
+      expect(tsp.issued.size).toBe(0);
+      expect(logs.some((l) => l.startsWith("П5: MCC справочника продавцов не по форме") && l.includes('"incident":true'))).toBe(true);
+    },
+  );
+
+  it("справочник читается только при выпуске токена: второй заказ и повтор заказа его не читают", async () => {
+    const d = counted(directory());
+    const { c } = setup({ merchants: d.dir });
+    expect((await c.issue(AGENT, req())).ok).toBe(true);
+    expect(d.reads).toEqual(["MER-1042"]);
+    expect((await c.issue(AGENT, req({ order_ref: "ORD-b" }))).ok).toBe(true);
+    expect((await c.issue(AGENT, req())).ok).toBe(true);
+    expect(d.reads).toEqual(["MER-1042"]);
+  });
+
+  it("справочник стенда — MCC витрины эмулятора, неизвестный продавец (и «__proto__») — нет в справочнике", async () => {
+    const dir = merchantDirectory();
+    expect(await dir.mccOf("MER-1042")).toEqual(["5462"]);
+    for (const s of SHOPS) expect(await dir.mccOf(s.merchant_id)).toEqual([s.mcc]);
+    expect(await dir.mccOf("MER-9")).toBeUndefined();
+    expect(await dir.mccOf("__proto__")).toBeUndefined();
   });
 });

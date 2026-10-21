@@ -2,6 +2,9 @@
 // Номера карты нет нигде (инвариант 1): у токена — только funding_ref банка, у реквизита — SHA-256 криптограммы, а не она.
 import { createHash, randomInt } from "node:crypto";
 
+/** Наборы допустимых MCC продавцов области CART (РП49 (д) п. 2): merchant_id → набор из справочника оператора. */
+export type MerchantMcc = Readonly<Record<string, readonly string[]>>;
+
 /** Домен агентского токена (РП47 п. 2): из записи CART журнала, а не со слов агента (инвариант 5). */
 export interface TokenDomain {
   readonly agent_code: string;
@@ -9,9 +12,13 @@ export interface TokenDomain {
   readonly mandate_id: string;
   readonly merchant_scope: readonly string[];
   readonly valid_to: string;
+  /** Набор MCC на каждого продавца merchant_scope — из справочника продавцов при выпуске, не со слов агента. */
+  readonly merchant_mcc: MerchantMcc;
 }
 
-export interface TokenRecord extends TokenDomain {
+export interface TokenRecord extends Omit<TokenDomain, "merchant_mcc"> {
+  /** null — токен выпущен до sql/110 (РП49 (д) п. 5): ADP не подтверждает операцию по нему. */
+  readonly merchant_mcc: MerchantMcc | null;
   readonly token_ref: string;
   /** Ссылка банка на карту клиента (ПИ-4); номера карты у Платформы нет. */
   readonly funding_ref: string;
@@ -54,6 +61,18 @@ export interface TokenServicePort {
   issueToken(input: { readonly funding_ref: string; readonly domain: TokenDomain }): Promise<{ readonly token_ref: string }>;
   cryptogram(input: CryptogramInput): Promise<string>;
 }
+
+/**
+ * Справочник продавцов оператора (РП49 (д) п. 1): набор допустимых MCC продавца. Локальное чтение, не внешний вызов П5
+ * (п. 3). Продавца нет — undefined; сбой — исключение. На стенде — эмулятор продавцов, в бою — справочник эквайреров
+ * оператора, форма — [альбом] (РП6).
+ */
+export interface MerchantDirectory {
+  mccOf(merchant_id: string): Promise<readonly string[] | undefined>;
+}
+
+/** MCC — ровно четыре цифры (решение владельца 21.10, «Нюансы РП49» п. 9); не по форме — справочник не прочитан. */
+export const MCC = /^[0-9]{4}$/;
 
 /** Банк клиента мандата (порт участника, РП36): ссылка на карту клиента для выпуска токена. Сбой — исключение. */
 export interface FundingSource {

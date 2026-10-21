@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { Adp, MemoryOperationStore, type AdpCredentials, type AdpMandates, type AdpOptions } from "../../src/adp/index.js";
 import { Credentials, MemoryCredentialStore, type CredentialStore } from "../../src/credentials/index.js";
 import { createTokenServiceEmulator } from "../../src/env/tsp/index.js";
+import { merchantDirectory } from "../../src/env/merchants/shops.js";
 import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
 import { parseDecision } from "../../src/shared/codes.js";
 import type { Credential } from "../../src/shared/pao.js";
@@ -42,7 +43,7 @@ const delegate = (s: CredentialStore, over: Partial<AdpCredentials> = {}): AdpCr
 });
 
 async function world(
-  opts: { cartLimit?: number; confirmAbove?: number; clientPerPeriod?: number; phase?: 1 | 2 | 3 } = {},
+  opts: { cartLimit?: number; confirmAbove?: number; clientPerPeriod?: number; clientCategories?: string[]; phase?: 1 | 2 | 3 } = {},
 ): Promise<World> {
   let now = T0.getTime();
   const c = setup({ now: () => new Date(now) });
@@ -66,15 +67,19 @@ async function world(
     store,
     tsp: createTokenServiceEmulator(),
     funding: c.emu,
+    merchants: merchantDirectory(),
     params: { cryptogram_ttl_sec: 900 },
     now: () => new Date(now),
   });
   const logs: string[] = [];
   // Лимит клиента за период (РП45 п. 1): запись банка до начала периода — действует сразу.
-  const versions =
-    opts.clientPerPeriod === undefined
+  const versions = [
+    ...(opts.clientPerPeriod === undefined
       ? []
-      : [{ limits: { per_period: opts.clientPerPeriod, period: "DAY", currency: "RUB" }, received_at: "2026-10-18T00:00:00Z" }];
+      : [{ limits: { per_period: opts.clientPerPeriod, period: "DAY", currency: "RUB" }, received_at: "2026-10-18T00:00:00Z" }]),
+    // Категории клиента (РП45) — поверх набора MCC домена токена.
+    ...(opts.clientCategories === undefined ? [] : [{ limits: { merchant_categories: opts.clientCategories }, received_at: "2026-10-18T00:00:00Z" }]),
+  ];
   let reserves = 0;
   const records = new MemoryOperationStore();
   const state: AdpOptions["state"] = {
@@ -118,7 +123,8 @@ const auth = (w: World, cred: Credential, over: Partial<CanonicalMessage> = {}, 
   channel: "CARD",
   amount,
   currency: "RUB",
-  merchant: { id: "MER-1042" },
+  // MCC витрины MER-1042 — в наборе домена токена из справочника стенда (РП49 (д)).
+  merchant: { id: "MER-1042", mcc: "5462" },
   instrument: { kind: "AGENT_TOKEN", token_ref: cred.payload.token_ref as string, cryptogram: cred.payload.cryptogram as string },
   aoi: { indicator: true, agent_code: A, mandate_id: w.cart },
   ...over,
@@ -425,5 +431,86 @@ describe("ADP: агентский токен без aoi — по домену т
     });
     expect(parseDecision(await adp.decide(noAoi(w, cred)), "adp").reason).toBe("STATE_UNAVAILABLE");
     expect(w.reserves()).toBe(0);
+  });
+});
+
+describe("ADP п. 6: MCC сообщения — в наборе продавца из домена токена (РП49 (д) п. 4–5, «Нюансы РП49» п. 7)", () => {
+  /** Запись токена с другим набором MCC: подмена чтения домена, записи реквизита и П3 — настоящие. */
+  const withMcc = (w: World, merchant_mcc: unknown) =>
+    delegate(w.store, {
+      tokenByRef: async (t) => ((r) => r && ({ ...r, merchant_mcc } as typeof r))(await w.store.tokenByRef(t)),
+    });
+  const noAoi = (w: World, cred: Credential, over: Partial<CanonicalMessage> = {}): CanonicalMessage => {
+    const m = auth(w, cred, over);
+    delete m.aoi;
+    return m;
+  };
+
+  it("доказательный: MCC из набора — APPROVE и погашение; MCC вне набора — MANDATE_SCOPE без резерва, реквизит не погашен", async () => {
+    const w = await world();
+    const cred = await w.issue();
+    // Набор в домене — из справочника стенда при выдаче, а не со слов агента.
+    expect((await w.store.tokenByRef(cred.payload.token_ref as string))?.merchant_mcc).toEqual({ "MER-1042": ["5462"] });
+    expect(await reason(w, auth(w, cred, { merchant: { id: "MER-1042", mcc: "5411" } }))).toBe("MANDATE_SCOPE");
+    expect(w.reserves()).toBe(0);
+    expect(await status(w)).toBe("ISSUED");
+    expect(await left(w, w.cart)).toBe(30_000);
+    const ok = auth(w, cred);
+    expect(parseDecision(await w.adp.decide(ok), "adp").decision).toBe("APPROVE");
+    expect(await w.store.credentialByOrder(A, w.cart, "ORD-1")).toMatchObject({ status: "USED", op_ref: ok.op_ref });
+  });
+
+  it("MCC в сообщении нет или он не строка — MANDATE_SCOPE без резерва", async () => {
+    const w = await world();
+    const cred = await w.issue();
+    expect(await reason(w, auth(w, cred, { merchant: { id: "MER-1042" } }))).toBe("MANDATE_SCOPE");
+    expect(await reason(w, auth(w, cred, { merchant: { id: "MER-1042", mcc: 5462 as unknown as string } }))).toBe("MANDATE_SCOPE");
+    expect(w.reserves()).toBe(0);
+    expect(await status(w)).toBe("ISSUED");
+  });
+
+  it("набор из нескольких MCC — проходит любой из набора, остальные — MANDATE_SCOPE", async () => {
+    const w = await world();
+    const cred = await w.issue();
+    const adp = w.adpWith({ credentials: withMcc(w, { "MER-1042": ["5411", "5462"] }) });
+    expect(parseDecision(await adp.decide(auth(w, cred, { merchant: { id: "MER-1042", mcc: "5499" } })), "adp").reason).toBe("MANDATE_SCOPE");
+    expect(parseDecision(await adp.decide(auth(w, cred, { merchant: { id: "MER-1042", mcc: "5411" } })), "adp").decision).toBe("APPROVE");
+  });
+
+  it.each([
+    ["токен без набора (выпущен до sql/110, РП49 (д) п. 5)", null],
+    ["в наборе нет записи продавца области (У1, «Нюансы РП49» п. 7)", { "MER-77": ["5462"] }],
+    ["запись продавца — только в прототипе (Object.hasOwn)", Object.create({ "MER-1042": ["5462"] }) as unknown],
+    ["запись продавца не массив", { "MER-1042": "5462" }],
+    ["набор — массив, а не объект", [["5462"]]],
+    ["набор продавца пуст (при выпуске запрещён)", { "MER-1042": [] }],
+    ["в наборе продавца не строка", { "MER-1042": [5462] }],
+  ])("%s — STATE_UNAVAILABLE и инцидент, без резерва; реквизит не погашен", async (_, merchant_mcc) => {
+    const w = await world();
+    const cred = await w.issue();
+    const m = auth(w, cred);
+    expect(parseDecision(await w.adpWith({ credentials: withMcc(w, merchant_mcc) }).decide(m), "adp").reason).toBe("STATE_UNAVAILABLE");
+    const incidents = w.logs.filter((l) => l.startsWith("ADP: в домене токена нет набора MCC продавца") && l.includes('"incident":true'));
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]).not.toContain(cred.payload.token_ref as string);
+    expect(w.reserves()).toBe(0);
+    expect(await status(w)).toBe("ISSUED");
+  });
+
+  it("очередь 2 без aoi: та же проверка по домену токена — вне набора MANDATE_SCOPE, из набора APPROVE", async () => {
+    const w = await world({ phase: 2 });
+    const cred = await w.issue();
+    expect(await reason(w, noAoi(w, cred, { merchant: { id: "MER-1042", mcc: "5411" } }))).toBe("MANDATE_SCOPE");
+    expect(w.reserves()).toBe(0);
+    expect(parseDecision(await w.adp.decide(noAoi(w, cred)), "adp").decision).toBe("APPROVE");
+  });
+
+  it("категории клиента (РП45) — поверх: MCC в наборе токена, но не в категориях клиента — MANDATE_SCOPE; в обоих — APPROVE", async () => {
+    const w = await world({ clientCategories: ["5411"] });
+    const cred = await w.issue();
+    expect(await reason(w, auth(w, cred))).toBe("MANDATE_SCOPE");
+    expect(await status(w)).toBe("ISSUED");
+    const both = await world({ clientCategories: ["5462"] });
+    expect(parseDecision(await both.adp.decide(auth(both, await both.issue())), "adp").decision).toBe("APPROVE");
   });
 });

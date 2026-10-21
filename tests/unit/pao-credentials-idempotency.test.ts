@@ -8,6 +8,7 @@ import { ConsentJournal, MemoryConsentStore } from "../../src/consent/index.js";
 import { Credentials, MemoryCredentialStore, P5_UPSTREAM_TIMEOUT_MS } from "../../src/credentials/index.js";
 import { createIssuerEmulator } from "../../src/env/issuer/index.js";
 import { createTokenServiceEmulator } from "../../src/env/tsp/index.js";
+import { merchantDirectory } from "../../src/env/merchants/shops.js";
 import { paoIdempotency, type PaoReply } from "../../src/pao/idempotency.js";
 import { paoRoutes } from "../../src/pao/routes.js";
 import { PaoRequestVerifier } from "../../src/pao/verify.js";
@@ -71,6 +72,7 @@ async function gateway() {
       },
     },
     funding: issuer,
+    merchants: merchantDirectory(),
     params: { cryptogram_ttl_sec: params.cryptogram_ttl_sec },
     log: (f, m) => lines.push(`${m} ${JSON.stringify(f)}`),
   });

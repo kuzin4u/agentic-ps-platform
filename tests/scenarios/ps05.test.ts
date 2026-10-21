@@ -75,7 +75,7 @@ describe("ПС05 на стенде: агентский токен и крипт�
     ...over,
   });
 
-  it("201: реквизит по схеме Credential, домен токена = agent_code + CART + merchant_scope, криптограмма верна", async () => {
+  it("201: реквизит по схеме Credential, домен токена = agent_code + CART + merchant_scope + merchant_mcc справочника, криптограмма верна", async () => {
     const res = await call("POST", "/pao/v1/credentials", credReq());
     expect(res.statusCode).toBe(201);
     const c = res.json() as Credential;
@@ -91,6 +91,8 @@ describe("ПС05 на стенде: агентский токен и крипт�
       mandate_id: cartId,
       merchant_scope: ["MER-1042"],
       valid_to: "2026-10-26T00:00:00Z",
+      // Набор MCC продавца — из справочника стенда (MCC витрины эмулятора), РП49 (д).
+      merchant_mcc: { "MER-1042": ["5462"] },
     });
     const input = { token_ref, order_ref: "ORD-ps05", merchant_id: "MER-1042", amount_max: 189_000, currency: "RUB", valid_to: c.payload.valid_to as string };
     expect(stand.tsp.verify(input, c.payload.cryptogram as string)).toBe(true);
@@ -118,7 +120,7 @@ describe("ПС05 на стенде: агентский токен и крипт�
       channel: "CARD",
       amount: 30_000,
       currency: "RUB",
-      merchant: { id: "MER-1042" },
+      merchant: { id: "MER-1042", mcc: "5462" },
       instrument: { kind: "AGENT_TOKEN", token_ref: c.payload.token_ref as string, cryptogram: c.payload.cryptogram as string },
       aoi: c.aoi,
     };
@@ -175,7 +177,7 @@ describe("ПС05 на стенде: агентский токен и крипт�
       channel: "CARD",
       amount: 40_000,
       currency: "RUB",
-      merchant: { id: "MER-1042" },
+      merchant: { id: "MER-1042", mcc: "5462" },
       instrument: { kind: "AGENT_TOKEN", token_ref: c.payload.token_ref as string, cryptogram: c.payload.cryptogram as string },
       aoi: c.aoi,
     });

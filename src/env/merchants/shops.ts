@@ -1,6 +1,7 @@
 // Витрины эмулятора продавцов (К6 пула, SPEC §9, A5): один источник для эмулятора и фикстур (AG-04, AG-09).
 // ID — по сценариям агента П07–П09, П17, Д01, Д02, Д06; SHOP-5501 — неполное описание (A5 п. 1.1, К6 «заведомо неполным»).
 // Суммы — целые копейки. MCC — общеизвестные значения ISO 18245, иллюстративно; справочник оператора — [альбом] (РП6). Тексты описаний — недоверенные данные продавца, агент их не исполняет.
+import type { MerchantDirectory } from "../../credentials/model.js";
 
 /** Поведение витрины в сценариях. */
 export const SHOP_BEHAVIOURS = [
@@ -189,3 +190,12 @@ export const byShopId = (a: Pick<Shop, "id">, b: Pick<Shop, "id">): number => (a
 /** Обязательные сведения карточки для заказа (A5 п. 1.1); у INCOMPLETE части нет. */
 export const isOrderable = (item: ShopItem): item is ShopItem & { price: number; currency: string } =>
   typeof item.price === "number" && typeof item.currency === "string";
+
+/**
+ * Справочник продавцов оператора на стенде (РП49 (д) п. 1): merchant_id → набор допустимых MCC; у витрины — один элемент,
+ * её `mcc`. В бою — справочник эквайреров оператора, форма — [альбом] (РП6). Неизвестный продавец — undefined.
+ */
+export function merchantDirectory(shops: readonly Shop[] = SHOPS): MerchantDirectory {
+  const map = new Map(shops.map((s) => [s.merchant_id, [s.mcc]] as const));
+  return { mccOf: async (merchant_id) => map.get(merchant_id) };
+}

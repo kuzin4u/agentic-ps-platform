@@ -10,6 +10,7 @@ import type { MandateDecisionPayload } from "../consent/model.js";
 import { createAgentReceiver, type AgentReceiver } from "../env/agent/index.js";
 import { createIssuerEmulator } from "../env/issuer/index.js";
 import { createTokenServiceEmulator, type TokenServiceEmulator } from "../env/tsp/index.js";
+import { merchantDirectory } from "../env/merchants/shops.js";
 import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
@@ -190,6 +191,8 @@ export function createStand(): Stand {
     store: credentialStore,
     tsp,
     funding: emulator,
+    // Справочник продавцов (РП49 (д)): витрины эмулятора, на продавца — MCC витрины.
+    merchants: merchantDirectory(),
     params,
     now,
   });

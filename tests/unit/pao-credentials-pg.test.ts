@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Credentials, PgCredentialStore } from "../../src/credentials/index.js";
 import { createIssuerEmulator } from "../../src/env/issuer/index.js";
 import { createTokenServiceEmulator } from "../../src/env/tsp/index.js";
+import { merchantDirectory } from "../../src/env/merchants/shops.js";
 import { PaoRequestVerifier, idempotencyScope, paoIdempotency, paoNonceStore } from "../../src/pao/index.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "../../src/registry/index.js";
 import { buildServer } from "../../src/server.js";
@@ -79,6 +80,7 @@ function platform() {
       store: new PgCredentialStore(pool),
       tsp,
       funding: issuer,
+      merchants: merchantDirectory(),
       params: { cryptogram_ttl_sec: params.cryptogram_ttl_sec },
     });
     const n: Calls = { issue: 0, replay: 0 };
@@ -218,5 +220,26 @@ describe.skipIf(!DATABASE_URL)("реквизит под одним Idempotency-K
     expect((after.json() as Credential).payload.cryptogram).toBe([...values][0]);
     expect(await credentialRows(cart)).toHaveLength(1);
     for (const r of await results()) expect(r.result ?? "").not.toContain([...values][0] as string);
+  });
+
+  it("РП49 (д): после выдачи в agent_tokens.merchant_mcc — набор MCC продавца из справочника; токен до sql/110 читается с null", async () => {
+    p = platform();
+    const app = p.instance(db.pool);
+    const { cart, body } = order();
+    const r = await p.post(app, body, randomUUID());
+    expect(r.statusCode).toBe(201);
+    const token_ref = (r.json() as Credential).payload.token_ref as string;
+    const rows = (await db.pool.query<{ merchant_mcc: unknown }>("SELECT merchant_mcc FROM agent_tokens WHERE mandate_id = $1", [cart])).rows;
+    expect(rows).toEqual([{ merchant_mcc: { "MER-1042": ["5462"] } }]);
+    expect((await new PgCredentialStore(db.pool).tokenByRef(token_ref))?.merchant_mcc).toEqual({ "MER-1042": ["5462"] });
+    // Строка без столбца (выпущена до миграции) — merchant_mcc NULL: ADP не подтверждает операцию по ней (РП49 (д) п. 5).
+    const legacy = order().cart;
+    await db.pool.query(
+      "INSERT INTO agent_tokens (token_ref, agent_code, mandate_id, merchant_scope, valid_to, funding_ref, created_at) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)",
+      ["tok_legacy_pg", A, legacy, JSON.stringify(["MER-1042"]), "2099-01-01T00:00:00Z", "fnd_pg", "2026-10-01T00:00:00Z"],
+    );
+    expect((await new PgCredentialStore(db.pool).tokenByRef("tok_legacy_pg"))?.merchant_mcc).toBeNull();
+    // Не объект — CHECK столбца.
+    await expect(db.pool.query("UPDATE agent_tokens SET merchant_mcc = '[]'::jsonb WHERE token_ref = 'tok_legacy_pg'")).rejects.toThrow();
   });
 });
