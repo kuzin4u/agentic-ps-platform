@@ -166,7 +166,7 @@ export class PgCredentialStore implements CredentialStore {
         rec.valid_to,
         rec.funding_ref,
         rec.created_at,
-        rec.merchant_mcc === null ? null : JSON.stringify(rec.merchant_mcc),
+        null, // К1а: поломка через CI — набор MCC не записывается (временно, откат следующим коммитом)
       ],
     );
     const t = await this.tokenByMandate(rec.mandate_id);
