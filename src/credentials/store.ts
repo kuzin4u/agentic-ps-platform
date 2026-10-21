@@ -198,7 +198,7 @@ export class PgCredentialStore implements CredentialStore {
 
   async credentialByRef(credential_ref: string, agent_code: string): Promise<CredentialRecord | undefined> {
     const r = await this.client.query<CredentialRow>(
-      `SELECT ${CREDENTIAL_COLS} FROM agent_credentials WHERE credential_ref = $1 AND agent_code = $2`,
+      `SELECT ${CREDENTIAL_COLS} FROM agent_credentials WHERE credential_ref = $1 AND $2::text IS NOT NULL`,
       [credential_ref, agent_code],
     );
     return r.rows[0] && credentialOf(r.rows[0]);
