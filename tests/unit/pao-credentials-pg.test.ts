@@ -39,16 +39,31 @@ const cartOf = (id: string): Mandate =>
     status: "ACTIVE",
   }) as Mandate;
 
-/** Реестр в памяти с A; «экземпляр шлюза» — сервер на своём пуле той же базы; токен-сервис и банк — общие. */
+/** Вызовы П5 одного экземпляра: issue — обработчик исполнен, replay — ответ собран из сохранённого под ключом. */
+interface Calls {
+  issue: number;
+  replay: number;
+}
+
+/**
+ * Реестр в памяти с A; «экземпляр шлюза» — сервер на своём пуле той же базы; токен-сервис и банк — общие. Счётчики
+ * различают повтор под ключом (replay) и повтор по заказу (issue → тот же реквизит): ответ у них одинаковый побайтно.
+ */
 function platform() {
   const store = new InMemoryAgentRegistryStore();
   const reg = new AgentRegistry(store, { keys: params });
   const keys = new AgentKeys(store, { keys: params });
   const side = newAgentSide();
   expect(reg.admit(buyerApplication(A, side), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
-  const tsp = createTokenServiceEmulator();
+  const emulator = createTokenServiceEmulator();
+  const tspCalls = { issueToken: 0 };
+  const tsp = {
+    issueToken: (i: Parameters<typeof emulator.issueToken>[0]) => (tspCalls.issueToken++, emulator.issueToken(i)),
+    cryptogram: (i: Parameters<typeof emulator.cryptogram>[0]) => emulator.cryptogram(i),
+  };
   const issuer = createIssuerEmulator();
   const apps: FastifyInstance[] = [];
+  const calls = new Map<FastifyInstance, Calls>();
   const instance = (pool: SqlClient): FastifyInstance => {
     const verifier = new PaoRequestVerifier(
       { getAgent: (c) => reg.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
@@ -66,6 +81,11 @@ function platform() {
       funding: issuer,
       params: { cryptogram_ttl_sec: params.cryptogram_ttl_sec },
     });
+    const n: Calls = { issue: 0, replay: 0 };
+    const counted = {
+      issue: (...a: Parameters<Credentials["issue"]>) => (n.issue++, credentials.issue(...a)),
+      replay: (...a: Parameters<Credentials["replay"]>) => (n.replay++, credentials.replay(...a)),
+    };
     const app = buildServer({
       env: "sandbox",
       pao: {
@@ -74,15 +94,17 @@ function platform() {
         idempotency: paoIdempotency({ client: pool, ttlSec: params.idempotency_ttl_sec }),
         params,
         consent: memoryConsent(),
-        credentials,
+        credentials: counted,
       },
     });
     apps.push(app);
+    calls.set(app, n);
     return app;
   };
   const post = (app: FastifyInstance, body: string, key: string) =>
     signedInject(app, side, A, { method: "POST", path: "/pao/v1/credentials", body, headers: { "idempotency-key": key } });
-  return { instance, post, close: () => Promise.all(apps.map((a) => a.close())) };
+  const callsOf = (app: FastifyInstance) => calls.get(app) as Calls;
+  return { instance, post, callsOf, tspCalls, close: () => Promise.all(apps.map((a) => a.close())) };
 }
 
 /** Свой CART на тест: записи реквизитов и токенов разных тестов одной схемы не пересекаются. */
@@ -127,6 +149,9 @@ describe.skipIf(!DATABASE_URL)("реквизит под одним Idempotency-K
     const b = await p.post(two, body, key);
     expect(b.statusCode).toBe(201);
     expect(b.body).toBe(a.body);
+    // Второй экземпляр ответил повтором под ключом (запись ядра в PG), а не новой выдачей с повтором по заказу (КТ2 № 1).
+    expect(p.callsOf(one)).toEqual({ issue: 1, replay: 0 });
+    expect(p.callsOf(two)).toEqual({ issue: 0, replay: 1 });
     // Главный инвариант сессии: значения криптограммы нет в базе Платформы — ни под ключом, ни в записи реквизита.
     const stored = (await results()).map((r) => r.result ?? "");
     expect(stored.some((r) => r.includes(c.credential_ref))).toBe(true);
@@ -152,6 +177,12 @@ describe.skipIf(!DATABASE_URL)("реквизит под одним Idempotency-K
     for (const r of busy) expect(r.json()).toMatchObject({ code: "UPSTREAM_UNAVAILABLE", retry: "same_key" });
     const values = new Set(ok.map((r) => (r.json() as Credential).payload.cryptogram));
     expect(values.size).toBe(1);
+    // Аренда ключа — между экземплярами (КТ2 № 2): обработчик исполнен один раз на оба, токен выпущен один раз;
+    // прочие 201 — повтор под ключом, остальные — 503 same_key.
+    const [c1, c2] = apps.map((a) => p!.callsOf(a)) as [Calls, Calls];
+    expect(c1.issue + c2.issue).toBe(1);
+    expect(c1.replay + c2.replay).toBe(ok.length - 1);
+    expect(p.tspCalls.issueToken).toBe(1);
     // После завершения первого — повтор на любом экземпляре даёт тот же реквизит.
     const after = await p.post(apps[1] as FastifyInstance, body, key);
     expect(after.statusCode).toBe(201);

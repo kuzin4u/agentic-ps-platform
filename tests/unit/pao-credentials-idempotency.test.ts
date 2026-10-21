@@ -250,12 +250,14 @@ describe("POST /pao/v1/credentials под тем же Idempotency-Key (РП48 (�
   it("пересборка повтора дала 4xx при сохранённом 201 — 503 STATE_UNAVAILABLE и инцидент, а не окончательный отказ (РП30 п. 3)", async () => {
     const g = await gateway();
     const key = randomUUID();
-    expect((await g.post(body(), key)).statusCode).toBe(201);
+    const c = (await g.post(body(), key)).json() as Credential;
     g.credentials.replay = async () => ({ ok: false, code: "MANDATE_SCOPE" });
     const r = await g.post(body(), key);
     expect([r.statusCode, (r.json() as { code: string }).code]).toEqual([503, "STATE_UNAVAILABLE"]);
     expect(r.headers["retry-after"]).toBeDefined();
-    expect(g.lines.some((l) => l.includes("пересборка повтора дала другой статус") && l.includes('"incident":true'))).toBe(true);
+    const inc = g.lines.find((l) => l.includes("пересборка повтора дала другой статус"));
+    expect(inc).toBeDefined();
+    expect(JSON.parse(inc as string)).toMatchObject({ incident: true, status: 409, code: "MANDATE_SCOPE", credential_ref: c.credential_ref });
     await g.app.close();
   });
 });

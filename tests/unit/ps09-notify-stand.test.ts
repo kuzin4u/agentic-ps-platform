@@ -58,6 +58,7 @@ describe("ПС09 на стенде: LIMIT_EXCEEDED и уведомление э�
     await stand.notifyParticipants();
     const mine = (await feed()).filter((n) => n.data.mandate_id === m);
     // По родителю INTENT — ничего: уведомления идут по мандату операции (CART), лишнего по родителю нет (повторный проход КТ1 № 4).
+    expect(parents.get(m)).toBeDefined();
     expect((await feed()).filter((n) => n.data.mandate_id === parents.get(m))).toEqual([]);
     expect(sorted(mine.map((n) => [n.type, n.data.op_ref ?? null, n.data.reason ?? null]))).toEqual([
       ["client.limit_declined", op, "MANDATE"],
@@ -78,6 +79,7 @@ describe("ПС09 на стенде: LIMIT_EXCEEDED и уведомление э�
     await stand.notifyParticipants();
     const mine = (await feed()).filter((n) => n.data.mandate_id === m);
     // По родителю INTENT — ничего: уведомления идут по мандату операции (CART), лишнего по родителю нет (повторный проход КТ1 № 4).
+    expect(parents.get(m)).toBeDefined();
     expect((await feed()).filter((n) => n.data.mandate_id === parents.get(m))).toEqual([]);
     expect(sorted(mine.map((n) => [n.type, n.data.reason ?? null]))).toEqual([
       ["client.limit_declined", "CLIENT"],

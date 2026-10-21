@@ -262,6 +262,18 @@ describe("CARD_TOKEN с признаком агента — CREDENTIAL_INVALID �
     ]);
   });
 
+  it("ключ счётчика без совпадений: null и пустая строка, перевод строки внутри id — разные пары (КТ2 PS-14 ч. 2)", async () => {
+    const { adp, logs } = setup();
+    const m = (op_ref: string, acquirer_id: string | undefined, id: string) =>
+      cardWithAoi({ op_ref, merchant: acquirer_id === undefined ? { id } : { id, acquirer_id } });
+    await adp.decide(m("k1", undefined, "M"));
+    await adp.decide(m("k2", "", "M"));
+    await adp.decide(m("k3", "a\nb", "c"));
+    await adp.decide(m("k4", "a", "b\nc"));
+    const counts = logs.filter((l) => l.msg.startsWith("ADP: CARD_TOKEN с признаком агента")).map((l) => l.fields.count);
+    expect(counts).toEqual([1, 1, 1, 1]);
+  });
+
   it("CARD_TOKEN без признака — по-прежнему BYPASS (инвариант 2)", async () => {
     const { adp } = setup();
     expect(pair(await adp.decide(plain()))).toMatchObject({ decision: "BYPASS" });

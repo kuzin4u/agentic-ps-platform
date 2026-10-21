@@ -221,7 +221,12 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         // Пересборка даёт либо тот же статус, либо 5xx (повтор позже): окончательный отказ при сохранённом 2xx нарушил
         // бы идемпотентность (РП30 п. 3) — агент бросил бы выданный реквизит. Иное — не подтверждено, инцидент.
         if (r.status < 500 && r.status !== run.result.status) {
-          req.log.warn({ agent_code: agent.agent_code, status: r.status, incident: true }, "ПАО: пересборка повтора дала другой статус");
+          const code = (r.body as { readonly code?: unknown } | null)?.code;
+          const credential_ref = (run.result.body as { readonly credential_ref?: unknown } | null)?.credential_ref;
+          req.log.warn(
+            { agent_code: agent.agent_code, status: r.status, code, credential_ref, incident: true },
+            "ПАО: пересборка повтора дала другой статус",
+          );
           r = reply4xx(paoError("STATE_UNAVAILABLE", "A3 п. 4.5"));
         }
       } else r = run.result;
