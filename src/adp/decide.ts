@@ -11,6 +11,7 @@ import { parseAgentCode } from "../registry/code.js";
 import { ConsentIntegrityError } from "../consent/model.js";
 import { sha256Hex, type CredentialRecord, type TokenRecord } from "../credentials/model.js";
 import type { CredentialStore } from "../credentials/store.js";
+import { CONFIRMATION_REF, newConfirmationId, sameTotals, type ConfirmationRecord, type ConfirmationStore } from "../confirm/index.js";
 import type { StateService } from "../state/index.js";
 import { STATE_TO_PI, STATUS_TO_PI } from "./codes.js";
 import type { LimitSource, OperationNotify, OperationRecord, OperationStore, WindowResult } from "./operations.js";
@@ -52,6 +53,16 @@ export interface AdpMandates {
  */
 export type AdpCredentials = Pick<CredentialStore, "tokenByRef" | "credentialByCryptogram" | "consume">;
 
+/**
+ * Подтверждение человеком (П6, РП50): запрос на CONFIRMATION_REQUIRED, проверка и погашение confirmation_ref. Не
+ * подключено — как до PS-19: ссылка не проверяется, запроса нет (РП43 п. 7). Сбой хранилища — исключение.
+ */
+export interface AdpConfirmations {
+  readonly store: Pick<ConfirmationStore, "byKey" | "create" | "byRef" | "expire" | "consume">;
+  /** Срок запроса (РП50 п. 1). */
+  readonly order_hold_sec: number;
+}
+
 export type AdpLog = (level: "info" | "warn", fields: Record<string, unknown>, msg: string) => void;
 
 export interface AdpOptions {
@@ -69,6 +80,7 @@ export interface AdpOptions {
    */
   readonly clientLimits: ClientLimitsSource;
   readonly credentials?: AdpCredentials;
+  readonly confirmations?: AdpConfirmations;
   readonly log?: AdpLog;
   readonly clock?: () => number;
   readonly now?: () => Date;
@@ -160,6 +172,8 @@ export class Adp {
     if (typeof msg.op_ref !== "string" || msg.op_ref === "") throw new AdpRequestInvalid("op_ref");
     if (!isUnits(msg.amount)) throw new AdpRequestInvalid("amount");
     if (!isCurrencyCode(msg.currency)) throw new AdpRequestInvalid("currency");
+    // Снимок входа вызывающего до первого await (Р-205): итоговые значения подтверждения и проверки — из одного сообщения.
+    msg = structuredClone(msg);
 
     const running = this.inflight.get(msg.op_ref);
     if (running) {
@@ -418,33 +432,37 @@ export class Adp {
       accounts.push({ id: m.parent_id, limit: parent.amount_limit });
     }
 
-    // 10. Порог — меньшее из рыночного и клиентского (РП44 п. 5); не определён — не подтверждено. confirmation_ref до
-    // PS-19 не проверяется: повтор получает тот же ответ (РП44 п. 6).
+    // 10. Порог — меньшее из рыночного и клиентского (РП44 п. 5); не определён — не подтверждено. Действующий
+    // confirmation_ref (РП50 п. 7) снимает п. 10 и п. 9 только для этой операции: окно не читается и не пополняется.
+    const confirmed = await this.confirmation(msg, agent_code, mandate_id);
+    if (confirmed === "unavailable") return no("STATE_UNAVAILABLE", mandate_id);
     const threshold = this.threshold(msg, mandate_id, limits && clientThreshold(limits));
     if (threshold === undefined) return no("STATE_UNAVAILABLE", mandate_id);
-    if (msg.amount > threshold) return this.confirm(accounts, client, msg.amount, mandate_id, false, no);
+    if (!confirmed && msg.amount > threshold) return this.confirm(msg, agent_code, accounts, client, mandate_id, false, no);
 
     // 9. Дробление (РП44 п. 1–4): операция не выше порога — доля, если в окне по корневому INTENT (у CART — родитель)
     // вместе с ней ≥ split_min_ops одобрений и сумма выше порога. Доля в окно не входит; вход — до резерва, отказ резерва
     // убирает запись из окна решением DECLINE. Окно не прочитано — не подтверждено, не «окна нет».
-    const window_key = accounts.at(-1)?.id ?? mandate_id;
-    const at_ms = this.now().getTime();
-    let w: WindowResult;
-    try {
-      w = await this.opts.operations.enterWindow(
-        msg.op_ref,
-        { key: window_key, amount: msg.amount, currency: msg.currency, at_ms },
-        { since_ms: at_ms - this.opts.params.split_window_sec * 1000, threshold, min_ops: this.opts.params.split_min_ops },
-      );
-    } catch {
-      this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: окно дробления не прочитано");
-      return no("STATE_UNAVAILABLE", mandate_id);
-    }
-    if (!w.entered) {
-      // Телеметрия ПС12: сигнал, не инцидент; реквизитов инструмента нет (инвариант 1, РП44 п. 7).
-      const fields = { op_ref: msg.op_ref, mandate_id, window_key, ops: w.ops, sum: w.sum, currency: msg.currency, split_detected: true };
-      this.log("warn", fields, "ADP: дробление по мандату в окне");
-      return this.confirm(accounts, client, msg.amount, mandate_id, true, no);
+    if (!confirmed) {
+      const window_key = accounts.at(-1)?.id ?? mandate_id;
+      const at_ms = this.now().getTime();
+      let w: WindowResult;
+      try {
+        w = await this.opts.operations.enterWindow(
+          msg.op_ref,
+          { key: window_key, amount: msg.amount, currency: msg.currency, at_ms },
+          { since_ms: at_ms - this.opts.params.split_window_sec * 1000, threshold, min_ops: this.opts.params.split_min_ops },
+        );
+      } catch {
+        this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: окно дробления не прочитано");
+        return no("STATE_UNAVAILABLE", mandate_id);
+      }
+      if (!w.entered) {
+        // Телеметрия ПС12: сигнал, не инцидент; реквизитов инструмента нет (инвариант 1, РП44 п. 7).
+        const fields = { op_ref: msg.op_ref, mandate_id, window_key, ops: w.ops, sum: w.sum, currency: msg.currency, split_detected: true };
+        this.log("warn", fields, "ADP: дробление по мандату в окне");
+        return this.confirm(msg, agent_code, accounts, client, mandate_id, true, no);
+      }
     }
 
     // 7–8, 11. Резерв: разовая сумма и остаток — одно атомарное условие ядра на каждом счёте; op_key — op_ref (РП43 п. 5).
@@ -492,6 +510,24 @@ export class Adp {
       for (const h of holds) await this.release(h, msg.op_ref);
       return no(late, mandate_id);
     }
+    // Погашение подтверждения (РП50 п. 10): после резерва и сверки статуса, до погашения реквизита, условной записью
+    // APPROVED → USED. Погасила другая авторизация или срок вышел — освобождение и снова CONFIRMATION_REQUIRED; сбой
+    // записи — освобождение и не подтверждено.
+    if (confirmed && this.opts.confirmations) {
+      let consumed: boolean;
+      try {
+        consumed = await this.opts.confirmations.store.consume(confirmed.confirmation_ref as string, msg.op_ref, this.now().toISOString());
+      } catch {
+        this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: погашение подтверждения не записано");
+        for (const h of holds) await this.release(h, msg.op_ref);
+        return no("STATE_UNAVAILABLE", mandate_id);
+      }
+      if (!consumed) {
+        for (const h of holds) await this.release(h, msg.op_ref);
+        this.log("warn", { op_ref: msg.op_ref, mandate_id, confirmation_id: confirmed.confirmation_id }, "ADP: подтверждение уже погашено или истекло");
+        return { ...no("CONFIRMATION_REQUIRED", mandate_id), split: confirmed.split_detected };
+      }
+    }
     // Погашение криптограммы (РП47 п. 8): только у APPROVE, после резерва и сверки статуса, условной записью ISSUED → USED.
     // Погасила другая авторизация (в том числе на другом экземпляре) — освобождение и CREDENTIAL_INVALID (A3 п. 4.4);
     // сбой записи — освобождение и не подтверждено. AGENT_TOKEN без записи реквизита сюда дойти не должен (п. 2 и 4);
@@ -532,12 +568,13 @@ export class Adp {
 
   /**
    * Подтверждение вместо резерва (доп. РП43 п. 15, РП44 п. 1): остаток — чтением без резерва (проверки 7–8 идут раньше);
-   * меньше суммы — LIMIT_EXCEEDED, не прочитан — STATE_UNAVAILABLE.
+   * меньше суммы — LIMIT_EXCEEDED, не прочитан — STATE_UNAVAILABLE. Иначе — запрос подтверждения (РП50 п. 1–3, 9).
    */
   private async confirm(
+    msg: CanonicalMessage,
+    agent_code: string,
     accounts: readonly { readonly id: string; readonly limit: number }[],
     client: ClientAccount | undefined,
-    amount: number,
     mandate_id: string,
     split: boolean,
     no: (reason: DecisionReason, mandate_id: string, source?: LimitSource) => Declined,
@@ -545,8 +582,102 @@ export class Adp {
     const left = await this.leftOf(accounts, client);
     if (left === undefined) return no("STATE_UNAVAILABLE", mandate_id);
     // Чей предел: мандата, если его остатка не хватает, иначе — лимита клиента (РП46 доп. п. 7).
-    if (minLeft(left) < amount) return no("LIMIT_EXCEEDED", mandate_id, left.mandate < amount ? "MANDATE" : "CLIENT");
+    if (minLeft(left) < msg.amount) return no("LIMIT_EXCEEDED", mandate_id, left.mandate < msg.amount ? "MANDATE" : "CLIENT");
+    if ((await this.request(msg, agent_code, mandate_id, split)) === "unavailable") return no("STATE_UNAVAILABLE", mandate_id);
     return { ...no("CONFIRMATION_REQUIRED", mandate_id), split };
+  }
+
+  /**
+   * Запрос подтверждения на итоговые значения (РП50 п. 1–3, 9): только из сообщения процессинга и записей Платформы.
+   * Один запрос в ожидании на ключ; после EXPIRED, REJECTED, USED (и при одобренном, но не предъявленном) — нового нет:
+   * заказ закрыт, новая попытка — с новым order_ref (A7 п. 7.3). Без order_ref — без запроса. Сбой — unavailable.
+   */
+  private async request(msg: CanonicalMessage, agent_code: string, mandate_id: string, split: boolean): Promise<"unavailable" | undefined> {
+    const c = this.opts.confirmations;
+    if (!c) return undefined;
+    const order_ref = msg.order_ref;
+    // Продавец уже сверен с областью мандата (п. 6); проверка формы — для типа, а не новое правило.
+    const merchant_id = msg.merchant?.id;
+    if (typeof order_ref !== "string" || order_ref === "" || typeof merchant_id !== "string") {
+      this.log("info", { op_ref: msg.op_ref, mandate_id }, "ADP: без order_ref запрос подтверждения не создаётся");
+      return undefined;
+    }
+    const key = { mandate_id, merchant_id, order_ref, amount: msg.amount, currency: msg.currency };
+    const now = this.now();
+    const at = now.toISOString();
+    try {
+      const prior = await c.store.byKey(key);
+      for (const r of prior) if (r.status === "PENDING" && !(r.expires_at > at)) await c.store.expire(r.confirmation_id, at);
+      if (prior.some((r) => r.status === "PENDING" && r.expires_at > at)) return undefined;
+      if (prior.length > 0) {
+        const statuses = prior.map((r) => r.status);
+        this.log("info", { op_ref: msg.op_ref, mandate_id, statuses }, "ADP: заказ закрыт для подтверждения — нового запроса нет");
+        return undefined;
+      }
+      await c.store.create({
+        ...key,
+        agent_code,
+        confirmation_id: newConfirmationId(),
+        split_detected: split,
+        status: "PENDING",
+        created_at: at,
+        expires_at: new Date(now.getTime() + c.order_hold_sec * 1000).toISOString(),
+        confirmation_ref: null,
+        decision: null,
+        op_ref: null,
+      });
+      return undefined;
+    } catch {
+      this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: запрос подтверждения не записан");
+      return "unavailable";
+    }
+  }
+
+  /**
+   * confirmation_ref сообщения (РП50 п. 7–8): действует — запись; нет, не по форме или не действует — undefined (обычный
+   * путь); сбой чтения — unavailable. Найденная ссылка с другими итоговыми значениями — инцидент (подмена итога).
+   */
+  private async confirmation(
+    msg: CanonicalMessage,
+    agent_code: string,
+    mandate_id: string,
+  ): Promise<ConfirmationRecord | "unavailable" | undefined> {
+    const c = this.opts.confirmations;
+    const ref = msg.confirmation_ref;
+    if (!c || ref === undefined || ref === null) return undefined;
+    if (typeof ref !== "string" || !CONFIRMATION_REF.test(ref)) {
+      this.log("info", { op_ref: msg.op_ref, mandate_id }, "ADP: confirmation_ref не по форме — не учитывается");
+      return undefined;
+    }
+    let r: ConfirmationRecord | undefined;
+    try {
+      r = await c.store.byRef(ref);
+    } catch {
+      this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: запись подтверждения не прочитана");
+      return "unavailable";
+    }
+    if (!r) {
+      this.log("info", { op_ref: msg.op_ref, mandate_id }, "ADP: confirmation_ref неизвестен — не учитывается");
+      return undefined;
+    }
+    const totals = {
+      agent_code,
+      mandate_id,
+      merchant_id: msg.merchant?.id as string,
+      amount: msg.amount,
+      currency: msg.currency,
+      order_ref: msg.order_ref as string,
+    };
+    if (!sameTotals(r, totals)) {
+      // Без значения ссылки и без реквизитов инструмента (инвариант 1).
+      this.log("warn", { op_ref: msg.op_ref, mandate_id, confirmation_id: r.confirmation_id, incident: true }, "ADP: confirmation_ref на другие итоговые значения");
+      return undefined;
+    }
+    if (r.status !== "APPROVED" || !(r.expires_at > this.now().toISOString())) {
+      this.log("info", { op_ref: msg.op_ref, mandate_id, confirmation_id: r.confirmation_id, status: r.status }, "ADP: подтверждение не действует");
+      return undefined;
+    }
+    return r;
   }
 
   /**

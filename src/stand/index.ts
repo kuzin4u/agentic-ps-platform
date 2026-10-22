@@ -12,6 +12,7 @@ import { createIssuerEmulator } from "../env/issuer/index.js";
 import { createTokenServiceEmulator, type TokenServiceEmulator } from "../env/tsp/index.js";
 import { merchantDirectory } from "../env/merchants/shops.js";
 import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
+import { MemoryConfirmationStore } from "../confirm/index.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
@@ -186,6 +187,8 @@ export function createStand(): Stand {
   // Агентские реквизиты (П5, РП47): токен-сервис — эмулятор с ключом в памяти, funding_ref — от банка стенда.
   const tsp = createTokenServiceEmulator();
   const credentialStore = new MemoryCredentialStore();
+  // Подтверждение человеком (П6, РП50): запросы ADP и решения банка стенда — одно хранилище в памяти.
+  const confirmationStore = new MemoryConfirmationStore();
   const credentials = new Credentials({
     mandates: { get: (id, agent_code) => consent.credentialMandate(id, agent_code) },
     store: credentialStore,
@@ -223,6 +226,8 @@ export function createStand(): Stand {
         clientLimits: { get: (c) => limits.history(c) },
         // Домен токена, криптограмма и погашение — то же хранилище П5, что выдаёт реквизиты (РП47 п. 6–8).
         credentials: credentialStore,
+        // Запрос на CONFIRMATION_REQUIRED, проверка и погашение confirmation_ref (РП50 п. 1–3, 7–10).
+        confirmations: { store: confirmationStore, order_hold_sec: params.order_hold_sec },
         // Часы стенда (setClock): период лимита клиента и окно дробления — по тем же часам, что резервы и подписи.
         now,
       }),
