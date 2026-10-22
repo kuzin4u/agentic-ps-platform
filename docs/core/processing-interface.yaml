@@ -749,7 +749,7 @@ paths:
   /participants/v1/confirmations/{id}:
     post:
       summary: ПИ-8/ПИ-6 Результат подтверждения
-      description: "Решение человека по запросу подтверждения (РП50 п. 4–5): банк клиента корневого INTENT присылает запись, подписанную своим ключом Ed25519. Подписываемая строка — canonicalJson записи с полем `context` = `pao:participant-confirmation:v1` и `confirmation_id` из пути; в теле `context` и `confirmation_id` нет. `totals_hash` — SHA-256 UTF-8 канонической записи RFC 8785 объекта {confirmation_id, agent_code, mandate_id, merchant_id, amount, currency, order_ref} (`amount` — целое в минимальных единицах, `currency` — ISO 4217): банк подтверждает итог, который видел человек. `decided_at` не позже `expires_at` запроса и не позже часов Платформы больше чем на `signature_skew_sec`. При APPROVE выдаётся `confirmation_ref`. Повтор той же записи — 200 с текущим статусом без записи. Подписант — банк клиента корневого INTENT или оператор УПК (участник с ролью `UPK`, РП51 п. 12; боевой `UPK` — отказ запуска до привязки решения к аутентификации у эмитента). `instrument_chosen` — выбор инструмента человеком (РП51 п. 13–14): есть — входит в подписываемую запись; нет — запись та же, что до РП51; от `UPK` обязателен; в `totals_hash` не входит; ссылка действует только по выбранному каналу."
+      description: "Решение человека по запросу подтверждения (РП50 п. 4–5): банк клиента корневого INTENT присылает запись, подписанную своим ключом Ed25519. Подписываемая строка — canonicalJson записи с полем `context` = `pao:participant-confirmation:v1` и `confirmation_id` из пути; в теле `context` и `confirmation_id` нет. `totals_hash` — SHA-256 UTF-8 канонической записи RFC 8785 объекта {confirmation_id, agent_code, mandate_id, merchant_id, amount, currency, order_ref} (`amount` — целое в минимальных единицах, `currency` — ISO 4217): банк подтверждает итог, который видел человек. `decided_at` не позже `expires_at` запроса и не позже часов Платформы больше чем на `signature_skew_sec`. При APPROVE выдаётся `confirmation_ref`. Повтор той же записи — 200 с текущим статусом без записи. Выбор инструмента на странице УПК — PS-19 ч. 2."
       parameters:
       - name: id
         in: path
@@ -785,12 +785,6 @@ paths:
                   type: string
                   pattern: ^[0-9a-f]{64}$
                   description: SHA-256 hex итоговых значений запроса (RFC 8785)
-                instrument_chosen:
-                  type: string
-                  enum:
-                  - CARD
-                  - SBP
-                  description: "инструмент, выбранный человеком (канонический `channel`); необязателен, от участника `UPK` — обязателен (РП51 п. 13)"
                 decided_at:
                   type: string
                   format: date-time
@@ -824,9 +818,9 @@ paths:
                     maxLength: 32
                     description: только при APPROVED; однократная ссылка для авторизации
         '400':
-          description: "`REQUEST_INVALID` — в том числе запись участника `UPK` без `instrument_chosen`"
+          description: "`REQUEST_INVALID`"
         '401':
-          description: "`SIGNATURE_INVALID` — подпись, неизвестный участник или ключ, не банк клиента корневого INTENT и не участник `UPK`, `decided_at` в будущем сверх `signature_skew_sec`"
+          description: "`SIGNATURE_INVALID` — подпись, неизвестный участник или ключ, не банк клиента корневого INTENT, `decided_at` в будущем сверх `signature_skew_sec`"
         '404':
           description: "`CONFIRMATION_NOT_FOUND`"
         '409':
