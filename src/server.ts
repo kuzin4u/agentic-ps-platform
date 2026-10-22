@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import Fastify, { type FastifyInstance } from "fastify";
 import { adpRoutes, type AdpDeps } from "./adp/routes.js";
+import type { CollectorHealth } from "./fulfilment/outcomes.js";
 import type { NotifierHealth } from "./participants/notifications.js";
 import { participantRoutes, type ParticipantDeps } from "./participants/routes.js";
 import { paoRoutes, type PaoDeps } from "./pao/routes.js";
@@ -36,6 +37,11 @@ export interface ServerOptions {
    * признак с кодом PARTICIPANT_NOTIFY_LAGGING, статус ответа остаётся 200 (уведомления в решении о платеже не участвуют).
    */
   notifier?: { health(): NotifierHealth };
+  /**
+   * Сборщик итогов операций (РП52 п. 1 (а)): состояние — в /health так же, отставание — признак OPERATION_OUTCOME_LAGGING
+   * («Дополнения» п. 2), статус ответа остаётся 200 (итог агенту отдаёт GET из записи операции).
+   */
+  outcomes?: { health(): CollectorHealth };
   /**
    * Режим «только BYPASS» (РП43 п. 8): самопроверка при старте не прошла. Неагентским — BYPASS, агентским — 503 без
    * решения; ПАО, П10 и точка решения не регистрируются; /health — 200 с mode и кодами непрошедших проверок; при входе
@@ -94,7 +100,13 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
 
   // Живость процесса; к базе не обращается. Уведомитель — по последнему проходу этого процесса.
   const notifier = opts.notifier;
-  app.get("/health", async () => ({ status: "ok", env: opts.env, ...(notifier ? { participant_notify: notifier.health() } : {}) }));
+  const outcomes = opts.outcomes;
+  app.get("/health", async () => ({
+    status: "ok",
+    env: opts.env,
+    ...(notifier ? { participant_notify: notifier.health() } : {}),
+    ...(outcomes ? { operation_outcome: outcomes.health() } : {}),
+  }));
 
   // Проверка обращения — в отдельном контексте: /health её не проходит.
   const pao = opts.pao;

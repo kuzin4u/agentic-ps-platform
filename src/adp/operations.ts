@@ -3,7 +3,7 @@
 // BYPASS не пишется. Окно дробления (РП44 п. 4) — столбцы той же записи (sql/104_adp_split_window.sql).
 import { createHash } from "node:crypto";
 import type { SqlClient } from "@kuzin4u/agentic-core";
-import type { Decision } from "../shared/canonical.generated.js";
+import type { Aoi, Decision } from "../shared/canonical.generated.js";
 
 export interface OperationRecord {
   readonly op_ref: string;
@@ -17,6 +17,25 @@ export interface OperationRecord {
   readonly at: string;
   /** Признаки для уведомителя участника (РП46 доп. п. 9 (о1)): пишутся тем же обновлением, что решение. */
   readonly notify?: OperationNotify;
+  /** Факты операции для итога П8 (РП52 п. 9): тем же обновлением, что решение. */
+  readonly facts?: OperationFacts;
+}
+
+/**
+ * Факты операции из сообщения процессинга (инвариант 5) и агент по домену токена (РП52 п. 5, 9): только ссылки и коды,
+ * сумма — парой с валютой; token_ref и криптограммы нет (инвариант 1).
+ */
+export interface OperationFacts {
+  /** Агент по домену токена (запись Платформы), не из aoi; null — агент не установлен: итог без события. */
+  readonly agent_code: string | null;
+  readonly order_ref: string | null;
+  /** null — канал не из перечня ПИ: не догадка (инвариант 3). */
+  readonly channel: "CARD" | "SBP" | null;
+  readonly merchant_id: string | null;
+  readonly amount: number;
+  readonly currency: string;
+  /** Признак сообщения как пришёл (A1 п. 5.1); null — без признака. */
+  readonly aoi: Aoi | null;
 }
 
 /**
@@ -81,6 +100,11 @@ export interface OperationStore {
   enterWindow(op_ref: string, entry: WindowEntry, rule: WindowRule): Promise<WindowResult>;
 }
 
+/** Чтение записи операции по op_ref — для ПИ-3 и GET операции (РП52 п. 8, 10); нет — undefined, сбой — исключение. */
+export interface OperationReader {
+  get(op_ref: string): Promise<OperationRecord | undefined> | OperationRecord | undefined;
+}
+
 export class MemoryOperationStore implements OperationStore {
   readonly #map = new Map<string, OperationRecord>();
   /** Входы окна по op_ref: заполняются один раз, решение их не меняет (как столбцы окна на PG). */
@@ -98,7 +122,7 @@ export class MemoryOperationStore implements OperationStore {
     for (const r of this.#map.values()) yield structuredClone(r);
   }
 
-  /** Запись по op_ref — для уведомителя в памяти и тестов; нет — undefined. */
+  /** Запись по op_ref — для уведомителя в памяти, ПИ-3, GET операции и тестов; нет — undefined. */
   get(op_ref: string): OperationRecord | undefined {
     const r = this.#map.get(op_ref);
     return r && structuredClone(r);
@@ -145,6 +169,16 @@ interface OperationRow extends Record<string, unknown> {
   at: string;
 }
 
+interface FactsRow extends OperationRow {
+  agent_code: string | null;
+  order_ref: string | null;
+  channel: "CARD" | "SBP" | null;
+  merchant_id: string | null;
+  msg_amount: string | null;
+  msg_currency: string | null;
+  aoi: Aoi | null;
+}
+
 /**
  * Записи операций на PostgreSQL (доп. РП43 п. 16): «в работе» — INSERT … ON CONFLICT DO NOTHING, один оператор, поэтому
  * из одновременных запросов с разных экземпляров к резерву проходит один. Решение — UPDATE только строки «в работе» с тем
@@ -180,12 +214,43 @@ export class PgOperationStore implements OperationStore {
     return { ...row, msg_hash: row.msg_hash.trim() };
   }
 
+  /**
+   * Запись с фактами итога (РП52 п. 9). У записей до sql/114 фактов нет — запись без facts: агент итога по ПИ-3 у них не
+   * установлен («Нюансы реализации» п. 4).
+   */
+  async get(op_ref: string): Promise<OperationRecord | undefined> {
+    const r = await this.client.query<FactsRow>(
+      `SELECT op_ref, msg_hash, decision, mandate_id, holds, at, agent_code, order_ref, channel, merchant_id, msg_amount, msg_currency, aoi
+         FROM adp_operations WHERE op_ref = $1`,
+      [op_ref],
+    );
+    const x = r.rows[0];
+    if (!x) return undefined;
+    const base: OperationRecord = { op_ref: x.op_ref, msg_hash: x.msg_hash.trim(), decision: x.decision, mandate_id: x.mandate_id, holds: x.holds, at: x.at };
+    if (x.msg_amount === null || x.msg_currency === null) return base;
+    return {
+      ...base,
+      facts: {
+        agent_code: x.agent_code,
+        order_ref: x.order_ref,
+        channel: x.channel,
+        merchant_id: x.merchant_id,
+        amount: Number(x.msg_amount),
+        currency: x.msg_currency.trim(),
+        aoi: x.aoi,
+      },
+    };
+  }
+
   async finish(rec: OperationRecord): Promise<void> {
-    // Признаки уведомителя — тем же оператором (РП46 доп. п. 9 (о1)): новых обращений к базе в пути ADP нет.
+    // Признаки уведомителя и факты итога — тем же оператором (РП46 доп. п. 9 (о1), РП52 п. 9): новых обращений к базе в
+    // пути ADP нет. Агент — по домену токена: у уведомителя он тот же (клиент мандата известен только после домена).
     const n = rec.notify;
+    const f = rec.facts;
     await this.client.query(
       `UPDATE adp_operations SET decision = $2::jsonb, mandate_id = $3, holds = $4::jsonb,
-              participant_code = $6, principal_ref = $7, agent_code = $8, limit_source = $9, client_account = $10, client_left_after = $11
+              participant_code = $6, principal_ref = $7, agent_code = $8, limit_source = $9, client_account = $10, client_left_after = $11,
+              order_ref = $12, channel = $13, merchant_id = $14, msg_amount = $15, msg_currency = $16, aoi = $17::jsonb
         WHERE op_ref = $1 AND decision IS NULL AND msg_hash = $5`,
       [
         rec.op_ref,
@@ -195,10 +260,16 @@ export class PgOperationStore implements OperationStore {
         rec.msg_hash,
         n?.participant_code ?? null,
         n?.principal_ref ?? null,
-        n?.agent_code ?? null,
+        n?.agent_code ?? f?.agent_code ?? null,
         n?.limit_source ?? null,
         n?.client_account ?? null,
         n?.client_left_after ?? null,
+        f?.order_ref ?? null,
+        f?.channel ?? null,
+        f?.merchant_id ?? null,
+        f?.amount ?? null,
+        f?.currency ?? null,
+        f?.aoi ? JSON.stringify(f.aoi) : null,
       ],
     );
   }

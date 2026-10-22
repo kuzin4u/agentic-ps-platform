@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.18.0** (подтверждение человеком, PS-19 ч. 3: страница УПК стенда — `link` рабочий, человек выбирает инструмент и подтверждает одноразовым кодом от банка; оператор УПК — участник ПИ-8 с ролью `UPK`; `instrument_chosen` — необязательное поле ПИ-8, ссылка действует только по выбранному каналу; ПС11 — целиком, ПС21 — частично до PS-21). Подробности — `CHANGELOG.md`.
+Текущая версия — **v0.19.0** (события операции, PS-16 ч. 1: `operation.authorized` / `operation.declined` агенту — по отказу ADP сборщиком вне пути авторизации и по ответу эмитента через ПИ-3 `POST /adp/v1/events`; `data` — только `{op_ref}`, причины отказа — закрытый перечень; `GET` операции — PS-16 ч. 2). Подробности — `CHANGELOG.md`.
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.18.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.19.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.

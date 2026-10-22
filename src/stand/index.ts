@@ -17,6 +17,7 @@ import { merchantDirectory } from "../env/merchants/shops.js";
 import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
 import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../confirm/index.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
+import { MemoryOutcomeStore, OperationOutcomeCollector, type CollectorResult } from "../fulfilment/outcomes.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import type { PaoEventType } from "../pao/events.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
@@ -126,6 +127,11 @@ export interface Stand {
    */
   notifyParticipants(): Promise<NotifierResult>;
   /**
+   * Проход сборщика итогов операций по часам стенда (РП52 п. 1 (а)): итог и событие operation.declined по решённым отказам
+   * ADP вне пути авторизации. Таймера на стенде нет — тест вызывает проход сам.
+   */
+  collectOperationOutcomes(): Promise<CollectorResult>;
+  /**
    * Проход вебхука-сигнала банку стенда по часам стенда (РП46 (б) п. 3): все готовые попытки до пустой очереди; число
    * попыток. Повтор — по nextAttemptDelayMs ядра, тест двигает часы. Приёмник — issuerWebhook.
    */
@@ -218,6 +224,14 @@ export function createStand(opts: StandOptions = {}): Stand {
     horizonSec: params.participant_notify_horizon_sec,
     now: () => now().getTime(),
   });
+  // Итоги операций (РП52): записи ADP стенда — память, события — в ленту журнала стенда, push — по тому же правилу.
+  const outcomeStore = new MemoryOutcomeStore(operations, consentStore);
+  const outcomes = new OperationOutcomeCollector(outcomeStore, {
+    horizonSec: params.operation_outcome_horizon_sec,
+    maxDelaySec: params.operation_outcome_max_delay_sec,
+    pushFor,
+    now: () => now().getTime(),
+  });
   // Вебхук-сигнал банку стенда: проверка адреса та же, что в рабочем сервере, подменены разрешение имени и транспорт.
   const issuerWebhook = createIssuerWebhookReceiver();
   const webhook = new WebhookDeliverer({
@@ -248,6 +262,7 @@ export function createStand(opts: StandOptions = {}): Stand {
   const app = buildServer({
     env: "dev",
     notifier,
+    outcomes,
     pao: {
       verifier,
       keys,
@@ -291,6 +306,8 @@ export function createStand(opts: StandOptions = {}): Stand {
         // Часы стенда (setClock): период лимита клиента и окно дробления — по тем же часам, что резервы и подписи.
         now,
       }),
+      // ПИ-3 стенда (РП52 п. 1 (б)): ответ эмитента — итог и событие в ленту журнала стенда, освобождение — П3 стенда.
+      events: { operations, store: outcomeStore, state, pushFor, now },
     },
   });
   const issuer: StandIssuer = {
@@ -431,6 +448,7 @@ export function createStand(opts: StandOptions = {}): Stand {
     },
     delivery: (id) => consentStore.delivery(id),
     notifyParticipants: () => notifier.runOnce(),
+    collectOperationOutcomes: () => outcomes.runOnce(),
     async deliverParticipantNotifications() {
       let total = 0;
       for (let n = await webhook.runOnce(); n > 0; n = await webhook.runOnce()) total += n;

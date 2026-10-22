@@ -1,6 +1,7 @@
 // П9 Лента событий агенту (РП39, PS-08 К1.2): событие пишется в одной транзакции с записью журнала согласий (Outbox),
 // номер у агента — под блокировкой агента до фиксации. Событие без подписи до ПАО 1.5.0 — сигнал, статус — через GET.
 // Второй источник — переход запроса подтверждения П6 (РП51 п. 1–4): та же лента и номер, без записи журнала.
+// Третий — итог операции П8 (РП52 п. 7): operation.authorized / .declined, data — только {op_ref}.
 import { createHash } from "node:crypto";
 import type { Event } from "../shared/pao.js";
 
@@ -16,13 +17,19 @@ export interface EventDraft {
   readonly push?: boolean;
 }
 
-/** Ссылка события: мандат (запись журнала) или запрос подтверждения (переход П6, РП51 п. 5). */
-export type EventData = { readonly mandate_id: string } | { readonly confirmation_id: string };
+/** Ссылка события: мандат (запись журнала), запрос подтверждения (переход П6, РП51 п. 5) или операция (итог П8, РП52 п. 7). */
+export type EventData = { readonly mandate_id: string } | { readonly confirmation_id: string } | { readonly op_ref: string };
 
 /** Событие перехода запроса подтверждения: тип confirmation.*, data — только {confirmation_id} (РП51 п. 2, 5). */
 export interface ConfirmationEventDraft extends EventDraft {
   readonly type: Extract<PaoEventType, `confirmation.${string}`>;
   readonly data: { readonly confirmation_id: string };
+}
+
+/** Событие итога операции: operation.authorized / .declined, data — только {op_ref} (РП52 п. 7). */
+export interface OperationEventDraft extends EventDraft {
+  readonly type: Extract<PaoEventType, "operation.authorized" | "operation.declined">;
+  readonly data: { readonly op_ref: string };
 }
 
 /**
@@ -39,6 +46,7 @@ export interface StoredEvent extends Omit<EventDraft, "push"> {
 
 export const EVENT_ID_DOMAIN = "pao:event-id:v1";
 export const CONFIRMATION_EVENT_ID_DOMAIN = "pao:confirmation-event-id:v1";
+export const OPERATION_EVENT_ID_DOMAIN = "pao:operation-event-id:v1";
 export const EVENT_SEQ_LOCK_DOMAIN = "pao:event-seq-lock:v1";
 
 export const EVENT_ID = /^evt_[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -53,6 +61,12 @@ export function eventIdFor(chain: string, seq: number): string {
 export function confirmationEventIdFor(confirmation_id: string, type: ConfirmationEventDraft["type"]): string {
   if (confirmation_id === "" || confirmation_id.includes("\n")) throw new Error("confirmationEventIdFor: запрос подтверждения");
   return uuidV8(`${CONFIRMATION_EVENT_ID_DOMAIN}\n${confirmation_id}\n${type}`);
+}
+
+/** event_id итога операции (РП52 п. 7): своя метка — не совпадает с событиями журнала и подтверждений. */
+export function operationEventIdFor(op_ref: string, type: OperationEventDraft["type"]): string {
+  if (op_ref === "" || op_ref.includes("\n")) throw new Error("operationEventIdFor: операция");
+  return uuidV8(`${OPERATION_EVENT_ID_DOMAIN}\n${op_ref}\n${type}`);
 }
 
 function uuidV8(input: string): string {

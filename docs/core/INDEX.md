@@ -12,7 +12,7 @@
 | [`SCENARIOS.md`](SCENARIOS.md) | 28 сценариев Платформы |
 | [`PARAMS.md`](PARAMS.md) | Стендовые параметры |
 | [`SECURITY.md`](SECURITY.md) | Модель угроз по компонентам, ключи Платформы, mTLS песочницы, аутентификация операторов агентов, ограничения песочницы |
-| [`DECISIONS.md`](DECISIONS.md) | РП1–РП51 |
+| [`DECISIONS.md`](DECISIONS.md) | РП1–РП52 |
 | [`ROADMAP.md`](ROADMAP.md) | Ред. 2: 8 этапов (0–7), 34 сессии, сроки по календарю планов рынков |
 | [`STATUS.md`](STATUS.md) | Состояние и следующая сессия |
 | [`GLOSSARY.md`](GLOSSARY.md) | Термины |

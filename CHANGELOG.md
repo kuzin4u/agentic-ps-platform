@@ -5,6 +5,69 @@
 ставит владелец на коммит слияния в `main`. Версия ПАО — `info.version` в `docs/core/agent-protocol.yaml`, сверка копий —
 по `PAO_SPEC_SHA256` (`src/shared/pao-errors.generated.ts`). Записи до v0.4.0 — в описаниях PR и тегах.
 
+## v0.19.0 — 22.10.2026
+
+PS-16 «События операции и запись об исполнении (П8)», часть 1, PR #57. Решение РП52 с «Дополнениями» п. 1–4 и
+«Нюансами реализации» п. 1–10. ПАО — по-прежнему 1.4.0, `PAO_SPEC_SHA256` не меняется (`48bd3397…9ad9da`),
+`agent-protocol.yaml` не менялся; изменён описательный AGENT-PROTOCOL §5 (события `operation.*`). **ПИ изменён
+совместимо:** в `processing-interface.yaml` — описание и ответы `POST /adp/v1/events` (ПИ-3), новых полей нет, новый
+`PI_SPEC_SHA256` `2236c72a…2a8631`, `info.version` — прежний. Ядро — `#v0.11.0` без изменений. Миграция —
+`sql/114_operation_outcomes.sql`. Новые стендовые параметры — `operation_outcome_every_ms`,
+`operation_outcome_max_delay_sec`, `operation_outcome_horizon_sec`. `GET /pao/v1/operations/{op_ref}` — **не в этом
+выпуске**, PS-16 ч. 2.
+
+### Агенту (AG-11 ч. 2, AG-12)
+
+- **События `operation.authorized` и `operation.declined` приходят в ленту** (`GET /pao/v1/events`) и push по подписке.
+  `data` — **только `{op_ref}`**: ни суммы, ни продавца, ни реквизита, ни причины. Номер в ленте — общий с `mandate.*` и
+  `confirmation.*`.
+- **`operation.authorized`** — только после одобрения эмитентом (ПИ-3), а не по решению ADP. **`operation.declined`** —
+  отказ ADP или эмитента, в том числе при отзыве или истечении мандата и при приостановлении агента (тогда событие ждёт
+  в ленте до снятия приостановки); `mandate.*` и `agent.*` итог операции не заменяют.
+- **Причины отказа — закрытый перечень** (до ПАО 1.5.0 `reason` в ПАО — строка, перечень — AGENT-PROTOCOL §5):
+  `AOI_MISMATCH`, `AGENT_SUSPENDED`, `CREDENTIAL_INVALID`, `MANDATE_NOT_FOUND`, `MANDATE_EXPIRED`, `MANDATE_REVOKED`,
+  `MANDATE_SCOPE`, `LIMIT_EXCEEDED`, `STATE_UNAVAILABLE`, `ISSUER_DECLINED`. **`INSUFFICIENT_FUNDS` из SPEC §7б агента до
+  ПАО 1.5.0 приходит как `ISSUER_DECLINED`.** Неизвестная причина — остановка без повтора.
+- **Событие отказа ADP — не позже `operation_outcome_max_delay_sec`** после решения (стенд — 30 с; его пишет сборщик вне
+  пути авторизации), событие по ответу эмитента — сразу.
+- **Чего событием нет:** отказ, при котором Платформа не установила агента по своей записи токена (`AOI_MISSING`,
+  `AGENT_UNKNOWN`, неопознанный реквизит); `CONFIRMATION_REQUIRED` (есть `confirmation.required`); `APPROVE` ADP без ответа
+  эмитента.
+- **До PS-16 ч. 2 событие — только сигнал:** `GET /pao/v1/operations/{op_ref}` в этом выпуске нет (404), итог стадии 5 по
+  событиям подтверждается с ч. 2. AG-11 ч. 2 ждёт PS-16 ч. 2.
+
+### Процессингу и банку (ПИ-3)
+
+- **Новый маршрут `POST /adp/v1/events`** — ПИ-3, тело — `CanonicalMessage`, ответ — `{}`. До SEC-1 подключён только на
+  стенде и в тестах, как `/adp/v1/decide`.
+- **`ISSUER_RESPONSE`** по операции с `APPROVE` ADP: `issuer_approved: true` — итог `AUTHORIZED`, `false` — освобождение
+  резерва и итог `DECLINED` / `ISSUER_DECLINED`. Итог по `op_ref` один: повтор — 202 без второго события; иной второй
+  исход — 202 и инцидент, итог прежний. Ответ по операции без записи ADP (`BYPASS`, неагентская) — 202 без действий.
+- **Ответы:** 202 — принято; 400 — тело не объект, пустой `op_ref`, `msg_type` не строка, `issuer_approved` не булево;
+  **503 — повторить:** решение ADP ещё не записано, сбой хранилища, сбой освобождения резерва (итог уже записан, повтор
+  освобождает снова), **прочие `msg_type` (`PRESENTMENT`, `REVERSAL`, `REFUND`, `CHARGEBACK`, `AUTH_EXPIRED`) — до PS-16
+  ч. 2**: принятый без закрепления `PRESENTMENT` вернул бы бюджет по `reservation_ttl`.
+- Кода причины отказа эмитента в канонической модели нет: причина — `ISSUER_DECLINED`; `issuer_reason` по альбомам — к
+  ПАО 1.5.0 (#37).
+- Новый `PI_SPEC_SHA256` `2236c72a3b7fc9ee33267de2179c0114eb7a3874f201c3d1053341922e2a8631` (было `c235a7b6…`): сверка
+  копии спецификации — по нему.
+
+### Стенд
+
+- `stand.collectOperationOutcomes()` — проход сборщика итогов по часам стенда (таймера на стенде нет, как
+  `notifyParticipants()`): после отказа ADP событие `operation.declined` появится в ленте агента только после прохода.
+- `POST /adp/v1/events` — на `stand.app`; `/health` стенда — новое поле `operation_outcome` (`last_pass_at`, `lagging`,
+  при отставании — `code: "OPERATION_OUTCOME_LAGGING"`).
+
+### Переход с 0.18.x
+
+- Миграция `sql/114_operation_outcomes.sql`: факты операции в `adp_operations`, таблица `operation_outcomes` (только
+  вставка), у `pao_events` — столбец `op_ref` и третий источник в CHECK. Решения ADP до миграции фактов не имеют: первый
+  проход сборщика после выпуска пишет по ним итоги, событие — где агент известен из столбца уведомителя; признак
+  отставания на первом проходе ожидаем.
+- В файл параметров — три ключа `operation_outcome_*` (без них — отказ запуска); границы — PARAMS.
+- Код реестра Платформы `OPERATION_OUTCOME_LAGGING` — признак, готовность не снимает.
+
 ## v0.18.0 — 22.10.2026
 
 PS-19 «Подтверждение человеком (П6)», часть 3, PR #56. Решение РП51 п. 12–16 с «Дополнениями» п. 6–8. ПАО — по-прежнему

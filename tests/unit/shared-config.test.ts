@@ -168,6 +168,8 @@ describe("стендовые параметры", () => {
       "`adp_timeout_ms` > `adp_p99_ms`",
       "`key_overlap_days` < `key_ttl_days`",
       "`participant_notify_horizon_sec` ≥ 2 × `participant_notify_max_delay_sec`",
+      "`operation_outcome_every_ms` < `operation_outcome_max_delay_sec` × 1000",
+      "`operation_outcome_horizon_sec` ≥ 2 × `operation_outcome_max_delay_sec`",
     ]) {
       expect(section, rule).toContain(rule);
     }
@@ -178,6 +180,18 @@ describe("стендовые параметры", () => {
     expect(() => parseParams({ ...stand(), participant_notify_max_delay_sec: 60, participant_notify_horizon_sec: 119 })).toThrow(
       /participant_notify_horizon_sec меньше двух participant_notify_max_delay_sec/,
     );
+  });
+
+  it("сборщик итогов: every_ms < max_delay_sec × 1000, горизонт ≥ 2 × max_delay_sec (РП52 «Дополнения» п. 1, 3)", () => {
+    const p = parseParams(stand());
+    expect([p.operation_outcome_every_ms, p.operation_outcome_max_delay_sec, p.operation_outcome_horizon_sec]).toEqual([1000, 30, 86400]);
+    expect(parseParams({ ...stand(), operation_outcome_every_ms: 29_999 }).operation_outcome_every_ms).toBe(29_999);
+    expect(() => parseParams({ ...stand(), operation_outcome_every_ms: 30_000 })).toThrow(/operation_outcome_every_ms не меньше operation_outcome_max_delay_sec/);
+    expect(parseParams({ ...stand(), operation_outcome_horizon_sec: 60 }).operation_outcome_horizon_sec).toBe(60);
+    expect(() => parseParams({ ...stand(), operation_outcome_horizon_sec: 59 })).toThrow(/operation_outcome_horizon_sec меньше двух operation_outcome_max_delay_sec/);
+    for (const k of ["operation_outcome_every_ms", "operation_outcome_max_delay_sec", "operation_outcome_horizon_sec"]) {
+      expect(() => parseParams({ ...stand(), [k]: 0 }), k).toThrow(new RegExp(`${k}:`));
+    }
   });
 
   it("participant_notify_allow_hosts — как event_subscription_allow_hosts: IP и повтор — отказ, пустой допустим", () => {

@@ -61,6 +61,12 @@ export interface Params {
   readonly participant_notify_horizon_sec: number;
   /** Разрешённые хосты адреса вебхука участника (РП46 доп. п. 9 (о4)); пустой — вебхук запрещён всем. */
   readonly participant_notify_allow_hosts: readonly string[];
+  /** Интервал прохода сборщика итогов операций по решённым записям ADP, мс (РП52 п. 11). */
+  readonly operation_outcome_every_ms: number;
+  /** Наибольшая задержка события operation.declined по отказу ADP, с (РП52 п. 12): публикуется агенту. */
+  readonly operation_outcome_max_delay_sec: number;
+  /** Горизонт прохода сборщика итогов, с (РП52 «Дополнения» п. 1): записи старше — не разбираются. */
+  readonly operation_outcome_horizon_sec: number;
   /** Начало адреса страницы УПК в link запроса подтверждения: https:// и имя хоста, без пути (РП51 п. 10). */
   readonly upk_page_base_url: string;
   /** Выбор СБП на странице УПК эмулятора; до PS-21 — false (РП51 п. 16). */
@@ -164,6 +170,9 @@ const RULES: Record<keyof Params, Rule> = {
   participant_notify_max_delay_sec: int(1),
   participant_notify_horizon_sec: int(1),
   participant_notify_allow_hosts: hostList,
+  operation_outcome_every_ms: int(1),
+  operation_outcome_max_delay_sec: int(1),
+  operation_outcome_horizon_sec: int(1),
   upk_page_base_url: httpsOrigin,
   upk_sbp_enabled: bool,
 };
@@ -205,6 +214,13 @@ export function parseParams(raw: unknown): Params {
     // Признак отставания — половина горизонта (РП46 доп. п. 9 (о2)); она не короче наибольшей задержки уведомления.
     if (p.participant_notify_horizon_sec < 2 * p.participant_notify_max_delay_sec) {
       problems.push("participant_notify_horizon_sec меньше двух participant_notify_max_delay_sec");
+    }
+    // Сборщик итогов (РП52 «Дополнения» п. 1, 3): проход чаще предела задержки, горизонт не короче двух пределов.
+    if (p.operation_outcome_every_ms >= p.operation_outcome_max_delay_sec * 1000) {
+      problems.push("operation_outcome_every_ms не меньше operation_outcome_max_delay_sec");
+    }
+    if (p.operation_outcome_horizon_sec < 2 * p.operation_outcome_max_delay_sec) {
+      problems.push("operation_outcome_horizon_sec меньше двух operation_outcome_max_delay_sec");
     }
   }
   if (problems.length) throw new ParamsError(problems);

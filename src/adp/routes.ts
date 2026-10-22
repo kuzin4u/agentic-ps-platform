@@ -1,15 +1,18 @@
 // ПИ-1 POST /adp/v1/decide (РП43 п. 1, 3, 8, доп. п. 20): BYPASS — по двум полям тела до любой другой проверки;
 // агентским — решение ADP (200 с согласованной парой, РП19), некорректное сообщение — 400, иначе — 503 без решения:
 // процессинг ставит ADP_UNAVAILABLE. В режиме «только BYPASS» (ready: false) агентским — 503.
-// До SEC-1 маршрут подключают только стенд и тесты, не main.ts (доп. РП43 п. 21).
+// До SEC-1 маршрут подключают только стенд и тесты, не main.ts (доп. РП43 п. 21). ПИ-3 POST /adp/v1/events (РП52) — так же.
 import type { FastifyInstance } from "fastify";
 import type { CanonicalMessage, Decision } from "../shared/canonical.generated.js";
 import { parseDecision } from "../shared/codes.js";
+import { acceptIssuerResponse, type IssuerResponseDeps } from "../fulfilment/outcomes.js";
 import { AdpRequestInvalid, isBypass, type Adp } from "./decide.js";
 
 export interface AdpDeps {
   /** Точка решения; в режиме «только BYPASS» её нет — хранилища не подтверждены самопроверкой. */
   readonly adp?: Adp;
+  /** ПИ-3 POST /adp/v1/events (РП52 п. 1 (б)); без него маршрута нет. */
+  readonly events?: IssuerResponseDeps;
 }
 
 const BYPASS: Decision = Object.freeze({ decision: "BYPASS", reason: null, decided_in_ms: 0 });
@@ -50,4 +53,10 @@ export async function adpRoutes(app: FastifyInstance, deps: AdpDeps): Promise<vo
     }
     return d;
   });
+  // ПИ-3 (РП52 п. 1 (б), 8): ISSUER_RESPONSE — итог и событие; тело ответа {}. Сбой хранилища — 503 (обработчик ошибок):
+  // процессинг повторяет, итог по op_ref один.
+  const events = deps.events;
+  if (events) {
+    app.post("/adp/v1/events", async (req, reply) => reply.code(await acceptIssuerResponse(events, req.body)).send({}));
+  }
 }

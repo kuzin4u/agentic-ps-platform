@@ -33,11 +33,13 @@ describe("РП25: стенд для тестов агента", () => {
 
   it("среда — dev, а не sandbox: стенд песочницей не является", async () => {
     s = createStand();
-    // Уведомитель участников стенда — в /health (ревью КТ1 PS-20 ч. 3): проходов ещё не было, отставания нет.
+    // Уведомитель участников и сборщик итогов стенда — в /health (ревью КТ1 PS-20 ч. 3, РП52 «Дополнения» п. 2): проходов
+    // ещё не было, отставания нет.
     expect((await s.app.inject({ method: "GET", url: "/health" })).json()).toEqual({
       status: "ok",
       env: "dev",
       participant_notify: { last_pass_at: null, lagging: false },
+      operation_outcome: { last_pass_at: null, lagging: false },
     });
   });
 

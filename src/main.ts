@@ -2,6 +2,7 @@ import pg from "pg";
 import { buildServer, parseEnv, parseTrustedProxies, type PlatformEnv } from "./server.js";
 import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
 import { MemoryLimitsStore, PgLimitsStore } from "./participants/limits.js";
+import { OperationOutcomeCollector, PgOutcomeStore, startOutcomeCollector } from "./fulfilment/outcomes.js";
 import { ParticipantNotifier, PgParticipantNotificationStore, startParticipantNotifier } from "./participants/notifications.js";
 import { WebhookDeliverer } from "./participants/webhook.js";
 import { loadTrustedParticipants, type TrustedParticipants } from "./participants/trusted.js";
@@ -192,10 +193,21 @@ async function serve(): Promise<void> {
       })
     : undefined;
 
+  // Сборщик итогов операций (РП52 п. 1 (а)) — так же только с PostgreSQL; события — в ленту журнала той же базы.
+  const outcomes = pool
+    ? new OperationOutcomeCollector(new PgOutcomeStore(pool), {
+        horizonSec: params.operation_outcome_horizon_sec,
+        maxDelaySec: params.operation_outcome_max_delay_sec,
+        pushFor: (code, type) => registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false),
+        log: (level, fields, msg) => app.log[level](fields, msg),
+      })
+    : undefined;
+
   const app = buildServer({
     env,
     logger: true,
     ...(notifier ? { notifier } : {}),
+    ...(outcomes ? { outcomes } : {}),
     trustedProxies,
     // Подписка — в записи агента (РП40 п. 1); разрешение имени — системное (стендового порта здесь нет, РП40 п. 8).
     pao: { verifier, keys, idempotency, params, consent, subscriptions: { set: registry.subscribe.bind(registry) } },
@@ -224,6 +236,10 @@ async function serve(): Promise<void> {
   const stopNotify = notifier
     ? startParticipantNotifier(notifier, PARTICIPANT_NOTIFY_EVERY_MS, (err) => app.log.error({ err }, "П10: сбой прохода уведомителя"))
     : async () => {};
+  // Проход сборщика итогов — раз в operation_outcome_every_ms (< operation_outcome_max_delay_sec, граница загрузчика).
+  const stopOutcomes = outcomes
+    ? startOutcomeCollector(outcomes, params.operation_outcome_every_ms, (err) => app.log.error({ err }, "П8: сбой прохода сборщика итогов"))
+    : async () => {};
   // Вебхук-сигнал банкам (РП46 (б) п. 3): адрес — из записи доверенного участника, проверка — как push агенту (РП40).
   const stopWebhook = notifyStore
     ? startEventDelivery(
@@ -244,6 +260,7 @@ async function serve(): Promise<void> {
     await stopDelivery();
     await stopExpiry();
     await stopNotify();
+    await stopOutcomes();
     await stopWebhook();
     await pool?.end();
   });
