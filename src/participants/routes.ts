@@ -305,8 +305,8 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
     });
   }
 
-  // Решение человека по запросу подтверждения (ПИ-8, РП50 п. 4–5; Дополнения п. 3): тело → подпись банка (401 до
-  // хранилища) → запрос (404) → банк клиента корневого INTENT (401) → decided_at не в будущем сверх допуска (401) →
+  // Решение человека по запросу подтверждения (ПИ-8, РП50 п. 4–5; Дополнения п. 3): тело → подпись банка или UPK (401 до
+  // хранилища) → запрос (404) → банк клиента корневого INTENT или UPK (401, РП51 п. 12) → decided_at не в будущем сверх допуска (401) →
   // повтор той же записи (200) → totals_hash (409) → срок и статус (409) → условная запись. Ссылка — при APPROVE.
   const confirmations = deps.confirmations;
   if (confirmations) {
@@ -324,6 +324,8 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
         req.log.info({ participant_code: d.participant_code, confirmation_id: id }, "ПИ-8: подпись решения по подтверждению не проверена");
         return fail("SIGNATURE_INVALID");
       }
+      // Роль — из списка доверенных, снимком до первого await (Р-205): оператор УПК решает по любому запросу (РП51 п. 12).
+      const upk = deps.trusted.role(d.participant_code) === "UPK";
       const now = (deps.now ?? (() => new Date()))();
       const at = now.toISOString();
       let r: ConfirmationRecord | undefined;
@@ -343,7 +345,7 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
         req.log.error({ confirmation_id: id, incident: true }, "ПИ-8: мандат запроса подтверждения не найден");
         return fail("STATE_UNAVAILABLE");
       }
-      if (bank !== d.participant_code) {
+      if (!upk && bank !== d.participant_code) {
         req.log.info({ participant_code: d.participant_code, confirmation_id: id }, "ПИ-8: решение по подтверждению — не банк клиента");
         return fail("SIGNATURE_INVALID");
       }

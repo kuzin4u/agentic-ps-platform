@@ -17,6 +17,7 @@ import {
   type ConfirmationStore,
 } from "../../src/confirm/index.js";
 import { createIssuerEmulator } from "../../src/env/issuer/index.js";
+import { createUpkEmulator } from "../../src/env/upk/index.js";
 import { participantRoutes } from "../../src/participants/routes.js";
 import { TrustedParticipants, type TrustedParticipantKey } from "../../src/participants/trusted.js";
 import { jwkThumbprint } from "../../src/registry/keys.js";
@@ -27,6 +28,8 @@ const T0 = Date.parse("2026-10-22T10:00:00.000Z");
 const HOLD_MS = 900_000;
 const SKEW_SEC = 300;
 const emu = createIssuerEmulator();
+/** Оператор УПК стенда (РП51 п. 12): решает по любому запросу, банком клиента не является. */
+const upk = createUpkEmulator();
 
 /** «Боевой» банк теста: подпись верна, но клиент мандата — не его. */
 function liveBank(code: string) {
@@ -71,7 +74,7 @@ async function setup(over: Partial<ConfirmationStore> = {}): Promise<Ctx> {
     },
   });
   await participantRoutes(app, {
-    trusted: new TrustedParticipants([emu.trustedKey, live.key], { stand: true }),
+    trusted: new TrustedParticipants([emu.trustedKey, live.key, upk.trustedKey], { stand: true }),
     consent,
     params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 },
     now: () => new Date(t),
@@ -109,17 +112,18 @@ async function request(over: Partial<ConfirmationRecord> = {}): Promise<Confirma
 }
 
 /** Тело решения банка эмулятора (или боевого) с верной подписью над записью. */
-function body(r: ConfirmationRecord, over: Partial<Omit<ConfirmationDecision, "signature">> = {}, bank: "emu" | "live" = "emu") {
+function body(r: ConfirmationRecord, over: Partial<Omit<ConfirmationDecision, "signature">> = {}, bank: "emu" | "live" | "upk" = "emu") {
+  const signer = bank === "emu" ? emu : bank === "upk" ? upk : { participant_code: live.key.participant_code, trustedKey: live.key, signConfirmation: live.sign };
   const record = {
-    participant_code: bank === "emu" ? emu.participant_code : live.key.participant_code,
-    kid: bank === "emu" ? emu.trustedKey.kid : live.key.kid,
+    participant_code: signer.participant_code,
+    kid: signer.trustedKey.kid,
     confirmation_id: r.confirmation_id,
     decision: "APPROVE" as const,
     totals_hash: totalsHash(r),
     decided_at: new Date(T0 + 60_000).toISOString(),
     ...over,
   };
-  const signature = bank === "emu" ? emu.signConfirmation(record) : live.sign(record);
+  const signature = signer.signConfirmation(record);
   const { confirmation_id: _id, ...rest } = { ...record, signature };
   void _id;
   return rest;
@@ -189,6 +193,14 @@ describe("ПИ-8: решение человека по запросу подтв
     const res = await post(r.confirmation_id, body(r, {}, "live"));
     expect(res).toEqual({ status: 401, body: { code: "SIGNATURE_INVALID" } });
     expect((await ctx.store.get(r.confirmation_id))?.status).toBe("PENDING");
+  });
+
+  it("решение оператора УПК (роль UPK) — принято по запросу клиента любого банка; запись решения — его (РП51 п. 12)", async () => {
+    const r = await request();
+    const res = await post(r.confirmation_id, body(r, {}, "upk"));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ confirmation_id: r.confirmation_id, status: "APPROVED" });
+    expect((await ctx.store.get(r.confirmation_id))?.decision).toMatchObject({ participant_code: upk.participant_code, decision: "APPROVE" });
   });
 
   it("decided_at позже часов Платформы больше допуска — 401; в пределах допуска — принято", async () => {
