@@ -187,6 +187,15 @@ describe("стендовые параметры", () => {
     }
   });
 
+  it("upk_page_base_url — https:// и имя хоста без порта и пути; upk_sbp_enabled — булево (РП51 п. 10, 16)", () => {
+    expect(parseParams(stand()).upk_page_base_url).toBe("https://upk.stand");
+    expect(parseParams(stand()).upk_sbp_enabled).toBe(false);
+    for (const v of ["http://upk.stand", "https://upk.stand/", "https://upk.stand/c", "https://upk.stand:443", "https://u@upk.stand", "https://UPK.stand", "https://127.0.0.1", "https://upk.stand?x=1", "upk.stand"]) {
+      expect(() => parseParams({ ...stand(), upk_page_base_url: v }), v).toThrow(/upk_page_base_url:/);
+    }
+    expect(() => parseParams({ ...stand(), upk_sbp_enabled: "false" })).toThrow(/upk_sbp_enabled:/);
+  });
+
   it("PARAMS_PATH описан в PARAMS.md", () => {
     expect(readFileSync("docs/core/PARAMS.md", "utf8")).toContain("`PARAMS_PATH`");
   });

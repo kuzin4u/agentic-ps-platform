@@ -61,6 +61,10 @@ export interface Params {
   readonly participant_notify_horizon_sec: number;
   /** Разрешённые хосты адреса вебхука участника (РП46 доп. п. 9 (о4)); пустой — вебхук запрещён всем. */
   readonly participant_notify_allow_hosts: readonly string[];
+  /** Начало адреса страницы УПК в link запроса подтверждения: https:// и имя хоста, без пути (РП51 п. 10). */
+  readonly upk_page_base_url: string;
+  /** Выбор СБП на странице УПК эмулятора; до PS-21 — false (РП51 п. 16). */
+  readonly upk_sbp_enabled: boolean;
 }
 
 type Rule = (v: unknown) => unknown;
@@ -98,6 +102,13 @@ const hostList: Rule = (v) => {
   }
   if (new Set(v).size !== v.length) throw new Error("имена хостов повторяются");
   return Object.freeze([...v]);
+};
+
+/** https:// и имя DNS без порта, пути, запроса и фрагмента: link строится сложением строк (РП51 п. 10). */
+const httpsOrigin: Rule = (v) => {
+  const m = typeof v === "string" ? /^https:\/\/([^/?#:@]+)$/.exec(v) : null;
+  if (!m || !DNS_NAME.test(m[1]!) || IPV4_LIKE.test(m[1]!)) throw new Error("ожидается https:// и имя DNS в нижнем регистре без пути");
+  return v;
 };
 
 /** Имя часового пояса IANA, известное Intl (РП45 п. 1): неизвестное — отказ запуска, а не UTC по умолчанию. */
@@ -153,6 +164,8 @@ const RULES: Record<keyof Params, Rule> = {
   participant_notify_max_delay_sec: int(1),
   participant_notify_horizon_sec: int(1),
   participant_notify_allow_hosts: hostList,
+  upk_page_base_url: httpsOrigin,
+  upk_sbp_enabled: bool,
 };
 
 /** Служебные ключи файла, не параметры. */
