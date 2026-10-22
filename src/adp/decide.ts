@@ -525,7 +525,8 @@ export class Adp {
       if (!consumed) {
         for (const h of holds) await this.release(h, msg.op_ref);
         this.log("warn", { op_ref: msg.op_ref, mandate_id, confirmation_id: confirmed.confirmation_id }, "ADP: подтверждение уже погашено или истекло");
-        return { ...no("CONFIRMATION_REQUIRED", mandate_id), split: confirmed.split_detected };
+        // По окну эта операция не оценивалась — не доля (Дополнения РП50 п. 2, ПИ-1: true — только п. 9).
+        return { ...no("CONFIRMATION_REQUIRED", mandate_id), split: false };
       }
     }
     // Погашение криптограммы (РП47 п. 8): только у APPROVE, после резерва и сверки статуса, условной записью ISSUED → USED.
@@ -589,8 +590,9 @@ export class Adp {
 
   /**
    * Запрос подтверждения на итоговые значения (РП50 п. 1–3, 9): только из сообщения процессинга и записей Платформы.
-   * Один запрос в ожидании на ключ; после EXPIRED, REJECTED, USED (и при одобренном, но не предъявленном) — нового нет:
-   * заказ закрыт, новая попытка — с новым order_ref (A7 п. 7.3). Без order_ref — без запроса. Сбой — unavailable.
+   * На ключ — одна запись за всё время (держит уникальный индекс, Дополнения РП50 п. 1): в ожидании — тот же запрос; после
+   * EXPIRED, REJECTED, USED (и при одобренном, но не предъявленном) — нового нет: заказ закрыт, новая попытка — с новым
+   * order_ref (A7 п. 7.3). Без order_ref — без запроса. Сбой — unavailable.
    */
   private async request(msg: CanonicalMessage, agent_code: string, mandate_id: string, split: boolean): Promise<"unavailable" | undefined> {
     const c = this.opts.confirmations;
@@ -660,14 +662,13 @@ export class Adp {
       this.log("info", { op_ref: msg.op_ref, mandate_id }, "ADP: confirmation_ref неизвестен — не учитывается");
       return undefined;
     }
-    const totals = {
-      agent_code,
-      mandate_id,
-      merchant_id: msg.merchant?.id as string,
-      amount: msg.amount,
-      currency: msg.currency,
-      order_ref: msg.order_ref as string,
-    };
+    // Без order_ref сверять заказ не с чем — ссылка не учитывается, это не подмена итога (Дополнения РП50 п. 5).
+    const order_ref = msg.order_ref;
+    if (typeof order_ref !== "string" || order_ref === "") {
+      this.log("info", { op_ref: msg.op_ref, mandate_id, confirmation_id: r.confirmation_id }, "ADP: confirmation_ref без order_ref — не учитывается");
+      return undefined;
+    }
+    const totals = { agent_code, mandate_id, merchant_id: msg.merchant?.id as string, amount: msg.amount, currency: msg.currency, order_ref };
     if (!sameTotals(r, totals)) {
       // Без значения ссылки и без реквизитов инструмента (инвариант 1).
       this.log("warn", { op_ref: msg.op_ref, mandate_id, confirmation_id: r.confirmation_id, incident: true }, "ADP: confirmation_ref на другие итоговые значения");

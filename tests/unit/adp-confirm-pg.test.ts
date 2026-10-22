@@ -258,6 +258,41 @@ describe.skipIf(!DATABASE_URL)("однократность confirmation_ref на
     expect((await store.get(id))?.status).toBe("USED");
   });
 
+  it("Дополнения РП50 п. 1: на ключ одна запись за всё время — после USED вставка на тот же ключ строку не добавляет", async () => {
+    const M = mandates.add(1_000_000);
+    const store = new PgConfirmationStore(db.pool);
+    const r = await store.create(pending(M, "ORD-once", 340_000));
+    const ref = await approved(store, r);
+    expect(await store.consume(ref, "OPKC-CNF-PG-7", AT)).toBe(true);
+    const again = await store.create(pending(M, "ORD-once", 340_000));
+    expect(again, "возвращена прежняя запись, а не новый запрос").toMatchObject({ confirmation_id: r.confirmation_id, status: "USED" });
+    const key = { mandate_id: M, merchant_id: "MER-1042", order_ref: "ORD-once", amount: 340_000, currency: "RUB" };
+    expect((await store.byKey(key)).map((x) => x.status)).toEqual(["USED"]);
+  });
+
+  it("Дополнения РП50 п. 4: формат сроков (toISOString) и валюты, срок позже создания — CHECK (23514)", async () => {
+    const M = mandates.add(1_000_000);
+    const insert = (over: { created_at?: string; expires_at?: string; currency?: string }) =>
+      db.pool.query(
+        `INSERT INTO confirmations (confirmation_id, agent_code, mandate_id, merchant_id, amount, currency, order_ref, split_detected, status, created_at, expires_at)
+         VALUES ($1, $2, $3, 'MER-1042', 1, $4, $5, false, 'PENDING', $6, $7)`,
+        [newConfirmationId(), AGENT, M, over.currency ?? "RUB", opaqueRef("ORD-"), over.created_at ?? AT, over.expires_at ?? EXPIRES],
+      );
+    const cases: [string, Parameters<typeof insert>[0]][] = [
+      ["created_at без миллисекунд", { created_at: "2026-10-22T10:00:00Z" }],
+      ["expires_at со смещением", { expires_at: "2099-01-01T03:00:00.000+03:00" }],
+      ["expires_at не позже created_at", { expires_at: AT }],
+      ["валюта строчными", { currency: "rub" }],
+    ];
+    for (const [what, over] of cases) {
+      const err = await insert(over).then(
+        () => undefined,
+        (e: unknown) => e as { code?: string },
+      );
+      expect(err?.code, what).toBe("23514");
+    }
+  });
+
   it("решение после срока не записывается; PENDING после срока переходит в EXPIRED", async () => {
     const M = mandates.add(1_000_000);
     const store = new PgConfirmationStore(db.pool);

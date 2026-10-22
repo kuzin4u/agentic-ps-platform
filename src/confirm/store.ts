@@ -8,9 +8,12 @@ export type ConfirmationKey = Pick<ConfirmationTotals, "mandate_id" | "merchant_
 
 /** Сбой любого метода — исключение (→ STATE_UNAVAILABLE). Время `now` — ISO-строка часов Платформы. */
 export interface ConfirmationStore {
-  /** Все запросы по ключу, по времени создания. */
+  /** Запрос по ключу: на ключ — одна запись за всё время (Дополнения РП50 п. 1); нет — пусто. */
   byKey(key: ConfirmationKey): Promise<ConfirmationRecord[]>;
-  /** Атомарно: запроса в ожидании по ключу нет — записать; есть — вернуть записанный (другой экземпляр успел первым). */
+  /**
+   * Атомарно: записи по ключу нет — записать PENDING; есть (другой экземпляр успел первым, или заказ уже закрыт) —
+   * вернуть записанную в любом статусе.
+   */
   create(rec: ConfirmationRecord): Promise<ConfirmationRecord>;
   get(confirmation_id: string): Promise<ConfirmationRecord | undefined>;
   byRef(confirmation_ref: string): Promise<ConfirmationRecord | undefined>;
@@ -38,8 +41,8 @@ export class MemoryConfirmationStore implements ConfirmationStore {
   async create(rec: ConfirmationRecord): Promise<ConfirmationRecord> {
     if (rec.status !== "PENDING") throw new Error("confirmations: вставка — только PENDING");
     const k = keyOf(rec);
-    const pending = [...this.#rows.values()].find((r) => r.status === "PENDING" && keyOf(r) === k);
-    if (pending) return structuredClone(pending);
+    const prior = [...this.#rows.values()].find((r) => keyOf(r) === k);
+    if (prior) return structuredClone(prior);
     if (this.#rows.has(rec.confirmation_id)) throw new Error("confirmations: confirmation_id уже записан");
     this.#rows.set(rec.confirmation_id, structuredClone(rec));
     return structuredClone(rec);
@@ -65,6 +68,8 @@ export class MemoryConfirmationStore implements ConfirmationStore {
   async decide(confirmation_id: string, d: ConfirmationDecision, confirmation_ref: string | null, now: string): Promise<ConfirmationRecord | undefined> {
     const r = this.#rows.get(confirmation_id);
     if (!r || r.status !== "PENDING" || !(r.expires_at > now)) return undefined;
+    // Одобрение без ссылки — ошибка вызывающего, как CHECK на PG (Дополнения РП50 п. 6).
+    if (d.decision === "APPROVE" && confirmation_ref === null) throw new Error("confirmations: APPROVE без confirmation_ref");
     const status: ConfirmationStatus = d.decision === "APPROVE" ? "APPROVED" : "REJECTED";
     const next: ConfirmationRecord = { ...r, status, decision: { ...d }, confirmation_ref: status === "APPROVED" ? confirmation_ref : null };
     this.#rows.set(confirmation_id, next);
@@ -139,8 +144,8 @@ function recordOf(row: Row): ConfirmationRecord {
 }
 
 /**
- * Хранилище П6 на PostgreSQL (sql/111_confirmations.sql). Запрос — INSERT … ON CONFLICT DO NOTHING по частичному
- * уникальному индексу запросов в ожидании, затем чтение записанного; решение, истечение и погашение — один условный
+ * Хранилище П6 на PostgreSQL (sql/111_confirmations.sql). Запрос — INSERT … ON CONFLICT DO NOTHING по уникальному
+ * индексу ключа (одна запись на ключ за всё время), затем чтение записанного; решение, истечение и погашение — один условный
  * UPDATE; триггер не даёт перехода вне РП50 п. 5 и изменения итоговых значений.
  */
 export class PgConfirmationStore implements ConfirmationStore {
@@ -160,20 +165,13 @@ export class PgConfirmationStore implements ConfirmationStore {
       `INSERT INTO confirmations (confirmation_id, agent_code, mandate_id, merchant_id, amount, currency, order_ref, split_detected,
          status, created_at, expires_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDING', $9, $10)
-       ON CONFLICT (mandate_id, merchant_id, order_ref, amount, currency) WHERE status = 'PENDING' DO NOTHING`,
+       ON CONFLICT (mandate_id, merchant_id, order_ref, amount, currency) DO NOTHING`,
       [rec.confirmation_id, rec.agent_code, rec.mandate_id, rec.merchant_id, rec.amount, rec.currency, rec.order_ref, rec.split_detected,
         rec.created_at, rec.expires_at],
     );
-    const r = await this.client.query<Row>(
-      `SELECT ${COLS} FROM confirmations
-       WHERE mandate_id = $1 AND merchant_id = $2 AND order_ref = $3 AND amount = $4 AND currency = $5 AND status = 'PENDING'`,
-      [rec.mandate_id, rec.merchant_id, rec.order_ref, rec.amount, rec.currency],
-    );
-    if (r.rows[0]) return recordOf(r.rows[0]);
-    // Запрос в ожидании успел решиться или истечь между вставкой и чтением — последний по ключу.
-    const last = (await this.byKey(rec)).at(-1);
-    if (!last) throw new Error("confirmations: запрос не найден после вставки");
-    return last;
+    const [row] = await this.byKey(rec);
+    if (!row) throw new Error("confirmations: запрос не найден после вставки");
+    return row;
   }
 
   async get(confirmation_id: string): Promise<ConfirmationRecord | undefined> {

@@ -354,6 +354,39 @@ describe("ПС11 в ADP: подтверждение выше порога и п�
   });
 });
 
+describe("Дополнения РП50 (К1а)", () => {
+  it("п. 2: ссылку доли первым погасил другой экземпляр — CONFIRMATION_REQUIRED с split_detected: false", async () => {
+    const s = setup({ splitMinOps: 2, over: { consume: async () => false } });
+    const part = { amount: 170_000 };
+    await s.adp.decide(auth({ ...part, order_ref: "ORD-1" }));
+    const second = auth({ ...part, order_ref: "ORD-2" });
+    expect(pair(await s.adp.decide(second))).toMatchObject({ split_detected: true });
+    const [r] = await s.requests(second);
+    const d = pair(await s.adp.decide(auth({ ...part, order_ref: "ORD-2", confirmation_ref: await s.approve(r!) })));
+    expect(d, "по окну операция не оценивалась — не доля (ПИ-1)").toMatchObject({ decision: "CONFIRMATION_REQUIRED", split_detected: false });
+  });
+
+  it("п. 5: ссылка в сообщении без order_ref — не учитывается, запись info, без инцидента «подмена итога»", async () => {
+    const s = setup();
+    await s.adp.decide(auth());
+    const [r] = await s.requests(auth());
+    const m = auth({ confirmation_ref: await s.approve(r!) });
+    delete m.order_ref;
+    expect(pair(await s.adp.decide(m)).decision).toBe("CONFIRMATION_REQUIRED");
+    expect(incidents(s.logs)).toEqual([]);
+    expect(s.logs.map((l) => l.msg)).toContain("ADP: confirmation_ref без order_ref — не учитывается");
+  });
+
+  it("п. 6: хранилище в памяти не принимает APPROVE без ссылки — как CHECK на PG", async () => {
+    const s = setup();
+    await s.adp.decide(auth());
+    const [r] = await s.requests(auth());
+    const d = { participant_code: "bank:a", kid: "k", decision: "APPROVE" as const, totals_hash: totalsHash(r!), decided_at: s.now().toISOString(), signature: "x".repeat(86) };
+    await expect(s.inner.decide(r!.confirmation_id, d, null, s.now().toISOString())).rejects.toThrow();
+    expect((await s.inner.get(r!.confirmation_id))?.status).toBe("PENDING");
+  });
+});
+
 describe("порядок погашений (РП50 п. 10; ворота К1 № 7)", () => {
   it("отзыв между резервом и сверкой статуса при действующей ссылке — отказ, ссылка не погашена", async () => {
     const s = setup();
