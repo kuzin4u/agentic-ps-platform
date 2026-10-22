@@ -84,7 +84,8 @@ export class TrustedParticipants {
       if (typeof k.participant_code !== "string" || !PARTICIPANT_CODE.test(k.participant_code)) {
         throw new Error(`Доверенные участники: недопустимый participant_code «${String(k.participant_code)}»`);
       }
-      const role = k.role ?? "ISSUER";
+      // Ключа нет — ISSUER; ключ есть — только ISSUER или UPK: null и прочее — отказ, а не банк по умолчанию (fail-closed).
+      const role = "role" in k ? k.role : "ISSUER";
       if (role !== "ISSUER" && role !== "UPK") {
         throw new Error(`Доверенные участники: недопустимая role «${String(role)}» у ${k.participant_code} (РП51 п. 12)`);
       }

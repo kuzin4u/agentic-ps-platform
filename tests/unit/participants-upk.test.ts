@@ -68,6 +68,11 @@ describe("Доверенные участники: роль UPK (РП51 п. 12)"
     expect(() => new TrustedParticipants([fake.key], { stand: true }), "код эмулятора УПК с ролью банка").toThrow(/роль UPK/);
     expect(() => new TrustedParticipants([{ ...upk.key, revocation_order: "bank:x:revocation:v1" }], { stand: true })).toThrow(/порядка отзыва нет/);
     expect(() => new TrustedParticipants([{ ...upk.key, role: "BANK" as never }], { stand: true })).toThrow(/недопустимая role/);
+    // Ключ role есть — только ISSUER или UPK: null и undefined не становятся банком по умолчанию (КТ1 № 2).
+    const bank = bankTest();
+    for (const role of [null, undefined, ""]) {
+      expect(() => new TrustedParticipants([{ ...bank.key, role: role as never }], { stand: true }), `role: ${String(role)}`).toThrow(/недопустимая role/);
+    }
   });
 
   it("UPK не боевой банк: не считается в пределе участников и не даёт порядок отзыва", () => {
@@ -93,6 +98,7 @@ describe("Доверенные участники: роль UPK (РП51 п. 12)"
     expect(loadTrustedParticipants(file([live.key]), { stand: false }).role("bank:live")).toBe("ISSUER");
     expect(() => loadTrustedParticipants(file([upkTest().key]), { stand: false })).toThrow(/UPK допустим только на стенде/);
     expect(() => loadTrustedParticipants(file([{ ...live.key, extra: 1 }]), { stand: false })).toThrow(/ровно/);
+    expect(() => loadTrustedParticipants(file([{ ...live.key, role: null }]), { stand: false }), "role: null — не банк по умолчанию").toThrow(/недопустимая role/);
     const { revocation_order: _ro, ...noOrder } = live.key;
     void _ro;
     expect(() => loadTrustedParticipants(file([noOrder]), { stand: false }), "банк без порядка отзыва").toThrow(/ровно/);

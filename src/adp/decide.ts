@@ -674,15 +674,16 @@ export class Adp {
       this.log("warn", { op_ref: msg.op_ref, mandate_id, confirmation_id: r.confirmation_id, incident: true }, "ADP: confirmation_ref на другие итоговые значения");
       return undefined;
     }
+    if (r.status !== "APPROVED" || !(r.expires_at > this.now().toISOString())) {
+      this.log("info", { op_ref: msg.op_ref, mandate_id, confirmation_id: r.confirmation_id, status: r.status }, "ADP: подтверждение не действует");
+      return undefined;
+    }
     // Ссылка — только по инструменту, выбранному человеком (РП51 п. 14): другой канал — не учитывается, без инцидента
-    // (итог тот же, это не подмена); выше порога — CONFIRMATION_REQUIRED без нового запроса (РП50 п. 9).
+    // (итог тот же, это не подмена); выше порога — CONFIRMATION_REQUIRED без нового запроса (РП50 п. 9). После статуса и
+    // срока: у недействующей ссылки причина в журнале — «не действует» (КТ1 № 6).
     const chosen = r.decision?.instrument_chosen;
     if (chosen !== undefined && chosen !== msg.channel) {
       this.log("info", { op_ref: msg.op_ref, mandate_id, confirmation_id: r.confirmation_id, instrument_chosen: chosen, channel: msg.channel }, "ADP: confirmation_ref по другому инструменту — не учитывается");
-      return undefined;
-    }
-    if (r.status !== "APPROVED" || !(r.expires_at > this.now().toISOString())) {
-      this.log("info", { op_ref: msg.op_ref, mandate_id, confirmation_id: r.confirmation_id, status: r.status }, "ADP: подтверждение не действует");
       return undefined;
     }
     return r;

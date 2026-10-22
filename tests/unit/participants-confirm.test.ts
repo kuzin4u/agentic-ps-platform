@@ -223,6 +223,12 @@ describe("ПИ-8: решение человека по запросу подтв
     // Запись без инструмента — ровно поля v0.16.0 (CHANGELOG «Банку» — совместимо).
     const base = { participant_code: "b", kid: "k", confirmation_id: r.confirmation_id, decision: "APPROVE" as const, totals_hash: "0".repeat(64), decided_at: "2026-10-22T10:00:00.000Z" };
     expect(JSON.parse(participantConfirmationSigningInput(base).toString("utf8"))).toEqual({ context: "pao:participant-confirmation:v1", ...base });
+    // Эталон байтов v0.16.0 (КТ1 № 4): ключи по порядку RFC 8785, без пробелов.
+    const fixed = { ...base, confirmation_id: "cnf_00000000-0000-4000-8000-000000000001" };
+    expect(participantConfirmationSigningInput(fixed).toString("utf8")).toBe(
+      '{"confirmation_id":"cnf_00000000-0000-4000-8000-000000000001","context":"pao:participant-confirmation:v1",' +
+        `"decided_at":"2026-10-22T10:00:00.000Z","decision":"APPROVE","kid":"k","participant_code":"b","totals_hash":"${"0".repeat(64)}"}`,
+    );
     expect(JSON.parse(participantConfirmationSigningInput({ ...base, instrument_chosen: "SBP" }).toString("utf8"))).toEqual({
       context: "pao:participant-confirmation:v1",
       ...base,
