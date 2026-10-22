@@ -274,8 +274,10 @@ export class PgConfirmationStore implements ConfirmationStore {
           d.totals_hash, d.decided_at, d.signature, now],
       );
       if (!r.rows[0]) return undefined;
-      const next = recordOf(r.rows[0]);
-      await insertConfirmationEventTx(tx, draftOf(next, approve ? "confirmation.approved" : "confirmation.rejected", this.opts.pushFor), now);
+      return recordOf(r.rows[0]);
+    }).then(async (next) => {
+      // ПОЛОМКА (временно): событие вне транзакции перехода — откат следующим коммитом.
+      if (next) await this.tx((tx) => insertConfirmationEventTx(tx, draftOf(next, approve ? "confirmation.approved" : "confirmation.rejected", this.opts.pushFor), now));
       return next;
     });
   }
