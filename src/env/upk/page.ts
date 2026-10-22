@@ -83,10 +83,15 @@ const TEXT = {
 } as const;
 
 const COLOR = /^#[0-9a-fA-F]{6}$/;
+const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src https:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
 const esc = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-/** Сумма для человека: минимальные единицы по числу знаков валюты ISO 4217 (правило совместимости 2). */
+/**
+ * Сумма для человека из минимальных единиц и валюты (правило совместимости 2). Число знаков — по CLDR (`Intl`): для RUB
+ * совпадает с ISO 4217, у части валют расходится — таблица знаков ISO 4217 появится вместе с ними. Неизвестная валюта —
+ * исключение (вызывающий отвечает страницей 503).
+ */
 function money(amount: number, currency: string, lang: UpkLang): string {
   const f = new Intl.NumberFormat(lang === "ru" ? "ru-RU" : "en-GB", { style: "currency", currency });
   return f.format(amount / 10 ** (f.resolvedOptions().maximumFractionDigits ?? 2));
@@ -120,6 +125,11 @@ export function createUpkPage(deps: UpkPageDeps): FastifyInstance {
       .header("content-type", "text/html; charset=utf-8")
       .header("cache-control", "no-store")
       .header("referrer-policy", "no-referrer")
+      // Страница не встраивается во фрейм (clickjacking: человек жмёт «Подтвердить», думая, что делает другое) и шлёт
+      // форму только себе (РП51 «Дополнения» п. 8).
+      .header("x-frame-options", "DENY")
+      .header("content-security-policy", CSP)
+      .header("x-content-type-options", "nosniff")
       .send(
         `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
           `<title>${esc(t.title)} — ${esc(b.name)}</title>` +
@@ -144,9 +154,15 @@ export function createUpkPage(deps: UpkPageDeps): FastifyInstance {
       return message(reply, 503, lang, t.unavailable);
     }
     if (!r) return message(reply, 404, lang, t.notFound);
+    let amount: string;
+    try {
+      amount = money(r.amount, r.currency, lang);
+    } catch {
+      return message(reply, 503, lang, t.unavailable);
+    }
     const summary =
       `<dl><dt>${esc(t.merchant)}</dt><dd data-merchant>${esc(r.merchant_id)}</dd>` +
-      `<dt>${esc(t.amount)}</dt><dd data-amount>${esc(money(r.amount, r.currency, lang))}</dd>` +
+      `<dt>${esc(t.amount)}</dt><dd data-amount>${esc(amount)}</dd>` +
       `<dt>${esc(t.order)}</dt><dd data-order>${esc(r.order_ref)}</dd>` +
       `<dt>${esc(t.until)}</dt><dd data-expires>${esc(r.expires_at)}</dd></dl>`;
     if (r.status !== "PENDING" || !(deps.now().toISOString() < r.expires_at)) {

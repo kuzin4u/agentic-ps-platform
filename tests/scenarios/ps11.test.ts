@@ -76,7 +76,7 @@ describe("ПС11 на стенде: подтверждение выше поро
     return id;
   }
 
-  /** Авторизация продавца через эквайрера и ОПКЦ — сообщение процессинга в ADP стенда. */
+  /** Сообщение процессинга — прямо в ADP стенда (путь эквайрер → ОПКЦ — PS-11). */
   const auth = (op_ref: string, over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
     op_ref,
     msg_type: "AUTH_REQUEST",
@@ -133,6 +133,7 @@ describe("ПС11 на стенде: подтверждение выше поро
     const done = await submit({ code: code!, instrument: "CARD", decision: "APPROVE" });
     expect(done.statusCode).toBe(200);
     expect(done.body).toContain("data-status>APPROVED<");
+    expect(done.body, "confirmation_ref человеку не показывается — его видит только агент (РП50 п. 7)").not.toContain("cr_");
     expect((await stand.confirmations.get(id))?.decision).toMatchObject({ participant_code: "stand:upk-emulator", instrument_chosen: "CARD" });
 
     // Агент: confirmation.approved → GET со ссылкой → повтор через продавца новой операцией.
@@ -142,8 +143,10 @@ describe("ПС11 на стенде: подтверждение выше поро
     expect(parseDecision(await decide(m("OPKC-PS11-U2", approved.confirmation_ref)), "adp")).toEqual({ decision: "APPROVE", reason: null });
     expect((await stand.confirmations.get(id))?.status).toBe("USED");
     expect(parseDecision(await decide(m("OPKC-PS11-U3", approved.confirmation_ref)), "adp").decision, "второй раз — не APPROVE").not.toBe("APPROVE");
-    // Повтор решения на странице тем же кодом — не принят (код одноразовый), второго решения нет.
-    expect((await submit({ code: code!, instrument: "CARD", decision: "APPROVE" })).statusCode).not.toBe(200);
+    // Страница после погашения: запрос уже USED — 409 по статусу, до кода; второго решения нет. Одноразовость кода через
+    // страницу — tests/unit/upk-page.test.ts.
+    expect((await submit({ code: code!, instrument: "CARD", decision: "APPROVE" })).statusCode).toBe(409);
+    expect(done.body).not.toContain(approved.confirmation_ref);
   });
 
   it("доказательный: 3 400 ₽ → CONFIRMATION_REQUIRED и запрос; банк подтверждает итог → ссылка; повтор с ней → APPROVE; второй раз — нет", async () => {

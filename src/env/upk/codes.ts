@@ -11,8 +11,6 @@ interface Entry {
   readonly digest: Buffer;
   readonly expires_at: string;
   attempts: number;
-  /** Погашен верным вводом или сожжён неверными. */
-  spent: boolean;
 }
 
 const digest = (code: string): Buffer => createHash("sha256").update(code, "utf8").digest();
@@ -23,7 +21,7 @@ export class UpkCodes {
   /** Новый код запроса (6 цифр); прежний код этого запроса больше не действует. */
   issue(confirmation_id: string, expires_at: string): string {
     const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-    this.#codes.set(confirmation_id, { digest: digest(code), expires_at, attempts: 0, spent: false });
+    this.#codes.set(confirmation_id, { digest: digest(code), expires_at, attempts: 0 });
     return code;
   }
 
@@ -35,13 +33,18 @@ export class UpkCodes {
     const e = this.#codes.get(confirmation_id);
     // Сравнение — всегда, и при отсутствии кода: время ответа не выдаёт, есть ли код у запроса.
     const ok = timingSafeEqual(digest(code), e?.digest ?? digest(""));
-    if (!e || e.spent || !(now < e.expires_at)) return false;
-    if (!ok) {
-      e.attempts += 1;
-      if (e.attempts >= UPK_CODE_MAX_ATTEMPTS) e.spent = true;
+    if (!e) return false;
+    if (!(now < e.expires_at)) {
+      this.#codes.delete(confirmation_id);
       return false;
     }
-    e.spent = true;
+    if (!ok) {
+      e.attempts += 1;
+      // Сгорел — запись удаляется: дальше как без кода, новый — только новой выдачей.
+      if (e.attempts >= UPK_CODE_MAX_ATTEMPTS) this.#codes.delete(confirmation_id);
+      return false;
+    }
+    this.#codes.delete(confirmation_id);
     return true;
   }
 }

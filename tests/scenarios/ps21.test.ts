@@ -137,6 +137,8 @@ describe("ПС21 на стенде (частично до PS-21): человек
       reason: "CONFIRMATION_REQUIRED",
     });
     expect((await stand.confirmations.get(id))?.status, "ссылка не погашена").toBe("APPROVED");
+    const key = { mandate_id: cartId, merchant_id: "MER-1042", order_ref: "ORD-ps21-sbp", amount: AMOUNT, currency: "RUB" };
+    expect(await stand.confirmations.byKey(key), "без нового запроса (РП51 п. 14, РП50 п. 9)").toHaveLength(1);
   });
 
   it("человек выбрал карту — повтор по карте с ссылкой APPROVE", async () => {

@@ -12,8 +12,11 @@ const T0 = Date.parse("2026-10-22T10:00:00.000Z");
 const HOLD_MS = 900_000;
 const upk = createUpkEmulator();
 const trusted = new TrustedParticipants([upk.trustedKey], { stand: true });
+const REF = "cr_abcdefghijklmnopqrstuvwxyz";
 
-function setup(opts: { sbp?: boolean; settings?: UpkPageSettings; failGet?: boolean } = {}) {
+type Submit = (id: string, body: Record<string, unknown>) => Promise<{ statusCode: number; body: unknown }>;
+
+function setup(opts: { sbp?: boolean; settings?: UpkPageSettings; failGet?: boolean | (() => boolean); submit?: Submit } = {}) {
   let t = T0;
   const store = new MemoryConfirmationStore();
   const codes = new UpkCodes();
@@ -22,14 +25,18 @@ function setup(opts: { sbp?: boolean; settings?: UpkPageSettings; failGet?: bool
     upk,
     confirmations: {
       get: async (id) => {
-        if (opts.failGet) throw new Error("П6 недоступен");
+        if (typeof opts.failGet === "function" ? opts.failGet() : opts.failGet) throw new Error("П6 недоступен");
         return store.get(id);
       },
     },
     codes,
     async submit(id, body) {
       sent.push({ id, body });
-      return { statusCode: 200, body: { confirmation_id: id, status: body.decision === "APPROVE" ? "APPROVED" : "REJECTED" } };
+      if (opts.submit) return opts.submit(id, body);
+      // Как ПИ-8: при APPROVED в ответе есть confirmation_ref — на страницу он попадать не должен (РП50 п. 7).
+      return body.decision === "APPROVE"
+        ? { statusCode: 200, body: { confirmation_id: id, status: "APPROVED", confirmation_ref: REF } }
+        : { statusCode: 200, body: { confirmation_id: id, status: "REJECTED" } };
     },
     sbpEnabled: opts.sbp ?? false,
     now: () => new Date(t),
@@ -151,6 +158,8 @@ describe("страница УПК: решение человека (РП51 п. 1
     const res = await ctx.post(r.confirmation_id, { code, instrument: "CARD", decision: "APPROVE" });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("data-status>APPROVED<");
+    expect(res.body, "confirmation_ref видит только агент (РП50 п. 7)").not.toContain(REF);
+    expect(res.body).not.toContain("cr_");
     expect(ctx.sent).toHaveLength(1);
     const { id, body } = ctx.sent[0]!;
     expect(id).toBe(r.confirmation_id);
@@ -225,6 +234,94 @@ describe("страница УПК: решение человека (РП51 п. 1
   });
 });
 
+describe("страница УПК: защита и сбои POST (КТ2 № 1–3, 8; РП51 «Дополнения» п. 8)", () => {
+  const security = (h: Record<string, unknown>) => {
+    expect(h["x-frame-options"]).toBe("DENY");
+    expect(h["content-security-policy"]).toContain("frame-ancestors 'none'");
+    expect(h["content-security-policy"]).toContain("form-action 'self'");
+    expect(h["x-content-type-options"]).toBe("nosniff");
+    expect(h["cache-control"]).toBe("no-store");
+  };
+
+  it("заголовки защиты от встраивания во фрейм — на GET и на всех ответах POST", async () => {
+    ctx = setup();
+    const r = await ctx.request();
+    security((await ctx.get(r.confirmation_id)).headers);
+    security((await ctx.get(newConfirmationId())).headers);
+    security((await ctx.post(r.confirmation_id, { instrument: "CARD", decision: "APPROVE" })).headers);
+    security((await ctx.post(r.confirmation_id, { code: "x", instrument: "CARD", decision: "APPROVE" })).headers);
+    const code = ctx.codes.issue(r.confirmation_id, r.expires_at);
+    security((await ctx.post(r.confirmation_id, { code, instrument: "CARD", decision: "APPROVE" })).headers);
+  });
+
+  it("два одновременных POST с одним кодом — ровно один вызов ПИ-8 и один ответ 200", async () => {
+    ctx = setup();
+    const r = await ctx.request();
+    const code = ctx.codes.issue(r.confirmation_id, r.expires_at);
+    const form = { code, instrument: "CARD", decision: "APPROVE" };
+    const res = await Promise.all([ctx.post(r.confirmation_id, form), ctx.post(r.confirmation_id, form)]);
+    expect(res.map((x) => x.statusCode).sort()).toEqual([200, 403]);
+    expect(ctx.sent).toHaveLength(1);
+  });
+
+  it("сбой ПИ-8 после верного кода — 503, код погашен: повтор тем же кодом не принят, новый — от эмитента", async () => {
+    let fail = true;
+    ctx = setup({
+      submit: async (id) => {
+        if (fail) throw new Error("ПИ-8 недоступен");
+        return { statusCode: 200, body: { confirmation_id: id, status: "APPROVED" } };
+      },
+    });
+    const r = await ctx.request();
+    const code = ctx.codes.issue(r.confirmation_id, r.expires_at);
+    const form = { code, instrument: "CARD", decision: "APPROVE" };
+    expect((await ctx.post(r.confirmation_id, form)).statusCode).toBe(503);
+    fail = false;
+    expect((await ctx.post(r.confirmation_id, form)).statusCode, "код погашен").toBe(403);
+    expect((await ctx.post(r.confirmation_id, { ...form, code: ctx.codes.issue(r.confirmation_id, r.expires_at) })).statusCode).toBe(200);
+  });
+
+  it("ответ ПИ-8: 409 (другое решение первым) — страница 409; 4xx — 502; 5xx — 503; сбой П6 на POST — 503", async () => {
+    let answer = { statusCode: 409, body: { code: "CONFIRMATION_NOT_PENDING", status: "REJECTED" } as unknown };
+    ctx = setup({ submit: async () => answer });
+    const r = await ctx.request();
+    const send = () => ctx!.post(r.confirmation_id, { code: ctx!.codes.issue(r.confirmation_id, r.expires_at), instrument: "CARD", decision: "APPROVE" });
+    const conflict = await send();
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.body).toContain("data-status>REJECTED<");
+    answer = { statusCode: 401, body: { code: "SIGNATURE_INVALID" } };
+    expect((await send()).statusCode).toBe(502);
+    answer = { statusCode: 503, body: { code: "STATE_UNAVAILABLE" } };
+    expect((await send()).statusCode).toBe(503);
+    await ctx.app.close();
+    let failNow = false;
+    ctx = setup({ failGet: () => failNow });
+    const r2 = await ctx.request();
+    const code = ctx.codes.issue(r2.confirmation_id, r2.expires_at);
+    failNow = true;
+    expect((await ctx.post(r2.confirmation_id, { code, instrument: "CARD", decision: "APPROVE" })).statusCode).toBe(503);
+    expect(ctx.sent).toEqual([]);
+  });
+
+  it("одноразовость через страницу: тот же код после ответа ПИ-8 409 — не принят (403), ПИ-8 второй раз не вызван", async () => {
+    ctx = setup({ submit: async () => ({ statusCode: 409, body: { code: "CONFIRMATION_NOT_PENDING", status: "APPROVED" } }) });
+    const r = await ctx.request();
+    const code = ctx.codes.issue(r.confirmation_id, r.expires_at);
+    const form = { code, instrument: "CARD", decision: "APPROVE" };
+    expect((await ctx.post(r.confirmation_id, form)).statusCode).toBe(409);
+    expect((await ctx.post(r.confirmation_id, form)).statusCode).toBe(403);
+    expect(ctx.sent).toHaveLength(1);
+  });
+
+  it("валюта не по форме ISO 4217 (Intl бросает) — страница 503, а не 500", async () => {
+    ctx = setup();
+    const r = await ctx.request({ currency: "R1B" });
+    const res = await ctx.get(r.confirmation_id);
+    expect(res.statusCode).toBe(503);
+    expect(res.headers["content-type"]).toMatch(/^text\/html/);
+  });
+});
+
 describe("одноразовый код (РП51 «Дополнения» п. 8, решение владельца 22.10)", () => {
   const ID = newConfirmationId();
   const EXP = new Date(T0 + HOLD_MS).toISOString();
@@ -249,13 +346,20 @@ describe("одноразовый код (РП51 «Дополнения» п. 8, 
     expect(codes.redeem(ID, code, AT)).toBe(true);
   });
 
-  it("код чужого запроса не принимается и не расходует его код", () => {
+  it("код чужого запроса не принимается и считается неверной попыткой; свой код чужого запроса цел", () => {
     const codes = new UpkCodes();
     const other = newConfirmationId();
-    const mine = codes.issue(ID, EXP);
-    const theirs = codes.issue(other, EXP);
-    if (theirs !== mine) expect(codes.redeem(ID, theirs, AT)).toBe(false);
-    expect(codes.redeem(other, theirs, AT)).toBe(true);
+    let mine = codes.issue(ID, EXP);
+    let theirs = codes.issue(other, EXP);
+    while (theirs === mine) theirs = codes.issue(other, EXP);
+    expect(codes.redeem(ID, theirs, AT)).toBe(false);
+    expect(codes.redeem(other, theirs, AT), "чужой запрос своим кодом").toBe(true);
+    // Ещё две неверные — код ID сгорел: чужой код засчитан как первая неверная попытка.
+    const wrong = mine === "000000" ? "111111" : "000000";
+    codes.redeem(ID, wrong, AT);
+    codes.redeem(ID, wrong, AT);
+    expect(codes.redeem(ID, mine, AT)).toBe(false);
+    mine = codes.issue(ID, EXP);
     expect(codes.redeem(ID, mine, AT)).toBe(true);
   });
 
