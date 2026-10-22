@@ -1,8 +1,8 @@
 // ПС11 «Сумма выше порога: подтверждение и повтор» на стенде через приложение эмитента (PS-19 ч. 1; A5 п. 3, A7 п. 7;
 // РП50; ФП8; инвариант 7): авторизация 3 400 ₽ при пороге 3 000 ₽ → CONFIRMATION_REQUIRED и запрос подтверждения на
 // итоговые значения → человек подтверждает в приложении банка (ПИ-8, подпись банка над totals_hash) → повтор через
-// продавца с confirmation_ref → APPROVE; ссылка однократна и привязана к итогу. Не целиком: страница УПК и событие
-// confirmation.required агенту — PS-19 ч. 2; запрос здесь находится чтением П6 стенда (до GET /pao/v1/confirmations).
+// продавца с confirmation_ref → APPROVE; ссылка однократна и привязана к итогу. Не целиком: страница УПК — PS-19 ч. 3;
+// событие confirmation.* и GET /pao/v1/confirmations/{id} агенту — tests/unit/pao-confirmations.test.ts (ч. 2, РП51).
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
