@@ -9,6 +9,9 @@ import { ConsentJournal, MemoryConsentStore } from "../consent/index.js";
 import type { MandateDecisionPayload } from "../consent/model.js";
 import { createAgentReceiver, type AgentReceiver } from "../env/agent/index.js";
 import { createIssuerEmulator } from "../env/issuer/index.js";
+import { createUpkEmulator } from "../env/upk/index.js";
+import { UpkCodes } from "../env/upk/codes.js";
+import { createUpkPage, type UpkPageSettings } from "../env/upk/page.js";
 import { createTokenServiceEmulator, type TokenServiceEmulator } from "../env/tsp/index.js";
 import { merchantDirectory } from "../env/merchants/shops.js";
 import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
@@ -76,6 +79,23 @@ export interface StandIssuer {
    * тестов отказов: другое время решения или другой хэш итога.
    */
   confirm(confirmationId: string, opts?: IssuerConfirmOptions): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /**
+   * Одноразовый код страницы УПК (РП51 п. 15, «Дополнения» п. 8): человек получил его в банке — вне ПАО, агенту
+   * недоступен. Привязан к запросу, истекает вместе с ним; новый код заменяет прежний. Запроса нет — undefined.
+   */
+  upkCode(confirmationId: string): Promise<string | undefined>;
+}
+
+/** Страница УПК стенда (РП51 п. 15): адрес link — upk_page_base_url + /c/{id}; здесь — путь /c/{id}. */
+export interface StandUpk {
+  readonly app: FastifyInstance;
+  /** Запуск на 127.0.0.1 и свободном порту; базовый адрес страницы. */
+  listen(): Promise<string>;
+}
+
+export interface StandOptions {
+  /** Язык и бренд страницы УПК (правило совместимости 3); по умолчанию — ru и бренд стенда. */
+  readonly upk?: UpkPageSettings;
 }
 
 export interface IssuerConfirmOptions {
@@ -116,6 +136,8 @@ export interface Stand {
   readonly issuerWebhook: IssuerWebhookReceiver;
   /** Приложение банка: подпись и отзыв мандата клиентом (РП12, РП36, РП38). */
   readonly issuer: StandIssuer;
+  /** Страница УПК (РП51 п. 15–16): оператор УПК — участник ПИ-8 с ролью UPK, ключ в памяти. */
+  readonly upk: StandUpk;
   /**
    * Запросы подтверждения П6 только для чтения (РП50): найти запрос по заказу до GET /pao/v1/confirmations/{id} (PS-19
    * ч. 2). Записи нет — решение только через приложение банка (issuer.confirm), инвариант 7.
@@ -136,7 +158,7 @@ export interface Stand {
 
 // Хранилище и проверка подписи наружу не отдаются: через хранилище тест мог бы записать агента в обход допуска
 // (инвариант 5). Параметры — только config/params.stand.json Платформы или PARAMS_PATH (РП25 п. 4).
-export function createStand(): Stand {
+export function createStand(opts: StandOptions = {}): Stand {
   const params = loadParams();
   let clock: Date | undefined;
   const now = (): Date => clock ?? new Date();
@@ -153,7 +175,9 @@ export function createStand(): Stand {
   // Банк стенда — эмулятор эмитента с ключом в памяти; другого доверенного участника на стенде нет (РП36 доп.).
   const emulator = createIssuerEmulator();
   // Адрес вебхука банка стенда — в записи доверенного участника (РП46 доп. п. 9 (о4)).
-  const trusted = new TrustedParticipants([{ ...emulator.trustedKey, notify_url: STAND_ISSUER_NOTIFY_URL }], { stand: true });
+  // Оператор УПК стенда (РП51 п. 12): роль UPK, только решения по подтверждению; боевой UPK — отказ запуска.
+  const upkEmulator = createUpkEmulator();
+  const trusted = new TrustedParticipants([{ ...emulator.trustedKey, notify_url: STAND_ISSUER_NOTIFY_URL }, upkEmulator.trustedKey], { stand: true });
   // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6).
   // Outbox участника стенда — в памяти; журнал согласий пишет в него client.mandate_exhausted и client.revoked_all.
   const operations = new MemoryOperationStore();
@@ -365,6 +389,33 @@ export function createStand(): Stand {
       const res = await app.inject({ method: "POST", url: `/participants/v1/confirmations/${confirmationId}`, payload: body });
       return { statusCode: res.statusCode, body: res.json() };
     },
+    async upkCode(confirmationId) {
+      const r = await confirmationStore.get(confirmationId);
+      return r ? upkCodes.issue(confirmationId, r.expires_at) : undefined;
+    },
+  };
+  // Страница УПК: итог — из записи П6, решение — ПИ-8 того же сервера (как приложение банка), выбор СБП — по параметру.
+  const upkCodes = new UpkCodes();
+  const upkApp = createUpkPage({
+    upk: upkEmulator,
+    confirmations: { get: (id) => confirmationStore.get(id) },
+    codes: upkCodes,
+    async submit(id, body) {
+      const res = await app.inject({ method: "POST", url: `/participants/v1/confirmations/${id}`, payload: body });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    sbpEnabled: params.upk_sbp_enabled,
+    now,
+    ...(opts.upk ? { settings: opts.upk } : {}),
+  });
+  const upk: StandUpk = {
+    app: upkApp,
+    async listen() {
+      await upkApp.listen({ host: "127.0.0.1", port: 0 });
+      const addr = upkApp.server.address();
+      if (!addr || typeof addr === "string") throw new Error("нет адреса страницы УПК");
+      return `http://127.0.0.1:${addr.port}`;
+    },
   };
   return {
     params,
@@ -388,6 +439,7 @@ export function createStand(): Stand {
     notificationDelivery: (id) => notifications.delivery(id),
     issuerWebhook,
     issuer,
+    upk,
     confirmations: { get: (id) => confirmationStore.get(id), byKey: (key) => confirmationStore.byKey(key) },
     tsp,
     setClock: (d) => (clock = d),
@@ -399,7 +451,10 @@ export function createStand(): Stand {
       if (!addr || typeof addr === "string") throw new Error("нет адреса сервера стенда");
       return `http://127.0.0.1:${addr.port}`;
     },
-    close: () => app.close(),
+    async close() {
+      await upkApp.close();
+      await app.close();
+    },
   };
 }
 

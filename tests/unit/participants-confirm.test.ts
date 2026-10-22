@@ -17,6 +17,7 @@ import {
   type ConfirmationStore,
 } from "../../src/confirm/index.js";
 import { createIssuerEmulator } from "../../src/env/issuer/index.js";
+import { createUpkEmulator } from "../../src/env/upk/index.js";
 import { participantRoutes } from "../../src/participants/routes.js";
 import { TrustedParticipants, type TrustedParticipantKey } from "../../src/participants/trusted.js";
 import { jwkThumbprint } from "../../src/registry/keys.js";
@@ -27,6 +28,8 @@ const T0 = Date.parse("2026-10-22T10:00:00.000Z");
 const HOLD_MS = 900_000;
 const SKEW_SEC = 300;
 const emu = createIssuerEmulator();
+/** Оператор УПК стенда (РП51 п. 12): решает по любому запросу, банком клиента не является. */
+const upk = createUpkEmulator();
 
 /** «Боевой» банк теста: подпись верна, но клиент мандата — не его. */
 function liveBank(code: string) {
@@ -71,7 +74,7 @@ async function setup(over: Partial<ConfirmationStore> = {}): Promise<Ctx> {
     },
   });
   await participantRoutes(app, {
-    trusted: new TrustedParticipants([emu.trustedKey, live.key], { stand: true }),
+    trusted: new TrustedParticipants([emu.trustedKey, live.key, upk.trustedKey], { stand: true }),
     consent,
     params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 },
     now: () => new Date(t),
@@ -109,17 +112,18 @@ async function request(over: Partial<ConfirmationRecord> = {}): Promise<Confirma
 }
 
 /** Тело решения банка эмулятора (или боевого) с верной подписью над записью. */
-function body(r: ConfirmationRecord, over: Partial<Omit<ConfirmationDecision, "signature">> = {}, bank: "emu" | "live" = "emu") {
+function body(r: ConfirmationRecord, over: Partial<Omit<ConfirmationDecision, "signature">> = {}, bank: "emu" | "live" | "upk" = "emu") {
+  const signer = bank === "emu" ? emu : bank === "upk" ? upk : { participant_code: live.key.participant_code, trustedKey: live.key, signConfirmation: live.sign };
   const record = {
-    participant_code: bank === "emu" ? emu.participant_code : live.key.participant_code,
-    kid: bank === "emu" ? emu.trustedKey.kid : live.key.kid,
+    participant_code: signer.participant_code,
+    kid: signer.trustedKey.kid,
     confirmation_id: r.confirmation_id,
     decision: "APPROVE" as const,
     totals_hash: totalsHash(r),
     decided_at: new Date(T0 + 60_000).toISOString(),
     ...over,
   };
-  const signature = bank === "emu" ? emu.signConfirmation(record) : live.sign(record);
+  const signature = signer.signConfirmation(record);
   const { confirmation_id: _id, ...rest } = { ...record, signature };
   void _id;
   return rest;
@@ -189,6 +193,57 @@ describe("ПИ-8: решение человека по запросу подтв
     const res = await post(r.confirmation_id, body(r, {}, "live"));
     expect(res).toEqual({ status: 401, body: { code: "SIGNATURE_INVALID" } });
     expect((await ctx.store.get(r.confirmation_id))?.status).toBe("PENDING");
+  });
+
+  it("решение оператора УПК (роль UPK) с instrument_chosen — принято по запросу клиента любого банка (РП51 п. 12–13)", async () => {
+    const r = await request();
+    const res = await post(r.confirmation_id, body(r, { instrument_chosen: "CARD" }, "upk"));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ confirmation_id: r.confirmation_id, status: "APPROVED" });
+    expect((await ctx.store.get(r.confirmation_id))?.decision).toMatchObject({ participant_code: upk.participant_code, decision: "APPROVE", instrument_chosen: "CARD" });
+  });
+
+  it("UPK без instrument_chosen — 400 REQUEST_INVALID, решение не записано; от банка поле по желанию (РП51 п. 13)", async () => {
+    const r = await request();
+    expect(await post(r.confirmation_id, body(r, {}, "upk"))).toEqual({ status: 400, body: { code: "REQUEST_INVALID" } });
+    expect((await ctx.store.get(r.confirmation_id))?.status).toBe("PENDING");
+    const res = await post(r.confirmation_id, body(r, { instrument_chosen: "SBP" }));
+    expect(res.status, "банк с инструментом").toBe(200);
+    expect((await ctx.store.get(r.confirmation_id))?.decision?.instrument_chosen).toBe("SBP");
+  });
+
+  it("instrument_chosen входит в подпись: подмена — 401; не CARD/SBP — 400; без поля — байты подписи v0.16.0", async () => {
+    const r = await request();
+    const signed = body(r, { instrument_chosen: "CARD" }, "upk");
+    expect((await post(r.confirmation_id, { ...signed, instrument_chosen: "SBP" })).status, "подмена инструмента").toBe(401);
+    for (const v of ["PAN", "", null, 1]) {
+      expect((await post(r.confirmation_id, { ...signed, instrument_chosen: v })).status, `instrument_chosen = ${JSON.stringify(v)}`).toBe(400);
+    }
+    expect((await ctx.store.get(r.confirmation_id))?.status).toBe("PENDING");
+    // Запись без инструмента — ровно поля v0.16.0 (CHANGELOG «Банку» — совместимо).
+    const base = { participant_code: "b", kid: "k", confirmation_id: r.confirmation_id, decision: "APPROVE" as const, totals_hash: "0".repeat(64), decided_at: "2026-10-22T10:00:00.000Z" };
+    expect(JSON.parse(participantConfirmationSigningInput(base).toString("utf8"))).toEqual({ context: "pao:participant-confirmation:v1", ...base });
+    // Эталон байтов v0.16.0 (КТ1 № 4): ключи по порядку RFC 8785, без пробелов.
+    const fixed = { ...base, confirmation_id: "cnf_00000000-0000-4000-8000-000000000001" };
+    expect(participantConfirmationSigningInput(fixed).toString("utf8")).toBe(
+      '{"confirmation_id":"cnf_00000000-0000-4000-8000-000000000001","context":"pao:participant-confirmation:v1",' +
+        `"decided_at":"2026-10-22T10:00:00.000Z","decision":"APPROVE","kid":"k","participant_code":"b","totals_hash":"${"0".repeat(64)}"}`,
+    );
+    expect(JSON.parse(participantConfirmationSigningInput({ ...base, instrument_chosen: "SBP" }).toString("utf8"))).toEqual({
+      context: "pao:participant-confirmation:v1",
+      ...base,
+      instrument_chosen: "SBP",
+    });
+  });
+
+  it("повтор: та же запись с инструментом — 200; тот же итог с другим инструментом — 409 (это другое решение)", async () => {
+    const r = await request();
+    const b = body(r, { instrument_chosen: "CARD" }, "upk");
+    const first = await post(r.confirmation_id, b);
+    expect(first.status).toBe(200);
+    expect(await post(r.confirmation_id, b)).toEqual(first);
+    const other = await post(r.confirmation_id, body(r, { instrument_chosen: "SBP" }, "upk"));
+    expect(other).toEqual({ status: 409, body: { code: "CONFIRMATION_NOT_PENDING", status: "APPROVED" } });
   });
 
   it("decided_at позже часов Платформы больше допуска — 401; в пределах допуска — принято", async () => {

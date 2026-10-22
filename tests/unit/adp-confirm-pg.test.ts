@@ -258,6 +258,47 @@ describe.skipIf(!DATABASE_URL)("однократность confirmation_ref на
     expect((await store.get(id))?.status).toBe("USED");
   });
 
+  it("instrument_chosen (sql/113, РП51 п. 13): хранится с решением, погашение его не меняет; без решения и не CARD/SBP — CHECK", async () => {
+    const M = mandates.add(1_000_000);
+    const store = new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 });
+    const r = await store.create(pending(M, "ORD-instr", 340_000));
+    const ref = newConfirmationRef();
+    const d = { participant_code: "stand:upk-emulator", kid: "kid-upk", decision: "APPROVE" as const, totals_hash: totalsHash(r), decided_at: AT, signature: "s".repeat(86), instrument_chosen: "SBP" as const };
+    expect((await store.decide(r.confirmation_id, d, ref, AT))?.decision).toEqual(d);
+    expect(await store.consume(ref, "OPKC-CNF-PG-instr", AT)).toBe(true);
+    expect((await store.get(r.confirmation_id))?.decision?.instrument_chosen, "после USED").toBe("SBP");
+    // Решение банка без инструмента читается без поля — запись побайтно прежняя.
+    const plain = await store.create(pending(M, "ORD-instr-plain", 1));
+    await approved(store, plain);
+    expect((await store.get(plain.confirmation_id))?.decision).not.toHaveProperty("instrument_chosen");
+    const id = r.confirmation_id;
+    await guarded(db.pool.query(`UPDATE confirmations SET instrument_chosen = 'CARD' WHERE confirmation_id = '${id}'`), "USED: смена инструмента");
+    await guarded(db.pool.query(`UPDATE confirmations SET instrument_chosen = NULL WHERE confirmation_id = '${id}'`), "USED: снятие инструмента");
+    // Погашение APPROVED → USED не меняет выбор человека (кортеж триггера sql/113): смена и снятие — 23001; погашение
+    // без смены — проходит. Строка USED выше этого не доказывает: USED → USED запрещён и без кортежа (КТ1, поломка 1b64c84).
+    const apr = await store.create(pending(M, "ORD-instr-apr", 1));
+    await store.decide(apr.confirmation_id, { ...d, totals_hash: totalsHash(apr) }, newConfirmationRef(), AT);
+    const consume = (set: string) => `UPDATE confirmations SET status = 'USED', op_ref = 'OPKC-instr-x'${set} WHERE confirmation_id = '${apr.confirmation_id}'`;
+    await guarded(db.pool.query(consume(", instrument_chosen = 'CARD'")), "APPROVED → USED со сменой SBP → CARD");
+    await guarded(db.pool.query(consume(", instrument_chosen = NULL")), "APPROVED → USED со снятием инструмента");
+    expect((await store.get(apr.confirmation_id))?.status).toBe("APPROVED");
+    await db.pool.query(consume(""));
+    expect((await store.get(apr.confirmation_id))?.decision?.instrument_chosen, "погашение без смены").toBe("SBP");
+    const pen = await store.create(pending(M, "ORD-instr-pen", 1));
+    for (const [what, sql] of [
+      ["инструмент без решения", `UPDATE confirmations SET status = 'EXPIRED', instrument_chosen = 'CARD' WHERE confirmation_id = '${pen.confirmation_id}'`],
+      ["инструмент не CARD/SBP", `UPDATE confirmations SET status = 'APPROVED', confirmation_ref = '${newConfirmationRef()}', participant_code = 'bank:pg', kid = 'kid-pg',
+         decision = 'APPROVE', totals_hash = '${"0".repeat(64)}', decided_at = '${AT}', signature = '${"s".repeat(86)}', instrument_chosen = 'PAN'
+         WHERE confirmation_id = '${pen.confirmation_id}'`],
+    ] as const) {
+      const err = await db.pool.query(sql).then(
+        () => undefined,
+        (e: unknown) => e as { code?: string },
+      );
+      expect(err?.code, what).toBe("23514");
+    }
+  });
+
   it("Дополнения РП50 п. 1: на ключ одна запись за всё время — после USED вставка на тот же ключ строку не добавляет", async () => {
     const M = mandates.add(1_000_000);
     const store = new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 });

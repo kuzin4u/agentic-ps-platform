@@ -1,8 +1,8 @@
-// ПС11 «Сумма выше порога: подтверждение и повтор» на стенде через приложение эмитента (PS-19 ч. 1; A5 п. 3, A7 п. 7;
-// РП50; ФП8; инвариант 7): авторизация 3 400 ₽ при пороге 3 000 ₽ → CONFIRMATION_REQUIRED и запрос подтверждения на
-// итоговые значения → человек подтверждает в приложении банка (ПИ-8, подпись банка над totals_hash) → повтор через
-// продавца с confirmation_ref → APPROVE; ссылка однократна и привязана к итогу. Не целиком: страница УПК — PS-19 ч. 3;
-// событие confirmation.* и GET /pao/v1/confirmations/{id} агенту — tests/unit/pao-confirmations.test.ts (ч. 2, РП51).
+// ПС11 «Сумма выше порога: подтверждение и повтор» на стенде — целиком (PS-19 ч. 1–3; A5 п. 3, A7 п. 7; РП50, РП51;
+// ФП8; инвариант 7): авторизация 3 400 ₽ при пороге 3 000 ₽ → CONFIRMATION_REQUIRED и запрос на итоговые значения →
+// confirmation.required в ленте агента → GET → link → страница УПК → код от эмитента → ПИ-8 (подпись UPK,
+// instrument_chosen) → confirmation.approved → GET со ссылкой → повтор через продавца новой операцией → APPROVE;
+// второй раз — не APPROVE. Путь через приложение банка (ПИ-8 от банка) — остальные тесты файла.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
@@ -17,7 +17,7 @@ const PRINCIPAL = "prn_ps_eleven";
 const ORDER = "ORD-ps11";
 const AMOUNT = 340_000;
 
-describe("ПС11 на стенде: подтверждение выше порога в приложении эмитента и повтор с confirmation_ref (РП50)", () => {
+describe("ПС11 на стенде: подтверждение выше порога на странице УПК и в приложении эмитента, повтор с confirmation_ref (РП50, РП51)", () => {
   let stand: Stand;
   let side: AgentSide;
   let cartId: string;
@@ -76,7 +76,7 @@ describe("ПС11 на стенде: подтверждение выше поро
     return id;
   }
 
-  /** Авторизация продавца через эквайрера и ОПКЦ — сообщение процессинга в ADP стенда. */
+  /** Сообщение процессинга — прямо в ADP стенда (путь эквайрер → ОПКЦ — PS-11). */
   const auth = (op_ref: string, over: Partial<CanonicalMessage> = {}): CanonicalMessage => ({
     op_ref,
     msg_type: "AUTH_REQUEST",
@@ -92,6 +92,62 @@ describe("ПС11 на стенде: подтверждение выше поро
   const decide = async (m: CanonicalMessage): Promise<Decision> =>
     (await stand.app.inject({ method: "POST", url: "/adp/v1/decide", payload: m })).json() as Decision;
   const key = { mandate_id: "", merchant_id: "MER-1042", order_ref: ORDER, amount: AMOUNT, currency: "RUB" };
+
+  /** Лента агента — массив событий (РП39). */
+  type Feed = readonly { readonly type: string; readonly data: Record<string, unknown> }[];
+  const feed = async (): Promise<Feed> => (await call("GET", "/pao/v1/events")).json() as Feed;
+
+  it("доказательный, целиком через страницу УПК: событие → GET → link → код → решение человека → событие → GET со ссылкой → APPROVE; второй раз — нет", async () => {
+    const order = "ORD-ps11-upk";
+    const c = (await call("POST", "/pao/v1/credentials", { mandate_id: cartId, order_ref: order, merchant_id: "MER-1042", amount_max: AMOUNT, currency: "RUB", kind: "CARD" })).json() as Credential;
+    const m = (op_ref: string, confirmation_ref?: string): CanonicalMessage => ({
+      ...auth(op_ref),
+      order_ref: order,
+      instrument: { kind: "AGENT_TOKEN", token_ref: c.payload.token_ref as string, cryptogram: c.payload.cryptogram as string },
+      ...(confirmation_ref ? { confirmation_ref } : {}),
+    });
+    expect(parseDecision(await decide(m("OPKC-PS11-U1")), "adp")).toEqual({ decision: "CONFIRMATION_REQUIRED", reason: "CONFIRMATION_REQUIRED" });
+
+    // Агент: событие-сигнал → GET → link человеку; сам на странице ничего не делает (Т7).
+    const required = (await feed()).filter((e) => e.type === "confirmation.required").at(-1)!;
+    const id = required.data.confirmation_id as string;
+    const view = (await call("GET", `/pao/v1/confirmations/${id}`)).json() as { status: string; link: string; confirmation_ref: string | null };
+    expect(view).toMatchObject({ status: "PENDING", confirmation_ref: null });
+    const link = new URL(view.link);
+    expect(link.origin).toBe(stand.params.upk_page_base_url);
+    expect(link.pathname).toBe(`/c/${id}`);
+
+    // Человек: страница УПК по link — итог из записи П6; код получил в банке (вне ПАО).
+    const pageRes = await stand.upk.app.inject({ method: "GET", url: link.pathname });
+    expect(pageRes.statusCode).toBe(200);
+    expect(pageRes.body).toMatch(/data-amount>3\s?400,00\s?₽</);
+    expect(pageRes.body).toContain(`data-order>${order}<`);
+    const code = await stand.issuer.upkCode(id);
+    const submit = (form: Record<string, string>) =>
+      stand.upk.app.inject({
+        method: "POST",
+        url: link.pathname,
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: new URLSearchParams(form).toString(),
+      });
+    const done = await submit({ code: code!, instrument: "CARD", decision: "APPROVE" });
+    expect(done.statusCode).toBe(200);
+    expect(done.body).toContain("data-status>APPROVED<");
+    expect(done.body, "confirmation_ref человеку не показывается — его видит только агент (РП50 п. 7)").not.toContain("cr_");
+    expect((await stand.confirmations.get(id))?.decision).toMatchObject({ participant_code: "stand:upk-emulator", instrument_chosen: "CARD" });
+
+    // Агент: confirmation.approved → GET со ссылкой → повтор через продавца новой операцией.
+    expect((await feed()).filter((e) => e.type === "confirmation.approved" && e.data.confirmation_id === id)).toHaveLength(1);
+    const approved = (await call("GET", `/pao/v1/confirmations/${id}`)).json() as { status: string; confirmation_ref: string };
+    expect(approved.status).toBe("APPROVED");
+    expect(parseDecision(await decide(m("OPKC-PS11-U2", approved.confirmation_ref)), "adp")).toEqual({ decision: "APPROVE", reason: null });
+    expect((await stand.confirmations.get(id))?.status).toBe("USED");
+    expect(parseDecision(await decide(m("OPKC-PS11-U3", approved.confirmation_ref)), "adp").decision, "второй раз — не APPROVE").not.toBe("APPROVE");
+    // Страница после погашения: запрос уже USED — 409 по статусу, до кода; второго решения нет. Одноразовость кода через
+    // страницу — tests/unit/upk-page.test.ts.
+    expect((await submit({ code: code!, instrument: "CARD", decision: "APPROVE" })).statusCode).toBe(409);
+    expect(done.body).not.toContain(approved.confirmation_ref);
+  });
 
   it("доказательный: 3 400 ₽ → CONFIRMATION_REQUIRED и запрос; банк подтверждает итог → ссылка; повтор с ней → APPROVE; второй раз — нет", async () => {
     const first = await decide(auth("OPKC-PS11-1"));

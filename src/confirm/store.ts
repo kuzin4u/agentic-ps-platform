@@ -133,11 +133,12 @@ interface Row extends Record<string, unknown> {
   decided_at: string | null;
   signature: string | null;
   op_ref: string | null;
+  instrument_chosen: "CARD" | "SBP" | null;
 }
 
 const COLS =
   "confirmation_id, agent_code, mandate_id, merchant_id, amount, currency, order_ref, split_detected, status, created_at, " +
-  "expires_at, confirmation_ref, participant_code, kid, decision, totals_hash, decided_at, signature, op_ref";
+  "expires_at, confirmation_ref, participant_code, kid, decision, totals_hash, decided_at, signature, op_ref, instrument_chosen";
 
 /** bigint приходит строкой: вне точного диапазона — не подтверждено (инвариант 3), а не округление. */
 function recordOf(row: Row): ConfirmationRecord {
@@ -153,6 +154,7 @@ function recordOf(row: Row): ConfirmationRecord {
           totals_hash: (row.totals_hash as string).trim(),
           decided_at: row.decided_at as string,
           signature: row.signature as string,
+          ...(row.instrument_chosen === null ? {} : { instrument_chosen: row.instrument_chosen }),
         };
   return {
     confirmation_id: row.confirmation_id,
@@ -268,10 +270,10 @@ export class PgConfirmationStore implements ConfirmationStore {
     return this.tx(async (tx) => {
       const r = await tx.query<Row>(
         `UPDATE confirmations SET status = $2, confirmation_ref = $3, participant_code = $4, kid = $5, decision = $6, totals_hash = $7,
-           decided_at = $8, signature = $9
+           decided_at = $8, signature = $9, instrument_chosen = $11
          WHERE confirmation_id = $1 AND status = 'PENDING' AND expires_at > $10 RETURNING ${COLS}`,
         [confirmation_id, approve ? "APPROVED" : "REJECTED", approve ? confirmation_ref : null, d.participant_code, d.kid, d.decision,
-          d.totals_hash, d.decided_at, d.signature, now],
+          d.totals_hash, d.decided_at, d.signature, now, d.instrument_chosen ?? null],
       );
       if (!r.rows[0]) return undefined;
       const next = recordOf(r.rows[0]);
