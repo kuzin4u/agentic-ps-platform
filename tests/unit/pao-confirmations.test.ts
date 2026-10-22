@@ -3,7 +3,8 @@
 // с той же ссылкой, link — страница УПК без сумм и ссылки, истечение при чтении — событие; POST — 400 без записи;
 // SUSPENDED — 403. Решение человека — приложением банка стенда (ПИ-8); страница УПК — К2.
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { MemoryConfirmationStore } from "../../src/confirm/index.js";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import type { Credential, MandateRequest } from "../../src/shared/pao.js";
 import { createStand, type Stand } from "../../src/stand/index.js";
@@ -155,12 +156,42 @@ describe("GET /pao/v1/confirmations/{id} и события confirmation.* на �
     }
   });
 
-  it("POST /pao/v1/confirmations в 1.4.x — 400 REQUEST_INVALID без записи (РП51 п. 11)", async () => {
+  it("POST /pao/v1/confirmations в 1.4.x — 400 REQUEST_INVALID без записи; повтор тем же ключом — снова 400, ключ не занят (РП51 п. 11)", async () => {
     const before = (await feed()).length;
-    const r = await call("POST", "/pao/v1/confirmations", { mandate_id: cartId, merchant_id: "MER-1042", amount: AMOUNT, summary: "x" });
-    expect(r.statusCode).toBe(400);
-    expect((r.json() as { code: string }).code).toBe("REQUEST_INVALID");
-    expect((await feed())).toHaveLength(before);
+    const body = JSON.stringify({ mandate_id: cartId, merchant_id: "MER-1042", amount: AMOUNT, summary: "x" });
+    const key = randomUUID();
+    for (let i = 0; i < 2; i++) {
+      const r = await signedInject(stand.app, side, CODE, { method: "POST", path: "/pao/v1/confirmations", body, headers: { "idempotency-key": key }, now: stand.now() });
+      expect(r.statusCode).toBe(400);
+      expect((r.json() as { code: string }).code).toBe("REQUEST_INVALID");
+    }
+    expect(await feed()).toHaveLength(before);
+    expect(await stand.confirmations.byKey({ mandate_id: cartId, merchant_id: "MER-1042", order_ref: "x", amount: AMOUNT, currency: "RUB" })).toEqual([]);
+  });
+
+  it("чужой GET после срока — 400, запрос владельца не переводится в EXPIRED и события нет (агент сверяется до истечения)", async () => {
+    const { id } = await order("ORD-get-foreign-exp");
+    stand.setClock(new Date("2026-10-22T09:15:00Z"));
+    try {
+      expect((await get(id, [other, OTHER])).statusCode).toBe(400);
+      expect((await stand.confirmations.get(id))?.status).toBe("PENDING");
+      expect((await feed()).filter((e) => e.type === "confirmation.expired" && (e.data as { confirmation_id: string }).confirmation_id === id)).toEqual([]);
+    } finally {
+      stand.setClock(new Date("2026-10-22T09:00:00Z"));
+    }
+  });
+
+  it("сбой П6 при чтении — 503 STATE_UNAVAILABLE с Retry-After, тело ПАО (инвариант 3)", async () => {
+    const { id } = await order("ORD-get-fail");
+    const spy = vi.spyOn(MemoryConfirmationStore.prototype, "get").mockRejectedValueOnce(new Error("П6 недоступно"));
+    try {
+      const r = await get(id);
+      expect(r.statusCode).toBe(503);
+      expect(r.headers["retry-after"]).toBe("1");
+      expect(r.json()).toMatchObject({ code: "STATE_UNAVAILABLE", retry: "same_key" });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("SUSPENDED — 403 AGENT_SUSPENDED у GET запроса подтверждения", async () => {

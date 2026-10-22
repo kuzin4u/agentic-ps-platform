@@ -169,10 +169,10 @@ describe.skipIf(!DATABASE_URL)("однократность confirmation_ref на
 
   it("две авторизации одной ссылкой одновременно — ровно одна APPROVE, вторая CONFIRMATION_REQUIRED, удержание освобождено", async () => {
     const M = mandates.add(1_000_000);
-    const s1 = new PgConfirmationStore(db.pool);
+    const s1 = new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 });
     const r = await s1.create(pending(M, "ORD-race", 340_000));
     const ref = await approved(s1, r);
-    const [g1, g2] = gateConsume([s1, new PgConfirmationStore(pool2)]);
+    const [g1, g2] = gateConsume([s1, new PgConfirmationStore(pool2, { lockTimeoutMs: 5_000 })]);
     const [a1, a2] = [instance(db.pool, g1!), instance(pool2, g2!)];
     const ds = await Promise.all([
       a1.decide(auth(M, "ORD-race", "OPKC-CNF-PG-1", 340_000, ref)),
@@ -193,20 +193,20 @@ describe.skipIf(!DATABASE_URL)("однократность confirmation_ref на
 
   it("CONFIRMATION_REQUIRED на один заказ с двух экземпляров одновременно — один запрос в ожидании", async () => {
     const M = mandates.add(1_000_000);
-    const [g1, g2] = gateByKey([new PgConfirmationStore(db.pool), new PgConfirmationStore(pool2)]);
+    const [g1, g2] = gateByKey([new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 }), new PgConfirmationStore(pool2, { lockTimeoutMs: 5_000 })]);
     const [a1, a2] = [instance(db.pool, g1!), instance(pool2, g2!)];
     const ds = await Promise.all([
       a1.decide(auth(M, "ORD-twice", "OPKC-CNF-PG-3", 340_000)),
       a2.decide(auth(M, "ORD-twice", "OPKC-CNF-PG-4", 340_000)),
     ]);
     expect(ds.map((d) => d.decision)).toEqual(["CONFIRMATION_REQUIRED", "CONFIRMATION_REQUIRED"]);
-    const rows = await new PgConfirmationStore(db.pool).byKey({ mandate_id: M, merchant_id: "MER-1042", order_ref: "ORD-twice", amount: 340_000, currency: "RUB" });
+    const rows = await new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 }).byKey({ mandate_id: M, merchant_id: "MER-1042", order_ref: "ORD-twice", amount: 340_000, currency: "RUB" });
     expect(rows.map((x) => x.status)).toEqual(["PENDING"]);
   });
 
   it("триггер: итоговые значения не меняются, USED назад не возвращается, решение после USED и удаление — запрещены", async () => {
     const M = mandates.add(1_000_000);
-    const store = new PgConfirmationStore(db.pool);
+    const store = new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 });
     const r = await store.create(pending(M, "ORD-guard", 340_000));
     const ref = await approved(store, r);
     expect(await store.consume(ref, "OPKC-CNF-PG-5", AT)).toBe(true);
@@ -260,7 +260,7 @@ describe.skipIf(!DATABASE_URL)("однократность confirmation_ref на
 
   it("Дополнения РП50 п. 1: на ключ одна запись за всё время — после USED вставка на тот же ключ строку не добавляет", async () => {
     const M = mandates.add(1_000_000);
-    const store = new PgConfirmationStore(db.pool);
+    const store = new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 });
     const r = await store.create(pending(M, "ORD-once", 340_000));
     const ref = await approved(store, r);
     expect(await store.consume(ref, "OPKC-CNF-PG-7", AT)).toBe(true);
@@ -295,7 +295,7 @@ describe.skipIf(!DATABASE_URL)("однократность confirmation_ref на
 
   it("решение после срока не записывается; PENDING после срока переходит в EXPIRED", async () => {
     const M = mandates.add(1_000_000);
-    const store = new PgConfirmationStore(db.pool);
+    const store = new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 });
     const r = await store.create({ ...pending(M, "ORD-late", 340_000), expires_at: "2026-10-22T10:15:00.000Z" });
     const later = "2026-10-22T10:15:00.000Z";
     const d = { participant_code: "bank:pg", kid: "kid-pg", decision: "APPROVE" as const, totals_hash: totalsHash(r), decided_at: AT, signature: "s".repeat(86) };

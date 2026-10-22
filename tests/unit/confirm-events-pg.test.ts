@@ -1,13 +1,14 @@
 // События confirmation.* на PostgreSQL (PS-19 ч. 2, РП51 п. 1–4; sql/112): переход запроса подтверждения и событие —
 // одна транзакция (сбой события откатывает переход); у ленты два источника, CHECK «ровно один»; на переход — одно событие
-// (UNIQUE (confirmation_id, type)); номер — общий у агента; из двух экземпляров решение и событие пишет один.
+// (UNIQUE (confirmation_id, type)); номер — общий у агента; из двух экземпляров решение, вставку и истечение пишет один;
+// ожидание блокировки при создании запроса — не дольше lockTimeoutMs (Дополнения РП51 п. 1).
 // В CI (РП30 п. 7); локально без базы — пропуск.
 import { canonicalJson } from "@kuzin4u/agentic-core";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { newConfirmationId, newConfirmationRef, PgConfirmationStore, totalsHash, type ConfirmationRecord } from "../../src/confirm/index.js";
 import { PgConsentStore } from "../../src/consent/store.js";
-import { confirmationEventIdFor } from "../../src/pao/events.js";
+import { confirmationEventIdFor, eventSeqLockKey } from "../../src/pao/events.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
 const AGENT = "nspk:agent:cnf-pg:v1";
@@ -68,7 +69,7 @@ describe.skipIf(!DATABASE_URL)("события confirmation.* на PostgreSQL (�
     ).rows;
 
   it("вставка запроса, решение, истечение — событие в той же транзакции; повтор ключа — без второго; лента — общий номер агента", async () => {
-    const store = new PgConfirmationStore(db.pool);
+    const store = new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 });
     const r = await store.create(pending("ORD-pg-1"));
     expect((await store.create(pending("ORD-pg-1"))).confirmation_id).toBe(r.confirmation_id);
     await store.decide(r.confirmation_id, decision(r), newConfirmationRef(), "2026-10-22T10:01:00.000Z");
@@ -92,7 +93,7 @@ describe.skipIf(!DATABASE_URL)("события confirmation.* на PostgreSQL (�
   });
 
   it("сбой вставки события — решение не записано: переход и событие откатываются вместе (РП51 п. 3)", async () => {
-    const store = new PgConfirmationStore(db.pool);
+    const store = new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 });
     const r = await store.create(pending("ORD-pg-rollback"));
     // Событие этого перехода уже стоит в ленте (под чужим агентом) — вставка в транзакции решения упадёт по UNIQUE.
     await db.pool.query(
@@ -124,16 +125,51 @@ describe.skipIf(!DATABASE_URL)("события confirmation.* на PostgreSQL (�
     expect(await code(insert({ confirmation_id: null })), "нет источника").toBe("23514");
     expect(await code(insert({ type: "mandate.signed" })), "запрос подтверждения с типом мандата").toBe("23514");
     expect(await code(insert({ journal: true })), "оба источника").toBe("23514");
+    expect(await code(insert({ journal: true, confirmation_id: null })), "пара журнала с типом confirmation.*").toBe("23514");
     const id = newConfirmationId();
     await insert({ confirmation_id: id });
     expect(await code(insert({ confirmation_id: id })), "второе событие того же типа по запросу").toBe("23505");
   });
 
   it("два экземпляра решают один запрос — одно решение и одно событие", async () => {
-    const [s1, s2] = [new PgConfirmationStore(db.pool), new PgConfirmationStore(pool2)];
+    const [s1, s2] = [new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 }), new PgConfirmationStore(pool2, { lockTimeoutMs: 5_000 })];
     const r = await s1.create(pending("ORD-pg-race"));
     const out = await Promise.all([s1, s2].map((s) => s.decide(r.confirmation_id, decision(r), newConfirmationRef(), AT)));
     expect(out.filter((x) => x?.status === "APPROVED")).toHaveLength(1);
     expect((await rows(r.confirmation_id)).map((x) => x.type)).toEqual(["confirmation.required", "confirmation.approved"]);
+  });
+
+  it("два экземпляра создают один запрос и истекают одновременно — одно confirmation.required и одно confirmation.expired", async () => {
+    const [s1, s2] = [new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 }), new PgConfirmationStore(pool2, { lockTimeoutMs: 5_000 })];
+    const recs = [pending("ORD-pg-twice", { expires_at: "2026-10-22T10:15:00.000Z" }), pending("ORD-pg-twice", { expires_at: "2026-10-22T10:15:00.000Z" })];
+    const [a, b] = await Promise.all([s1.create(recs[0]!), s2.create(recs[1]!)]);
+    expect(a.confirmation_id).toBe(b.confirmation_id);
+    const later = "2026-10-22T10:20:00.000Z";
+    const expired = await Promise.all([s1.expire(a.confirmation_id, later), s2.expire(a.confirmation_id, later)]);
+    expect(expired.filter(Boolean)).toHaveLength(1);
+    expect((await rows(a.confirmation_id)).map((x) => x.type)).toEqual(["confirmation.required", "confirmation.expired"]);
+  });
+
+  it("Дополнения РП51 п. 1: блокировка агента занята дольше lockTimeoutMs — создание запроса отказывает (55P03), запроса и события нет", async () => {
+    const agent = "nspk:agent:cnf-pg-lock:v1";
+    const holder = await db.pool.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(agent)]);
+      const rec = pending("ORD-pg-lock", { agent_code: agent });
+      const t0 = Date.now();
+      expect(await code(new PgConfirmationStore(pool2, { lockTimeoutMs: 100 }).create(rec))).toBe("55P03");
+      expect(Date.now() - t0, "отказ по пределу, а не по таймауту теста").toBeLessThan(2_000);
+      const store = new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 });
+      expect(await store.byKey(rec)).toEqual([]);
+      expect(await rows(rec.confirmation_id)).toEqual([]);
+    } finally {
+      await holder.query("ROLLBACK");
+      holder.release();
+    }
+  });
+
+  it("lockTimeoutMs — целое ≥ 1, иначе отказ конструктора", () => {
+    for (const v of [0, -1, 1.5, Number.NaN]) expect(() => new PgConfirmationStore(db.pool, { lockTimeoutMs: v }), String(v)).toThrow(/lockTimeoutMs/);
   });
 });

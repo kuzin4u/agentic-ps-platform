@@ -132,4 +132,23 @@ describe("события confirmation.* в памяти (РП51 п. 1–5)", () 
     await expect(store.create(rec)).rejects.toThrow(/лента/);
     expect(await store.get(rec.confirmation_id)).toBeUndefined();
   });
+
+  it("сбой события при решении и истечении — запрос остаётся PENDING", async () => {
+    let fail = false;
+    const store = new MemoryConfirmationStore({
+      events: {
+        appendConfirmationEventNow: () => {
+          if (fail) throw new Error("лента недоступна");
+        },
+      },
+    });
+    const a = await store.create(pending("ORD-fail-decide"));
+    const b = await store.create(pending("ORD-fail-expire"));
+    fail = true;
+    await expect(store.decide(a.confirmation_id, decision(a, "APPROVE"), newConfirmationRef(), AT)).rejects.toThrow(/лента/);
+    await expect(store.expire(b.confirmation_id, "2026-10-22T10:20:00.000Z")).rejects.toThrow(/лента/);
+    expect((await store.get(a.confirmation_id))?.status).toBe("PENDING");
+    expect((await store.get(a.confirmation_id))?.confirmation_ref).toBeNull();
+    expect((await store.get(b.confirmation_id))?.status).toBe("PENDING");
+  });
 });

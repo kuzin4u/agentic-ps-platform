@@ -179,10 +179,16 @@ function recordOf(row: Row): ConfirmationRecord {
  * транзакция вместе с событием (sql/112, РП51 п. 3); погашение события не даёт.
  */
 export class PgConfirmationStore implements ConfirmationStore {
+  private readonly lockTimeoutMs: number;
+
+  /** lockTimeoutMs — предел ожидания блокировки при создании запроса в пути ADP: adp_timeout_ms (Дополнения РП51 п. 1). */
   constructor(
     private readonly client: TxSqlPool,
-    private readonly opts: { readonly pushFor?: PushFor } = {},
-  ) {}
+    private readonly opts: { readonly lockTimeoutMs: number; readonly pushFor?: PushFor },
+  ) {
+    if (!Number.isSafeInteger(opts.lockTimeoutMs) || opts.lockTimeoutMs < 1) throw new Error("PgConfirmationStore: lockTimeoutMs — целое ≥ 1");
+    this.lockTimeoutMs = opts.lockTimeoutMs;
+  }
 
   /** Транзакция на своём соединении; соединение, на котором не прошёл ROLLBACK, в пул не возвращается. */
   private async tx<T>(fn: (tx: SqlClient) => Promise<T>): Promise<T> {
@@ -216,7 +222,10 @@ export class PgConfirmationStore implements ConfirmationStore {
 
   async create(rec: ConfirmationRecord): Promise<ConfirmationRecord> {
     // Событие — только у вставившего: при конфликте ключа запрос и его событие уже записаны другим (РП51 п. 2).
+    // Путь авторизации: ожидание блокировок (строка ключа, блокировка агента) — не дольше lockTimeoutMs, иначе исключение
+    // (→ STATE_UNAVAILABLE) и откат без запроса и события (Дополнения РП51 п. 1; как окно дробления, доп. РП44 п. 2).
     await this.tx(async (tx) => {
+      await tx.query("SELECT set_config('lock_timeout', $1, true)", [`${this.lockTimeoutMs}ms`]);
       const ins = await tx.query(
         `INSERT INTO confirmations (confirmation_id, agent_code, mandate_id, merchant_id, amount, currency, order_ref, split_detected,
            status, created_at, expires_at)
