@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.16.0** (подтверждение человеком, PS-19 ч. 1: на `CONFIRMATION_REQUIRED` Платформа создаёт запрос подтверждения на итоговые значения, банк клиента присылает решение человека по ПИ-8 с подписью над `totals_hash`, при одобрении выдаётся однократная `confirmation_ref`; повтор авторизации со ссылкой одобряется ADP; страница УПК и события `confirmation.*` — PS-19 ч. 2). Что изменилось и что ломает — в
+Текущая версия — **v0.17.0** (подтверждение человеком, PS-19 ч. 2: события `confirmation.required` / `.approved` / `.rejected` / `.expired` агенту в общей ленте и `GET /pao/v1/confirmations/{id}` — статус запроса и `confirmation_ref` после решения человека в приложении банка; ПИ без изменений; страница УПК с выбором инструмента — PS-19 ч. 3). Что изменилось и что ломает — в
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.16.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.17.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.

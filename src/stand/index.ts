@@ -15,6 +15,7 @@ import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
 import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../confirm/index.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
+import type { PaoEventType } from "../pao/events.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
 import {
   MemoryParticipantNotificationStore,
@@ -158,10 +159,12 @@ export function createStand(): Stand {
   const operations = new MemoryOperationStore();
   const notifications = new MemoryParticipantNotificationStore(operations);
   const consentStore = new MemoryConsentStore({ notifications });
+  const pushFor = (code: string, type: PaoEventType): boolean =>
+    registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false);
   const consent: ConsentJournal = new ConsentJournal(consentStore, {
     now,
     revocationOrder: () => trusted.revocationOrder(),
-    pushFor: (code, type) => registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false),
+    pushFor,
     amountLeft: (id, limit) => state.amountLeft(id, limit),
   });
   // Лимиты клиента от банка (РП45 п. 1): в памяти, как журнал стенда.
@@ -205,8 +208,9 @@ export function createStand(): Stand {
   // Агентские реквизиты (П5, РП47): токен-сервис — эмулятор с ключом в памяти, funding_ref — от банка стенда.
   const tsp = createTokenServiceEmulator();
   const credentialStore = new MemoryCredentialStore();
-  // Подтверждение человеком (П6, РП50): запросы ADP и решения банка стенда — одно хранилище в памяти.
-  const confirmationStore = new MemoryConfirmationStore();
+  // Подтверждение человеком (П6, РП50): запросы ADP и решения банка стенда — одно хранилище в памяти; переходы пишут
+  // события confirmation.* в ленту журнала стенда (РП51 п. 1–3), push — по тому же правилу, что у мандатов.
+  const confirmationStore = new MemoryConfirmationStore({ events: consentStore, pushFor });
   const credentials = new Credentials({
     mandates: { get: (id, agent_code) => consent.credentialMandate(id, agent_code) },
     store: credentialStore,
@@ -220,7 +224,19 @@ export function createStand(): Stand {
   const app = buildServer({
     env: "dev",
     notifier,
-    pao: { verifier, keys, idempotency, params, consent, subscriptions, credentials, resolveHost: dns.resolve, stand: true },
+    pao: {
+      verifier,
+      keys,
+      idempotency,
+      params,
+      consent,
+      subscriptions,
+      credentials,
+      // Запрос подтверждения агенту (РП51 п. 8–10): то же хранилище П6, часы стенда, link — на страницу УПК.
+      confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url },
+      resolveHost: dns.resolve,
+      stand: true,
+    },
     participants: {
       trusted,
       consent,

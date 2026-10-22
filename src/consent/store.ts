@@ -14,7 +14,16 @@ import {
   type SqlClient,
 } from "@kuzin4u/agentic-core";
 import type { DeliveryOutcome, DeliveryRow, DueDelivery, EventDeliveryStore } from "../pao/delivery.js";
-import { EventCursorUnknown, eventIdFor, eventSeqLockKey, type EventDraft, type PaoEventType, type StoredEvent } from "../pao/events.js";
+import {
+  confirmationEventIdFor,
+  EventCursorUnknown,
+  eventIdFor,
+  eventSeqLockKey,
+  type ConfirmationEventDraft,
+  type EventDraft,
+  type PaoEventType,
+  type StoredEvent,
+} from "../pao/events.js";
 import { insertNotificationsTx, type NotificationSink, type ParticipantNotice } from "../participants/notifications.js";
 
 export interface MandateIndexRow {
@@ -128,6 +137,19 @@ const eventOf = (draft: EventDraft, chain: string, e: JournalEntry, seq: number)
     journal_seq: e.seq,
   });
 
+/** Событие перехода запроса подтверждения (РП51 п. 1–4): без записи журнала, at — момент перехода. */
+const confirmationEventOf = (draft: ConfirmationEventDraft, at: string, seq: number): StoredEvent =>
+  Object.freeze({
+    agent_code: draft.agent_code,
+    type: draft.type,
+    data: Object.freeze({ confirmation_id: draft.data.confirmation_id }),
+    seq,
+    event_id: confirmationEventIdFor(draft.data.confirmation_id, draft.type),
+    at,
+    journal_chain: null,
+    journal_seq: null,
+  });
+
 export class MemoryConsentStore implements ConsentStore {
   /** notifications — Outbox участника в памяти (стенд); без него уведомления клиента через банк не пишутся (dev без базы). */
   constructor(private readonly opts: { readonly notifications?: NotificationSink } = {}) {}
@@ -172,15 +194,26 @@ export class MemoryConsentStore implements ConsentStore {
         // Без await между вставкой записи, строки SIGN и события: в одном процессе другая запись между ними не встанет.
         // Метка, вставшая между проверкой корня и записью, получает меньший номер — CART отозван правилом (РП46 (а) п. 3).
         if (sign) this.pushOrder(sign.pair, "SIGN", sign.mandate_id, null, sign.at);
-        const own = this.events.get(draft.agent_code) ?? [];
-        const ev = eventOf(draft, chain, e, own.length + 1);
-        own.push(ev);
-        this.events.set(draft.agent_code, own);
-        this.byEventId.set(ev.event_id, ev);
-        if (draft.push) this.deliveries.set(ev.event_id, newDelivery(ev));
+        this.pushEvent(eventOf(draft, chain, e, (this.events.get(draft.agent_code)?.length ?? 0) + 1), draft.push);
         if (notice) this.opts.notifications?.insertNow(notice.participant_code, notice.drafts, e.at);
       },
     };
+  }
+  /**
+   * Событие перехода запроса подтверждения (РП51 п. 2–3): без await — вызывающий пишет его в том же синхронном шаге, что
+   * переход П6. Второе событие на тот же переход — ошибка, как UNIQUE (confirmation_id, type) на PG.
+   */
+  appendConfirmationEventNow(draft: ConfirmationEventDraft, at: string): void {
+    const ev = confirmationEventOf(draft, at, (this.events.get(draft.agent_code)?.length ?? 0) + 1);
+    if (this.byEventId.has(ev.event_id)) throw new Error(`pao_events: событие ${draft.type} запроса уже записано`);
+    this.pushEvent(ev, draft.push);
+  }
+  private pushEvent(ev: StoredEvent, push: boolean | undefined): void {
+    const own = this.events.get(ev.agent_code) ?? [];
+    own.push(ev);
+    this.events.set(ev.agent_code, own);
+    this.byEventId.set(ev.event_id, ev);
+    if (push) this.deliveries.set(ev.event_id, newDelivery(ev));
   }
   async pairPosition(pair: PrincipalPair, mandate_id: string): Promise<PairPosition> {
     return this.position(pair, mandate_id);
@@ -405,18 +438,7 @@ export class PgConsentStore implements ConsentStore {
         await new PgJournalStore(tx, chain).append(e);
         await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(draft.agent_code)]);
         await this.hooks.inTx?.("event", draft);
-        const ev = eventOf(draft, chain, e, 0);
-        await tx.query(
-          `INSERT INTO pao_events (agent_code, seq, event_id, type, at, data, journal_chain, journal_seq)
-           SELECT $1, COALESCE(MAX(seq), 0) + 1, $2, $3, $4, $5, $6, $7 FROM pao_events WHERE agent_code = $1`,
-          [ev.agent_code, ev.event_id, ev.type, ev.at, canonicalJson(ev.data), ev.journal_chain, ev.journal_seq],
-        );
-        if (draft.push) {
-          await tx.query(
-            "INSERT INTO pao_event_deliveries (event_id, agent_code, state, attempts, next_at_ms) VALUES ($1, $2, 'PENDING', 0, $3)",
-            [ev.event_id, ev.agent_code, Date.parse(ev.at)],
-          );
-        }
+        await insertEventTx(tx, eventOf(draft, chain, e, 0), draft.push);
         if (sign) {
           // Дубль решения с другого экземпляра (РП36 доп. п. 4) — прежняя строка, номер не меняется.
           await tx.query(
@@ -545,6 +567,34 @@ async function position(client: SqlClient, pair: PrincipalPair, mandate_id: stri
   return { sign: x?.sign == null ? undefined : Number(x.sign), mark: x?.mark == null ? undefined : Number(x.mark) };
 }
 
+/**
+ * Вставка события с номером max + 1 у агента и строки попытки push (РП39 п. 2, РП40 п. 5) — внутри транзакции вызывающего,
+ * под уже взятой блокировкой агента. ev.seq не используется: номер даёт база.
+ */
+async function insertEventTx(tx: SqlClient, ev: StoredEvent, push: boolean | undefined): Promise<void> {
+  const confirmation_id = "confirmation_id" in ev.data ? ev.data.confirmation_id : null;
+  await tx.query(
+    `INSERT INTO pao_events (agent_code, seq, event_id, type, at, data, journal_chain, journal_seq, confirmation_id)
+     SELECT $1, COALESCE(MAX(seq), 0) + 1, $2, $3, $4, $5, $6, $7, $8 FROM pao_events WHERE agent_code = $1`,
+    [ev.agent_code, ev.event_id, ev.type, ev.at, canonicalJson(ev.data), ev.journal_chain, ev.journal_seq, confirmation_id],
+  );
+  if (push) {
+    await tx.query(
+      "INSERT INTO pao_event_deliveries (event_id, agent_code, state, attempts, next_at_ms) VALUES ($1, $2, 'PENDING', 0, $3)",
+      [ev.event_id, ev.agent_code, Date.parse(ev.at)],
+    );
+  }
+}
+
+/**
+ * Событие перехода запроса подтверждения в транзакции перехода П6 (РП51 п. 3): блокировка агента до фиксации — номер
+ * общий с событиями мандатов (РП39 п. 2), затем вставка. Сбой — исключение, вызывающий откатывает переход вместе с событием.
+ */
+export async function insertConfirmationEventTx(tx: SqlClient, draft: ConfirmationEventDraft, at: string): Promise<void> {
+  await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(draft.agent_code)]);
+  await insertEventTx(tx, confirmationEventOf(draft, at, 0), draft.push);
+}
+
 /** bigint из pg — строкой. */
 interface EventRow extends Record<string, unknown> {
   readonly agent_code: string;
@@ -553,8 +603,8 @@ interface EventRow extends Record<string, unknown> {
   readonly type: string;
   readonly at: string;
   readonly data: string;
-  readonly journal_chain: string;
-  readonly journal_seq: string;
+  readonly journal_chain: string | null;
+  readonly journal_seq: string | null;
 }
 
 const eventFromRow = (x: EventRow): StoredEvent =>
@@ -566,7 +616,7 @@ const eventFromRow = (x: EventRow): StoredEvent =>
     event_id: x.event_id,
     at: x.at,
     journal_chain: x.journal_chain,
-    journal_seq: Number(x.journal_seq),
+    journal_seq: x.journal_seq === null ? null : Number(x.journal_seq),
   });
 
 /** Новая строка попытки: можно брать с момента события. */

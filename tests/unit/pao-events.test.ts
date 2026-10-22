@@ -3,6 +3,7 @@
 // Журнал — на памяти ядра (всегда) и на PostgreSQL (в CI, РП30 п. 7); ПАО — через стенд.
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { newConfirmationId, newConfirmationRef, PgConfirmationStore, totalsHash, type ConfirmationRecord } from "../../src/confirm/index.js";
 import { ConsentJournal } from "../../src/consent/journal.js";
 import type { MandateDecisionPayload, MandateRevocationPayload } from "../../src/consent/model.js";
 import { MemoryConsentStore, PgConsentStore, type ConsentStore, type PgConsentStoreHooks } from "../../src/consent/store.js";
@@ -271,7 +272,7 @@ describe.skipIf(!DATABASE_URL)("лента событий — PostgreSQL", () =>
     const steps: string[] = [];
     const hooks: PgConsentStoreHooks = {
       inTx: async (step, draft: EventDraft) => {
-        const who = draft.data.mandate_id === first.id ? "first" : "second";
+        const who = "mandate_id" in draft.data && draft.data.mandate_id === first.id ? "first" : "second";
         if (step === "journal") return; // запись журнала — до блокировки, порядок номеров её не касается
         steps.push(`${who}:${step}`);
         if (who === "first" && step === "commit") {
@@ -302,6 +303,62 @@ describe.skipIf(!DATABASE_URL)("лента событий — PostgreSQL", () =>
       [first.id, 1],
       [second.id, 2],
     ]);
+  });
+
+  it("барьер двух источников (РП51 п. 3): событие мандата держит номер, решение подтверждения того же агента ждёт блокировку агента; номера 1…3 без пропусков и дублей, курсор проходит оба источника", async () => {
+    const agent = `nspk:agent:events-${randomUUID().slice(0, 8)}:v1`;
+    const plain = journalOf(new PgConsentStore(db.pool));
+    const m = await mk(plain, agent);
+    const cnf = new PgConfirmationStore(db.pool, { lockTimeoutMs: 5_000 });
+    const rec: ConfirmationRecord = {
+      confirmation_id: newConfirmationId(),
+      agent_code: agent,
+      mandate_id: m.id,
+      merchant_id: "MER-1042",
+      amount: 340_000,
+      currency: "RUB",
+      order_ref: `ORD-${randomUUID().slice(0, 8)}`,
+      split_detected: false,
+      status: "PENDING",
+      created_at: T0.toISOString(),
+      expires_at: "2099-01-01T00:00:00.000Z",
+      confirmation_ref: null,
+      decision: null,
+      op_ref: null,
+    };
+    await cnf.create(rec); // confirmation.required — номер 1
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let holding!: () => void;
+    const held = new Promise<void>((r) => (holding = r));
+    const hooks: PgConsentStoreHooks = {
+      inTx: async (step) => {
+        if (step !== "commit") return;
+        holding();
+        await gate; // mandate.signed вставлен с номером 2, транзакция не зафиксирована
+      },
+    };
+    const a = journalOf(new PgConsentStore(db.pool, hooks)).sign(decision(m.id, m.hash), yes, POLICY);
+    await held;
+    const d = { participant_code: "BANK-TEST", kid: "kid-bank", decision: "APPROVE" as const, totals_hash: totalsHash(rec), decided_at: T0.toISOString(), signature: "s".repeat(86) };
+    const b = cnf.decide(rec.confirmation_id, d, newConfirmationRef(), T0.toISOString());
+    try {
+      // Без блокировки агента в транзакции решения ожидания advisory не будет — тест красный здесь.
+      await waitAdvisoryWaiter(eventSeqLockKey(agent));
+      expect((await plain.events(agent, undefined, 10)).map((e) => e.type)).toEqual(["confirmation.required"]);
+    } finally {
+      release();
+      await Promise.allSettled([a, b]);
+    }
+    await Promise.all([a, b]);
+    const r = await db.pool.query<{ seq: string; type: string }>("SELECT seq, type FROM pao_events WHERE agent_code = $1 ORDER BY seq", [agent]);
+    expect(r.rows.map((x) => [Number(x.seq), x.type])).toEqual([
+      [1, "confirmation.required"],
+      [2, "mandate.signed"],
+      [3, "confirmation.approved"],
+    ]);
+    const all = await allEvents(plain, agent);
+    expect(all.map((e) => e.type)).toEqual(["confirmation.required", "mandate.signed", "confirmation.approved"]);
   });
 
   it("10 одновременных решений — номера в базе ровно 1…10 по агенту", async () => {

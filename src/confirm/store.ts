@@ -1,6 +1,9 @@
 // Хранилище П6 (РП50): запросы подтверждения. В памяти (dev без базы, стенд) и на PostgreSQL (sql/111_confirmations.sql).
-// Переходы — условной записью: из одновременных проходит ровно одна (п. 5, 10).
+// Переходы — условной записью: из одновременных проходит ровно одна (п. 5, 10). Переход, кроме USED, — событие
+// confirmation.* агенту записи в той же транзакции (РП51 п. 2–3): перехода без события и события без перехода нет.
 import type { SqlClient } from "@kuzin4u/agentic-core";
+import { insertConfirmationEventTx, type MemoryConsentStore, type TxSqlPool } from "../consent/store.js";
+import type { ConfirmationEventDraft, PaoEventType } from "../pao/events.js";
 import type { ConfirmationDecision, ConfirmationRecord, ConfirmationStatus, ConfirmationTotals } from "./model.js";
 
 /** Ключ запроса (РП50 п. 2): мандат, продавец, заказ, сумма, валюта. */
@@ -27,10 +30,36 @@ export interface ConfirmationStore {
   consume(confirmation_ref: string, op_ref: string, now: string): Promise<boolean>;
 }
 
+/** Строка попытки push в транзакции события (РП40 п. 5): агент ACTIVE и подписан на тип — на момент записи. */
+export type PushFor = (agent_code: string, type: PaoEventType) => boolean;
+
+type ConfirmationEventType = ConfirmationEventDraft["type"];
+
+const draftOf = (r: ConfirmationRecord, type: ConfirmationEventType, pushFor: PushFor | undefined): ConfirmationEventDraft => ({
+  agent_code: r.agent_code,
+  type,
+  data: { confirmation_id: r.confirmation_id },
+  push: pushFor?.(r.agent_code, type) ?? false,
+});
+
 const keyOf = (k: ConfirmationKey): string => JSON.stringify([k.mandate_id, k.merchant_id, k.order_ref, k.amount, k.currency]);
+
+export interface MemoryConfirmationStoreOptions {
+  /** Лента агента в памяти (РП51 п. 3); без неё (тесты П6 без ленты) события не пишутся. */
+  readonly events?: Pick<MemoryConsentStore, "appendConfirmationEventNow">;
+  readonly pushFor?: PushFor;
+}
 
 export class MemoryConfirmationStore implements ConfirmationStore {
   readonly #rows = new Map<string, ConfirmationRecord>();
+
+  constructor(private readonly opts: MemoryConfirmationStoreOptions = {}) {}
+
+  /** Событие до записи строки, без await между ними: сбой события оставляет запрос без перехода (РП51 п. 2). */
+  #transit(next: ConfirmationRecord, type: ConfirmationEventType, at: string): void {
+    this.opts.events?.appendConfirmationEventNow(draftOf(next, type, this.opts.pushFor), at);
+    this.#rows.set(next.confirmation_id, structuredClone(next));
+  }
 
   async byKey(key: ConfirmationKey): Promise<ConfirmationRecord[]> {
     const k = keyOf(key);
@@ -44,7 +73,7 @@ export class MemoryConfirmationStore implements ConfirmationStore {
     const prior = [...this.#rows.values()].find((r) => keyOf(r) === k);
     if (prior) return structuredClone(prior);
     if (this.#rows.has(rec.confirmation_id)) throw new Error("confirmations: confirmation_id уже записан");
-    this.#rows.set(rec.confirmation_id, structuredClone(rec));
+    this.#transit(rec, "confirmation.required", rec.created_at);
     return structuredClone(rec);
   }
 
@@ -61,7 +90,7 @@ export class MemoryConfirmationStore implements ConfirmationStore {
   async expire(confirmation_id: string, now: string): Promise<boolean> {
     const r = this.#rows.get(confirmation_id);
     if (!r || r.status !== "PENDING" || r.expires_at > now) return false;
-    this.#rows.set(confirmation_id, { ...r, status: "EXPIRED" });
+    this.#transit({ ...r, status: "EXPIRED" }, "confirmation.expired", now);
     return true;
   }
 
@@ -72,7 +101,7 @@ export class MemoryConfirmationStore implements ConfirmationStore {
     if (d.decision === "APPROVE" && confirmation_ref === null) throw new Error("confirmations: APPROVE без confirmation_ref");
     const status: ConfirmationStatus = d.decision === "APPROVE" ? "APPROVED" : "REJECTED";
     const next: ConfirmationRecord = { ...r, status, decision: { ...d }, confirmation_ref: status === "APPROVED" ? confirmation_ref : null };
-    this.#rows.set(confirmation_id, next);
+    this.#transit(next, status === "APPROVED" ? "confirmation.approved" : "confirmation.rejected", now);
     return structuredClone(next);
   }
 
@@ -146,10 +175,41 @@ function recordOf(row: Row): ConfirmationRecord {
 /**
  * Хранилище П6 на PostgreSQL (sql/111_confirmations.sql). Запрос — INSERT … ON CONFLICT DO NOTHING по уникальному
  * индексу ключа (одна запись на ключ за всё время), затем чтение записанного; решение, истечение и погашение — один условный
- * UPDATE; триггер не даёт перехода вне РП50 п. 5 и изменения итоговых значений.
+ * UPDATE; триггер не даёт перехода вне РП50 п. 5 и изменения итоговых значений. Вставка запроса, решение и истечение —
+ * транзакция вместе с событием (sql/112, РП51 п. 3); погашение события не даёт.
  */
 export class PgConfirmationStore implements ConfirmationStore {
-  constructor(private readonly client: SqlClient) {}
+  private readonly lockTimeoutMs: number;
+
+  /** lockTimeoutMs — предел ожидания блокировки при создании запроса в пути ADP: adp_timeout_ms (Дополнения РП51 п. 1). */
+  constructor(
+    private readonly client: TxSqlPool,
+    private readonly opts: { readonly lockTimeoutMs: number; readonly pushFor?: PushFor },
+  ) {
+    if (!Number.isSafeInteger(opts.lockTimeoutMs) || opts.lockTimeoutMs < 1) throw new Error("PgConfirmationStore: lockTimeoutMs — целое ≥ 1");
+    this.lockTimeoutMs = opts.lockTimeoutMs;
+  }
+
+  /** Транзакция на своём соединении; соединение, на котором не прошёл ROLLBACK, в пул не возвращается. */
+  private async tx<T>(fn: (tx: SqlClient) => Promise<T>): Promise<T> {
+    const tx = await this.client.connect();
+    let broken: Error | undefined;
+    try {
+      try {
+        await tx.query("BEGIN");
+        const out = await fn(tx);
+        await tx.query("COMMIT");
+        return out;
+      } catch (err) {
+        await tx.query("ROLLBACK").catch((rb: unknown) => {
+          broken = rb instanceof Error ? rb : new Error(String(rb));
+        });
+        throw err;
+      }
+    } finally {
+      tx.release(broken);
+    }
+  }
 
   async byKey(key: ConfirmationKey): Promise<ConfirmationRecord[]> {
     const r = await this.client.query<Row>(
@@ -161,14 +221,21 @@ export class PgConfirmationStore implements ConfirmationStore {
   }
 
   async create(rec: ConfirmationRecord): Promise<ConfirmationRecord> {
-    await this.client.query(
-      `INSERT INTO confirmations (confirmation_id, agent_code, mandate_id, merchant_id, amount, currency, order_ref, split_detected,
-         status, created_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDING', $9, $10)
-       ON CONFLICT (mandate_id, merchant_id, order_ref, amount, currency) DO NOTHING`,
-      [rec.confirmation_id, rec.agent_code, rec.mandate_id, rec.merchant_id, rec.amount, rec.currency, rec.order_ref, rec.split_detected,
-        rec.created_at, rec.expires_at],
-    );
+    // Событие — только у вставившего: при конфликте ключа запрос и его событие уже записаны другим (РП51 п. 2).
+    // Путь авторизации: ожидание блокировок (строка ключа, блокировка агента) — не дольше lockTimeoutMs, иначе исключение
+    // (→ STATE_UNAVAILABLE) и откат без запроса и события (Дополнения РП51 п. 1; как окно дробления, доп. РП44 п. 2).
+    await this.tx(async (tx) => {
+      await tx.query("SELECT set_config('lock_timeout', $1, true)", [`${this.lockTimeoutMs}ms`]);
+      const ins = await tx.query(
+        `INSERT INTO confirmations (confirmation_id, agent_code, mandate_id, merchant_id, amount, currency, order_ref, split_detected,
+           status, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDING', $9, $10)
+         ON CONFLICT (mandate_id, merchant_id, order_ref, amount, currency) DO NOTHING RETURNING confirmation_id`,
+        [rec.confirmation_id, rec.agent_code, rec.mandate_id, rec.merchant_id, rec.amount, rec.currency, rec.order_ref, rec.split_detected,
+          rec.created_at, rec.expires_at],
+      );
+      if (ins.rows.length === 1) await insertConfirmationEventTx(tx, draftOf(rec, "confirmation.required", this.opts.pushFor), rec.created_at);
+    });
     const [row] = await this.byKey(rec);
     if (!row) throw new Error("confirmations: запрос не найден после вставки");
     return row;
@@ -185,23 +252,32 @@ export class PgConfirmationStore implements ConfirmationStore {
   }
 
   async expire(confirmation_id: string, now: string): Promise<boolean> {
-    const r = await this.client.query(
-      "UPDATE confirmations SET status = 'EXPIRED' WHERE confirmation_id = $1 AND status = 'PENDING' AND expires_at <= $2 RETURNING confirmation_id",
-      [confirmation_id, now],
-    );
-    return r.rows.length === 1;
+    return this.tx(async (tx) => {
+      const r = await tx.query<Row>(
+        `UPDATE confirmations SET status = 'EXPIRED' WHERE confirmation_id = $1 AND status = 'PENDING' AND expires_at <= $2 RETURNING ${COLS}`,
+        [confirmation_id, now],
+      );
+      if (!r.rows[0]) return false;
+      await insertConfirmationEventTx(tx, draftOf(recordOf(r.rows[0]), "confirmation.expired", this.opts.pushFor), now);
+      return true;
+    });
   }
 
   async decide(confirmation_id: string, d: ConfirmationDecision, confirmation_ref: string | null, now: string): Promise<ConfirmationRecord | undefined> {
     const approve = d.decision === "APPROVE";
-    const r = await this.client.query<Row>(
-      `UPDATE confirmations SET status = $2, confirmation_ref = $3, participant_code = $4, kid = $5, decision = $6, totals_hash = $7,
-         decided_at = $8, signature = $9
-       WHERE confirmation_id = $1 AND status = 'PENDING' AND expires_at > $10 RETURNING ${COLS}`,
-      [confirmation_id, approve ? "APPROVED" : "REJECTED", approve ? confirmation_ref : null, d.participant_code, d.kid, d.decision,
-        d.totals_hash, d.decided_at, d.signature, now],
-    );
-    return r.rows[0] && recordOf(r.rows[0]);
+    return this.tx(async (tx) => {
+      const r = await tx.query<Row>(
+        `UPDATE confirmations SET status = $2, confirmation_ref = $3, participant_code = $4, kid = $5, decision = $6, totals_hash = $7,
+           decided_at = $8, signature = $9
+         WHERE confirmation_id = $1 AND status = 'PENDING' AND expires_at > $10 RETURNING ${COLS}`,
+        [confirmation_id, approve ? "APPROVED" : "REJECTED", approve ? confirmation_ref : null, d.participant_code, d.kid, d.decision,
+          d.totals_hash, d.decided_at, d.signature, now],
+      );
+      if (!r.rows[0]) return undefined;
+      const next = recordOf(r.rows[0]);
+      await insertConfirmationEventTx(tx, draftOf(next, approve ? "confirmation.approved" : "confirmation.rejected", this.opts.pushFor), now);
+      return next;
+    });
   }
 
   async consume(confirmation_ref: string, op_ref: string, now: string): Promise<boolean> {
