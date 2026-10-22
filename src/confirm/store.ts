@@ -207,7 +207,7 @@ export class PgConfirmationStore implements ConfirmationStore {
   async consume(confirmation_ref: string, op_ref: string, now: string): Promise<boolean> {
     const r = await this.client.query(
       `UPDATE confirmations SET status = 'USED', op_ref = $2
-       WHERE confirmation_ref = $1 AND status = 'APPROVED' AND expires_at > $3 RETURNING confirmation_id`,
+       WHERE confirmation_ref = $1 AND expires_at > $3 RETURNING confirmation_id`,
       [confirmation_ref, op_ref, now],
     );
     return r.rows.length === 1;
