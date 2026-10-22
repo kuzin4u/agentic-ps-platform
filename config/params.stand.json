@@ -34,6 +34,9 @@
   "participant_notify_max_delay_sec": 60,
   "participant_notify_horizon_sec": 86400,
   "participant_notify_allow_hosts": ["issuer-emulator.stand"],
+  "operation_outcome_every_ms": 1000,
+  "operation_outcome_max_delay_sec": 30,
+  "operation_outcome_horizon_sec": 86400,
   "upk_page_base_url": "https://upk.stand",
   "upk_sbp_enabled": false
 }

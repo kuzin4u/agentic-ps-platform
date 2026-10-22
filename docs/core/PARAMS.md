@@ -35,6 +35,9 @@
 | `participant_notify_max_delay_sec` | 60 | Наибольшая задержка уведомления клиента через банк по решению ADP (РП46 доп. п. 7): период прохода уведомителя по сохранённым записям операций вне пути авторизации; боевое значение — по соглашению с банком (ч. 4 ст. 9 161-ФЗ: уведомление «незамедлительно») | соглашение с банком |
 | `participant_notify_horizon_sec` | 86 400 | Горизонт прохода уведомителя (РП46 доп. п. 9 (о2)): записи операций старше — не разбираются. Уведомитель не работал дольше горизонта — уведомлений по старым решениям нет (SPEC §5); дольше половины горизонта — признак `PARTICIPANT_NOTIFY_LAGGING` в самопроверке | соглашение с банком |
 | `participant_notify_allow_hosts` | `["issuer-emulator.stand"]` | Разрешённые хосты адреса вебхука участника (`notify_url` в записи доверенного участника, РП46 доп. п. 9 (о4)) — точное имя DNS, без масок; проверка адреса — как РП40 п. 2–4. Пустой список — вебхук запрещён всем, уведомления — только лентой | соглашение с банком |
+| `operation_outcome_every_ms` | 1000 | Интервал прохода сборщика итогов операций по решённым записям ADP вне пути авторизации (РП52 п. 11) | решение владельца 22.10 |
+| `operation_outcome_max_delay_sec` | 30 | Наибольшая задержка события `operation.declined` по отказу ADP после решения (РП52 п. 12); публикуется агенту (AGENT-PROTOCOL §5), отставание — `OPERATION_OUTCOME_LAGGING` | решение владельца 22.10 |
+| `operation_outcome_horizon_sec` | 86 400 | Горизонт прохода сборщика (РП52 «Дополнения» п. 1): записи операций старше — не разбираются, события по ним нет; итог — по `GET /pao/v1/operations/{op_ref}` из записи операции ADP | решение владельца 22.10 |
 | `upk_page_base_url` | `https://upk.stand` | Начало адреса страницы УПК в `link` запроса подтверждения: `link` = значение + `/c/` + `confirmation_id` (РП51 п. 10); только `https://` и имя хоста, без порта, пути, запроса и фрагмента | соглашение с оператором УПК |
 | `upk_sbp_enabled` | false | Выбор СБП на странице УПК эмулятора (РП51 п. 16; читается с v0.17.0, используется страницей УПК с v0.18.0, PS-19 ч. 3): при `false` — только карта, решение с `SBP` — отказ страницы; до PS-21 путь СБП в ADP не подтверждён, выбор СБП давал бы тупик заказа | PS-21 — включить по умолчанию |
 
@@ -43,7 +46,7 @@
 
 | Правило | Почему |
 |---|---|
-| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `participant_notify_max_delay_sec`, `participant_notify_horizon_sec`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
+| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `participant_notify_max_delay_sec`, `participant_notify_horizon_sec`, `operation_outcome_every_ms`, `operation_outcome_max_delay_sec`, `operation_outcome_horizon_sec`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
 | Целые ≥ 0: `bypass_overhead_ms`, `event_reorder_window_ms`, `key_overlap_days` | ноль допустим |
 | `split_min_ops` ≥ 2 | дробление — от двух операций |
 | `aoi_rollout_phase` ∈ 1…3 | A1 п. 8.3 |
@@ -52,6 +55,7 @@
 | `adp_timeout_ms` > `adp_p99_ms` | ПИ §3, РП20 |
 | `key_overlap_days` < `key_ttl_days` | перекрытие ключей короче их жизни |
 | `participant_notify_horizon_sec` ≥ 2 × `participant_notify_max_delay_sec` | признак отставания — половина горизонта; она не короче наибольшей задержки уведомления (РП46 доп. п. 9 (о2)) |
+| `operation_outcome_every_ms` < `operation_outcome_max_delay_sec` × 1000; `operation_outcome_horizon_sec` ≥ 2 × `operation_outcome_max_delay_sec` | проход чаще предела задержки; горизонт не короче двух пределов (РП52 «Дополнения» п. 1, 3) |
 | `idempotency_ttl_sec` — целое ≥ 60 | не меньше аренды захвата ключа ядра (60 с, условие К6 agentic-core: аренда ≤ ttl; РП30 п. 3) |
 | `unavailable_retry_after_sec` — целое 0…30 | 0 — «повторить сразу» (ПАО `minimum: 0`); верхняя граница — `maxRetryAfterSec` клиента ПАО agentic-core (30): больший `Retry-After` эталонный клиент отвергает (РП24) |
 | `event_subscription_allow_hosts` — массив имён DNS в нижнем регистре (метки `a-z0-9-`, не IP), без повторов; пустой допустим | пустой — fail-closed: подписка запрещена всем (РП40 п. 2) |
@@ -78,3 +82,6 @@
 | 20.10.2026 | `participant_notify_allow_hosts` | — | `["issuer-emulator.stand"]` | PS-20 ч. 3 К3.1, адрес вебхука участника; решение владельца 20.10 (РП46 доп. п. 9 (о4)) |
 | 22.10.2026 | `upk_page_base_url` | — | `https://upk.stand` | PS-19 ч. 2 К0, `link` страницы УПК; решение владельца 22.10 (РП51 п. 10) |
 | 22.10.2026 | `upk_sbp_enabled` | — | false | PS-19 ч. 2 К0, выбор СБП на странице УПК до PS-21; решение владельца 22.10 (РП51 п. 16, ревью из чата № 2) |
+| 22.10.2026 | `operation_outcome_every_ms` | — | 1000 | PS-16 ч. 1 К0, интервал сборщика итогов операций; решение владельца 22.10 (РП52 п. 11, «Дополнения» п. 3) |
+| 22.10.2026 | `operation_outcome_max_delay_sec` | — | 30 | PS-16 ч. 1 К0, предел задержки `operation.declined` по отказу ADP; решение владельца 22.10 (РП52 п. 12, условие ревью из чата) |
+| 22.10.2026 | `operation_outcome_horizon_sec` | — | 86 400 | PS-16 ч. 1 К0, горизонт прохода сборщика; решение владельца 22.10 (РП52 «Дополнения» п. 1, 3) |
