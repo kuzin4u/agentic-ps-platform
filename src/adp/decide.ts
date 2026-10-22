@@ -147,27 +147,40 @@ interface Left {
 
 const minLeft = (l: Left): number => (l.client === undefined ? l.mandate : Math.min(l.mandate, l.client));
 
-const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+/** Предел длины строки факта (РП52 «Нюансы реализации» п. 1): ссылки ПИ короче, длиннее — не по форме. */
+export const FACT_MAX_LENGTH = 128;
+
+/**
+ * Строка факта, которую примет PostgreSQL (text и jsonb): непустая, не длиннее предела, без NUL и одиночных суррогатов
+ * (КТ1 PS-16 ч. 1, ревью № 1); иначе null — запись решения не должна падать на базе.
+ */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const factString = (v: unknown): string | null =>
+  typeof v === "string" && v !== "" && v.length <= FACT_MAX_LENGTH && !v.includes("\u0000") && !LONE_SURROGATE.test(v) ? v : null;
 
 /**
  * Факты операции для итога П8 (РП52 п. 9): из сообщения процессинга, без token_ref и криптограммы (инвариант 1). Поле не
- * по форме — null, а не сбой записи решения: запись решения не должна падать на CHECK базы. aoi — только известные ссылки.
+ * по форме — null (у aoi — поле опускается), а не сбой записи решения. aoi — только известные ссылки: indicator —
+ * булево, прочие — строки факта.
  */
-function factsOf(msg: CanonicalMessage, agent_code: string | null): OperationFacts {
+export function factsOf(msg: CanonicalMessage, agent_code: string | null): OperationFacts {
   const a: unknown = msg.aoi;
-  const aoi =
-    a !== null && typeof a === "object" && !Array.isArray(a)
-      ? (Object.fromEntries(
-          (["indicator", "agent_code", "mandate_id", "fulfilment_ref", "deal_ref"] as const)
-            .filter((k) => Object.hasOwn(a, k))
-            .map((k) => [k, (a as Record<string, unknown>)[k]]),
-        ) as Aoi)
-      : null;
+  let aoi: Aoi | null = null;
+  if (a !== null && typeof a === "object" && !Array.isArray(a)) {
+    const src = a as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    if (typeof src.indicator === "boolean") out.indicator = src.indicator;
+    for (const k of ["agent_code", "mandate_id", "fulfilment_ref", "deal_ref"] as const) {
+      const s = Object.hasOwn(src, k) ? factString(src[k]) : null;
+      if (s !== null) out[k] = s;
+    }
+    aoi = out as Aoi;
+  }
   return {
     agent_code,
-    order_ref: nonEmpty(msg.order_ref),
+    order_ref: factString(msg.order_ref),
     channel: msg.channel === "CARD" || msg.channel === "SBP" ? msg.channel : null,
-    merchant_id: nonEmpty(msg.merchant?.id),
+    merchant_id: factString(msg.merchant?.id),
     amount: msg.amount,
     currency: msg.currency,
     aoi,

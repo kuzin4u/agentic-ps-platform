@@ -4,9 +4,11 @@
 // признак отставания. Стенд — память; PostgreSQL — operation-outcomes-pg.test.ts.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { FACT_MAX_LENGTH, factsOf } from "../../src/adp/decide.js";
 import { MemoryOperationStore } from "../../src/adp/operations.js";
 import { MemoryConsentStore } from "../../src/consent/store.js";
 import {
+  acceptIssuerResponse,
   DECLINE_EVENT_REASONS,
   eventFor,
   ISSUER_DECLINED,
@@ -144,6 +146,49 @@ describe("итог операции и operation.* на стенде (РП52)", 
     expect(await opEvents(op)).toHaveLength(1);
   });
 
+  const issuer = async (op_ref: string, issuer_approved: unknown, over: Record<string, unknown> = {}) =>
+    (await stand.app.inject({ method: "POST", url: "/adp/v1/events", payload: { op_ref, msg_type: "ISSUER_RESPONSE", issuer_approved, ...over } })).statusCode;
+
+  it("ПИ-3 ISSUER_RESPONSE одобрен — итог AUTHORIZED и одно operation.authorized сразу, без прохода сборщика; повтор — без второго (п. 2, 8)", async () => {
+    const m = await cart(100_000);
+    const op = `OPKC-PS16-${randomUUID()}`;
+    expect(await decide(await pay().auth(m, 60_000, op))).toMatchObject({ decision: "APPROVE" });
+    expect(await opEvents(op), "по APPROVE ADP события нет").toEqual([]);
+    expect(await issuer(op, true)).toBe(202);
+    expect((await opEvents(op)).map((e) => [e.type, e.data])).toEqual([["operation.authorized", { op_ref: op }]]);
+    expect(await issuer(op, true)).toBe(202);
+    // Иной второй исход — инцидент, итог и события прежние; удержание не освобождается.
+    expect(await issuer(op, false)).toBe(202);
+    expect((await opEvents(op)).map((e) => e.type)).toEqual(["operation.authorized"]);
+    expect(await decide(await pay().auth(m, 60_000))).toMatchObject({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
+  });
+
+  it("ПИ-3 отказ эмитента — operation.declined ISSUER_DECLINED и удержание освобождено: бюджет снова доступен (п. 3 (б), инвариант 4)", async () => {
+    const m = await cart(100_000);
+    const op = `OPKC-PS16-${randomUUID()}`;
+    expect(await decide(await pay().auth(m, 60_000, op))).toMatchObject({ decision: "APPROVE" });
+    expect(await issuer(op, false)).toBe(202);
+    expect((await opEvents(op)).map((e) => e.type)).toEqual(["operation.declined"]);
+    expect(await decide(await pay().auth(m, 60_000))).toMatchObject({ decision: "APPROVE" });
+    // Повтор отказа — 202, второго события нет, повторное освобождение не трогает новый резерв.
+    expect(await issuer(op, false)).toBe(202);
+    expect(await opEvents(op)).toHaveLength(1);
+    expect(await decide(await pay().auth(m, 60_000))).toMatchObject({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
+  });
+
+  it("ПИ-3: op_ref без записи ADP — 202 без действий (инвариант 2); ответ по отказу ADP — 202, итог ADP прежний; форма — 400; иной msg_type — 503", async () => {
+    expect(await issuer(`OPKC-BYPASS-${randomUUID()}`, true)).toBe(202);
+    const op = `OPKC-PS16-${randomUUID()}`;
+    await limitDecline(op);
+    expect(await issuer(op, true)).toBe(202);
+    await stand.collectOperationOutcomes();
+    expect((await opEvents(op)).map((e) => e.type)).toEqual(["operation.declined"]);
+    expect(await issuer(op, "yes")).toBe(400);
+    expect(await issuer("", true)).toBe(400);
+    expect((await stand.app.inject({ method: "POST", url: "/adp/v1/events", payload: [] })).statusCode).toBe(400);
+    expect(await issuer(op, true, { msg_type: "PRESENTMENT" })).toBe(503);
+  });
+
   it("горизонт ограничивает только события: отказ старше operation_outcome_horizon_sec — события нет (итог — GET, К2)", async () => {
     await stand.collectOperationOutcomes();
     const op = `OPKC-PS16-${randomUUID()}`;
@@ -199,6 +244,56 @@ describe("правила итога и события (РП52 п. 3, 5–7)", ()
     const second: OperationOutcome = { ...first, status: "AUTHORIZED", reason: null, source: "ISSUER" };
     expect(await store.record(second, eventFor(second))).toEqual(first);
     expect((await events.listEvents(CODE, undefined, 10)).map((e) => e.type)).toEqual(["operation.declined"]);
+  });
+
+  it("ПИ-3: запись «в работе» — 503; сбой освобождения — итог записан, 503; повтор после восстановления П3 — освобождение и 202, события одно (РП52 п. 3)", async () => {
+    const rec = { op_ref: "OPKC-1", msg_hash: "h", mandate_id: "m", at: AT };
+    const events = new MemoryConsentStore();
+    const store = new MemoryOutcomeStore(new MemoryOperationStore(), events);
+    const logs: string[] = [];
+    let p3up = false;
+    const released: string[] = [];
+    const deps = (decision: Decision | null) => ({
+      operations: { get: () => ({ ...rec, decision, holds: ["hold-1"], facts: { agent_code: CODE, order_ref: null, channel: "CARD" as const, merchant_id: null, amount: 1, currency: "RUB", aoi: null } }) },
+      store,
+      state: {
+        release: async (h: string) => {
+          if (!p3up) return { ok: false as const, code: "STATE_UNAVAILABLE" as const };
+          released.push(h);
+          return { ok: false as const, code: "RESERVATION_RELEASED" as const };
+        },
+      },
+      log: (_l: "info" | "warn", _f: Record<string, unknown>, msg: string) => void logs.push(msg),
+    });
+    const msg = { op_ref: "OPKC-1", msg_type: "ISSUER_RESPONSE", issuer_approved: false };
+    expect(await acceptIssuerResponse(deps(null), msg)).toBe(503);
+    expect(await store.get("OPKC-1")).toBeUndefined();
+    const ok: Decision = { decision: "APPROVE", reason: null, decided_in_ms: 1 };
+    expect(await acceptIssuerResponse(deps(ok), msg)).toBe(503);
+    expect(await store.get("OPKC-1")).toMatchObject({ status: "DECLINED", reason: ISSUER_DECLINED, source: "ISSUER", agent_code: CODE });
+    expect(logs.some((m) => m.includes("не освобождено"))).toBe(true);
+    p3up = true;
+    expect(await acceptIssuerResponse(deps(ok), msg)).toBe(202);
+    expect(released).toEqual(["hold-1"]);
+    expect((await events.listEvents(CODE, undefined, 10)).map((e) => e.type)).toEqual(["operation.declined"]);
+  });
+
+  it("факты не по форме — null или поле признака опущено: NUL, одиночный суррогат, длиннее предела, не строка (ревью КТ1 № 1)", () => {
+    const base = { op_ref: "OPKC-1", msg_type: "AUTH_REQUEST", channel: "CARD", amount: 1, currency: "RUB", instrument: { kind: "AGENT_TOKEN" } } as CanonicalMessage;
+    const f = factsOf(
+      {
+        ...base,
+        order_ref: "ORD-\u0000",
+        merchant: { id: "\uDC00MER" } as CanonicalMessage["merchant"],
+        aoi: { indicator: "true", agent_code: CODE, mandate_id: 7, fulfilment_ref: "\uD800x", deal_ref: "d".repeat(FACT_MAX_LENGTH + 1), extra: "x" } as unknown as CanonicalMessage["aoi"],
+      },
+      CODE,
+    );
+    expect(f).toEqual({ agent_code: CODE, order_ref: null, channel: "CARD", merchant_id: null, amount: 1, currency: "RUB", aoi: { agent_code: CODE } });
+    // Пара суррогатов (эмодзи) и строка ровно предела — по форме.
+    const ok = factsOf({ ...base, order_ref: "ORD-😀", aoi: { indicator: true, deal_ref: "d".repeat(FACT_MAX_LENGTH) } }, null);
+    expect(ok).toMatchObject({ order_ref: "ORD-😀", aoi: { indicator: true, deal_ref: "d".repeat(FACT_MAX_LENGTH) } });
+    expect(factsOf({ ...base, channel: "QR" as "CARD" }, null).channel).toBeNull();
   });
 
   it("проход без отставания: событие не позже предела; проход не завершался дольше предела — признак отставания", async () => {

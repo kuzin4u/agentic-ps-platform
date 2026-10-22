@@ -4,10 +4,11 @@
 // В CI (РП30 п. 7); локально без базы — пропуск.
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { factsOf } from "../../src/adp/decide.js";
 import { PgOperationStore, type OperationFacts } from "../../src/adp/operations.js";
-import { eventFor, OperationOutcomeCollector, PgOutcomeStore, type OperationOutcome } from "../../src/fulfilment/outcomes.js";
+import { acceptIssuerResponse, eventFor, OperationOutcomeCollector, PgOutcomeStore, type OperationOutcome } from "../../src/fulfilment/outcomes.js";
 import { operationEventIdFor } from "../../src/pao/events.js";
-import type { Decision } from "../../src/shared/canonical.generated.js";
+import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
 const AGENT = "nspk:agent:outcome-pg:v1";
@@ -64,11 +65,38 @@ describe.skipIf(!DATABASE_URL)("итог операции и operation.* на Po
     });
   });
 
-  it("сборщик с двух экземпляров одновременно — один итог и одно событие; data ровно {op_ref}; повтор — без второго", async () => {
+  /** Ждать, пока хоть один сеанс схемы теста ждёт блокировку (вставка второго экземпляра на первичном ключе). */
+  const lockWaiter = async (): Promise<void> => {
+    for (let i = 0; i < 150; i++) {
+      const r = await db.pool.query<{ n: string }>("SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()");
+      if (Number(r.rows[0]!.n) > 0) return;
+      await new Promise((res) => setTimeout(res, 20));
+    }
+    throw new Error("второй экземпляр не дошёл до ожидания блокировки");
+  };
+
+  it("сборщик с двух экземпляров, барьер: второй ждёт фиксации первого на ключе и читает прежний итог — одно событие; data ровно {op_ref}", async () => {
     await decided("OP-pg-race", decline("MANDATE_REVOKED"));
-    const a = new OperationOutcomeCollector(new PgOutcomeStore(db.pool), { horizonSec: 86_400, maxDelaySec: 30, now: () => Date.parse(AT) + 1_000 });
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    let held!: () => void;
+    const holding = new Promise<void>((r) => (held = r));
+    const a = new OperationOutcomeCollector(
+      new PgOutcomeStore(db.pool, {
+        inserted: async () => {
+          held();
+          await gate;
+        },
+      }),
+      { horizonSec: 86_400, maxDelaySec: 30, now: () => Date.parse(AT) + 1_000 },
+    );
     const b = new OperationOutcomeCollector(new PgOutcomeStore(pool2), { horizonSec: 86_400, maxDelaySec: 30, now: () => Date.parse(AT) + 1_000 });
-    const [ra, rb] = await Promise.all([a.runOnce(), b.runOnce()]);
+    const pa = a.runOnce();
+    await holding;
+    const pb = b.runOnce();
+    await lockWaiter();
+    open();
+    const [ra, rb] = await Promise.all([pa, pb]);
     expect(ra.failed + rb.failed).toBe(0);
     await a.runOnce();
     const evs = await events("OP-pg-race");
@@ -106,9 +134,99 @@ describe.skipIf(!DATABASE_URL)("итог операции и operation.* на Po
     const second: OperationOutcome = { ...first, status: "AUTHORIZED", reason: null, source: "ISSUER" };
     expect(await store.record(second, eventFor(second))).toEqual(first);
     expect((await events("OP-pg-once")).map((e) => e.type)).toEqual(["operation.declined"]);
-    expect(await code(db.pool.query("UPDATE operation_outcomes SET reason = 'X' WHERE op_ref = 'OP-pg-once'"))).toBeDefined();
-    expect(await code(db.pool.query("DELETE FROM operation_outcomes WHERE op_ref = 'OP-pg-once'"))).toBeDefined();
-    expect(await code(db.pool.query("TRUNCATE operation_outcomes"))).toBeDefined();
+    // restrict_violation триггера consent_append_only (sql/100), а не любая ошибка.
+    expect(await code(db.pool.query("UPDATE operation_outcomes SET reason = 'X' WHERE op_ref = 'OP-pg-once'"))).toBe("23001");
+    expect(await code(db.pool.query("DELETE FROM operation_outcomes WHERE op_ref = 'OP-pg-once'"))).toBe("23001");
+    expect(await code(db.pool.query("TRUNCATE operation_outcomes"))).toBe("23001");
+  });
+
+  it("факты с NUL и одиночным суррогатом — решение записано, факты null (ревью КТ1 № 1); get отдаёт факты, сумма — число, валюта без пробелов", async () => {
+    const ops = new PgOperationStore(db.pool, { lockTimeoutMs: 5_000 });
+    expect(await ops.begin("OP-pg-nul", HASH, AT)).toBeUndefined();
+    const dirty = factsOf(
+      {
+        op_ref: "OP-pg-nul",
+        msg_type: "AUTH_REQUEST",
+        channel: "CARD",
+        amount: 60_000,
+        currency: "RUB",
+        merchant: { id: "MER-\u0000" } as CanonicalMessage["merchant"],
+        instrument: { kind: "AGENT_TOKEN" } as CanonicalMessage["instrument"],
+        order_ref: "ORD-\u0000",
+        aoi: { indicator: true, agent_code: AGENT, fulfilment_ref: "\uD800", deal_ref: "x\u0000" },
+      },
+      AGENT,
+    );
+    await ops.finish({ op_ref: "OP-pg-nul", msg_hash: HASH, decision: decline("LIMIT_EXCEEDED"), mandate_id: "mnd_x", holds: [], at: AT, facts: dirty });
+    const rec = await ops.get("OP-pg-nul");
+    expect(rec?.decision).toEqual(decline("LIMIT_EXCEEDED"));
+    expect(rec?.facts).toEqual({ agent_code: AGENT, order_ref: null, channel: "CARD", merchant_id: null, amount: 60_000, currency: "RUB", aoi: { indicator: true, agent_code: AGENT } });
+    expect(await ops.get("OP-pg-absent")).toBeUndefined();
+  });
+
+  /** ПИ-3 на базе: чтение записи — PG, итог — PG, освобождение — заглушка П3 (удержаний ядра в тесте нет). */
+  const issuer = (pool: pg.Pool, op_ref: string, issuer_approved: boolean, released: string[] = []) =>
+    acceptIssuerResponse(
+      {
+        operations: new PgOperationStore(pool, { lockTimeoutMs: 5_000 }),
+        store: new PgOutcomeStore(pool),
+        state: {
+          release: async (h: string) => {
+            released.push(h);
+            return { ok: false as const, code: "RESERVATION_RELEASED" as const };
+          },
+        },
+        now: () => new Date(AT),
+      },
+      { op_ref, msg_type: "ISSUER_RESPONSE", issuer_approved },
+    );
+
+  it("ПИ-3 на базе: одобрение — AUTHORIZED и одно operation.authorized, повтор — без второго; два одновременных ответа с разным исходом — один итог, одно событие", async () => {
+    const ok: Decision = { decision: "APPROVE", reason: null, reservation_id: "h-1", decided_in_ms: 1 };
+    const ops = new PgOperationStore(db.pool, { lockTimeoutMs: 5_000 });
+    for (const op of ["OP-pg-iss", "OP-pg-iss-race"]) {
+      expect(await ops.begin(op, HASH, AT)).toBeUndefined();
+      await ops.finish({ op_ref: op, msg_hash: HASH, decision: ok, mandate_id: "mnd_x", holds: ["h-1"], at: AT, facts: facts(AGENT) });
+    }
+    expect(await issuer(db.pool, "OP-pg-iss", true)).toBe(202);
+    expect(await issuer(pool2, "OP-pg-iss", true)).toBe(202);
+    expect((await events("OP-pg-iss")).map((e) => [e.type, e.data])).toEqual([["operation.authorized", JSON.stringify({ op_ref: "OP-pg-iss" })]]);
+
+    const released: string[] = [];
+    const [x, y] = await Promise.all([issuer(db.pool, "OP-pg-iss-race", true, released), issuer(pool2, "OP-pg-iss-race", false, released)]);
+    expect([x, y]).toEqual([202, 202]);
+    const evs = await events("OP-pg-iss-race");
+    expect(evs).toHaveLength(1);
+    const o = (await db.pool.query<{ status: string }>("SELECT status FROM operation_outcomes WHERE op_ref = 'OP-pg-iss-race'")).rows;
+    expect(o).toHaveLength(1);
+    // Освобождение — только если победил отказ: иной второй исход — инцидент без освобождения.
+    expect(released).toEqual(o[0]!.status === "DECLINED" ? ["h-1"] : []);
+    expect(evs[0]!.type).toBe(o[0]!.status === "DECLINED" ? "operation.declined" : "operation.authorized");
+  });
+
+  it("запись до sql/114 (без фактов): get — без facts, ПИ-3 — итог без агента и без события; сборщик — агент из столбца уведомителя", async () => {
+    const ops = new PgOperationStore(db.pool, { lockTimeoutMs: 5_000 });
+    const ok: Decision = { decision: "APPROVE", reason: null, reservation_id: null, decided_in_ms: 1 };
+    expect(await ops.begin("OP-pg-pre", HASH, AT)).toBeUndefined();
+    await ops.finish({ op_ref: "OP-pg-pre", msg_hash: HASH, decision: ok, mandate_id: "mnd_x", holds: [], at: AT });
+    expect((await ops.get("OP-pg-pre"))?.facts).toBeUndefined();
+    expect(await issuer(db.pool, "OP-pg-pre", true)).toBe(202);
+    expect((await db.pool.query("SELECT agent_code, status FROM operation_outcomes WHERE op_ref = 'OP-pg-pre'")).rows).toEqual([{ agent_code: null, status: "AUTHORIZED" }]);
+    expect(await events("OP-pg-pre")).toEqual([]);
+
+    // Отказ до sql/114 с клиентом мандата: агент — из столбца уведомителя (РП52 «Нюансы реализации» п. 4).
+    expect(await ops.begin("OP-pg-pre-dec", HASH, AT)).toBeUndefined();
+    await ops.finish({
+      op_ref: "OP-pg-pre-dec",
+      msg_hash: HASH,
+      decision: decline("LIMIT_EXCEEDED"),
+      mandate_id: "mnd_x",
+      holds: [],
+      at: AT,
+      notify: { participant_code: "bank:pg", principal_ref: "prn_pg", agent_code: AGENT },
+    });
+    await new OperationOutcomeCollector(new PgOutcomeStore(db.pool), { horizonSec: 86_400, maxDelaySec: 30, now: () => Date.parse(AT) + 1_000 }).runOnce();
+    expect((await events("OP-pg-pre-dec")).map((e) => e.type)).toEqual(["operation.declined"]);
   });
 
   it("CHECK «ровно один источник»: operation.* без op_ref и op_ref у не operation.* — отказ; второе событие того же типа — отказ", async () => {

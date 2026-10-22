@@ -3,7 +3,8 @@
 // авторизации (п. 1 (а), как уведомитель РП46 доп. п. 7) и ответ эмитента по ПИ-3 (п. 1 (б), К1.2). В памяти (dev,
 // стенд) и на PostgreSQL (sql/114_operation_outcomes.sql). Номера карты и token_ref нет (инвариант 1).
 import type { SqlClient } from "@kuzin4u/agentic-core";
-import type { OperationRecord } from "../adp/operations.js";
+import type { OperationReader, OperationRecord } from "../adp/operations.js";
+import type { StateService } from "../state/index.js";
 import { insertOperationEventTx, type MemoryConsentStore, type TxSqlPool } from "../consent/store.js";
 import type { OperationEventDraft, PaoEventType } from "../pao/events.js";
 import type { Decision } from "../shared/canonical.generated.js";
@@ -156,7 +157,11 @@ const PENDING_WHERE = `o.decision IS NOT NULL AND o.decision->>'decision' IN ('D
  * одна: вторая ждёт фиксации первой на уникальном ключе и читает прежний итог — второго события нет.
  */
 export class PgOutcomeStore implements OutcomeStore {
-  constructor(private readonly client: TxSqlPool) {}
+  constructor(
+    private readonly client: TxSqlPool,
+    /** Точка в транзакции после вставки итога, до события и COMMIT — только для тестов (гонка двух экземпляров). */
+    private readonly hooks: { readonly inserted?: (op_ref: string) => Promise<void> } = {},
+  ) {}
 
   async pending(sinceAt: string, limit: number): Promise<readonly DecidedOp[]> {
     const r = await this.client.query<{ op_ref: string; decision: Decision; agent_code: string | null; at: string }>(
@@ -184,6 +189,7 @@ export class PgOutcomeStore implements OutcomeStore {
         );
         let prior: OperationOutcome | undefined;
         if (ins.rows.length === 1) {
+          await this.hooks.inserted?.(o.op_ref);
           if (event) await insertOperationEventTx(tx, event, o.at);
         } else {
           prior = await readOutcome(tx, o.op_ref);
@@ -213,6 +219,78 @@ async function readOutcome(client: SqlClient, op_ref: string): Promise<Operation
   const r = await client.query<OutcomeRow>("SELECT op_ref, agent_code, status, reason, source, at FROM operation_outcomes WHERE op_ref = $1", [op_ref]);
   const x = r.rows[0];
   return x && { op_ref: x.op_ref, agent_code: x.agent_code, status: x.status, reason: x.reason, source: x.source, at: x.at };
+}
+
+/** Ответ ПИ-3: 202 — принято (в том числе без действий), 400 — сообщение не по форме, 503 — не обработано, повторить. */
+export type IssuerResponseStatus = 202 | 400 | 503;
+
+export interface IssuerResponseDeps {
+  readonly operations: OperationReader;
+  readonly store: OutcomeStore;
+  readonly state: Pick<StateService, "release">;
+  readonly pushFor?: PushFor;
+  readonly now?: () => Date;
+  readonly log?: CollectorLog;
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * ПИ-3 `ISSUER_RESPONSE` (РП52 п. 1 (б), 2, 3 (б), 8): по операции с APPROVE ADP — итог AUTHORIZED или DECLINED /
+ * ISSUER_DECLINED и событие в одной транзакции; при отказе — освобождение удержаний записи операции. op_ref без записи ADP
+ * (BYPASS, неагентская) — 202 без действий (инвариант 2); запись «в работе» — 503. Повтор — прежний итог без второго
+ * события (идемпотентность по op_ref покрывает (op_ref, msg_type, seq)); иной второй итог — инцидент, итог прежний.
+ */
+export async function acceptIssuerResponse(deps: IssuerResponseDeps, raw: unknown): Promise<IssuerResponseStatus> {
+  const log = deps.log ?? (() => {});
+  // Снимок входа вызывающего до первого await (Р-205): разбор и итог — из одного сообщения.
+  if (!isObj(raw)) return 400;
+  const msg = structuredClone(raw);
+  const op_ref = msg.op_ref;
+  if (typeof op_ref !== "string" || op_ref === "") return 400;
+  if (msg.msg_type !== "ISSUER_RESPONSE") {
+    // Прочие типы ПИ-3 — PS-16 ч. 2 (РП52 п. 13): 503, а не 202 — процессинг повторит, событие не теряется молча
+    // (PRESENTMENT без закрепления вернул бы бюджет по reservation_ttl — инвариант 4).
+    if (typeof msg.msg_type !== "string") return 400;
+    log("warn", { op_ref, msg_type: msg.msg_type }, "П8: тип события ПИ-3 ещё не обрабатывается — 503");
+    return 503;
+  }
+  if (typeof msg.issuer_approved !== "boolean") return 400;
+  const approved = msg.issuer_approved;
+  const rec = await deps.operations.get(op_ref);
+  if (!rec) return 202;
+  if (rec.decision === null) return 503;
+  if (rec.decision.decision !== "APPROVE") {
+    log("warn", { op_ref, decision: rec.decision.decision, issuer_approved: approved, incident: true }, "П8: ответ эмитента по операции без APPROVE ADP");
+    return 202;
+  }
+  const o: OperationOutcome = {
+    op_ref,
+    agent_code: rec.facts?.agent_code ?? null,
+    status: approved ? "AUTHORIZED" : "DECLINED",
+    reason: approved ? null : ISSUER_DECLINED,
+    source: "ISSUER",
+    at: (deps.now ?? (() => new Date()))().toISOString(),
+  };
+  const prior = await deps.store.record(o, eventFor(o, deps.pushFor));
+  if (prior && (prior.status !== o.status || prior.reason !== o.reason)) {
+    log("warn", { op_ref, prior: prior.status, issuer_approved: approved, incident: true }, "П8: второй ответ эмитента с иным исходом — итог прежний");
+    return 202;
+  }
+  // Освобождение — и при повторе того же отказа: прошлый вызов мог записать итог и не освободить (повтор release безопасен).
+  // Сбой — 503 (РП52 п. 3, решение владельца на КТ1): процессинг повторит, итог уже записан, второго события нет.
+  if (!approved) {
+    let failed = false;
+    for (const hold_id of rec.holds) {
+      const r = await deps.state.release(hold_id);
+      if (!r.ok && r.code !== "RESERVATION_RELEASED") {
+        failed = true;
+        log("warn", { op_ref, hold_id, code: r.code }, "П8: удержание по отказу эмитента не освобождено — 503, процессинг повторит");
+      }
+    }
+    if (failed) return 503;
+  }
+  return 202;
 }
 
 /** Сколько записей сборщик разбирает за проход. */

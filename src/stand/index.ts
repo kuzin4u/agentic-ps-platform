@@ -306,6 +306,8 @@ export function createStand(opts: StandOptions = {}): Stand {
         // Часы стенда (setClock): период лимита клиента и окно дробления — по тем же часам, что резервы и подписи.
         now,
       }),
+      // ПИ-3 стенда (РП52 п. 1 (б)): ответ эмитента — итог и событие в ленту журнала стенда, освобождение — П3 стенда.
+      events: { operations, store: outcomeStore, state, pushFor, now },
     },
   });
   const issuer: StandIssuer = {

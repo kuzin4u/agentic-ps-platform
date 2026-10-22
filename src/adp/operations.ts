@@ -100,6 +100,11 @@ export interface OperationStore {
   enterWindow(op_ref: string, entry: WindowEntry, rule: WindowRule): Promise<WindowResult>;
 }
 
+/** Чтение записи операции по op_ref — для ПИ-3 и GET операции (РП52 п. 8, 10); нет — undefined, сбой — исключение. */
+export interface OperationReader {
+  get(op_ref: string): Promise<OperationRecord | undefined> | OperationRecord | undefined;
+}
+
 export class MemoryOperationStore implements OperationStore {
   readonly #map = new Map<string, OperationRecord>();
   /** Входы окна по op_ref: заполняются один раз, решение их не меняет (как столбцы окна на PG). */
@@ -117,7 +122,7 @@ export class MemoryOperationStore implements OperationStore {
     for (const r of this.#map.values()) yield structuredClone(r);
   }
 
-  /** Запись по op_ref — для уведомителя в памяти и тестов; нет — undefined. */
+  /** Запись по op_ref — для уведомителя в памяти, ПИ-3, GET операции и тестов; нет — undefined. */
   get(op_ref: string): OperationRecord | undefined {
     const r = this.#map.get(op_ref);
     return r && structuredClone(r);
@@ -164,6 +169,16 @@ interface OperationRow extends Record<string, unknown> {
   at: string;
 }
 
+interface FactsRow extends OperationRow {
+  agent_code: string | null;
+  order_ref: string | null;
+  channel: "CARD" | "SBP" | null;
+  merchant_id: string | null;
+  msg_amount: string | null;
+  msg_currency: string | null;
+  aoi: Aoi | null;
+}
+
 /**
  * Записи операций на PostgreSQL (доп. РП43 п. 16): «в работе» — INSERT … ON CONFLICT DO NOTHING, один оператор, поэтому
  * из одновременных запросов с разных экземпляров к резерву проходит один. Решение — UPDATE только строки «в работе» с тем
@@ -197,6 +212,34 @@ export class PgOperationStore implements OperationStore {
     // Вставки не было, а строки нет — её быть не может (удаление запрещено): не подтверждено, без догадки.
     if (!row) throw new Error("adp_operations: запись по op_ref не найдена после конфликта вставки");
     return { ...row, msg_hash: row.msg_hash.trim() };
+  }
+
+  /**
+   * Запись с фактами итога (РП52 п. 9). У записей до sql/114 фактов нет — запись без facts: агент итога по ПИ-3 у них не
+   * установлен («Нюансы реализации» п. 4).
+   */
+  async get(op_ref: string): Promise<OperationRecord | undefined> {
+    const r = await this.client.query<FactsRow>(
+      `SELECT op_ref, msg_hash, decision, mandate_id, holds, at, agent_code, order_ref, channel, merchant_id, msg_amount, msg_currency, aoi
+         FROM adp_operations WHERE op_ref = $1`,
+      [op_ref],
+    );
+    const x = r.rows[0];
+    if (!x) return undefined;
+    const base: OperationRecord = { op_ref: x.op_ref, msg_hash: x.msg_hash.trim(), decision: x.decision, mandate_id: x.mandate_id, holds: x.holds, at: x.at };
+    if (x.msg_amount === null || x.msg_currency === null) return base;
+    return {
+      ...base,
+      facts: {
+        agent_code: x.agent_code,
+        order_ref: x.order_ref,
+        channel: x.channel,
+        merchant_id: x.merchant_id,
+        amount: Number(x.msg_amount),
+        currency: x.msg_currency.trim(),
+        aoi: x.aoi,
+      },
+    };
   }
 
   async finish(rec: OperationRecord): Promise<void> {
