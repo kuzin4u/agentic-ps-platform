@@ -1,6 +1,7 @@
 // Эмулятор окружения (issuer) — SPEC §9, каноническая модель (РП6).
 // Приложение банка на стенде (РП36 п. 4): клиент подписывает мандат простой ЭП по договору с банком, банк подписывает
-// своим тестовым ключом запись о решении или об отзыве (РП38) над хэшем мандата. Пара ключей — только в памяти процесса,
+// своим тестовым ключом запись о решении или об отзыве (РП38) над хэшем мандата, а решение человека по запросу
+// подтверждения (РП50 п. 4) — над totals_hash итоговых значений. Пара ключей — только в памяти процесса,
 // на диск не пишется.
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { signRequest } from "@kuzin4u/agentic-core";
@@ -18,6 +19,7 @@ import {
 } from "../../participants/trusted.js";
 import { participantLimitsSigningInput, type LimitsRecord } from "../../participants/limits.js";
 import { opaqueRef } from "../../credentials/model.js";
+import { participantConfirmationSigningInput, type ConfirmationDecision } from "../../confirm/model.js";
 import { PARTICIPANT_COMPONENTS } from "../../participants/verify.js";
 
 export const component = "env/issuer";
@@ -34,6 +36,8 @@ export interface IssuerEmulator {
   signPrincipalRevocation(record: ParticipantPrincipalRevocationRecord): string;
   /** Подпись записи лимитов клиента (base64url, РП45 п. 1). */
   signLimits(record: LimitsRecord): string;
+  /** Подпись решения человека по запросу подтверждения (base64url, РП50 п. 4). */
+  signConfirmation(record: Omit<ConfirmationDecision, "signature"> & { readonly confirmation_id: string }): string;
   /** Заголовки подписанного запроса участника без тела (RFC 9421, РП46 (в)): чтения ПИ-8. */
   signRequest(method: string, path: string, query: string, at: Date): Record<string, string>;
   /**
@@ -75,6 +79,7 @@ export function createIssuerEmulator(): IssuerEmulator {
         PARTICIPANT_COMPONENTS,
       ).headers,
     signLimits: (record) => sign(null, participantLimitsSigningInput(record), secret).toString("base64url"),
+    signConfirmation: (record) => sign(null, participantConfirmationSigningInput(record), secret).toString("base64url"),
     async fundingRef({ participant_code, principal_ref }) {
       if (participant_code !== STAND_ISSUER_CODE) throw new Error("эмулятор эмитента: клиент другого банка");
       let ref = funding.get(principal_ref);

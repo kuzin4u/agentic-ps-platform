@@ -14,6 +14,14 @@ import {
 } from "../consent/model.js";
 import { isOpaquePrincipalRef } from "../consent/terms.js";
 import type { Params } from "../shared/config.js";
+import {
+  CONFIRMATION_ID,
+  newConfirmationRef,
+  totalsHash,
+  type ConfirmationDecision,
+  type ConfirmationRecord,
+  type ConfirmationStore,
+} from "../confirm/index.js";
 import type { StateService } from "../state/service.js";
 import { limitsBody, type LimitsStore } from "./limits.js";
 import { NOTIFICATION_ID, NotificationCursorUnknown, type ParticipantNotificationStore } from "./notifications.js";
@@ -34,6 +42,11 @@ export interface ParticipantDeps {
   readonly requests?: ParticipantRequestVerifier;
   /** Outbox участника (РП46 (б)); без него, без подписи запроса и без event_page_max маршрута ленты уведомлений нет. */
   readonly notifications?: ParticipantNotificationStore;
+  /**
+   * П6 (РП50 п. 4–5): решение человека по запросу подтверждения; без хранилища маршрута нет. skewSec — допуск часов
+   * для decided_at (signature_skew_sec).
+   */
+  readonly confirmations?: { readonly store: Pick<ConfirmationStore, "get" | "decide" | "expire">; readonly skewSec: number };
 }
 
 /** Коды ответа ПИ-8 подписи (processing-interface.yaml); тело ошибки — `{code}`, причина — в журнале процесса. */
@@ -46,6 +59,9 @@ const HTTP: Readonly<Record<string, number>> = {
   LIMITS_VERSION_CONFLICT: 409,
   LIMITS_NOT_FOUND: 404,
   LIMITS_UNSUPPORTED: 422,
+  CONFIRMATION_NOT_FOUND: 404,
+  CONFIRMATION_TOTALS_MISMATCH: 409,
+  CONFIRMATION_NOT_PENDING: 409,
   QUALIFIED_SIGNATURE_REQUIRED: 422,
   STATE_UNAVAILABLE: 503,
   UPSTREAM_UNAVAILABLE: 503,
@@ -289,6 +305,81 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
     });
   }
 
+  // Решение человека по запросу подтверждения (ПИ-8, РП50 п. 4–5; Дополнения п. 3): тело → подпись банка (401 до
+  // хранилища) → запрос (404) → банк клиента корневого INTENT (401) → decided_at не в будущем сверх допуска (401) →
+  // повтор той же записи (200) → totals_hash (409) → срок и статус (409) → условная запись. Ссылка — при APPROVE.
+  const confirmations = deps.confirmations;
+  if (confirmations) {
+    app.post<{ Params: { id: string } }>("/participants/v1/confirmations/:id", async (req, reply) => {
+      const fail = (code: keyof typeof HTTP, extra: Record<string, unknown> = {}) => {
+        const http = HTTP[code]!;
+        if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+        return reply.code(http).send({ code, ...extra });
+      };
+      const id = req.params.id;
+      const d = CONFIRMATION_ID.test(id) ? confirmBody(req.body) : undefined;
+      if (!d) return fail("REQUEST_INVALID");
+      const { signature, ...record } = d;
+      if (!deps.trusted.verifyConfirmation({ ...record, confirmation_id: id }, signature)) {
+        req.log.info({ participant_code: d.participant_code, confirmation_id: id }, "ПИ-8: подпись решения по подтверждению не проверена");
+        return fail("SIGNATURE_INVALID");
+      }
+      const now = (deps.now ?? (() => new Date()))();
+      const at = now.toISOString();
+      let r: ConfirmationRecord | undefined;
+      let bank: string | null | undefined;
+      try {
+        r = await confirmations.store.get(id);
+        if (!r) return fail("CONFIRMATION_NOT_FOUND");
+        // Банк клиента — из журнала (подпись корня), а не со слов участника (инвариант 5, РП45).
+        const m = await deps.consent.adpMandate(r.mandate_id, r.agent_code);
+        bank = m ? (m.client?.participant_code ?? null) : undefined;
+      } catch (err) {
+        req.log.error({ err, confirmation_id: id }, "ПИ-8: запрос подтверждения или мандат не прочитаны");
+        return fail("STATE_UNAVAILABLE");
+      }
+      if (bank === undefined) {
+        // Запрос есть, мандата нет — порча записей Платформы, а не ошибка банка.
+        req.log.error({ confirmation_id: id, incident: true }, "ПИ-8: мандат запроса подтверждения не найден");
+        return fail("STATE_UNAVAILABLE");
+      }
+      if (bank !== d.participant_code) {
+        req.log.info({ participant_code: d.participant_code, confirmation_id: id }, "ПИ-8: решение по подтверждению — не банк клиента");
+        return fail("SIGNATURE_INVALID");
+      }
+      const decided = parseRfc3339(d.decided_at);
+      if (decided > now.getTime() + confirmations.skewSec * 1000) {
+        req.log.info({ participant_code: d.participant_code, confirmation_id: id }, "ПИ-8: decided_at в будущем сверх допуска часов");
+        return fail("SIGNATURE_INVALID");
+      }
+      if (r.decision && sameDecision(r.decision, d)) return reply.code(200).send(confirmationView(r));
+      if (d.totals_hash !== totalsHash(r)) {
+        req.log.info({ participant_code: d.participant_code, confirmation_id: id }, "ПИ-8: totals_hash не совпадает с запросом");
+        return fail("CONFIRMATION_TOTALS_MISMATCH");
+      }
+      if (r.status !== "PENDING") return fail("CONFIRMATION_NOT_PENDING", { status: r.status });
+      try {
+        // Срок (РП50 п. 5, Дополнения п. 3): решение — не позже expires_at, запись — строго раньше него.
+        if (!(decided <= Date.parse(r.expires_at)) || !(at < r.expires_at)) {
+          await confirmations.store.expire(id, at);
+          return fail("CONFIRMATION_NOT_PENDING", { status: "EXPIRED" });
+        }
+        const done = await confirmations.store.decide(id, d, d.decision === "APPROVE" ? newConfirmationRef() : null, at);
+        if (done) {
+          req.log.info({ participant_code: d.participant_code, confirmation_id: id, status: done.status }, "ПИ-8: решение по подтверждению записано");
+          return reply.code(200).send(confirmationView(done));
+        }
+        // Другой экземпляр записал решение или срок вышел между чтением и записью.
+        const cur = await confirmations.store.get(id);
+        if (cur?.decision && sameDecision(cur.decision, d)) return reply.code(200).send(confirmationView(cur));
+        return fail("CONFIRMATION_NOT_PENDING", { status: cur?.status ?? "EXPIRED" });
+      } catch (err) {
+        req.log.error({ err, confirmation_id: id }, "ПИ-8: решение по подтверждению не записано");
+        return fail("STATE_UNAVAILABLE");
+      }
+    });
+  }
+
   const limits = deps.limits;
   if (!limits) return;
   // Лимиты клиента (РП45 п. 1, 3): тело → подпись банка (401 до хранилища) → только вставка с версией. GET того же пути —
@@ -351,6 +442,43 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
     }
   });
 }
+
+const CONFIRM_FIELDS = ["decided_at", "decision", "kid", "participant_code", "signature", "totals_hash"].join(",");
+
+/** Тело решения по запросу подтверждения (РП50 п. 4): ровно поля записи и подпись; разбор — новый объект (снимок, Р-205). */
+function confirmBody(v: unknown): ConfirmationDecision | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  if (Object.keys(o).sort().join(",") !== CONFIRM_FIELDS) return undefined;
+  const str = (k: string) => typeof o[k] === "string" && (o[k] as string).length > 0 && (o[k] as string).length <= 256;
+  if (!["participant_code", "kid", "decided_at", "signature"].every(str)) return undefined;
+  if (o.decision !== "APPROVE" && o.decision !== "REJECT") return undefined;
+  if (typeof o.totals_hash !== "string" || !/^[0-9a-f]{64}$/.test(o.totals_hash)) return undefined;
+  if (!/^[A-Za-z0-9_-]{86}$/.test(o.signature as string) || Number.isNaN(parseRfc3339(o.decided_at))) return undefined;
+  return {
+    participant_code: o.participant_code as string,
+    kid: o.kid as string,
+    decision: o.decision,
+    totals_hash: o.totals_hash,
+    decided_at: o.decided_at as string,
+    signature: o.signature as string,
+  };
+}
+
+const sameDecision = (a: ConfirmationDecision, b: ConfirmationDecision): boolean =>
+  a.participant_code === b.participant_code &&
+  a.kid === b.kid &&
+  a.decision === b.decision &&
+  a.totals_hash === b.totals_hash &&
+  a.decided_at === b.decided_at &&
+  a.signature === b.signature;
+
+/** Ответ 200 ПИ-8: ссылка — только у одобренного, ещё не погашенного (РП50 п. 6, ответ ПИ-8). */
+const confirmationView = (r: ConfirmationRecord) => ({
+  confirmation_id: r.confirmation_id,
+  status: r.status,
+  ...(r.status === "APPROVED" && r.confirmation_ref ? { confirmation_ref: r.confirmation_ref } : {}),
+});
 
 /** Подпись запроса участника у чтения ПИ-8 (РП46 (в)): путь и запрос — как пришли, тело пустое. */
 function verifyRead(requests: ParticipantRequestVerifier, req: FastifyRequest) {

@@ -749,6 +749,7 @@ paths:
   /participants/v1/confirmations/{id}:
     post:
       summary: ПИ-8/ПИ-6 Результат подтверждения
+      description: "Решение человека по запросу подтверждения (РП50 п. 4–5): банк клиента корневого INTENT присылает запись, подписанную своим ключом Ed25519. Подписываемая строка — canonicalJson записи с полем `context` = `pao:participant-confirmation:v1` и `confirmation_id` из пути; в теле `context` и `confirmation_id` нет. `totals_hash` — SHA-256 UTF-8 канонической записи RFC 8785 объекта {confirmation_id, agent_code, mandate_id, merchant_id, amount, currency, order_ref} (`amount` — целое в минимальных единицах, `currency` — ISO 4217): банк подтверждает итог, который видел человек. `decided_at` не позже `expires_at` запроса и не позже часов Платформы больше чем на `signature_skew_sec`. При APPROVE выдаётся `confirmation_ref`. Повтор той же записи — 200 с текущим статусом без записи. Выбор инструмента на странице УПК — PS-19 ч. 2."
       parameters:
       - name: id
         in: path
@@ -761,17 +762,71 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
+              required:
+              - participant_code
+              - kid
+              - decision
+              - totals_hash
+              - decided_at
+              - signature
               properties:
+                participant_code:
+                  type: string
+                kid:
+                  type: string
+                  description: отпечаток JWK ключа участника по RFC 7638
                 decision:
                   type: string
                   enum:
                   - APPROVE
                   - REJECT
-                instrument_chosen:
+                totals_hash:
                   type: string
+                  pattern: ^[0-9a-f]{64}$
+                  description: SHA-256 hex итоговых значений запроса (RFC 8785)
+                decided_at:
+                  type: string
+                  format: date-time
+                signature:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{86}$
+                  description: Ed25519 (64 байта), base64url без дополнения
       responses:
         '200':
-          description: OK
+          description: "Решение записано или повтор той же записи"
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - confirmation_id
+                - status
+                properties:
+                  confirmation_id:
+                    type: string
+                  status:
+                    type: string
+                    enum:
+                    - PENDING
+                    - APPROVED
+                    - REJECTED
+                    - EXPIRED
+                    - USED
+                  confirmation_ref:
+                    type: string
+                    maxLength: 32
+                    description: только при APPROVED; однократная ссылка для авторизации
+        '400':
+          description: "`REQUEST_INVALID`"
+        '401':
+          description: "`SIGNATURE_INVALID` — подпись, неизвестный участник или ключ, не банк клиента корневого INTENT, `decided_at` в будущем сверх `signature_skew_sec`"
+        '404':
+          description: "`CONFIRMATION_NOT_FOUND`"
+        '409':
+          description: "`CONFIRMATION_TOTALS_MISMATCH`; `CONFIRMATION_NOT_PENDING` с текущим `status` — другое решение, ссылка использована, срок вышел (`EXPIRED`)"
+        '503':
+          description: "`STATE_UNAVAILABLE`, Retry-After"
   /participants/v1/state/reserve:
     post:
       summary: 'Режим «сам эмитент»: резерв'

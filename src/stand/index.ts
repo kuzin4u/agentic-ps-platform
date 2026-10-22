@@ -12,6 +12,7 @@ import { createIssuerEmulator } from "../env/issuer/index.js";
 import { createTokenServiceEmulator, type TokenServiceEmulator } from "../env/tsp/index.js";
 import { merchantDirectory } from "../env/merchants/shops.js";
 import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
+import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../confirm/index.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
@@ -67,6 +68,19 @@ export interface StandIssuer {
    * банка; after — notification_id последнего прочитанного. Уведомления по решениям ADP — после stand.notifyParticipants().
    */
   getNotifications(after?: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /**
+   * Решение человека по запросу подтверждения в приложении банка (РП50 п. 4–5, ПИ-8 `POST /participants/v1/confirmations/{id}`):
+   * банк показывает итог запроса, подписывает запись с totals_hash этого итога. Ответ шлюза участников — 200
+   * `{confirmation_id, status, confirmation_ref?}` или `{code}`; неизвестный запрос — 404 без обращения. opts — для
+   * тестов отказов: другое время решения или другой хэш итога.
+   */
+  confirm(confirmationId: string, opts?: IssuerConfirmOptions): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+}
+
+export interface IssuerConfirmOptions {
+  readonly decision?: "APPROVE" | "REJECT";
+  readonly decided_at?: string;
+  readonly totals_hash?: string;
 }
 
 export interface Stand {
@@ -101,6 +115,11 @@ export interface Stand {
   readonly issuerWebhook: IssuerWebhookReceiver;
   /** Приложение банка: подпись и отзыв мандата клиентом (РП12, РП36, РП38). */
   readonly issuer: StandIssuer;
+  /**
+   * Запросы подтверждения П6 только для чтения (РП50): найти запрос по заказу до GET /pao/v1/confirmations/{id} (PS-19
+   * ч. 2). Записи нет — решение только через приложение банка (issuer.confirm), инвариант 7.
+   */
+  readonly confirmations: Pick<ConfirmationStore, "get" | "byKey">;
   /** Эмулятор токен-сервиса (ПИ-4, РП47): выпущенные токены и проверка криптограммы — для тестов. */
   readonly tsp: Pick<TokenServiceEmulator, "issued" | "verify">;
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
@@ -186,6 +205,8 @@ export function createStand(): Stand {
   // Агентские реквизиты (П5, РП47): токен-сервис — эмулятор с ключом в памяти, funding_ref — от банка стенда.
   const tsp = createTokenServiceEmulator();
   const credentialStore = new MemoryCredentialStore();
+  // Подтверждение человеком (П6, РП50): запросы ADP и решения банка стенда — одно хранилище в памяти.
+  const confirmationStore = new MemoryConfirmationStore();
   const credentials = new Credentials({
     mandates: { get: (id, agent_code) => consent.credentialMandate(id, agent_code) },
     store: credentialStore,
@@ -209,6 +230,8 @@ export function createStand(): Stand {
       now,
       requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, now }),
       notifications,
+      // Решение человека по подтверждению (РП50 п. 4–5): то же хранилище П6, что у ADP; допуск часов — окно подписи.
+      confirmations: { store: confirmationStore, skewSec: params.signature_skew_sec },
     },
     // ADP стенда (ПИ-1, РП43): реестр, журнал и П3 стенда, записи операций в памяти; только 127.0.0.1 (доп. РП43 п. 21).
     // Мандат — с клиентом из журнала, лимиты клиента — из записей банка стенда (РП45 п. 1–2).
@@ -223,6 +246,8 @@ export function createStand(): Stand {
         clientLimits: { get: (c) => limits.history(c) },
         // Домен токена, криптограмма и погашение — то же хранилище П5, что выдаёт реквизиты (РП47 п. 6–8).
         credentials: credentialStore,
+        // Запрос на CONFIRMATION_REQUIRED, проверка и погашение confirmation_ref (РП50 п. 1–3, 7–10).
+        confirmations: { store: confirmationStore, order_hold_sec: params.order_hold_sec },
         // Часы стенда (setClock): период лимита клиента и окно дробления — по тем же часам, что резервы и подписи.
         now,
       }),
@@ -307,6 +332,23 @@ export function createStand(): Stand {
       const res = await app.inject({ method: "POST", url: `/participants/v1/principals/${encodeURIComponent(principalRef)}/revoke-all`, payload: body });
       return { statusCode: res.statusCode, body: res.json() };
     },
+    async confirm(confirmationId, opts = {}) {
+      // Экран подтверждения: итог запроса — тот, что видит человек; хэш — от него (РП50 п. 4).
+      const view = await confirmationStore.get(confirmationId);
+      if (!view) return { statusCode: 404, body: { code: "CONFIRMATION_NOT_FOUND" } };
+      const record = {
+        participant_code: emulator.participant_code,
+        kid: emulator.trustedKey.kid,
+        confirmation_id: confirmationId,
+        decision: opts.decision ?? "APPROVE",
+        totals_hash: opts.totals_hash ?? totalsHash(view),
+        decided_at: opts.decided_at ?? now().toISOString(),
+      } as const;
+      const { confirmation_id: _id, ...body } = { ...record, signature: emulator.signConfirmation(record) };
+      void _id;
+      const res = await app.inject({ method: "POST", url: `/participants/v1/confirmations/${confirmationId}`, payload: body });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
   };
   return {
     params,
@@ -330,6 +372,7 @@ export function createStand(): Stand {
     notificationDelivery: (id) => notifications.delivery(id),
     issuerWebhook,
     issuer,
+    confirmations: { get: (id) => confirmationStore.get(id), byKey: (key) => confirmationStore.byKey(key) },
     tsp,
     setClock: (d) => (clock = d),
     now,

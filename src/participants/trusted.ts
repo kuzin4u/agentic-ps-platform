@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { canonicalJson } from "@kuzin4u/agentic-core";
 import type { MandateDecisionPayload, MandateRevocationPayload, PrincipalRevocationPayload } from "../consent/model.js";
 import { ED25519, parseKey } from "../registry/keys.js";
+import { participantConfirmationSigningInput, type ConfirmationDecision } from "../confirm/model.js";
 import { participantLimitsSigningInput, type LimitsRecord } from "./limits.js";
 
 /** Метка контекста подписи участника (РП36 доп.): подпись банка пригодна только для подписи мандата этой версии. */
@@ -138,6 +139,11 @@ export class TrustedParticipants {
   /** Подпись участника над записью лимитов клиента (РП45 п. 1): своя метка, подпись решения или отзыва не подходит. */
   verifyLimits(record: LimitsRecord, signature: string): boolean {
     return this.verifyInput(record.participant_code, record.kid, participantLimitsSigningInput(record), signature);
+  }
+
+  /** Подпись участника над решением человека по запросу подтверждения (РП50 п. 4): своя метка. */
+  verifyConfirmation(record: Omit<ConfirmationDecision, "signature"> & { readonly confirmation_id: string }, signature: string): boolean {
+    return this.verifyInput(record.participant_code, record.kid, participantConfirmationSigningInput(record), signature);
   }
 
   /** Подпись Ed25519 над готовыми байтами (основа подписи запроса RFC 9421, РП46 (в)); неизвестный ключ — false. */

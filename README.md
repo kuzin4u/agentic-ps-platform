@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.15.0** (агентские реквизиты, PS-14 ч. 4 — PS-14 закрыта: реквизит привязан к категории продавца — при выдаче в домен токена записывается набор MCC продавцов корзины из справочника оператора, оплата с MCC вне набора — `MANDATE_SCOPE`; выдача по CART с продавцом вне справочника — 409 `MANDATE_SCOPE`). Что изменилось и что ломает — в
+Текущая версия — **v0.16.0** (подтверждение человеком, PS-19 ч. 1: на `CONFIRMATION_REQUIRED` Платформа создаёт запрос подтверждения на итоговые значения, банк клиента присылает решение человека по ПИ-8 с подписью над `totals_hash`, при одобрении выдаётся однократная `confirmation_ref`; повтор авторизации со ссылкой одобряется ADP; страница УПК и события `confirmation.*` — PS-19 ч. 2). Что изменилось и что ломает — в
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.15.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.16.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.
