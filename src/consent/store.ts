@@ -19,8 +19,10 @@ import {
   EventCursorUnknown,
   eventIdFor,
   eventSeqLockKey,
+  operationEventIdFor,
   type ConfirmationEventDraft,
   type EventDraft,
+  type OperationEventDraft,
   type PaoEventType,
   type StoredEvent,
 } from "../pao/events.js";
@@ -150,6 +152,19 @@ const confirmationEventOf = (draft: ConfirmationEventDraft, at: string, seq: num
     journal_seq: null,
   });
 
+/** Событие итога операции (РП52 п. 7): без записи журнала, at — момент записи итога. */
+const operationEventOf = (draft: OperationEventDraft, at: string, seq: number): StoredEvent =>
+  Object.freeze({
+    agent_code: draft.agent_code,
+    type: draft.type,
+    data: Object.freeze({ op_ref: draft.data.op_ref }),
+    seq,
+    event_id: operationEventIdFor(draft.data.op_ref, draft.type),
+    at,
+    journal_chain: null,
+    journal_seq: null,
+  });
+
 export class MemoryConsentStore implements ConsentStore {
   /** notifications — Outbox участника в памяти (стенд); без него уведомления клиента через банк не пишутся (dev без базы). */
   constructor(private readonly opts: { readonly notifications?: NotificationSink } = {}) {}
@@ -206,6 +221,15 @@ export class MemoryConsentStore implements ConsentStore {
   appendConfirmationEventNow(draft: ConfirmationEventDraft, at: string): void {
     const ev = confirmationEventOf(draft, at, (this.events.get(draft.agent_code)?.length ?? 0) + 1);
     if (this.byEventId.has(ev.event_id)) throw new Error(`pao_events: событие ${draft.type} запроса уже записано`);
+    this.pushEvent(ev, draft.push);
+  }
+  /**
+   * Событие итога операции (РП52 п. 7–8): без await — вызывающий пишет его в том же синхронном шаге, что итог. Второе
+   * событие того же типа по операции — ошибка, как UNIQUE (op_ref, type) на PG.
+   */
+  appendOperationEventNow(draft: OperationEventDraft, at: string): void {
+    const ev = operationEventOf(draft, at, (this.events.get(draft.agent_code)?.length ?? 0) + 1);
+    if (this.byEventId.has(ev.event_id)) throw new Error(`pao_events: событие ${draft.type} операции уже записано`);
     this.pushEvent(ev, draft.push);
   }
   private pushEvent(ev: StoredEvent, push: boolean | undefined): void {
@@ -573,10 +597,11 @@ async function position(client: SqlClient, pair: PrincipalPair, mandate_id: stri
  */
 async function insertEventTx(tx: SqlClient, ev: StoredEvent, push: boolean | undefined): Promise<void> {
   const confirmation_id = "confirmation_id" in ev.data ? ev.data.confirmation_id : null;
+  const op_ref = "op_ref" in ev.data ? ev.data.op_ref : null;
   await tx.query(
-    `INSERT INTO pao_events (agent_code, seq, event_id, type, at, data, journal_chain, journal_seq, confirmation_id)
-     SELECT $1, COALESCE(MAX(seq), 0) + 1, $2, $3, $4, $5, $6, $7, $8 FROM pao_events WHERE agent_code = $1`,
-    [ev.agent_code, ev.event_id, ev.type, ev.at, canonicalJson(ev.data), ev.journal_chain, ev.journal_seq, confirmation_id],
+    `INSERT INTO pao_events (agent_code, seq, event_id, type, at, data, journal_chain, journal_seq, confirmation_id, op_ref)
+     SELECT $1, COALESCE(MAX(seq), 0) + 1, $2, $3, $4, $5, $6, $7, $8, $9 FROM pao_events WHERE agent_code = $1`,
+    [ev.agent_code, ev.event_id, ev.type, ev.at, canonicalJson(ev.data), ev.journal_chain, ev.journal_seq, confirmation_id, op_ref],
   );
   if (push) {
     await tx.query(
@@ -593,6 +618,12 @@ async function insertEventTx(tx: SqlClient, ev: StoredEvent, push: boolean | und
 export async function insertConfirmationEventTx(tx: SqlClient, draft: ConfirmationEventDraft, at: string): Promise<void> {
   await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(draft.agent_code)]);
   await insertEventTx(tx, confirmationEventOf(draft, at, 0), draft.push);
+}
+
+/** Событие итога операции в транзакции итога (РП52 п. 7–8): блокировка агента до фиксации, затем вставка (как РП51 п. 3). */
+export async function insertOperationEventTx(tx: SqlClient, draft: OperationEventDraft, at: string): Promise<void> {
+  await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(draft.agent_code)]);
+  await insertEventTx(tx, operationEventOf(draft, at, 0), draft.push);
 }
 
 /** bigint из pg — строкой. */

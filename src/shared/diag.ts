@@ -78,6 +78,8 @@ export const STARTUP_CODES = [
   // источник — сама Платформа (РП46 доп. п. 9 (о2), 10; решение владельца по КТ1). Довод: уведомления клиента в решении
   // о платеже не участвуют, снимать приём трафика из-за них неверно. Тот же код — в журнале прохода и в /health.
   "PARTICIPANT_NOTIFY_LAGGING",
+  // Так же признак (РП52 «Дополнения» п. 2): события итога — сигнал, итог агенту отдаёт GET из записи операции.
+  "OPERATION_OUTCOME_LAGGING",
 ] as const;
 
 export const PLATFORM_DIAG_CODES = [...PLATFORM_STATE_CODES, ...STARTUP_CODES] as const;
@@ -126,4 +128,7 @@ export const PLATFORM_DIAG: Readonly<Record<PlatformCode, DiagEntry>> = {
   PARTICIPANT_NOTIFY_LAGGING: platform("PARTICIPANT_NOTIFY_LAGGING", ["platform"], "after_human",
     "Уведомления о покупках через помощника могут прийти с задержкой.",
     "Уведомитель участников не разобрал запись операции старше половины горизонта (participant_notify_horizon_sec): проверить процесс уведомителя и PostgreSQL; за горизонтом уведомлений по старым решениям не будет.", "РП46 доп. п. 7, 9 (о2); A3 п. 5.3", "0.11.0"),
+  OPERATION_OUTCOME_LAGGING: platform("OPERATION_OUTCOME_LAGGING", ["platform"], "after_human",
+    "Итог покупки через помощника может прийти с задержкой.",
+    "Сборщик итогов операций не разобрал отказ ADP старше operation_outcome_max_delay_sec: проверить процесс сборщика и PostgreSQL; итог агенту отдаёт GET /pao/v1/operations/{op_ref}, за горизонтом события по старым отказам не будет.", "РП52 п. 12, «Дополнения» п. 1–2", "0.19.0"),
 };

@@ -56,8 +56,10 @@ describe("реестры кодов Платформы (РП42)", () => {
   it("STARTUP_*: дефект сборки — platform, after_fix; остальные — environment, after_human (РП42 п. 4)", () => {
     const build = new Set(["STARTUP_PAO_SPEC_MISMATCH", "STARTUP_DIAG_INCOMPLETE"]);
     // Отставание уведомителя — признак самой Платформы, разбирает оператор (РП46 доп. п. 9 (о2)).
-    expect(PLATFORM_DIAG.PARTICIPANT_NOTIFY_LAGGING).toMatchObject({ source: ["platform"], action: "after_human" });
-    for (const code of STARTUP_CODES.filter((c) => c !== "PARTICIPANT_NOTIFY_LAGGING")) {
+    // Отставание сборщика итогов — так же (РП52 «Дополнения» п. 2).
+    const lagging = new Set<string>(["PARTICIPANT_NOTIFY_LAGGING", "OPERATION_OUTCOME_LAGGING"]);
+    for (const code of lagging) expect(PLATFORM_DIAG[code as "OPERATION_OUTCOME_LAGGING"], code).toMatchObject({ source: ["platform"], action: "after_human" });
+    for (const code of STARTUP_CODES.filter((c) => !lagging.has(c))) {
       const e = PLATFORM_DIAG[code];
       expect({ code, source: e.source, action: e.action }).toEqual(
         build.has(code)

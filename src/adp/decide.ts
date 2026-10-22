@@ -2,7 +2,7 @@
 // операции по порядку §6; первая сработавшая даёт причину. Неподтверждённое состояние — отказ, не BYPASS (РП43 п. 4).
 import { createHash } from "node:crypto";
 import { canonicalJson, isCurrencyCode } from "@kuzin4u/agentic-core";
-import type { CanonicalMessage, Decision } from "../shared/canonical.generated.js";
+import type { Aoi, CanonicalMessage, Decision } from "../shared/canonical.generated.js";
 import type { DecisionReason } from "../shared/codes.js";
 import type { Params } from "../shared/config.js";
 import type { Mandate } from "../shared/pao.js";
@@ -14,7 +14,7 @@ import type { CredentialStore } from "../credentials/store.js";
 import { CONFIRMATION_REF, newConfirmationId, sameTotals, type ConfirmationRecord, type ConfirmationStore } from "../confirm/index.js";
 import type { StateService } from "../state/index.js";
 import { STATE_TO_PI, STATUS_TO_PI } from "./codes.js";
-import type { LimitSource, OperationNotify, OperationRecord, OperationStore, WindowResult } from "./operations.js";
+import type { LimitSource, OperationFacts, OperationNotify, OperationRecord, OperationStore, WindowResult } from "./operations.js";
 import {
   effectivePeriodLimit,
   parseLimits,
@@ -147,6 +147,33 @@ interface Left {
 
 const minLeft = (l: Left): number => (l.client === undefined ? l.mandate : Math.min(l.mandate, l.client));
 
+const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+
+/**
+ * Факты операции для итога П8 (РП52 п. 9): из сообщения процессинга, без token_ref и криптограммы (инвариант 1). Поле не
+ * по форме — null, а не сбой записи решения: запись решения не должна падать на CHECK базы. aoi — только известные ссылки.
+ */
+function factsOf(msg: CanonicalMessage, agent_code: string | null): OperationFacts {
+  const a: unknown = msg.aoi;
+  const aoi =
+    a !== null && typeof a === "object" && !Array.isArray(a)
+      ? (Object.fromEntries(
+          (["indicator", "agent_code", "mandate_id", "fulfilment_ref", "deal_ref"] as const)
+            .filter((k) => Object.hasOwn(a, k))
+            .map((k) => [k, (a as Record<string, unknown>)[k]]),
+        ) as Aoi)
+      : null;
+  return {
+    agent_code,
+    order_ref: nonEmpty(msg.order_ref),
+    channel: msg.channel === "CARD" || msg.channel === "SBP" ? msg.channel : null,
+    merchant_id: nonEmpty(msg.merchant?.id),
+    amount: msg.amount,
+    currency: msg.currency,
+    aoi,
+  };
+}
+
 const isUnits = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 1;
 
 export class Adp {
@@ -201,7 +228,7 @@ export class Adp {
     }
     if (prior) return { ...(await this.repeat(prior, msg_hash)), decided_in_ms: elapsed() };
 
-    const v = await this.verdict(msg);
+    const { v, agent_code } = await this.verdict(msg);
     const decision: Decision =
       v.reason === null
         ? {
@@ -230,6 +257,7 @@ export class Adp {
         holds: v.reason === null ? v.holds : [],
         at: this.now().toISOString(),
         ...(v.notify ? { notify: v.notify } : {}),
+        facts: factsOf(msg, agent_code),
       });
     } catch {
       // Запись остаётся «в работе»: повтор op_ref получит STATE_UNAVAILABLE без нового резерва; решение не меняется.
@@ -260,8 +288,18 @@ export class Adp {
     return prior.decision;
   }
 
-  /** Проверки агентской операции по порядку SPEC §6; первая сработавшая — причина. */
-  private async verdict(msg: CanonicalMessage): Promise<Verdict> {
+  /**
+   * Вердикт и агент итога (РП52 п. 5): агент — из домена токена, если проверки до него дошли; у AGENT_UNKNOWN (нет в
+   * реестре или исключён) агент не установлен — итог без события.
+   */
+  private async verdict(msg: CanonicalMessage): Promise<{ readonly v: Verdict; readonly agent_code: string | null }> {
+    const seen: { agent_code?: string } = {};
+    const v = await this.checks(msg, seen);
+    return { v, agent_code: v.reason === "AGENT_UNKNOWN" ? null : (seen.agent_code ?? null) };
+  }
+
+  /** Проверки агентской операции по порядку SPEC §6; первая сработавшая — причина. seen — агент по домену токена. */
+  private async checks(msg: CanonicalMessage, seen: { agent_code?: string }): Promise<Verdict> {
     const kind: string | undefined = msg.instrument?.kind;
     const agentInstrument = kind !== undefined && AGENT_INSTRUMENTS.includes(kind);
     const aoi = msg.aoi ?? undefined;
@@ -313,6 +351,8 @@ export class Adp {
         return no("STATE_UNAVAILABLE");
       }
       if (!token) return no("CREDENTIAL_INVALID");
+      // Агент итога — владелец токена по записи Платформы, в том числе при AOI_MISMATCH (РП52 п. 5).
+      seen.agent_code = token.agent_code;
       if (aoi !== undefined && (token.agent_code !== aoiCode || token.mandate_id !== aoi.mandate_id)) {
         // Недостоверный код агента или мандат в признаке (A1 п. 8.2); в журнал — коды, без реквизитов инструмента.
         this.log("warn", { op_ref: msg.op_ref, agent_code: aoiCode, incident: true }, "ADP: признак не совпадает с доменом токена");
