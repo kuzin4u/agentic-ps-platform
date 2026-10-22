@@ -21,9 +21,11 @@ BEGIN
   IF NOT (
        (OLD.status = 'PENDING' AND NEW.status IN ('APPROVED', 'REJECTED', 'EXPIRED'))
     OR (OLD.status = 'APPROVED' AND NEW.status = 'USED'
-        AND (NEW.confirmation_ref, NEW.participant_code, NEW.kid, NEW.decision, NEW.totals_hash, NEW.decided_at, NEW.signature)
+        AND (NEW.confirmation_ref, NEW.participant_code, NEW.kid, NEW.decision, NEW.totals_hash, NEW.decided_at, NEW.signature,
+             NEW.instrument_chosen)
             IS NOT DISTINCT FROM
-            (OLD.confirmation_ref, OLD.participant_code, OLD.kid, OLD.decision, OLD.totals_hash, OLD.decided_at, OLD.signature))
+            (OLD.confirmation_ref, OLD.participant_code, OLD.kid, OLD.decision, OLD.totals_hash, OLD.decided_at, OLD.signature,
+             OLD.instrument_chosen))
   ) THEN
     RAISE EXCEPTION 'confirmations: переход % → % запрещён', OLD.status, NEW.status USING ERRCODE = 'restrict_violation';
   END IF;
