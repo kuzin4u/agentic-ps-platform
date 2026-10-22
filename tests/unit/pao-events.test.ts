@@ -271,7 +271,7 @@ describe.skipIf(!DATABASE_URL)("лента событий — PostgreSQL", () =>
     const steps: string[] = [];
     const hooks: PgConsentStoreHooks = {
       inTx: async (step, draft: EventDraft) => {
-        const who = draft.data.mandate_id === first.id ? "first" : "second";
+        const who = "mandate_id" in draft.data && draft.data.mandate_id === first.id ? "first" : "second";
         if (step === "journal") return; // запись журнала — до блокировки, порядок номеров её не касается
         steps.push(`${who}:${step}`);
         if (who === "first" && step === "commit") {

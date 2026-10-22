@@ -10,6 +10,8 @@ import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
 import type { Params } from "../shared/config.js";
 import type { AgentSelf, Credential } from "../shared/pao.js";
+import { CONFIRMATION_ID, type ConfirmationRecord } from "../confirm/model.js";
+import type { ConfirmationStore } from "../confirm/store.js";
 import { CREDENTIAL_REF } from "../credentials/model.js";
 import type { Credentials } from "../credentials/service.js";
 import { credentialRequestBody, hasPaymentDetails, keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
@@ -51,6 +53,15 @@ export interface PaoDeps {
    * в рабочем сервере не подключён — только стенд и тесты.
    */
   readonly credentials?: Pick<Credentials, "issue" | "replay" | "get">;
+  /**
+   * Запросы подтверждения П6 (РП51 п. 8–10); без них GET /pao/v1/confirmations/{id} не регистрируется: П6 в рабочем
+   * сервере не подключено — только стенд и тесты. now — часы Платформы для истечения при чтении (п. 6).
+   */
+  readonly confirmations?: {
+    readonly store: Pick<ConfirmationStore, "get" | "expire">;
+    readonly now: () => Date;
+    readonly upk_page_base_url: string;
+  };
   /** Стенд (РП40 п. 8): только он принимает стендовые порты; в рабочем сервере стендовый порт — отказ запуска. */
   readonly stand?: boolean;
   /** Монотонные часы предела обработчика (РП33 доп.); по умолчанию performance.now — в тестах подменяются. */
@@ -423,6 +434,39 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     );
   }
 
+  // Запрос подтверждения создаёт ADP с итогом из сообщения процессинга (РП50, инвариант 5): в 1.4.x метода нет —
+  // 400 REQUEST_INVALID без записи и без захвата ключа (РП51 п. 11); судьба метода — ПАО 1.5.0.
+  app.post("/pao/v1/confirmations", async (req, reply) => {
+    req.log.info({ agent_code: (req.paoAgent as AgentRecord).agent_code }, "ПАО: POST /pao/v1/confirmations в 1.4.x не поддерживается");
+    return send(reply, paoError("REQUEST_INVALID", "ПАО §3"));
+  });
+
+  // Запрос подтверждения этого агента (ПАО §3; РП51 п. 8–10). Чужой, неизвестный и не по форме id — один ответ
+  // 400 REQUEST_INVALID: кода «не найден» в 1.4.0 нет (404 CONFIRMATION_NOT_FOUND — ПАО 1.5.0). PENDING после срока
+  // переводится в EXPIRED этим чтением (событие confirmation.expired, п. 6). Сбой П6 — 503 STATE_UNAVAILABLE.
+  const confirmations = deps.confirmations;
+  if (confirmations) {
+    app.get<{ Params: { id: string } }>("/pao/v1/confirmations/:id", async (req, reply) => {
+      const agent = req.paoAgent as AgentRecord;
+      const id = req.params.id;
+      if (!CONFIRMATION_ID.test(id)) return send(reply, paoError("REQUEST_INVALID", "ПАО §3"));
+      try {
+        let r = await confirmations.store.get(id);
+        if (!r || r.agent_code !== agent.agent_code) return send(reply, paoError("REQUEST_INVALID", "ПАО §3"));
+        const now = confirmations.now().toISOString();
+        if (r.status === "PENDING" && !(r.expires_at > now)) {
+          await confirmations.store.expire(id, now);
+          r = await confirmations.store.get(id);
+          if (!r) throw new Error("confirmations: запрос пропал после истечения");
+        }
+        return reply.code(200).send(confirmationView(r, confirmations.upk_page_base_url));
+      } catch (err) {
+        req.log.error({ err, agent_code: agent.agent_code }, "ПАО: П6 — состояние запроса подтверждения не подтверждено");
+        return send(reply, paoError("STATE_UNAVAILABLE", "A3 п. 4.5"));
+      }
+    });
+  }
+
   // Лента событий этого агента (ПАО §5; РП39 п. 7): после курсора after, по номеру, не больше event_page_max.
   // after не по форме, пустой или повторённый — 400 REQUEST_INVALID, как и чужой или неизвестный (одинаково).
   // Ответы 400/401/403/503 объявляются в ПАО 1.5.0 (РП39 п. 8, № 20). Событие — сигнал, статус — через GET мандата.
@@ -446,6 +490,18 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
 const emptyBody = (raw: string): true | undefined => (raw === "" ? true : undefined);
 
 const reply4xx = (e: PaoErrorReply): PaoReply => ({ status: e.http, body: e.body });
+
+/**
+ * Confirmation ПАО 1.4.0 (РП51 п. 9–10): USED — как APPROVED с той же ссылкой (значения USED в перечне нет до 1.5.0;
+ * погашение агент узнаёт из итога операции); ссылка — только у APPROVED и USED. link — страница УПК без сумм и ссылки.
+ */
+const confirmationView = (r: ConfirmationRecord, upkBase: string) => ({
+  id: r.confirmation_id,
+  status: r.status === "USED" ? "APPROVED" : r.status,
+  link: `${upkBase}/c/${r.confirmation_id}`,
+  confirmation_ref: r.status === "APPROVED" || r.status === "USED" ? r.confirmation_ref : null,
+  expires_at: r.expires_at,
+});
 
 /** Реквизит для хранения под ключом (РП48 (в)): без значения криптограммы — его в базе Платформы нет (РП47 п. 3, 10). */
 function withoutCryptogram(c: Credential): Credential {
