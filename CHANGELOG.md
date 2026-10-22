@@ -5,6 +5,53 @@
 ставит владелец на коммит слияния в `main`. Версия ПАО — `info.version` в `docs/core/agent-protocol.yaml`, сверка копий —
 по `PAO_SPEC_SHA256` (`src/shared/pao-errors.generated.ts`). Записи до v0.4.0 — в описаниях PR и тегах.
 
+## v0.16.0 — 22.10.2026
+
+PS-19 «Подтверждение человеком (П6)», часть 1, PR #53. Решение РП50 с «Дополнениями» п. 1–9. ПАО — по-прежнему 1.4.0,
+`PAO_SPEC_SHA256` не меняется (`48bd3397…9ad9da`), `agent-protocol.yaml` не менялся. ПИ — тело и ответы ПИ-8
+`POST /participants/v1/confirmations/{id}`; новый `PI_SPEC_SHA256` `cc15d826…5e2485`, `info.version` — прежний
+`1.0.0-draft`. Ядро — `#v0.11.0` без изменений. Миграция — `sql/111_confirmations.sql`.
+
+### Агенту (AG-13)
+
+- **Повтор авторизации с `confirmation_ref` — новой операцией, с новым `op_ref`.** Тот же `op_ref` с добавленной
+  ссылкой — другое сообщение: `STATE_UNAVAILABLE` (РП43 п. 5). Канала к запросу подтверждения у агента пока нет
+  (событие `confirmation.required` и `GET /pao/v1/confirmations/{id}` — PS-19 ч. 2): поведение агента на
+  `CONFIRMATION_REQUIRED` не меняется.
+
+### Банку
+
+- **Новое тело ПИ-8 `POST /participants/v1/confirmations/{id}`** — решение человека по запросу подтверждения в приложении
+  банка: `{participant_code, kid, decision: APPROVE | REJECT, totals_hash, decided_at, signature}`, ровно эти поля
+  (поле `instrument_chosen` из черновика убрано — вернётся с выбором инструмента на странице УПК, PS-19 ч. 2).
+- **Подпись** — Ed25519 ключом банка над `canonicalJson` записи `{context, participant_code, kid, confirmation_id,
+  decision, totals_hash, decided_at}`, `context` = `pao:participant-confirmation:v1`, `confirmation_id` — из пути, в теле
+  его нет. Подписывает банк клиента корневого INTENT.
+- **`totals_hash`** — SHA-256 (64 строчные hex) UTF-8 канонической записи RFC 8785 объекта `{confirmation_id, agent_code,
+  mandate_id, merchant_id, amount, currency, order_ref}`: `amount` — целое в минимальных единицах, `currency` — ISO 4217.
+  Банк хэширует итог, который показал человеку.
+- **Порядок проверок и коды:** тело — 400 `REQUEST_INVALID`; подпись (до чтения хранилища), не банк клиента,
+  `decided_at` позже часов Платформы больше `signature_skew_sec` — 401 `SIGNATURE_INVALID`; запроса нет — 404
+  `CONFIRMATION_NOT_FOUND`; повтор той же записи — 200 с текущим статусом; `totals_hash` не совпал — 409
+  `CONFIRMATION_TOTALS_MISMATCH`; решение уже другое, ссылка погашена, `decided_at` позже `expires_at` или запись не
+  строго раньше `expires_at` — 409 `CONFIRMATION_NOT_PENDING` с текущим `status` (`EXPIRED` по сроку); сбой — 503
+  `STATE_UNAVAILABLE`, `Retry-After`.
+- **Ответ 200** — `{confirmation_id, status}` и `confirmation_ref` при `APPROVED` (однократная, до 32 символов): её
+  через агента получает продавец и повторяет авторизацию с ней в ПИ-1.
+
+### Стенд
+
+- ADP стенда создаёт запрос подтверждения на `CONFIRMATION_REQUIRED` (сообщение с `order_ref`), срок — `order_hold_sec`;
+  повтор с действующей `confirmation_ref` и теми же итоговыми значениями — `APPROVE`, ссылка гасится.
+- Приложение банка стенда — `stand.issuer.confirm(confirmationId, opts?)`; запросы — только чтением
+  `stand.confirmations.get / byKey` (до `GET /pao/v1/confirmations/{id}` в ч. 2).
+
+### Переход с 0.15.x
+
+- Миграция `sql/111` (таблица `confirmations`) применяется при старте рабочего сервера (`applyPlatformMigrations`);
+  параметров нет. Банку — новое тело ПИ-8 и `PI_SPEC_SHA256`. Смена тега у агента — по порядку смены тега, без
+  `npm install`.
+
 ## v0.15.0 — 21.10.2026
 
 PS-14 «Агентские реквизиты (П5)», часть 4, PR #52 — PS-14 закрыта. Решение РП49 (д) с уточнением владельца (набор MCC
