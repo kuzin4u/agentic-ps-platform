@@ -326,6 +326,11 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       }
       // Роль — из списка доверенных, снимком до первого await (Р-205): оператор УПК решает по любому запросу (РП51 п. 12).
       const upk = deps.trusted.role(d.participant_code) === "UPK";
+      // Страница УПК без выбора инструмента — не по форме (РП51 п. 13): от банка поле по желанию.
+      if (upk && d.instrument_chosen === undefined) {
+        req.log.info({ participant_code: d.participant_code, confirmation_id: id }, "ПИ-8: решение UPK без instrument_chosen");
+        return fail("REQUEST_INVALID");
+      }
       const now = (deps.now ?? (() => new Date()))();
       const at = now.toISOString();
       let r: ConfirmationRecord | undefined;
@@ -446,12 +451,16 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
 }
 
 const CONFIRM_FIELDS = ["decided_at", "decision", "kid", "participant_code", "signature", "totals_hash"].join(",");
+/** То же с выбором инструмента на странице УПК (РП51 п. 13). */
+const CONFIRM_FIELDS_INSTRUMENT = ["decided_at", "decision", "instrument_chosen", "kid", "participant_code", "signature", "totals_hash"].join(",");
 
 /** Тело решения по запросу подтверждения (РП50 п. 4): ровно поля записи и подпись; разбор — новый объект (снимок, Р-205). */
 function confirmBody(v: unknown): ConfirmationDecision | undefined {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
   const o = v as Record<string, unknown>;
-  if (Object.keys(o).sort().join(",") !== CONFIRM_FIELDS) return undefined;
+  const fields = Object.keys(o).sort().join(",");
+  if (fields !== CONFIRM_FIELDS && fields !== CONFIRM_FIELDS_INSTRUMENT) return undefined;
+  if (o.instrument_chosen !== undefined && o.instrument_chosen !== "CARD" && o.instrument_chosen !== "SBP") return undefined;
   const str = (k: string) => typeof o[k] === "string" && (o[k] as string).length > 0 && (o[k] as string).length <= 256;
   if (!["participant_code", "kid", "decided_at", "signature"].every(str)) return undefined;
   if (o.decision !== "APPROVE" && o.decision !== "REJECT") return undefined;
@@ -464,6 +473,7 @@ function confirmBody(v: unknown): ConfirmationDecision | undefined {
     totals_hash: o.totals_hash,
     decided_at: o.decided_at as string,
     signature: o.signature as string,
+    ...(o.instrument_chosen === undefined ? {} : { instrument_chosen: o.instrument_chosen }),
   };
 }
 
@@ -473,7 +483,8 @@ const sameDecision = (a: ConfirmationDecision, b: ConfirmationDecision): boolean
   a.decision === b.decision &&
   a.totals_hash === b.totals_hash &&
   a.decided_at === b.decided_at &&
-  a.signature === b.signature;
+  a.signature === b.signature &&
+  a.instrument_chosen === b.instrument_chosen;
 
 /** Ответ 200 ПИ-8: ссылка — только у одобренного, ещё не погашенного (РП50 п. 6, ответ ПИ-8). */
 const confirmationView = (r: ConfirmationRecord) => ({

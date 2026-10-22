@@ -195,12 +195,49 @@ describe("ПИ-8: решение человека по запросу подтв
     expect((await ctx.store.get(r.confirmation_id))?.status).toBe("PENDING");
   });
 
-  it("решение оператора УПК (роль UPK) — принято по запросу клиента любого банка; запись решения — его (РП51 п. 12)", async () => {
+  it("решение оператора УПК (роль UPK) с instrument_chosen — принято по запросу клиента любого банка (РП51 п. 12–13)", async () => {
     const r = await request();
-    const res = await post(r.confirmation_id, body(r, {}, "upk"));
+    const res = await post(r.confirmation_id, body(r, { instrument_chosen: "CARD" }, "upk"));
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ confirmation_id: r.confirmation_id, status: "APPROVED" });
-    expect((await ctx.store.get(r.confirmation_id))?.decision).toMatchObject({ participant_code: upk.participant_code, decision: "APPROVE" });
+    expect((await ctx.store.get(r.confirmation_id))?.decision).toMatchObject({ participant_code: upk.participant_code, decision: "APPROVE", instrument_chosen: "CARD" });
+  });
+
+  it("UPK без instrument_chosen — 400 REQUEST_INVALID, решение не записано; от банка поле по желанию (РП51 п. 13)", async () => {
+    const r = await request();
+    expect(await post(r.confirmation_id, body(r, {}, "upk"))).toEqual({ status: 400, body: { code: "REQUEST_INVALID" } });
+    expect((await ctx.store.get(r.confirmation_id))?.status).toBe("PENDING");
+    const res = await post(r.confirmation_id, body(r, { instrument_chosen: "SBP" }));
+    expect(res.status, "банк с инструментом").toBe(200);
+    expect((await ctx.store.get(r.confirmation_id))?.decision?.instrument_chosen).toBe("SBP");
+  });
+
+  it("instrument_chosen входит в подпись: подмена — 401; не CARD/SBP — 400; без поля — байты подписи v0.16.0", async () => {
+    const r = await request();
+    const signed = body(r, { instrument_chosen: "CARD" }, "upk");
+    expect((await post(r.confirmation_id, { ...signed, instrument_chosen: "SBP" })).status, "подмена инструмента").toBe(401);
+    for (const v of ["PAN", "", null, 1]) {
+      expect((await post(r.confirmation_id, { ...signed, instrument_chosen: v })).status, `instrument_chosen = ${JSON.stringify(v)}`).toBe(400);
+    }
+    expect((await ctx.store.get(r.confirmation_id))?.status).toBe("PENDING");
+    // Запись без инструмента — ровно поля v0.16.0 (CHANGELOG «Банку» — совместимо).
+    const base = { participant_code: "b", kid: "k", confirmation_id: r.confirmation_id, decision: "APPROVE" as const, totals_hash: "0".repeat(64), decided_at: "2026-10-22T10:00:00.000Z" };
+    expect(JSON.parse(participantConfirmationSigningInput(base).toString("utf8"))).toEqual({ context: "pao:participant-confirmation:v1", ...base });
+    expect(JSON.parse(participantConfirmationSigningInput({ ...base, instrument_chosen: "SBP" }).toString("utf8"))).toEqual({
+      context: "pao:participant-confirmation:v1",
+      ...base,
+      instrument_chosen: "SBP",
+    });
+  });
+
+  it("повтор: та же запись с инструментом — 200; тот же итог с другим инструментом — 409 (это другое решение)", async () => {
+    const r = await request();
+    const b = body(r, { instrument_chosen: "CARD" }, "upk");
+    const first = await post(r.confirmation_id, b);
+    expect(first.status).toBe(200);
+    expect(await post(r.confirmation_id, b)).toEqual(first);
+    const other = await post(r.confirmation_id, body(r, { instrument_chosen: "SBP" }, "upk"));
+    expect(other).toEqual({ status: 409, body: { code: "CONFIRMATION_NOT_PENDING", status: "APPROVED" } });
   });
 
   it("decided_at позже часов Платформы больше допуска — 401; в пределах допуска — принято", async () => {

@@ -32,7 +32,15 @@ export interface ConfirmationDecision {
   readonly totals_hash: string;
   readonly decided_at: string;
   readonly signature: string;
+  /**
+   * Инструмент, выбранный человеком на странице УПК (РП51 п. 13): значение канонического channel, номера карты и счёта нет
+   * (инвариант 1). От UPK обязателен, от банка — по желанию; в totals_hash не входит (итог — одно, выбор — другое).
+   */
+  readonly instrument_chosen?: ConfirmationInstrument;
 }
+
+/** Канал, выбранный человеком (РП51 п. 13) — значения канонического channel. */
+export type ConfirmationInstrument = "CARD" | "SBP";
 
 export interface ConfirmationRecord extends ConfirmationTotals {
   readonly confirmation_id: string;
@@ -107,7 +115,10 @@ export const sameTotals = (a: ConfirmationTotals, b: ConfirmationTotals): boolea
   a.currency === b.currency &&
   a.order_ref === b.order_ref;
 
-/** Байты подписи участника: canonicalJson записи решения с меткой контекста и confirmation_id из пути, UTF-8. */
+/**
+ * Байты подписи участника: canonicalJson записи решения с меткой контекста и confirmation_id из пути, UTF-8. Без
+ * instrument_chosen — те же байты, что в v0.16.0 (подпись банка по прежнему телу не меняется, РП51 п. 13).
+ */
 export const participantConfirmationSigningInput = (
   r: Omit<ConfirmationDecision, "signature"> & { readonly confirmation_id: string },
 ): Buffer =>
@@ -120,6 +131,7 @@ export const participantConfirmationSigningInput = (
       decision: r.decision,
       totals_hash: r.totals_hash,
       decided_at: r.decided_at,
+      ...(r.instrument_chosen === undefined ? {} : { instrument_chosen: r.instrument_chosen }),
     }),
     "utf8",
   );
