@@ -194,6 +194,24 @@ describe("GET /pao/v1/confirmations/{id} и события confirmation.* на �
     }
   });
 
+  it("КТ2 ч. 2 № 9: сбой истечения при чтении после срока — 503 STATE_UNAVAILABLE, статус не догадкой (инвариант 3)", async () => {
+    const { id } = await order("ORD-get-exp-fail");
+    stand.setClock(new Date("2026-10-22T09:15:00Z"));
+    const spy = vi.spyOn(MemoryConfirmationStore.prototype, "expire").mockRejectedValueOnce(new Error("П6 недоступно"));
+    try {
+      const r = await get(id);
+      expect(r.statusCode).toBe(503);
+      expect(r.headers["retry-after"]).toBe("1");
+      expect(r.json()).toMatchObject({ code: "STATE_UNAVAILABLE", retry: "same_key" });
+      const expired = (await feed()).filter((e) => e.type === "confirmation.expired" && (e.data as { confirmation_id?: string }).confirmation_id === id);
+      expect(expired, "события без перехода нет").toEqual([]);
+      expect((await get(id)).json(), "следующее чтение переводит в EXPIRED").toMatchObject({ status: "EXPIRED" });
+    } finally {
+      spy.mockRestore();
+      stand.setClock(new Date("2026-10-22T09:00:00Z"));
+    }
+  });
+
   it("SUSPENDED — 403 AGENT_SUSPENDED у GET запроса подтверждения", async () => {
     const { id } = await order("ORD-get-susp");
     stand.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });

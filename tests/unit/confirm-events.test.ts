@@ -120,6 +120,16 @@ describe("события confirmation.* в памяти (РП51 п. 1–5)", () 
     expect(await events.delivery(rej!.event_id), "на rejected не подписан").toBeUndefined();
   });
 
+  it("КТ2 ч. 2 № 9: второе событие того же перехода в памяти — исключение (аналог UNIQUE (confirmation_id, type)), ленту не меняет", async () => {
+    const { events, store, feed } = setup();
+    const rec = await store.create(pending("ORD-dup"));
+    const before = await feed();
+    expect(() =>
+      events.appendConfirmationEventNow({ agent_code: AGENT, type: "confirmation.required", data: { confirmation_id: rec.confirmation_id } }, AT),
+    ).toThrow(/уже записано/);
+    expect(await feed()).toEqual(before);
+  });
+
   it("сбой записи события — переход не записан (откат вместе, РП51 п. 7)", async () => {
     const store = new MemoryConfirmationStore({
       events: {
