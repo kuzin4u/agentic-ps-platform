@@ -121,9 +121,17 @@ function setup(
   const requests = (m: CanonicalMessage) =>
     inner.byKey({ mandate_id: M, merchant_id: m.merchant.id as string, order_ref: m.order_ref as string, amount: m.amount, currency: m.currency });
   /** Решение человека — записью хранилища, не через ПИ-8 (см. шапку). */
-  const approve = async (r: ConfirmationRecord, decision: "APPROVE" | "REJECT" = "APPROVE"): Promise<string> => {
+  const approve = async (r: ConfirmationRecord, decision: "APPROVE" | "REJECT" = "APPROVE", instrument?: "CARD" | "SBP"): Promise<string> => {
     const ref = newConfirmationRef();
-    const d = { participant_code: CLIENT.participant_code, kid: "kid-test", decision, totals_hash: totalsHash(r), decided_at: now().toISOString(), signature: "x".repeat(86) };
+    const d = {
+      participant_code: CLIENT.participant_code,
+      kid: "kid-test",
+      decision,
+      totals_hash: totalsHash(r),
+      decided_at: now().toISOString(),
+      signature: "x".repeat(86),
+      ...(instrument === undefined ? {} : { instrument_chosen: instrument }),
+    };
     const done = await inner.decide(r.confirmation_id, d, decision === "APPROVE" ? ref : null, now().toISOString());
     expect(done?.status, "решение в хранилище не записано").toBe(decision === "APPROVE" ? "APPROVED" : "REJECTED");
     return ref;
@@ -180,6 +188,33 @@ describe("ПС11 в ADP: подтверждение выше порога и п�
     expect(await s.available(), "резерв на сумму операции (инвариант 4)").toBe(LIMIT - 340_000);
     const used = await s.inner.byRef(ref);
     expect(used).toMatchObject({ status: "USED", op_ref: retry.op_ref });
+  });
+
+  it("РП51 п. 14: человек выбрал СБП — повтор по карте с этой ссылкой CONFIRMATION_REQUIRED без нового запроса, без инцидента", async () => {
+    const s = setup();
+    await s.adp.decide(auth());
+    const [r] = await s.requests(auth());
+    const ref = await s.approve(r!, "APPROVE", "SBP");
+    const retry = auth({ confirmation_ref: ref });
+    expect(pair(await s.adp.decide(retry))).toMatchObject({ decision: "CONFIRMATION_REQUIRED", reason: "CONFIRMATION_REQUIRED" });
+    expect((await s.requests(auth())).map((x) => x.status), "нового запроса нет, ссылка не погашена").toEqual(["APPROVED"]);
+    expect(s.calls.filter((c) => c === "consume"), "погашения нет").toHaveLength(0);
+    expect(await s.available(), "резерва нет").toBe(LIMIT);
+    expect(incidents(s.logs), "не подмена итога").toEqual([]);
+    expect(s.logs.find((l) => l.msg.includes("другому инструменту"))?.fields).toMatchObject({ instrument_chosen: "SBP", channel: "CARD" });
+  });
+
+  it("РП51 п. 14: человек выбрал карту — повтор по карте с этой ссылкой APPROVE; решение банка без инструмента — по любому каналу", async () => {
+    const s = setup();
+    await s.adp.decide(auth());
+    const [r] = await s.requests(auth());
+    const ref = await s.approve(r!, "APPROVE", "CARD");
+    expect(pair(await s.adp.decide(auth({ confirmation_ref: ref }))).decision).toBe("APPROVE");
+    const other = auth({ order_ref: "ORD-no-instr" });
+    await s.adp.decide(other);
+    const [r2] = await s.requests(other);
+    const ref2 = await s.approve(r2!);
+    expect(pair(await s.adp.decide(auth({ order_ref: "ORD-no-instr", confirmation_ref: ref2 }))).decision).toBe("APPROVE");
   });
 
   it("повторное CONFIRMATION_REQUIRED на тот же заказ до решения — тот же запрос, нового нет", async () => {
