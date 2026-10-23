@@ -170,6 +170,8 @@ describe("стендовые параметры", () => {
       "`participant_notify_horizon_sec` ≥ 2 × `participant_notify_max_delay_sec`",
       "`operation_outcome_every_ms` < `operation_outcome_max_delay_sec` × 1000",
       "`operation_outcome_horizon_sec` ≥ 2 × `operation_outcome_max_delay_sec`",
+      "`operation_reread_interval_sec` — целое ≥ 1, меньше `reservation_ttl_sec`",
+      "`restore_budget_on_refund` — булево; `true` — отказ запуска до PS-23",
     ]) {
       expect(section, rule).toContain(rule);
     }
@@ -192,6 +194,17 @@ describe("стендовые параметры", () => {
     for (const k of ["operation_outcome_every_ms", "operation_outcome_max_delay_sec", "operation_outcome_horizon_sec"]) {
       expect(() => parseParams({ ...stand(), [k]: 0 }), k).toThrow(new RegExp(`${k}:`));
     }
+  });
+
+  it("operation_reread_interval_sec меньше reservation_ttl_sec (РП55 п. 2)", () => {
+    expect(parseParams(stand()).operation_reread_interval_sec).toBe(3600);
+    expect(parseParams({ ...stand(), reservation_ttl_sec: 3601 }).operation_reread_interval_sec).toBe(3600);
+    expect(() => parseParams({ ...stand(), reservation_ttl_sec: 3600 })).toThrow(/operation_reread_interval_sec не меньше reservation_ttl_sec/);
+  });
+
+  it("restore_budget_on_refund: true до PS-23 — отказ запуска (РП55 п. 4)", () => {
+    expect(parseParams(stand()).restore_budget_on_refund).toBe(false);
+    expect(() => parseParams({ ...stand(), restore_budget_on_refund: true })).toThrow(/restore_budget_on_refund: true не поддерживается до PS-23/);
   });
 
   it("participant_notify_allow_hosts — как event_subscription_allow_hosts: IP и повтор — отказ, пустой допустим", () => {

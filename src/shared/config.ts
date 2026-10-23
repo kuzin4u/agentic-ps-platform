@@ -67,6 +67,8 @@ export interface Params {
   readonly operation_outcome_max_delay_sec: number;
   /** Горизонт прохода сборщика итогов, с (РП52 «Дополнения» п. 1): записи старше — не разбираются. */
   readonly operation_outcome_horizon_sec: number;
+  /** Для агента, Платформа не читает (РП55 п. 2): интервал перечитывания GET операции после operation.authorized, с. */
+  readonly operation_reread_interval_sec: number;
   /** Начало адреса страницы УПК в link запроса подтверждения: https:// и имя хоста, без пути (РП51 п. 10). */
   readonly upk_page_base_url: string;
   /** Выбор СБП на странице УПК эмулятора; до PS-21 — false (РП51 п. 16). */
@@ -173,6 +175,7 @@ const RULES: Record<keyof Params, Rule> = {
   operation_outcome_every_ms: int(1),
   operation_outcome_max_delay_sec: int(1),
   operation_outcome_horizon_sec: int(1),
+  operation_reread_interval_sec: int(1),
   upk_page_base_url: httpsOrigin,
   upk_sbp_enabled: bool,
 };
@@ -222,6 +225,12 @@ export function parseParams(raw: unknown): Params {
     if (p.operation_outcome_horizon_sec < 2 * p.operation_outcome_max_delay_sec) {
       problems.push("operation_outcome_horizon_sec меньше двух operation_outcome_max_delay_sec");
     }
+    // Перечитывание агентом укладывается в срок авторизации хотя бы раз (РП55 п. 2).
+    if (p.operation_reread_interval_sec >= p.reservation_ttl_sec) {
+      problems.push("operation_reread_interval_sec не меньше reservation_ttl_sec");
+    }
+    // Восстановление бюджета при возврате не реализовано до PS-23: true — молчаливое расхождение (РП55 п. 4).
+    if (p.restore_budget_on_refund) problems.push("restore_budget_on_refund: true не поддерживается до PS-23");
   }
   if (problems.length) throw new ParamsError(problems);
   return Object.freeze(out) as unknown as Params;
