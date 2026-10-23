@@ -9,6 +9,7 @@ import { insertOperationEventTx, type MemoryConsentStore, type TxSqlPool } from 
 import type { OperationEventDraft } from "../pao/events.js";
 import type { StateService } from "../state/index.js";
 import { acceptIssuerResponse, type CollectorLog, type IssuerResponseDeps, type IssuerResponseStatus, type OutcomeStore, type PushFor } from "./outcomes.js";
+import { acceptRefund, type RefundStore } from "./refunds.js";
 import { acceptReversal, REVERSAL_KINDS, type ReversalStore } from "./reversals.js";
 
 /** Сопоставление с пределами (РП53 п. 5, 6, 8); перечень — текстом AGENT-PROTOCOL §5, enum — ПАО 1.5.0 (#37). */
@@ -173,6 +174,7 @@ export interface OperationEventDeps extends IssuerResponseDeps {
   readonly outcomes?: Pick<OutcomeStore, "get">;
   readonly fulfilments?: FulfilmentStore;
   readonly reversals?: ReversalStore;
+  readonly refunds?: RefundStore;
   /** event_reorder_window_ms (РП55 п. 5): событие без предшественника дольше окна от решения ADP — инцидент. */
   readonly reorder_window_ms?: number;
 }
@@ -183,8 +185,8 @@ const CURRENCY = /^[A-Z]{3}$/;
 
 /**
  * ПИ-3 POST /adp/v1/events: ISSUER_RESPONSE — РП52 (acceptIssuerResponse), PRESENTMENT — РП53 (acceptPresentment),
- * REVERSAL и AUTH_EXPIRED — РП55 (acceptReversal); прочие типы — 503 (процессинг повторит). Снимок входа до первого
- * await (Р-205).
+ * REVERSAL и AUTH_EXPIRED — РП55 (acceptReversal), REFUND — РП55 (acceptRefund); прочие типы (CHARGEBACK до PS-22) — 503
+ * (процессинг повторит). Снимок входа до первого await (Р-205).
  */
 export async function acceptOperationEvent(deps: OperationEventDeps, raw: unknown): Promise<IssuerResponseStatus> {
   if (!isObj(raw)) return 400;
@@ -193,6 +195,7 @@ export async function acceptOperationEvent(deps: OperationEventDeps, raw: unknow
   const outcomes = deps.outcomes ?? deps.store;
   if (msg.msg_type === "PRESENTMENT" && deps.fulfilments) return acceptPresentment({ ...deps, fulfilments: deps.fulfilments, outcomes }, msg);
   if (REVERSAL_KINDS.includes(msg.msg_type) && deps.reversals) return acceptReversal({ ...deps, reversals: deps.reversals, outcomes }, msg);
+  if (msg.msg_type === "REFUND" && deps.refunds && deps.fulfilments) return acceptRefund({ ...deps, refunds: deps.refunds, fulfilments: deps.fulfilments, outcomes }, msg);
   return acceptIssuerResponse(deps, msg);
 }
 

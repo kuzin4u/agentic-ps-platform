@@ -19,6 +19,7 @@ import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { MemoryOutcomeStore, OperationOutcomeCollector, type CollectorResult } from "../fulfilment/outcomes.js";
 import { MemoryFulfilmentStore } from "../fulfilment/records.js";
+import { MemoryRefundStore } from "../fulfilment/refunds.js";
 import { MemoryReversalStore } from "../fulfilment/reversals.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import { pushAllowed, type PaoEventType } from "../pao/events.js";
@@ -253,6 +254,8 @@ export function createStand(opts: StandOptions = {}): Stand {
   const fulfilmentStore = new MemoryFulfilmentStore(consentStore);
   // Реверсалы и истечение авторизации (РП55 п. 1): записи в памяти, событий нет до ПАО 1.5.0.
   const reversalStore = new MemoryReversalStore();
+  // Возвраты (РП55 п. 3): записи и operation.refunded — в ленту журнала стенда; бюджет не восстанавливается.
+  const refundStore = new MemoryRefundStore(consentStore);
   const outcomes = new OperationOutcomeCollector(outcomeStore, {
     horizonSec: params.operation_outcome_horizon_sec,
     maxDelaySec: params.operation_outcome_max_delay_sec,
@@ -301,7 +304,7 @@ export function createStand(opts: StandOptions = {}): Stand {
       // Запрос подтверждения агенту (РП51 п. 8–10): то же хранилище П6, часы стенда, link — на страницу УПК.
       confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url },
       // Операция агенту (РП52 п. 10): записи ADP и итоги П8 — те же хранилища в памяти, что у ADP и ПИ-3.
-      operations: { operations, outcomes: outcomeStore, fulfilments: fulfilmentStore, reversals: reversalStore },
+      operations: { operations, outcomes: outcomeStore, fulfilments: fulfilmentStore, reversals: reversalStore, refunds: refundStore },
       resolveHost: dns.resolve,
       stand: true,
     },
@@ -346,6 +349,7 @@ export function createStand(opts: StandOptions = {}): Stand {
         now,
         fulfilments: fulfilmentStore,
         reversals: reversalStore,
+        refunds: refundStore,
         reorder_window_ms: params.event_reorder_window_ms,
       },
     },

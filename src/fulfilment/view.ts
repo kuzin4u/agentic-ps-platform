@@ -6,6 +6,7 @@ import type { Aoi as CanonicalAoi } from "../shared/canonical.generated.js";
 import type { Aoi, Operation } from "../shared/pao.js";
 import type { OperationOutcome, OutcomeStatus, OutcomeStore } from "./outcomes.js";
 import type { FulfilmentRecord, FulfilmentStore } from "./records.js";
+import type { RefundStore } from "./refunds.js";
 import type { ReversalStore } from "./reversals.js";
 
 /** Объект fulfilment ПАО 1.4.0 (РП53 п. 8): currency и прочие поля записи агенту — с 1.5.0 (#37). */
@@ -24,6 +25,8 @@ export interface OperationViewDeps {
   readonly fulfilments?: Pick<FulfilmentStore, "get">;
   /** Реверсалы (РП55 п. 1): есть — REVERSED с reason REVERSAL / AUTH_EXPIRED; без хранилища — как до ч. 3. */
   readonly reversals?: Pick<ReversalStore, "get">;
+  /** Возвраты (РП55 п. 3): есть после клиринга — REFUNDED, fulfilment прежний; без хранилища — как до ч. 3. */
+  readonly refunds?: Pick<RefundStore, "get">;
 }
 
 /** Агент операции: из итога, а без него — как у сборщика (факты, затем столбец уведомителя у записей до sql/114). */
@@ -61,6 +64,8 @@ export async function operationFor(deps: OperationViewDeps, agent_code: string, 
   if (!result) return undefined;
   // Клиринг — только после AUTHORIZED (РП53 п. 3): запись об исполнении меняет статус на SETTLED.
   const settled = result.status === "AUTHORIZED" ? await deps.fulfilments?.get(op_ref) : undefined;
+  // Возврат — только после клиринга (РП55 п. 3): REFUNDED, запись об исполнении остаётся в fulfilment.
+  const refunded = settled ? await deps.refunds?.get(op_ref) : undefined;
   const f = rec.facts;
   return {
     op_ref,
@@ -71,7 +76,7 @@ export async function operationFor(deps: OperationViewDeps, agent_code: string, 
     // AOI_MISMATCH: признак называет другого агента и чужой мандат — агенту не отдаётся (решение владельца на КТ1 № 10);
     // полный признак остаётся в записи Платформы для спора (PS-22).
     ...(result.reason === "AOI_MISMATCH" ? {} : paoAoi(f?.aoi)),
-    status: settled ? "SETTLED" : result.status,
+    status: refunded ? "REFUNDED" : settled ? "SETTLED" : result.status,
     reason: settled ? null : result.reason,
     fulfilment: settled ? fulfilmentView(settled) : null,
     deal_ref: null,
