@@ -139,7 +139,8 @@ const CURRENCY = /^[A-Z]{3}$/;
 
 /**
  * ПИ-3 REFUND (РП55 п. 3): после записи об исполнении — запись возврата и operation.refunded; бюджет не меняется. Без
- * клиринга — 503 (перестановка, п. 5); по операции без одобрения или после реверсала — 202 и инцидент; валюта ≠ операции —
+ * клиринга — 503 (перестановка, п. 5); по операции без одобрения — 202 и инцидент; после реверсала — по записи об
+ * исполнении, как без него (КТ1 п. 3); валюта ≠ операции —
  * 400 и инцидент; больше суммы клиринга — запись и инцидент; второй возврат с другой суммой — 202 и инцидент.
  */
 export async function acceptRefund(deps: RefundDeps, msg: Readonly<Record<string, unknown>>): Promise<IssuerResponseStatus> {
@@ -160,12 +161,13 @@ export async function acceptRefund(deps: RefundDeps, msg: Readonly<Record<string
     log("warn", { op_ref, status: outcome.status, incident: true }, "П8: возврат по операции без одобрения эмитента");
     return 202;
   }
-  if (await deps.reversals?.get(op_ref)) {
-    log("warn", { op_ref, incident: true }, "П8: возврат по отменённой авторизации — не записан");
-    return 202;
-  }
+  // Клиринг старше реверсала (РП55 «Дополнения КТ1» п. 3): есть запись об исполнении — возврат принимается и после
+  // реверсала. Реверсал без клиринга — предшественник не придёт по этой авторизации: 503 и инцидент за окном, как без него.
   const f = await deps.fulfilments.get(op_ref);
-  if (!f) return awaitPredecessor(deps, { op_ref, msg_type: "REFUND", decided_at: rec.at, missing: outcome ? "PRESENTMENT" : "ISSUER_RESPONSE" });
+  if (!f) {
+    const missing = outcome || (await deps.reversals?.get(op_ref)) ? "PRESENTMENT" : "ISSUER_RESPONSE";
+    return awaitPredecessor(deps, { op_ref, msg_type: "REFUND", decided_at: rec.at, missing });
+  }
   if (currency !== f.currency) {
     log("warn", { op_ref, currency, expected: f.currency, incident: true }, "П8: валюта возврата не совпадает с валютой операции");
     return 400;

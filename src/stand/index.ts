@@ -19,6 +19,7 @@ import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { MemoryOutcomeStore, OperationOutcomeCollector, type CollectorResult } from "../fulfilment/outcomes.js";
 import { MemoryFulfilmentStore } from "../fulfilment/records.js";
+import { MemoryOpLock } from "../fulfilment/oplock.js";
 import { MemoryRefundStore } from "../fulfilment/refunds.js";
 import { MemoryReversalStore } from "../fulfilment/reversals.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
@@ -350,6 +351,8 @@ export function createStand(opts: StandOptions = {}): Stand {
         fulfilments: fulfilmentStore,
         reversals: reversalStore,
         refunds: refundStore,
+        // Обработчики одной операции — по одному (РП55 «Дополнения КТ1» п. 1).
+        lock: new MemoryOpLock(),
         reorder_window_ms: params.event_reorder_window_ms,
       },
     },

@@ -9,6 +9,7 @@ import { insertOperationEventTx, type MemoryConsentStore, type TxSqlPool } from 
 import type { OperationEventDraft } from "../pao/events.js";
 import type { StateService } from "../state/index.js";
 import { acceptIssuerResponse, type CollectorLog, type IssuerResponseDeps, type IssuerResponseStatus, type OutcomeStore, type PushFor } from "./outcomes.js";
+import type { OpLock } from "./oplock.js";
 import { acceptRefund, type RefundStore } from "./refunds.js";
 import { acceptReversal, REVERSAL_KINDS, type ReversalStore } from "./reversals.js";
 
@@ -175,6 +176,8 @@ export interface OperationEventDeps extends IssuerResponseDeps {
   readonly fulfilments?: FulfilmentStore;
   readonly reversals?: ReversalStore;
   readonly refunds?: RefundStore;
+  /** Очередь по op_ref (РП55 «Дополнения КТ1» п. 1); без неё — без очереди, как до К1.3 (тесты отдельных обработчиков). */
+  readonly lock?: OpLock;
   /** event_reorder_window_ms (РП55 п. 5): событие без предшественника дольше окна от решения ADP — инцидент. */
   readonly reorder_window_ms?: number;
 }
@@ -192,11 +195,17 @@ export async function acceptOperationEvent(deps: OperationEventDeps, raw: unknow
   if (!isObj(raw)) return 400;
   const msg = structuredClone(raw);
   if (typeof msg.op_ref !== "string" || msg.op_ref === "" || typeof msg.msg_type !== "string") return 400;
+  const op_ref = msg.op_ref;
+  const msg_type = msg.msg_type;
   const outcomes = deps.outcomes ?? deps.store;
-  if (msg.msg_type === "PRESENTMENT" && deps.fulfilments) return acceptPresentment({ ...deps, fulfilments: deps.fulfilments, outcomes }, msg);
-  if (REVERSAL_KINDS.includes(msg.msg_type) && deps.reversals) return acceptReversal({ ...deps, reversals: deps.reversals, outcomes }, msg);
-  if (msg.msg_type === "REFUND" && deps.refunds && deps.fulfilments) return acceptRefund({ ...deps, refunds: deps.refunds, fulfilments: deps.fulfilments, outcomes }, msg);
-  return acceptIssuerResponse(deps, msg);
+  const handle = (): Promise<IssuerResponseStatus> => {
+    if (msg_type === "PRESENTMENT" && deps.fulfilments) return acceptPresentment({ ...deps, fulfilments: deps.fulfilments, outcomes }, msg);
+    if (REVERSAL_KINDS.includes(msg_type) && deps.reversals) return acceptReversal({ ...deps, reversals: deps.reversals, outcomes }, msg);
+    if (msg_type === "REFUND" && deps.refunds && deps.fulfilments) return acceptRefund({ ...deps, refunds: deps.refunds, fulfilments: deps.fulfilments, outcomes }, msg);
+    return acceptIssuerResponse(deps, msg);
+  };
+  // Обработчики одной операции — по одному (РП55 «Дополнения КТ1» п. 1); сбой или ожидание дольше предела — исключение (503).
+  return deps.lock ? deps.lock.run(op_ref, handle) : handle();
 }
 
 /**
@@ -224,6 +233,8 @@ export interface PresentmentDeps {
   readonly now?: () => Date;
   readonly log?: CollectorLog;
   readonly reorder_window_ms?: number;
+  /** Реверсалы (РП55 «Дополнения КТ1» п. 3): реверсал без итога эмитента — предшественник клиринга. */
+  readonly reversals?: Pick<ReversalStore, "get">;
 }
 
 /**
@@ -245,8 +256,12 @@ export async function acceptPresentment(deps: PresentmentDeps, msg: Readonly<Rec
     return 202;
   }
   const outcome = await deps.outcomes.get(op_ref);
-  if (!outcome) return awaitPredecessor(deps, { op_ref, msg_type: "PRESENTMENT", decided_at: rec.at, missing: "ISSUER_RESPONSE" });
-  if (outcome.status !== "AUTHORIZED") {
+  // Реверсал раньше ответа эмитента — предшественник клиринга (РП55 «Дополнения КТ1» п. 3): итога эмитента после него не
+  // будет, клиринг пишется по РП53 п. 6 (NOT_RESERVED), а не 503 навсегда.
+  if (!outcome && !(await deps.reversals?.get(op_ref))) {
+    return awaitPredecessor(deps, { op_ref, msg_type: "PRESENTMENT", decided_at: rec.at, missing: "ISSUER_RESPONSE" });
+  }
+  if (outcome && outcome.status !== "AUTHORIZED") {
     log("warn", { op_ref, status: outcome.status, incident: true }, "П8: представление по операции без одобрения эмитента");
     return 202;
   }
@@ -306,7 +321,8 @@ export async function acceptPresentment(deps: PresentmentDeps, msg: Readonly<Rec
   const f: FulfilmentRecord = {
     op_ref,
     fulfilment_ref: fulfilmentRefFor(op_ref),
-    agent_code: outcome.agent_code,
+    // Без итога (клиринг после реверсала) — агент по домену токена из записи ADP.
+    agent_code: outcome ? outcome.agent_code : (rec.facts?.agent_code ?? null),
     mandate_id: rec.mandate_id,
     order_ref: rec.facts?.order_ref ?? null,
     merchant_id: rec.facts?.merchant_id ?? null,

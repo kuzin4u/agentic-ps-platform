@@ -126,7 +126,18 @@ describe("возврат REFUND → operation.refunded без восстанов
     expect(await refunded(o)).toHaveLength(1);
   });
 
-  it("форма — 400; валюта не операции — 400 без записи; после реверсала, по отказу эмитента и BYPASS — 202 без записи и события", async () => {
+  it("клиринг после реверсала, затем возврат — записан, operation.refunded, GET — REFUNDED с NOT_RESERVED (клиринг старше, КТ1 п. 3)", async () => {
+    const m = await mandates(100_000);
+    const o = await approved(m, 20_000);
+    expect(await issuer(o, true)).toBe(202);
+    expect(await pi3({ op_ref: o, msg_type: "REVERSAL" })).toBe(202);
+    expect(await present(o, 20_000)).toBe(202);
+    expect(await refund(o, 20_000)).toBe(202);
+    expect(await refunded(o)).toHaveLength(1);
+    expect(await op(o)).toMatchObject({ status: "REFUNDED", fulfilment: { scope_check: "NOT_RESERVED" } });
+  });
+
+  it("форма — 400; валюта не операции — 400 без записи; реверсал без клиринга — 503 (ждёт клиринга); по отказу эмитента и BYPASS — 202 без записи и события", async () => {
     const m = await mandates(100_000);
     const o = await settled(m, 10_000);
     expect(await refund(o, 0)).toBe(400);
@@ -136,7 +147,7 @@ describe("возврат REFUND → operation.refunded без восстанов
     const r = await approved(m, 10_000);
     expect(await issuer(r, true)).toBe(202);
     expect(await pi3({ op_ref: r, msg_type: "REVERSAL" })).toBe(202);
-    expect(await refund(r, 10_000)).toBe(202);
+    expect(await refund(r, 10_000)).toBe(503);
     expect(await op(r)).toMatchObject({ status: "REVERSED" });
     const no = await approved(m, 10_000);
     expect(await issuer(no, false)).toBe(202);

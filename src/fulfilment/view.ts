@@ -58,12 +58,18 @@ export async function operationFor(deps: OperationViewDeps, agent_code: string, 
   const outcome = await deps.outcomes.get(op_ref);
   if (agentOf(rec, outcome) !== agent_code) return undefined;
   const decided = outcome ? { status: outcome.status, reason: outcome.status === "DECLINED" ? outcome.reason : null } : fromDecision(rec);
-  // Реверсал — по APPROVE ADP с итогом AUTHORIZED или до ответа эмитента (РП55 п. 1); после клиринга не записывается.
-  const reversal = rec.decision?.decision === "APPROVE" && (!outcome || outcome.status === "AUTHORIZED") ? await deps.reversals?.get(op_ref) : undefined;
-  const result: { status: Operation["status"]; reason: string | null } | undefined = reversal ? { status: "REVERSED", reason: reversal.kind } : decided;
+  // Клиринг и реверсал — только по APPROVE ADP с итогом AUTHORIZED или до ответа эмитента (РП53 п. 3, РП55 п. 1).
+  const open = rec.decision?.decision === "APPROVE" && (!outcome || outcome.status === "AUTHORIZED");
+  // Клиринг старше реверсала (РП55 «Дополнения КТ1» п. 3): запись об исполнении — SETTLED с fulfilment и после реверсала
+  // (тогда NOT_RESERVED); реверсал — REVERSED, только если клиринга нет.
+  const settled = open ? await deps.fulfilments?.get(op_ref) : undefined;
+  const reversal = open && !settled ? await deps.reversals?.get(op_ref) : undefined;
+  const result: { status: Operation["status"]; reason: string | null } | undefined = settled
+    ? { status: "SETTLED", reason: null }
+    : reversal
+      ? { status: "REVERSED", reason: reversal.kind }
+      : decided;
   if (!result) return undefined;
-  // Клиринг — только после AUTHORIZED (РП53 п. 3): запись об исполнении меняет статус на SETTLED.
-  const settled = result.status === "AUTHORIZED" ? await deps.fulfilments?.get(op_ref) : undefined;
   // Возврат — только после клиринга (РП55 п. 3): REFUNDED, запись об исполнении остаётся в fulfilment.
   const refunded = settled ? await deps.refunds?.get(op_ref) : undefined;
   const f = rec.facts;

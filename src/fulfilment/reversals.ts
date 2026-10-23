@@ -1,5 +1,6 @@
 // П8 Реверсал и истечение авторизации (РП55 п. 1, PS-16 ч. 3): по ПИ-3 REVERSAL / AUTH_EXPIRED при APPROVE ADP без записи
-// об исполнении — освобождение каждого удержания записи операции (РП11), затем запись (одна на op_ref, только вставка).
+// об исполнении и без закреплённых удержаний — запись (одна на op_ref, только вставка), затем освобождение каждого
+// удержания записи операции (РП11; порядок — «Дополнения КТ1» п. 2).
 // События нет до ПАО 1.5.0 (п. 2): агент видит REVERSED по GET. В памяти (dev, стенд) и на PostgreSQL
 // (sql/117_operation_reversals_refunds.sql). Номера карты и token_ref нет (инвариант 1).
 import type { SqlClient } from "@kuzin4u/agentic-core";
@@ -82,24 +83,27 @@ export interface ReversalDeps {
   readonly outcomes: Pick<OutcomeStore, "get">;
   readonly fulfilments?: Pick<FulfilmentStore, "get">;
   readonly reversals: ReversalStore;
-  readonly state: Pick<StateService, "release">;
+  readonly state: Pick<StateService, "release" | "hold">;
   readonly now?: () => Date;
   readonly log?: CollectorLog;
 }
 
 const isUnits = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 1;
+const CURRENCY = /^[A-Z]{3}$/;
 
 /**
  * ПИ-3 REVERSAL / AUTH_EXPIRED (РП55 п. 1): по операции с APPROVE ADP без записи об исполнении — с итогом AUTHORIZED или до
- * ответа эмитента — освобождение каждого удержания записи операции, затем запись. Повтор освобождения безопасен
- * (RESERVATION_RELEASED — не сбой); сбой — 503 без записи. Частичного реверсала нет: amount ≠ одобренной — 400 и инцидент.
- * После клиринга — 202 и инцидент, закреплённое не трогается; решение не APPROVE или итог DECLINED — 202 без действий.
+ * ответа эмитента — запись, затем освобождение каждого удержания записи операции; повтор освобождает снова
+ * (RESERVATION_RELEASED — не сбой), сбой освобождения — 503. Частичного реверсала нет: amount или currency ≠ одобренным —
+ * 400 и инцидент. После клиринга или при закреплённом удержании — 202 и инцидент, ничего не освобождается; решение не
+ * APPROVE или итог DECLINED — 202 без действий. Вызывается под очередью по op_ref (acceptOperationEvent, КТ1 п. 1).
  */
 export async function acceptReversal(deps: ReversalDeps, msg: Readonly<Record<string, unknown>>): Promise<IssuerResponseStatus> {
   const log = deps.log ?? (() => {});
   const op_ref = msg.op_ref as string;
   const kind = msg.msg_type as ReversalKind;
   const amount = msg.amount;
+  const currency = msg.currency;
   if (amount !== undefined && amount !== null && !isUnits(amount)) return 400;
   const rec = await deps.operations.get(op_ref);
   if (!rec) return 202;
@@ -117,32 +121,36 @@ export async function acceptReversal(deps: ReversalDeps, msg: Readonly<Record<st
     log("warn", { op_ref, kind, incident: true }, "П8: реверсал после клиринга — закреплённое не трогается, путь — возврат");
     return 202;
   }
-  if (await deps.reversals.get(op_ref)) return 202;
-  if (typeof amount === "number") {
-    // Одобренная сумма — из фактов записи ADP; у записей до sql/114 фактов нет — сверка невозможна, освобождение целиком.
-    if (!rec.facts) log("warn", { op_ref, kind, amount }, "П8: сумма реверсала не сверена — фактов операции нет");
-    else if (amount !== rec.facts.amount) {
-      log("warn", { op_ref, kind, amount, authorized: rec.facts.amount, incident: true }, "П8: частичный реверсал не поддерживается — не освобождено");
+  // Реверсал уже записан — повтор освобождает снова: прошлый вызов мог записать и не освободить (сбой П3 — 503).
+  if (await deps.reversals.get(op_ref)) return releaseAll(deps, rec.holds, op_ref, log);
+  // Одобренная сумма и валюта — из фактов записи ADP; у записей до sql/114 фактов нет — сверка невозможна, освобождение целиком.
+  if (currency !== undefined && currency !== null && (typeof currency !== "string" || !CURRENCY.test(currency))) return 400;
+  if (typeof amount === "number" || typeof currency === "string") {
+    if (!rec.facts) log("warn", { op_ref, kind, amount, currency }, "П8: сумма реверсала не сверена — фактов операции нет");
+    else if ((typeof amount === "number" && amount !== rec.facts.amount) || (typeof currency === "string" && currency !== rec.facts.currency)) {
+      const authorized = { amount: rec.facts.amount, currency: rec.facts.currency };
+      log("warn", { op_ref, kind, amount, currency, authorized, incident: true }, "П8: реверсал не на одобренную сумму и валюту — не освобождено");
       return 400;
     }
   }
-  let committed = false;
+  // Под очередью по op_ref (КТ1 п. 1) клиринг одновременно не идёт; хоть одно удержание закреплено — клиринг был (в том
+  // числе упал между закреплением и записью): ничего не освобождать — ядро освобождает каждое удержание отдельно, и
+  // освобождение остальных вернуло бы бюджет списанной операции (инвариант 4).
   for (const hold_id of rec.holds) {
-    const r = await deps.state.release(hold_id);
-    if (r.ok) {
-      if (r.hold.committed > 0) committed = true;
+    const h = await deps.state.hold(hold_id);
+    if (h.ok) {
+      if (h.hold.committed > 0) {
+        log("warn", { op_ref, kind, hold_id, incident: true }, "П8: реверсал после закрепления — ничего не освобождено, путь — клиринг или возврат");
+        return 202;
+      }
       continue;
     }
-    if (r.code === "RESERVATION_RELEASED") continue;
-    log("warn", { op_ref, hold_id, code: r.code }, "П8: удержание по реверсалу не освобождено — 503, процессинг повторит");
+    if (h.code === "RESERVATION_RELEASED") continue;
+    log("warn", { op_ref, hold_id, code: h.code }, "П8: удержание перед реверсалом не прочитано — 503, процессинг повторит");
     return 503;
   }
-  // Клиринг успел закрепить удержание между проверкой и освобождением (одновременные PRESENTMENT и REVERSAL): ядро
-  // освободило только открытую часть, исполнение учтено — реверсал не записывается, инцидент.
-  if (committed) {
-    log("warn", { op_ref, kind, incident: true }, "П8: реверсал одновременно с клирингом — удержание закреплено, реверсал не записан");
-    return 202;
-  }
+  // Сначала запись, затем освобождение (КТ1 п. 2): ответ эмитента после записи видит реверсал; сбой освобождения — 503,
+  // удержание держит до повтора (безопасная сторона), повтор освобождает снова.
   await deps.reversals.record({
     op_ref,
     kind,
@@ -150,5 +158,16 @@ export async function acceptReversal(deps: ReversalDeps, msg: Readonly<Record<st
     mandate_id: rec.mandate_id,
     at: (deps.now ?? (() => new Date()))().toISOString(),
   });
-  return 202;
+  return releaseAll(deps, rec.holds, op_ref, log);
+}
+
+async function releaseAll(deps: Pick<ReversalDeps, "state">, holds: readonly string[], op_ref: string, log: CollectorLog): Promise<IssuerResponseStatus> {
+  let failed = false;
+  for (const hold_id of holds) {
+    const r = await deps.state.release(hold_id);
+    if (r.ok || r.code === "RESERVATION_RELEASED") continue;
+    failed = true;
+    log("warn", { op_ref, hold_id, code: r.code }, "П8: удержание по реверсалу не освобождено — 503, процессинг повторит");
+  }
+  return failed ? 503 : 202;
 }
