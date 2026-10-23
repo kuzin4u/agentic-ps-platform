@@ -13,6 +13,7 @@ import { operationEventIdFor } from "../../src/pao/events.js";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import { createStand, type Stand } from "../../src/stand/index.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
+import { opaquePrincipalRef } from "../support/opaque.js";
 import { signedInject } from "../support/signed-inject.js";
 import { standPay } from "../support/stand-pay.js";
 
@@ -185,8 +186,10 @@ describe("клиринг PRESENTMENT → закрепление, запись о
   });
 
   it("частичное с лимитом клиента: остаток освобождён и на счёте периода клиента (ревью КТ1 № 8)", async () => {
-    const principal = `prn_ps14_${randomUUID().slice(0, 8)}`;
-    expect((await stand.issuer.setLimits(principal, { per_period: 100_000, period: "DAY", currency: "RUB" }, 1)).statusCode).toBe(200);
+    // Без цифровых прогонов: `randomUUID().slice(0, 8)` в ≈ 5 % запусков давал 7+ цифр подряд — 400 по формату (Р-160).
+    const principal = opaquePrincipalRef("prn_ps14_");
+    const limits = await stand.issuer.setLimits(principal, { per_period: 100_000, period: "DAY", currency: "RUB" }, 1);
+    expect(limits.statusCode, `setLimits ${principal}: ${JSON.stringify(limits.body)}`).toBe(200);
     const pp = standPay(stand, side, CODE, principal);
     const cartOf = async () => pp.cart(await pp.mandate({ amount_limit: 100_000 }), 100_000);
     const first = await cartOf();

@@ -12,6 +12,7 @@ import { createStand, type Stand } from "../../src/stand/index.js";
 import type { Event, MandateRequest } from "../../src/shared/pao.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
+import { opaquePrincipalRef } from "../support/opaque.js";
 import { signedInject } from "../support/signed-inject.js";
 
 const A = "nspk:agent:events-a:v1";
@@ -63,7 +64,7 @@ const journalOf = (store: ConsentStore): ConsentJournal =>
  * principal_ref — свой у каждого мандата по умолчанию: подписи одной пары клиента идут под локом пары (РП46 (а)) раньше
  * блокировки агента, а здесь проверяется именно блокировка агента.
  */
-async function mk(j: ConsentJournal, agent = A, principal_ref = `prn_${randomUUID().replace(/[^a-f]/g, "").slice(0, 8)}`): Promise<{ id: string; hash: string }> {
+async function mk(j: ConsentJournal, agent = A, principal_ref = opaquePrincipalRef()): Promise<{ id: string; hash: string }> {
   const m = await j.request(agent, key(), intent({ principal_ref }));
   return { id: m.id!, hash: m.hash! };
 }
