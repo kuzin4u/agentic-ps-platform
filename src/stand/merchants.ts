@@ -9,6 +9,7 @@ import {
   buildMerchantsServer,
   type PackageMetadata,
   type ReconciliationPort,
+  type ShopListFailure,
 } from "../env/merchants/index.js";
 import type { Stand } from "./index.js";
 
@@ -31,6 +32,8 @@ export interface MerchantsStand {
   /** Метаданные пакетов, переданные для сверки при эквайрере без aoi. */
   readonly reconciliation: readonly PackageMetadata[];
   readonly verifier: MerchantAgentVerifier;
+  /** Отказ списка витрин из теста (#49): 503 UPSTREAM_UNAVAILABLE или 429 RATE_LIMITED с Retry-After; null — снять. */
+  failShopList(failure: ShopListFailure | null): void;
   listen(): Promise<string>;
   close(): Promise<void>;
 }
@@ -46,11 +49,13 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     skewSec: stand.params.signature_skew_sec,
     now: stand.now,
   });
+  let shopListFailure: ShopListFailure | null = null;
   const app = buildMerchantsServer({
     verifier,
     acquirer,
     reconciliation,
     rateLimitPerMin: opts.rateLimitPerMin ?? stand.params.merchant_rate_limit_per_min,
+    shopListFailure: () => shopListFailure,
   });
   return {
     app,
@@ -58,6 +63,7 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     opkc,
     reconciliation: submitted,
     verifier,
+    failShopList: (failure) => void (shopListFailure = failure),
     async listen() {
       await app.listen({ host: "127.0.0.1", port: 0 });
       const addr = app.server.address();

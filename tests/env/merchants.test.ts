@@ -99,6 +99,46 @@ describe("К6: список витрин и зоны", () => {
   });
 });
 
+describe("#49 (РП56 п. 6): GET /v1/shops опознаёт агента, как каталог; управляемый отказ списка", () => {
+  const path = "/v1/shops";
+
+  it("подписанный агент из реестра и человек без подписи — 200", async () => {
+    const { app, asA } = setup();
+    expect((await merchantCall(app, { ...asA(), path })).statusCode).toBe(200);
+    expect((await merchantCall(app, { path })).statusCode).toBe(200);
+  });
+
+  it("агент не в реестре — 401 KEY_UNKNOWN; ключ B за агента A — 401 AGENT_MISMATCH", async () => {
+    const { app, s, b } = setup();
+    const stranger = newAgentSide();
+    const r1 = await merchantCall(app, { side: stranger, agentCode: "nspk:agent:stranger:v1", now: s.now(), path });
+    expect([r1.statusCode, r1.json()]).toEqual([401, { code: "KEY_UNKNOWN" }]);
+    const r2 = await merchantCall(app, { side: b, agentCode: A, now: s.now(), path });
+    expect([r2.statusCode, r2.json()]).toEqual([401, { code: "AGENT_MISMATCH" }]);
+  });
+
+  it("каталог ключей недоступен — 503 UPSTREAM_UNAVAILABLE (инвариант 3)", async () => {
+    const { s, a } = setup();
+    const verifier = new MerchantAgentVerifier(() => { throw new Error("каталог недоступен"); }, { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
+    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub(), now: s.now }), rateLimitPerMin: LIMIT });
+    const r = await merchantCall(app, { side: a, agentCode: A, now: s.now(), path });
+    expect([r.statusCode, r.json()]).toEqual([503, { code: "UPSTREAM_UNAVAILABLE" }]);
+    await app.close();
+  });
+
+  it("failShopList: 503 и 429 с Retry-After на ответе эмулятора; null — список снова отдаётся", async () => {
+    const { app, m, asA } = setup();
+    m.failShopList({ code: "UPSTREAM_UNAVAILABLE", retryAfterSec: 2 });
+    const r1 = await merchantCall(app, { ...asA(), path });
+    expect([r1.statusCode, r1.headers["retry-after"], r1.json()]).toEqual([503, "2", { code: "UPSTREAM_UNAVAILABLE" }]);
+    m.failShopList({ code: "RATE_LIMITED", retryAfterSec: 5 });
+    const r2 = await merchantCall(app, { ...asA(), path });
+    expect([r2.statusCode, r2.headers["retry-after"], r2.json()]).toEqual([429, "5", { code: "RATE_LIMITED" }]);
+    m.failShopList(null);
+    expect((await merchantCall(app, { ...asA(), path })).statusCode).toBe(200);
+  });
+});
+
 describe("SHOP-4401: отказ неопознанным, опознанный агент из реестра обслуживается (A5 п. 2.1–2.2, П08)", () => {
   const path = "/v1/shops/SHOP-4401/catalog";
 
