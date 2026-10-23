@@ -33,8 +33,22 @@ import {
 } from "./threshold.js";
 
 /** Реестр агентов (П1): неизвестный — undefined; сбой — исключение (→ STATE_UNAVAILABLE). */
+/** Агент для ADP: статус, уровень и время последнего приостановления (отсечка РП54 п. 5–6; нет поля — не приостанавливался). */
+export type AdpAgent = Pick<AgentRecord, "status" | "level"> & { readonly suspended_at?: string | null };
+
 export interface AdpAgents {
-  get(agent_code: string): Pick<AgentRecord, "status" | "level"> | undefined;
+  get(agent_code: string): AdpAgent | undefined;
+}
+
+/**
+ * Выдано раньше последнего приостановления агента (РП54 п. 5–6): реквизит и confirmation_ref не действуют и после снятия.
+ * Время не разбирается — «раньше» (fail-closed, инвариант 3).
+ */
+function issuedBeforeSuspension(created_at: string, suspended_at: string | null | undefined): boolean {
+  if (suspended_at === null || suspended_at === undefined) return false;
+  const issued = Date.parse(created_at);
+  const suspended = Date.parse(suspended_at);
+  return !(Number.isFinite(issued) && Number.isFinite(suspended)) || issued < suspended;
 }
 
 export type AdpMandate = Pick<Mandate, "status" | "type" | "parent_id" | "merchant_scope" | "currency" | "amount_limit"> & {
@@ -395,7 +409,7 @@ export class Adp {
     }
 
     // 3. Агент — из реестра (инвариант 5). Исключённый — вне реестра (A1 п. 5.3); сбой реестра — не подтверждено.
-    let agent: Pick<AgentRecord, "status" | "level"> | undefined;
+    let agent: AdpAgent | undefined;
     try {
       agent = this.opts.agents.get(agent_code);
     } catch {
@@ -419,6 +433,11 @@ export class Adp {
       }
       if (!cred || cred.status !== "ISSUED" || !(Date.parse(cred.valid_to) > this.now().getTime())) return no("CREDENTIAL_INVALID");
       if (cred.merchant_id !== msg.merchant?.id) return no("CREDENTIAL_INVALID");
+      // Выдан до последнего приостановления (РП54 п. 5): не действует и после снятия — мог уйти при компрометации.
+      if (issuedBeforeSuspension(cred.created_at, agent.suspended_at)) {
+        this.log("info", { op_ref: msg.op_ref, credential_ref: cred.credential_ref }, "ADP: реквизит выдан до приостановления агента");
+        return no("CREDENTIAL_INVALID");
+      }
     }
 
     // 5. Мандат агента (чужой = неизвестный), статус — по свёртке журнала (инвариант 5).
@@ -487,7 +506,7 @@ export class Adp {
 
     // 10. Порог — меньшее из рыночного и клиентского (РП44 п. 5); не определён — не подтверждено. Действующий
     // confirmation_ref (РП50 п. 7) снимает п. 10 и п. 9 только для этой операции: окно не читается и не пополняется.
-    const confirmed = await this.confirmation(msg, agent_code, mandate_id);
+    const confirmed = await this.confirmation(msg, agent_code, mandate_id, agent.suspended_at);
     if (confirmed === "unavailable") return no("STATE_UNAVAILABLE", mandate_id);
     const threshold = this.threshold(msg, mandate_id, limits && clientThreshold(limits));
     if (threshold === undefined) return no("STATE_UNAVAILABLE", mandate_id);
@@ -690,12 +709,14 @@ export class Adp {
 
   /**
    * confirmation_ref сообщения (РП50 п. 7–8): действует — запись; нет, не по форме или не действует — undefined (обычный
-   * путь); сбой чтения — unavailable. Найденная ссылка с другими итоговыми значениями — инцидент (подмена итога).
+   * путь); сбой чтения — unavailable. Найденная ссылка с другими итоговыми значениями — инцидент (подмена итога). Запрос
+   * создан до последнего приостановления агента — не учитывается, без инцидента: ссылка устарела (РП54 п. 6).
    */
   private async confirmation(
     msg: CanonicalMessage,
     agent_code: string,
     mandate_id: string,
+    suspended_at: string | null | undefined,
   ): Promise<ConfirmationRecord | "unavailable" | undefined> {
     const c = this.opts.confirmations;
     const ref = msg.confirmation_ref;
@@ -729,6 +750,10 @@ export class Adp {
     }
     if (r.status !== "APPROVED" || !(r.expires_at > this.now().toISOString())) {
       this.log("info", { op_ref: msg.op_ref, mandate_id, confirmation_id: r.confirmation_id, status: r.status }, "ADP: подтверждение не действует");
+      return undefined;
+    }
+    if (issuedBeforeSuspension(r.created_at, suspended_at)) {
+      this.log("info", { op_ref: msg.op_ref, mandate_id, confirmation_id: r.confirmation_id }, "ADP: подтверждение запрошено до приостановления агента — не учитывается");
       return undefined;
     }
     // Ссылка — только по инструменту, выбранному человеком (РП51 п. 14): другой канал — не учитывается, без инцидента

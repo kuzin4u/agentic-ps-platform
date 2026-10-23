@@ -14,11 +14,14 @@ import {
   StatusTransitionError,
 } from "../../src/registry/index.js";
 import { loadParams } from "../../src/shared/config.js";
+import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
+import { parseDecision } from "../../src/shared/codes.js";
 import type { Event, MandateRequest } from "../../src/shared/pao.js";
 import { createStand, type Stand } from "../../src/stand/index.js";
 import { STAND_AGENT_EMULATOR_HOST } from "../../src/stand/dns.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
 import { signedInject } from "../support/signed-inject.js";
+import { standPay } from "../support/stand-pay.js";
 
 const T0 = new Date("2026-10-23T10:00:00Z");
 const URL_OK = `https://${STAND_AGENT_EMULATOR_HOST}/pao/events`;
@@ -63,8 +66,28 @@ describe("приостановление и снятие агента на ст�
       expect(r.statusCode).toBe(200);
       return r.json() as Event[];
     };
-    return { code, call, mandate, feed };
+    return { code, side, call, mandate, feed };
   }
+
+  const decide = async (m: CanonicalMessage) =>
+    parseDecision((await stand.app.inject({ method: "POST", url: "/adp/v1/decide", payload: m })).json(), "adp");
+
+  it("отсечка реквизита (РП54 п. 5): выданный до приостановления — CREDENTIAL_INVALID и после снятия; выданный после — APPROVE", async () => {
+    const a = await agent([]);
+    const pay = standPay(stand, a.side, a.code, "prn_cut");
+    const cart = await pay.cart(await pay.mandate({ amount_limit: 100_000 }), 50_000);
+    const before = await pay.auth(cart, 10_000);
+
+    stand.setClock(new Date(T0.getTime() + 1_000));
+    await stand.suspendAgent(a.code, "KEY_COMPROMISE");
+    expect(await decide({ ...before, op_ref: "OPKC-CUT-1" })).toEqual({ decision: "DECLINE", reason: "AGENT_SUSPENDED" });
+
+    stand.setClock(new Date(T0.getTime() + 2_000));
+    await stand.reinstateAgent(a.code);
+    // Отказ на п. 3 криптограмму не погасил, но и после снятия реквизит не действует.
+    expect(await decide({ ...before, op_ref: "OPKC-CUT-2" })).toEqual({ decision: "DECLINE", reason: "CREDENTIAL_INVALID" });
+    expect(await decide(await pay.auth(cart, 10_000, "OPKC-CUT-3"))).toEqual({ decision: "APPROVE", reason: null });
+  });
 
   it("приостановление: статус, 403 на ленте, agent.suspended push-ем приостановленному; data — только {agent_code}", async () => {
     const a = await agent();

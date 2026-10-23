@@ -49,12 +49,13 @@ export class AgentStatusService {
   }
 
   /**
-   * SUSPENDED → ACTIVE без основания. Уже ACTIVE после снятия (версия записи > 1: в ACTIVE после допуска ведёт только
-   * снятие) — повтор с дописыванием события; ACTIVE с допуска — StatusTransitionError.
+   * SUSPENDED → ACTIVE без основания. Уже ACTIVE и приостанавливался (suspended_at есть: в ACTIVE после приостановления
+   * ведёт только снятие) — повтор с дописыванием события; ACTIVE с допуска — StatusTransitionError. По смыслу, не по
+   * версии записи: версия может начать расти и от других полей (КТ1 № 3).
    */
   async reinstate(agent_code: string): Promise<AgentRecord> {
     const cur = this.current(agent_code);
-    const repeat = cur.status === "ACTIVE" && cur.row_version > 1;
+    const repeat = cur.status === "ACTIVE" && cur.suspended_at !== null;
     const rec = repeat ? cur : this.registry.changeStatus(agent_code, { to: "ACTIVE" });
     await this.emit(rec, "agent.reinstated");
     return rec;

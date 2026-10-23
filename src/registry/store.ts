@@ -30,7 +30,10 @@ export interface AgentRegistryStore {
    * другому оператору — AgentCodeTakenError (A2 п. 4.1, РП21 п. 2); kid уже есть — KeyTakenError. При ошибке не сохраняется ничего.
    */
   insert(record: AgentRecord, firstKey: AgentKey): void;
-  /** Изменение только полей статуса при совпадении row_version; не совпала — undefined (конкурентное изменение). */
+  /**
+   * Изменение только полей статуса при совпадении row_version; не совпала — undefined (конкурентное изменение).
+   * row_version записи агента растёт только здесь: по ней event_id события смены статуса (РП54 п. 2, КТ1 № 3).
+   */
   updateStatus(agent_code: string, expectedRowVersion: number, fields: StatusFields): AgentRecord | undefined;
 
   getKey(kid: string): AgentKey | undefined;
