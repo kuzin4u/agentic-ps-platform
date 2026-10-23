@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { adpRoutes, type AdpDeps } from "./adp/routes.js";
 import type { CollectorHealth } from "./fulfilment/outcomes.js";
 import type { NotifierHealth } from "./participants/notifications.js";
-import { merchantApiRoutes, type MerchantApiDeps } from "./participants/merchant-api.js";
+import { merchantApiRoutes, merchantApiUnavailable, type MerchantApiDeps } from "./participants/merchant-api.js";
 import { participantRoutes, type ParticipantDeps } from "./participants/routes.js";
 import { paoRoutes, type PaoDeps } from "./pao/routes.js";
 
@@ -96,6 +96,8 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     // 200, а не 503: оркестратор не перезапускает процесс, и неагентские не теряют BYPASS (решение владельца, РП43 п. 8).
     app.get("/health", async () => ({ status: "ok", env: opts.env, mode: "bypass_only", failures }));
     void app.register(async (scope) => adpRoutes(scope, {}));
+    // API для продавцов — 503, а не 404 (уточнение РП56 по № 42): каталог и статус без самопроверки не отдаются.
+    void app.register(merchantApiUnavailable);
     const alarm = bypass.alarm ?? ((fields, msg) => app.log.fatal(fields, msg));
     alarm({ alarm: true, mode: "bypass_only", failures }, "Платформа: самопроверка не прошла — режим «только BYPASS», агентские операции не принимаются");
     return app;

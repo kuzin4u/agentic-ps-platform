@@ -2,6 +2,7 @@
 // агентским — 503 без решения (у процессинга ADP_UNAVAILABLE), ПАО и П10 не регистрируются, /health — 200 с
 // mode: "bypass_only" и кодами непрошедших проверок, при входе в режим — запись «тревога» (инвариант 2, РП4).
 import { describe, expect, it } from "vitest";
+import { AGENT_KEYS_PATH, BYPASS_RETRY_AFTER_SEC } from "../../src/participants/merchant-api.js";
 import { buildServer } from "../../src/server.js";
 import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
 import { setup } from "../support/state.js";
@@ -67,6 +68,17 @@ describe("режим «только BYPASS» (РП43 п. 8)", () => {
     const { app } = bypassOnly();
     expect((await app.inject({ method: "GET", url: "/pao/v1/agent" })).statusCode).toBe(404);
     expect((await app.inject({ method: "POST", url: "/participants/v1/mandates/mnd_x/sign", payload: {} })).statusCode).toBe(404);
+  });
+
+  it("API для продавцов — 503 UPSTREAM_UNAVAILABLE с Retry-After и без Cache-Control, а не 404 (уточнение РП56, № 42)", async () => {
+    const { app } = bypassOnly();
+    for (const url of [AGENT_KEYS_PATH, "/merchants/v1/agents/nspk:agent:a:v1"]) {
+      const res = await app.inject({ method: "GET", url });
+      expect(res.statusCode).toBe(503);
+      expect(res.headers["retry-after"]).toBe(String(BYPASS_RETRY_AFTER_SEC));
+      expect(res.headers["cache-control"]).toBeUndefined();
+      expect(res.json()).toEqual({ code: "UPSTREAM_UNAVAILABLE" });
+    }
   });
 
   it("в обычном режиме /health — как прежде, без mode", async () => {

@@ -18,6 +18,24 @@ export interface MerchantApiDeps {
 /** Адрес каталога (РП56 п. 1). */
 export const AGENT_KEYS_PATH = "/.well-known/agent-keys";
 export const JWK_SET_CONTENT_TYPE = "application/jwk-set+json";
+/** Статус агента для продавца (РП56 п. 4). */
+export const AGENT_STATUS_PATH = "/merchants/v1/agents/:code";
+/**
+ * Retry-After в режиме «только BYPASS» (уточнение РП56 по № 42): параметры могли не загрузиться, а сам режим снимается
+ * только перезапуском — верхняя граница РП24.
+ */
+export const BYPASS_RETRY_AFTER_SEC = 30;
+
+/**
+ * Режим «только BYPASS» (РП43 п. 8; уточнение РП56 по № 42): оба адреса — 503 UPSTREAM_UNAVAILABLE с Retry-After и без
+ * Cache-Control, а не 404: 404 продавец закешировал бы как «каталога нет» дольше, чем сбой.
+ */
+export async function merchantApiUnavailable(app: FastifyInstance): Promise<void> {
+  const unavailable = async (_req: unknown, reply: FastifyReply) =>
+    reply.code(503).header("retry-after", String(BYPASS_RETRY_AFTER_SEC)).send({ code: "UPSTREAM_UNAVAILABLE" });
+  app.get(AGENT_KEYS_PATH, unavailable);
+  app.get(AGENT_STATUS_PATH, unavailable);
+}
 
 export async function merchantApiRoutes(app: FastifyInstance, deps: MerchantApiDeps): Promise<void> {
   const unavailable = (reply: FastifyReply) =>
@@ -46,7 +64,7 @@ export async function merchantApiRoutes(app: FastifyInstance, deps: MerchantApiD
 
   // Статус агента (РП56 п. 4): только код, статус и класс из реестра; сведений об операторе и принципалах нет (A2 п. 1.2).
   // Неизвестный, не по форме и чужого контура — один ответ 404: продавец не отличает «нет» от «не в этом контуре».
-  app.get<{ Params: { code: string } }>("/merchants/v1/agents/:code", async (req, reply) => {
+  app.get<{ Params: { code: string } }>(AGENT_STATUS_PATH, async (req, reply) => {
     const code = req.params.code;
     if (!isAgentCode(code)) return reply.code(404).send({ code: "AGENT_UNKNOWN" });
     let rec: AgentRecord | undefined;
