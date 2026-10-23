@@ -291,7 +291,11 @@ describe.skipIf(!DATABASE_URL)("реверсал на PostgreSQL (РП55, sql/11
   });
 
   it("индекс записей операций по мандату (РП55 п. 6)", async () => {
-    const r = await db.pool.query<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE tablename = 'adp_operations' AND indexname = 'adp_operations_mandate'");
+    // Только своя схема: PG-тесты идут параллельно в одной базе, у каждого файла — своя схема с теми же миграциями
+    // (tests/support/pg.ts); без фильтра видны индексы чужих схем (run 39979152237 — «got 2»).
+    const r = await db.pool.query<{ indexname: string }>(
+      "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'adp_operations' AND indexname = 'adp_operations_mandate'",
+    );
     expect(r.rows).toHaveLength(1);
   });
 });
