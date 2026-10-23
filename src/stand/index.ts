@@ -18,6 +18,7 @@ import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
 import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../confirm/index.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { MemoryOutcomeStore, OperationOutcomeCollector, type CollectorResult } from "../fulfilment/outcomes.js";
+import { MemoryFulfilmentStore } from "../fulfilment/records.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import type { PaoEventType } from "../pao/events.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
@@ -132,6 +133,11 @@ export interface Stand {
    */
   collectOperationOutcomes(): Promise<CollectorResult>;
   /**
+   * Проход срока резервов П3 по часам стенда (РП41 п. 6): освобождение истёкших удержаний; число освобождённых. Таймера на
+   * стенде нет — тест вызывает проход сам (позднее представление, РП53 п. 6).
+   */
+  expireReservations(): Promise<number>;
+  /**
    * Проход вебхука-сигнала банку стенда по часам стенда (РП46 (б) п. 3): все готовые попытки до пустой очереди; число
    * попыток. Повтор — по nextAttemptDelayMs ядра, тест двигает часы. Приёмник — issuerWebhook.
    */
@@ -226,6 +232,8 @@ export function createStand(opts: StandOptions = {}): Stand {
   });
   // Итоги операций (РП52): записи ADP стенда — память, события — в ленту журнала стенда, push — по тому же правилу.
   const outcomeStore = new MemoryOutcomeStore(operations, consentStore);
+  // Записи об исполнении (РП53): та же лента журнала стенда.
+  const fulfilmentStore = new MemoryFulfilmentStore(consentStore);
   const outcomes = new OperationOutcomeCollector(outcomeStore, {
     horizonSec: params.operation_outcome_horizon_sec,
     maxDelaySec: params.operation_outcome_max_delay_sec,
@@ -273,6 +281,8 @@ export function createStand(opts: StandOptions = {}): Stand {
       credentials,
       // Запрос подтверждения агенту (РП51 п. 8–10): то же хранилище П6, часы стенда, link — на страницу УПК.
       confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url },
+      // Операция агенту (РП52 п. 10): записи ADP и итоги П8 — те же хранилища в памяти, что у ADP и ПИ-3.
+      operations: { operations, outcomes: outcomeStore, fulfilments: fulfilmentStore },
       resolveHost: dns.resolve,
       stand: true,
     },
@@ -306,8 +316,9 @@ export function createStand(opts: StandOptions = {}): Stand {
         // Часы стенда (setClock): период лимита клиента и окно дробления — по тем же часам, что резервы и подписи.
         now,
       }),
-      // ПИ-3 стенда (РП52 п. 1 (б)): ответ эмитента — итог и событие в ленту журнала стенда, освобождение — П3 стенда.
-      events: { operations, store: outcomeStore, state, pushFor, now },
+      // ПИ-3 стенда (РП52 п. 1 (б), РП53): ответ эмитента — итог и событие в ленту журнала стенда, освобождение — П3 стенда;
+      // клиринг — закрепление П3 стенда, запись об исполнении и operation.settled.
+      events: { operations, store: outcomeStore, state, pushFor, now, fulfilments: fulfilmentStore },
     },
   });
   const issuer: StandIssuer = {
@@ -449,6 +460,7 @@ export function createStand(opts: StandOptions = {}): Stand {
     delivery: (id) => consentStore.delivery(id),
     notifyParticipants: () => notifier.runOnce(),
     collectOperationOutcomes: () => outcomes.runOnce(),
+    expireReservations: async () => (await state.expire()).length,
     async deliverParticipantNotifications() {
       let total = 0;
       for (let n = await webhook.runOnce(); n > 0; n = await webhook.runOnce()) total += n;

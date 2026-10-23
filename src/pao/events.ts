@@ -1,7 +1,7 @@
 // П9 Лента событий агенту (РП39, PS-08 К1.2): событие пишется в одной транзакции с записью журнала согласий (Outbox),
 // номер у агента — под блокировкой агента до фиксации. Событие без подписи до ПАО 1.5.0 — сигнал, статус — через GET.
 // Второй источник — переход запроса подтверждения П6 (РП51 п. 1–4): та же лента и номер, без записи журнала.
-// Третий — итог операции П8 (РП52 п. 7): operation.authorized / .declined, data — только {op_ref}.
+// Третий — итог операции П8 (РП52 п. 7): operation.authorized / .declined, а с клиринга — .settled (РП53 п. 9); data — только {op_ref}.
 import { createHash } from "node:crypto";
 import type { Event } from "../shared/pao.js";
 
@@ -26,9 +26,9 @@ export interface ConfirmationEventDraft extends EventDraft {
   readonly data: { readonly confirmation_id: string };
 }
 
-/** Событие итога операции: operation.authorized / .declined, data — только {op_ref} (РП52 п. 7). */
+/** Событие итога операции и клиринга: operation.authorized / .declined / .settled, data — только {op_ref} (РП52 п. 7, РП53 п. 9). */
 export interface OperationEventDraft extends EventDraft {
-  readonly type: Extract<PaoEventType, "operation.authorized" | "operation.declined">;
+  readonly type: Extract<PaoEventType, "operation.authorized" | "operation.declined" | "operation.settled">;
   readonly data: { readonly op_ref: string };
 }
 

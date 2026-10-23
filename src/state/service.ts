@@ -349,6 +349,20 @@ export class StateService {
     }
   }
 
+  /**
+   * Закреплено по счёту мандата — израсходованная позиция записи об исполнении (РП53 п. 8). Счёта нет — 0 (расходования
+   * не было); сбой — undefined (не подтверждено, без догадки).
+   */
+  async committed(mandate_id: string): Promise<number | undefined> {
+    try {
+      return (await this.ledger.account(accountId(mandate_id))).committed;
+    } catch (e) {
+      if (holdCode(e) === "UNKNOWN_ACCOUNT") return 0;
+      this.log("warn", { mandate_id, code: holdCode(e) ?? "storage" }, "П3: закреплённое по мандату не прочитано");
+      return undefined;
+    }
+  }
+
   /** Закреплён весь предел — запись MANDATE_EXHAUSTED (РП41 п. 11). Сбой — в журнал процесса, ответ П3 не меняется. */
   private async markExhausted(mandate_id: string | undefined): Promise<void> {
     if (!mandate_id || !this.opts.exhausted) return;

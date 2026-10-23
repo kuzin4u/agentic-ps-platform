@@ -176,7 +176,7 @@ describe("итог операции и operation.* на стенде (РП52)", 
     expect(await decide(await pay().auth(m, 60_000))).toMatchObject({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
   });
 
-  it("ПИ-3: op_ref без записи ADP — 202 без действий (инвариант 2); ответ по отказу ADP — 202, итог ADP прежний; форма — 400; иной msg_type — 503", async () => {
+  it("ПИ-3: op_ref без записи ADP — 202 без действий (инвариант 2); ответ по отказу ADP — 202, итог ADP прежний; форма — 400; типы ч. 3 — 503", async () => {
     expect(await issuer(`OPKC-BYPASS-${randomUUID()}`, true)).toBe(202);
     const op = `OPKC-PS16-${randomUUID()}`;
     await limitDecline(op);
@@ -186,7 +186,8 @@ describe("итог операции и operation.* на стенде (РП52)", 
     expect(await issuer(op, "yes")).toBe(400);
     expect(await issuer("", true)).toBe(400);
     expect((await stand.app.inject({ method: "POST", url: "/adp/v1/events", payload: [] })).statusCode).toBe(400);
-    expect(await issuer(op, true, { msg_type: "PRESENTMENT" })).toBe(503);
+    // PRESENTMENT — с ч. 2 (РП53, pao-presentment.test.ts); REFUND, REVERSAL, AUTH_EXPIRED — 503 до ч. 3.
+    for (const msg_type of ["REFUND", "REVERSAL", "AUTH_EXPIRED"]) expect(await issuer(op, true, { msg_type }), msg_type).toBe(503);
   });
 
   it("горизонт ограничивает только события: отказ старше operation_outcome_horizon_sec — события нет (итог — GET, К2)", async () => {
@@ -276,6 +277,53 @@ describe("правила итога и события (РП52 п. 3, 5–7)", ()
     expect(await acceptIssuerResponse(deps(ok), msg)).toBe(202);
     expect(released).toEqual(["hold-1"]);
     expect((await events.listEvents(CODE, undefined, 10)).map((e) => e.type)).toEqual(["operation.declined"]);
+  });
+
+  it("одобрение эмитента по освобождённому удержанию — итог AUTHORIZED, инцидент; сбой чтения — итог, предупреждение; повтор — без проверки (РП53 п. 11)", async () => {
+    const events = new MemoryConsentStore();
+    const store = new MemoryOutcomeStore(new MemoryOperationStore(), events);
+    const logs: { msg: string; fields: Record<string, unknown> }[] = [];
+    const checked: string[] = [];
+    const deps = (op_ref: string, hold: "RESERVATION_RELEASED" | "STATE_UNAVAILABLE" | "ok") => ({
+      operations: {
+        get: () => ({
+          op_ref,
+          msg_hash: "h",
+          mandate_id: "m",
+          at: AT,
+          decision: { decision: "APPROVE", reason: null, decided_in_ms: 1 } as Decision,
+          holds: ["hold-cart", "hold-intent"],
+          facts: { agent_code: CODE, order_ref: null, channel: "CARD" as const, merchant_id: null, amount: 1, currency: "RUB", aoi: null },
+        }),
+      },
+      store,
+      state: {
+        release: async () => ({ ok: false as const, code: "RESERVATION_RELEASED" as const }),
+        hold: async (h: string) => {
+          checked.push(h);
+          return hold === "ok" ? ({ ok: true, hold: {} } as never) : { ok: false as const, code: hold };
+        },
+      },
+      log: (_l: "info" | "warn", fields: Record<string, unknown>, msg: string) => void logs.push({ msg, fields }),
+    });
+    const msg = (op_ref: string) => ({ op_ref, msg_type: "ISSUER_RESPONSE", issuer_approved: true });
+    expect(await acceptIssuerResponse(deps("OP-late", "RESERVATION_RELEASED"), msg("OP-late"))).toBe(202);
+    expect(await store.get("OP-late")).toMatchObject({ status: "AUTHORIZED" });
+    expect(checked).toEqual(["hold-cart", "hold-intent"]);
+    expect(logs.filter((l) => l.fields.incident === true && l.msg.includes("освобождённому")).map((l) => l.fields.hold_id)).toEqual(["hold-cart", "hold-intent"]);
+    expect((await events.listEvents(CODE, undefined, 10)).map((e) => e.type)).toEqual(["operation.authorized"]);
+    // Повтор того же одобрения — итог прежний, проверки нет.
+    expect(await acceptIssuerResponse(deps("OP-late", "RESERVATION_RELEASED"), msg("OP-late"))).toBe(202);
+    expect(checked).toHaveLength(2);
+    // Сбой чтения — итог записан, предупреждение без инцидента.
+    logs.length = 0;
+    expect(await acceptIssuerResponse(deps("OP-unread", "STATE_UNAVAILABLE"), msg("OP-unread"))).toBe(202);
+    expect(await store.get("OP-unread")).toMatchObject({ status: "AUTHORIZED" });
+    expect(logs.some((l) => l.msg.includes("не проверено") && l.fields.incident === undefined)).toBe(true);
+    // Удержание открыто — без записей в журнал.
+    logs.length = 0;
+    expect(await acceptIssuerResponse(deps("OP-held", "ok"), msg("OP-held"))).toBe(202);
+    expect(logs).toEqual([]);
   });
 
   it("факты не по форме — null или поле признака опущено: NUL, одиночный суррогат, длиннее предела, не строка (ревью КТ1 № 1)", () => {

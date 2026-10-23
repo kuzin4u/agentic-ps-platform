@@ -227,7 +227,8 @@ export type IssuerResponseStatus = 202 | 400 | 503;
 export interface IssuerResponseDeps {
   readonly operations: OperationReader;
   readonly store: OutcomeStore;
-  readonly state: Pick<StateService, "release">;
+  /** hold — проверка удержаний при одобрении эмитента (РП53 п. 11); без него проверки нет. */
+  readonly state: Pick<StateService, "release"> & Partial<Pick<StateService, "hold">>;
   readonly pushFor?: PushFor;
   readonly now?: () => Date;
   readonly log?: CollectorLog;
@@ -276,6 +277,16 @@ export async function acceptIssuerResponse(deps: IssuerResponseDeps, raw: unknow
   if (prior && (prior.status !== o.status || prior.reason !== o.reason)) {
     log("warn", { op_ref, prior: prior.status, issuer_approved: approved, incident: true }, "П8: второй ответ эмитента с иным исходом — итог прежний");
     return 202;
+  }
+  // Одобрение после освобождения удержания (РП53 п. 11, РП52 остаточный риск 5): итог уже записан — эмитент одобрил;
+  // освобождённое — инцидент, нового резерва нет (РП41 п. 6). Проверка диагностическая: сбой чтения — предупреждение.
+  if (approved && !prior && deps.state.hold) {
+    for (const hold_id of rec.holds) {
+      const h = await deps.state.hold(hold_id);
+      if (h.ok) continue;
+      if (h.code === "RESERVATION_RELEASED") log("warn", { op_ref, hold_id, incident: true }, "П8: одобрение эмитента по освобождённому удержанию — бюджет не держит операцию");
+      else log("warn", { op_ref, hold_id, code: h.code }, "П8: удержание при одобрении эмитента не проверено");
+    }
   }
   // Освобождение — и при повторе того же отказа: прошлый вызов мог записать итог и не освободить (повтор release безопасен).
   // Сбой — 503 (РП52 п. 3, решение владельца на КТ1): процессинг повторит, итог уже записан, второго события нет.

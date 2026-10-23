@@ -5,14 +5,14 @@
 import type { FastifyInstance } from "fastify";
 import type { CanonicalMessage, Decision } from "../shared/canonical.generated.js";
 import { parseDecision } from "../shared/codes.js";
-import { acceptIssuerResponse, type IssuerResponseDeps } from "../fulfilment/outcomes.js";
+import { acceptOperationEvent, type OperationEventDeps } from "../fulfilment/records.js";
 import { AdpRequestInvalid, isBypass, type Adp } from "./decide.js";
 
 export interface AdpDeps {
   /** Точка решения; в режиме «только BYPASS» её нет — хранилища не подтверждены самопроверкой. */
   readonly adp?: Adp;
-  /** ПИ-3 POST /adp/v1/events (РП52 п. 1 (б)); без него маршрута нет. */
-  readonly events?: IssuerResponseDeps;
+  /** ПИ-3 POST /adp/v1/events (РП52 п. 1 (б), РП53); без него маршрута нет. */
+  readonly events?: OperationEventDeps;
 }
 
 const BYPASS: Decision = Object.freeze({ decision: "BYPASS", reason: null, decided_in_ms: 0 });
@@ -53,10 +53,10 @@ export async function adpRoutes(app: FastifyInstance, deps: AdpDeps): Promise<vo
     }
     return d;
   });
-  // ПИ-3 (РП52 п. 1 (б), 8): ISSUER_RESPONSE — итог и событие; тело ответа {}. Сбой хранилища — 503 (обработчик ошибок):
-  // процессинг повторяет, итог по op_ref один.
+  // ПИ-3 (РП52 п. 1 (б), 8; РП53): ISSUER_RESPONSE — итог и событие, PRESENTMENT — закрепление, запись об исполнении и
+  // operation.settled; тело ответа {}. Сбой хранилища — 503 (обработчик ошибок): процессинг повторяет.
   const events = deps.events;
   if (events) {
-    app.post("/adp/v1/events", async (req, reply) => reply.code(await acceptIssuerResponse(events, req.body)).send({}));
+    app.post("/adp/v1/events", async (req, reply) => reply.code(await acceptOperationEvent(events, req.body)).send({}));
   }
 }
