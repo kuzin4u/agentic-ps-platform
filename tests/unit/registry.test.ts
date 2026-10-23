@@ -153,6 +153,7 @@ describe("ПС01 (часть реестра): допуск оператора Bu
         "status",
         "status_changed_at",
         "status_ground",
+        "suspended_at",
         "version",
       ].sort(),
     );
@@ -398,6 +399,7 @@ describe("статус допуска (РП21 п. 4)", () => {
         status: "EXCLUDED",
         status_ground: "WITHDRAWN",
         status_changed_at: "x",
+        suspended_at: null,
       }),
     ).toBeUndefined();
     expect(store.get(CODE)).toMatchObject({ status: "ACTIVE", row_version: 3 });
@@ -426,10 +428,25 @@ describe("статус допуска (РП21 п. 4)", () => {
     admitted(reg.admit(buyerApplication(), ctx()));
     const before = store.get(CODE) as AgentRecord;
     const after = reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" });
-    const STATUS_FIELDS = new Set(["status", "status_ground", "status_changed_at", "row_version"]);
+    const STATUS_FIELDS = new Set(["status", "status_ground", "status_changed_at", "suspended_at", "row_version"]);
     const rest = (r: AgentRecord): Record<string, unknown> =>
       Object.fromEntries(Object.entries(r).filter(([k]) => !STATUS_FIELDS.has(k)));
     expect(rest(after)).toEqual(rest(before));
+  });
+
+  it("suspended_at — время последнего приостановления: при снятии и исключении сохраняется (РП54 п. 5)", () => {
+    let t = Date.parse("2026-10-23T10:00:00.000Z");
+    const reg = new AgentRegistry(new InMemoryAgentRegistryStore(), { ...opts, now: () => new Date(t) });
+    expect(admitted(reg.admit(buyerApplication(), ctx())).suspended_at).toBeNull();
+    t += 1000;
+    const first = reg.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" }).suspended_at;
+    expect(first).toBe("2026-10-23T10:00:01.000Z");
+    t += 1000;
+    expect(reg.changeStatus(CODE, { to: "ACTIVE" }).suspended_at).toBe(first);
+    t += 1000;
+    expect(reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" }).suspended_at).toBe("2026-10-23T10:00:03.000Z");
+    t += 1000;
+    expect(reg.changeStatus(CODE, { to: "EXCLUDED", ground: "WITHDRAWN" }).suspended_at).toBe("2026-10-23T10:00:03.000Z");
   });
 
   it("неизвестный текущий статус — переход запрещён (инвариант 3)", () => {

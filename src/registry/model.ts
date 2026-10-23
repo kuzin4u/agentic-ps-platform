@@ -59,6 +59,11 @@ export interface AgentRecord {
   readonly conformance_run_ref: string | null;
   readonly admitted_at: string;
   readonly status_changed_at: string;
+  /**
+   * Время последнего перехода ACTIVE → SUSPENDED (часы Платформы); при снятии сохраняется, до первого приостановления —
+   * null. Отсечка ADP: реквизит и confirmation_ref, выданные раньше, не действуют и после снятия (РП54 п. 5–6).
+   */
+  readonly suspended_at: string | null;
   /** Версия строки: каждое изменение записи увеличивает её на 1; изменение — по условию версии. */
   readonly row_version: number;
 }

@@ -15,11 +15,13 @@ import {
 } from "@kuzin4u/agentic-core";
 import type { DeliveryOutcome, DeliveryRow, DueDelivery, EventDeliveryStore } from "../pao/delivery.js";
 import {
+  agentStatusEventIdFor,
   confirmationEventIdFor,
   EventCursorUnknown,
   eventIdFor,
   eventSeqLockKey,
   operationEventIdFor,
+  type AgentStatusEventDraft,
   type ConfirmationEventDraft,
   type EventDraft,
   type OperationEventDraft,
@@ -165,7 +167,28 @@ const operationEventOf = (draft: OperationEventDraft, at: string, seq: number): 
     journal_seq: null,
   });
 
-export class MemoryConsentStore implements ConsentStore {
+/** Событие смены статуса агента (РП54 п. 8): без записи журнала, at — момент смены по реестру. */
+const agentStatusEventOf = (draft: AgentStatusEventDraft, at: string, seq: number): StoredEvent =>
+  Object.freeze({
+    agent_code: draft.agent_code,
+    type: draft.type,
+    data: Object.freeze({ agent_code: draft.data.agent_code }),
+    seq,
+    event_id: agentStatusEventIdFor(draft.agent_code, draft.version),
+    at,
+    journal_chain: null,
+    journal_seq: null,
+  });
+
+/**
+ * Лента для событий смены статуса агента (РП54 п. 2, 8). Повтор той же смены (та же версия записи реестра) — без второго
+ * события: false; записано этим вызовом — true. Сбой — исключение.
+ */
+export interface AgentStatusEventStore {
+  appendAgentStatusEvent(draft: AgentStatusEventDraft, at: string): Promise<boolean>;
+}
+
+export class MemoryConsentStore implements ConsentStore, AgentStatusEventStore {
   /** notifications — Outbox участника в памяти (стенд); без него уведомления клиента через банк не пишутся (dev без базы). */
   constructor(private readonly opts: { readonly notifications?: NotificationSink } = {}) {}
 
@@ -231,6 +254,13 @@ export class MemoryConsentStore implements ConsentStore {
     const ev = operationEventOf(draft, at, (this.events.get(draft.agent_code)?.length ?? 0) + 1);
     if (this.byEventId.has(ev.event_id)) throw new Error(`pao_events: событие ${draft.type} операции уже записано`);
     this.pushEvent(ev, draft.push);
+  }
+  /** Событие смены статуса агента (РП54 п. 2): по версии записи реестра — одно; повтор — false, как ON CONFLICT на PG. */
+  async appendAgentStatusEvent(draft: AgentStatusEventDraft, at: string): Promise<boolean> {
+    const ev = agentStatusEventOf(draft, at, (this.events.get(draft.agent_code)?.length ?? 0) + 1);
+    if (this.byEventId.has(ev.event_id)) return false;
+    this.pushEvent(ev, draft.push);
+    return true;
   }
   private pushEvent(ev: StoredEvent, push: boolean | undefined): void {
     const own = this.events.get(ev.agent_code) ?? [];
@@ -317,7 +347,7 @@ export interface PgConsentStoreHooks {
 
 const UNIQUE_VIOLATION = "23505";
 
-export class PgConsentStore implements ConsentStore {
+export class PgConsentStore implements ConsentStore, AgentStatusEventStore {
   constructor(
     private readonly client: TxSqlPool,
     private readonly hooks: PgConsentStoreHooks = {},
@@ -366,6 +396,18 @@ export class PgConsentStore implements ConsentStore {
 
   async pairPosition(pair: PrincipalPair, mandate_id: string): Promise<PairPosition> {
     return position(this.client, pair, mandate_id);
+  }
+
+  /**
+   * Событие смены статуса агента (РП54 п. 2, 8): своя транзакция — блокировка агента (номер общий с прочими событиями,
+   * РП39 п. 2), вставка с ON CONFLICT DO NOTHING по (agent_code, agent_status_version); строка попытки — только у
+   * вставленного события.
+   */
+  async appendAgentStatusEvent(draft: AgentStatusEventDraft, at: string): Promise<boolean> {
+    return this.tx(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(draft.agent_code)]);
+      return insertEventTx(tx, agentStatusEventOf(draft, at, 0), draft.push, draft.version);
+    });
   }
 
   async appendNotice(notice: ParticipantNotice, at: string): Promise<void> {
@@ -593,22 +635,26 @@ async function position(client: SqlClient, pair: PrincipalPair, mandate_id: stri
 
 /**
  * Вставка события с номером max + 1 у агента и строки попытки push (РП39 п. 2, РП40 п. 5) — внутри транзакции вызывающего,
- * под уже взятой блокировкой агента. ev.seq не используется: номер даёт база.
+ * под уже взятой блокировкой агента. ev.seq не используется: номер даёт база. Событие смены статуса агента (version) —
+ * с ON CONFLICT DO NOTHING (РП54 п. 2): повтор той же смены не вставляет ничего и даёт false.
  */
-async function insertEventTx(tx: SqlClient, ev: StoredEvent, push: boolean | undefined): Promise<void> {
+async function insertEventTx(tx: SqlClient, ev: StoredEvent, push: boolean | undefined, version?: number): Promise<boolean> {
   const confirmation_id = "confirmation_id" in ev.data ? ev.data.confirmation_id : null;
   const op_ref = "op_ref" in ev.data ? ev.data.op_ref : null;
-  await tx.query(
-    `INSERT INTO pao_events (agent_code, seq, event_id, type, at, data, journal_chain, journal_seq, confirmation_id, op_ref)
-     SELECT $1, COALESCE(MAX(seq), 0) + 1, $2, $3, $4, $5, $6, $7, $8, $9 FROM pao_events WHERE agent_code = $1`,
-    [ev.agent_code, ev.event_id, ev.type, ev.at, canonicalJson(ev.data), ev.journal_chain, ev.journal_seq, confirmation_id, op_ref],
+  const r = await tx.query(
+    `INSERT INTO pao_events (agent_code, seq, event_id, type, at, data, journal_chain, journal_seq, confirmation_id, op_ref, agent_status_version)
+     SELECT $1, COALESCE(MAX(seq), 0) + 1, $2, $3, $4, $5, $6, $7, $8, $9, $10 FROM pao_events WHERE agent_code = $1
+     ${version === undefined ? "" : "ON CONFLICT (agent_code, agent_status_version) DO NOTHING"} RETURNING event_id`,
+    [ev.agent_code, ev.event_id, ev.type, ev.at, canonicalJson(ev.data), ev.journal_chain, ev.journal_seq, confirmation_id, op_ref, version ?? null],
   );
+  if (r.rows.length === 0) return false;
   if (push) {
     await tx.query(
       "INSERT INTO pao_event_deliveries (event_id, agent_code, state, attempts, next_at_ms) VALUES ($1, $2, 'PENDING', 0, $3)",
       [ev.event_id, ev.agent_code, Date.parse(ev.at)],
     );
   }
+  return true;
 }
 
 /**

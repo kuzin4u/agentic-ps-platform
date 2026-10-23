@@ -200,6 +200,7 @@ export class AgentRegistry {
       conformance_run_ref: conformance,
       admitted_at: at,
       status_changed_at: at,
+      suspended_at: null,
       row_version: 1,
     };
     try {
@@ -236,10 +237,13 @@ export class AgentRegistry {
     const cur = this.store.get(agent_code);
     if (!cur) throw new AgentNotFoundError(agent_code);
     const c = checkTransition(cur.status, change);
+    const at = this.now().toISOString();
     const next = this.store.updateStatus(agent_code, cur.row_version, {
       status: c.to,
       status_ground: c.to === "ACTIVE" ? null : c.ground,
-      status_changed_at: this.now().toISOString(),
+      status_changed_at: at,
+      // Отсечка РП54 п. 5–6: время последнего приостановления переживает снятие и исключение.
+      suspended_at: c.to === "SUSPENDED" ? at : cur.suspended_at,
     });
     if (!next) throw new ConcurrentChangeError(agent_code);
     return next;

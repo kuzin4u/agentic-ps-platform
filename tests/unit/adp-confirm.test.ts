@@ -87,7 +87,14 @@ const auth = (over: Partial<CanonicalMessage> = {}): CanonicalMessage =>
   });
 
 function setup(
-  opts: { splitMinOps?: number; over?: Partial<ConfirmationStore>; connected?: boolean; credentials?: AdpCredentials } = {},
+  opts: {
+    splitMinOps?: number;
+    over?: Partial<ConfirmationStore>;
+    connected?: boolean;
+    credentials?: AdpCredentials;
+    /** Время последнего приостановления агента из реестра (РП54 п. 6); по умолчанию — не приостанавливался. */
+    suspendedAt?: () => string | null;
+  } = {},
 ) {
   let t = T0;
   const now = () => new Date(t);
@@ -100,7 +107,7 @@ function setup(
   const store = wrap(inner, broken, calls, opts.over);
   const logs: { fields: Record<string, unknown>; msg: string }[] = [];
   const adp = new Adp({
-    agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
+    agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1, suspended_at: opts.suspendedAt?.() ?? null } : undefined) },
     mandates: journal,
     state,
     operations: new MemoryOperationStore(),
@@ -534,5 +541,49 @@ describe("снимок входа (Р-205)", () => {
     expect(pair(await p).decision).toBe("CONFIRMATION_REQUIRED");
     const [r] = await s.requests({ ...m, amount: 340_000, order_ref: "ORD-77a1" });
     expect(r).toMatchObject({ amount: 340_000, order_ref: "ORD-77a1" });
+  });
+});
+
+describe("отсечка ссылки по последнему приостановлению агента (РП54 п. 6)", () => {
+  // Реквизит выдан после снятия (позже любой отсечки теста): проверяется только ссылка, отсечка реквизита — п. 4,
+  // ПС25 и agent-status.test.ts.
+  const FRESH = "2026-10-22T12:00:00.000Z";
+  const fresh: AdpCredentials = {
+    ...agentTokenCredentials,
+    credentialByCryptogram: async (t, h) => {
+      const r = await agentTokenCredentials.credentialByCryptogram(t, h);
+      return r && { ...r, created_at: FRESH };
+    },
+  };
+
+  async function approvedThen(suspendedAt: string | null) {
+    let susp: string | null = null;
+    const s = setup({ credentials: fresh, suspendedAt: () => susp });
+    const first = auth();
+    expect(pair(await s.adp.decide(first)).decision).toBe("CONFIRMATION_REQUIRED");
+    const [r] = await s.requests(first);
+    const ref = await s.approve(r!);
+    // Приостановление и снятие после решения человека: в реестре остаётся время приостановления.
+    susp = suspendedAt;
+    s.advance(2_000);
+    const d = pair(await s.adp.decide(auth({ confirmation_ref: ref })));
+    return { s, r: r!, d };
+  }
+
+  it("запрос создан до последнего приостановления — ссылка не учитывается: CONFIRMATION_REQUIRED, без инцидента, ссылка не погашена", async () => {
+    const { s, r, d } = await approvedThen(new Date(T0 + 1_000).toISOString());
+    expect(d.decision).toBe("CONFIRMATION_REQUIRED");
+    expect((await s.inner.get(r.confirmation_id))?.status).toBe("APPROVED");
+    expect(incidents(s.logs)).toEqual([]);
+    expect(s.logs.map((l) => l.msg)).toContain("ADP: подтверждение запрошено до приостановления агента — не учитывается");
+  });
+
+  it("контроль: приостановление раньше запроса или его не было — та же ссылка даёт APPROVE", async () => {
+    expect((await approvedThen(new Date(T0 - 1_000).toISOString())).d).toMatchObject({ decision: "APPROVE", reason: null });
+    expect((await approvedThen(null)).d).toMatchObject({ decision: "APPROVE", reason: null });
+  });
+
+  it("время приостановления не разбирается — «раньше» (fail-closed): отказ уже на реквизите, п. 4", async () => {
+    expect((await approvedThen("не-время")).d).toMatchObject({ decision: "DECLINE", reason: "CREDENTIAL_INVALID" });
   });
 });
