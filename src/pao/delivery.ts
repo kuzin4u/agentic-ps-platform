@@ -6,7 +6,7 @@ import { isIP, type LookupFunction } from "node:net";
 import { nextAttemptDelayMs } from "@kuzin4u/agentic-core";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
 import type { Params } from "../shared/config.js";
-import { toPaoEvent, type StoredEvent } from "./events.js";
+import { pushAllowed, toPaoEvent, type StoredEvent } from "./events.js";
 import { checkSubscriptionUrl, resolveGlobal, STAND_PORT, withTimeout, type HostResolver } from "./subscription.js";
 
 export type DeliveryState = "PENDING" | "DELIVERED" | "EXHAUSTED" | "SKIPPED";
@@ -167,8 +167,9 @@ export class EventDeliverer {
       this.deps.log?.("warn", { ...fields, reason: "status_unavailable" }, "ПАО: статус агента не прочитан — попытка отложена");
       return { state: "PENDING", next_at_ms: this.now() + nextAttemptDelayMs(d.claim), reason: "status_unavailable", refund: true };
     }
-    // Приостановлен или исключён — push не выполняется и не догоняет: событие в ленте (РП40 п. 6–7).
-    if (!agent || agent.status !== "ACTIVE") return this.skip(event, "agent_not_active");
+    // Приостановлен или исключён — push не выполняется и не догоняет: событие в ленте (РП40 п. 6–7). Исключение —
+    // agent.suspended приостановленному (РП54 п. 9).
+    if (!agent || !pushAllowed(agent.status, event.type)) return this.skip(event, "agent_not_active");
     if (!sub || !sub.events.includes(event.type)) return this.skip(event, "not_subscribed");
     const form = checkSubscriptionUrl(sub.url, this.deps.params.event_subscription_allow_hosts);
     if (!form.ok) return this.failed(event, attempts, form.reason, form.host);

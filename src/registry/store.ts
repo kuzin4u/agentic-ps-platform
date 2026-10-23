@@ -17,7 +17,7 @@ export class KeyTakenError extends Error {
   }
 }
 
-export type StatusFields = Pick<AgentRecord, "status" | "status_ground" | "status_changed_at">;
+export type StatusFields = Pick<AgentRecord, "status" | "status_ground" | "status_changed_at" | "suspended_at">;
 
 export interface AgentRegistryStore {
   get(agent_code: string): AgentRecord | undefined;
@@ -96,6 +96,7 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
       status: fields.status,
       status_ground: fields.status_ground,
       status_changed_at: fields.status_changed_at,
+      suspended_at: fields.suspended_at,
       row_version: cur.row_version + 1,
     });
     this.#byCode.set(agent_code, next);

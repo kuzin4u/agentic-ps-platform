@@ -8,6 +8,7 @@ import { WebhookDeliverer } from "./participants/webhook.js";
 import { loadTrustedParticipants, type TrustedParticipants } from "./participants/trusted.js";
 import { ParticipantRequestVerifier } from "./participants/verify.js";
 import { EventDeliverer, httpsTransport, startEventDelivery } from "./pao/delivery.js";
+import { pushAllowed } from "./pao/events.js";
 import { paoIdempotency } from "./pao/idempotency.js";
 import { paoNonceStore, paoPoolConfig, requireDatabaseUrl, startNoncePurge } from "./pao/stores.js";
 import { systemResolver } from "./pao/subscription.js";
@@ -151,11 +152,12 @@ async function serve(): Promise<void> {
   );
 
   // Журнал согласий (П2): PostgreSQL при DATABASE_URL, иначе (dev) — память ядра. Порядок отзыва — из записи участника (РП37).
-  // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6).
+  // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6); agent.suspended — и
+  // приостановленному (РП54 п. 9). Служба приостановления (AgentStatusService) подключается к HTTP оператора в PS-32.
   const consentStore = pool ? new PgConsentStore(pool) : new MemoryConsentStore();
   const consent: ConsentJournal = new ConsentJournal(consentStore, {
     revocationOrder: () => trusted.revocationOrder(),
-    pushFor: (code, type) => registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false),
+    pushFor: (code, type) => pushAllowed(registry.get(code)?.status, type) && (registry.subscription(code)?.events.includes(type) ?? false),
     // Остаток для verify — из П3 (РП41 п. 10); state объявлен ниже, вызов — только при обращении.
     amountLeft: (id, limit) => state.amountLeft(id, limit),
   });
@@ -198,7 +200,7 @@ async function serve(): Promise<void> {
     ? new OperationOutcomeCollector(new PgOutcomeStore(pool), {
         horizonSec: params.operation_outcome_horizon_sec,
         maxDelaySec: params.operation_outcome_max_delay_sec,
-        pushFor: (code, type) => registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false),
+        pushFor: (code, type) => pushAllowed(registry.get(code)?.status, type) && (registry.subscription(code)?.events.includes(type) ?? false),
         log: (level, fields, msg) => app.log[level](fields, msg),
       })
     : undefined;

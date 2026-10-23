@@ -9,3 +9,4 @@ export * from "./registry.js";
 export * from "./keys.js";
 export * from "./agent-keys.js";
 export * from "./jwks.js";
+export * from "./suspension.js";

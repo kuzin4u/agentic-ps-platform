@@ -20,7 +20,7 @@ import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhoo
 import { MemoryOutcomeStore, OperationOutcomeCollector, type CollectorResult } from "../fulfilment/outcomes.js";
 import { MemoryFulfilmentStore } from "../fulfilment/records.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
-import type { PaoEventType } from "../pao/events.js";
+import { pushAllowed, type PaoEventType } from "../pao/events.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
 import {
   MemoryParticipantNotificationStore,
@@ -33,7 +33,14 @@ import { TrustedParticipants, type TrustedParticipantKey } from "../participants
 import { ParticipantRequestVerifier } from "../participants/verify.js";
 import { paoIdempotency } from "../pao/idempotency.js";
 import { PaoRequestVerifier } from "../pao/verify.js";
-import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore, type AdmissionDecision } from "../registry/index.js";
+import {
+  AgentKeys,
+  AgentRegistry,
+  AgentStatusService,
+  InMemoryAgentRegistryStore,
+  type AdmissionDecision,
+  type AgentRecord,
+} from "../registry/index.js";
 import { buildServer } from "../server.js";
 import { loadParams, type Params } from "../shared/config.js";
 import { holdLedger, StateService } from "../state/index.js";
@@ -163,6 +170,13 @@ export interface Stand {
   now(): Date;
   /** Допуск по заявлению (РП21, РП23) в контуре sandbox; оператор — от вызывающего (только стенд, №9). */
   admit(application: unknown, operator: string): AdmissionDecision;
+  /**
+   * Действие оператора Системы (РП54 п. 1, ПС25): приостановление с основанием A2 п. 7.1 и событие agent.suspended.
+   * Повтор с тем же основанием дописывает недостающее событие; HTTP оператора — PS-32.
+   */
+  suspendAgent(agent_code: string, ground: string): Promise<AgentRecord>;
+  /** Снятие приостановления и событие agent.reinstated (РП54 п. 1, 10). */
+  reinstateAgent(agent_code: string): Promise<AgentRecord>;
   /** Запуск на 127.0.0.1 и свободном порту; возвращает базовый адрес для клиента ПАО. */
   listen(): Promise<string>;
   close(): Promise<void>;
@@ -196,7 +210,9 @@ export function createStand(opts: StandOptions = {}): Stand {
   const notifications = new MemoryParticipantNotificationStore(operations);
   const consentStore = new MemoryConsentStore({ notifications });
   const pushFor = (code: string, type: PaoEventType): boolean =>
-    registry.get(code)?.status === "ACTIVE" && (registry.subscription(code)?.events.includes(type) ?? false);
+    pushAllowed(registry.get(code)?.status, type) && (registry.subscription(code)?.events.includes(type) ?? false);
+  // Приостановление и снятие — одно действие оператора со событием в ленте стенда (РП54 п. 1–2).
+  const agentStatus = new AgentStatusService(registry, { events: consentStore, pushFor });
   const consent: ConsentJournal = new ConsentJournal(consentStore, {
     now,
     revocationOrder: () => trusted.revocationOrder(),
@@ -475,6 +491,8 @@ export function createStand(opts: StandOptions = {}): Stand {
     setClock: (d) => (clock = d),
     now,
     admit: (application, operator) => registry.admit(application, { contour: "sandbox", operator }),
+    suspendAgent: (agent_code, ground) => agentStatus.suspend(agent_code, ground),
+    reinstateAgent: (agent_code) => agentStatus.reinstate(agent_code),
     async listen() {
       await app.listen({ host: "127.0.0.1", port: 0 });
       const addr = app.server.address();

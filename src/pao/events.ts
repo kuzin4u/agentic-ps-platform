@@ -2,7 +2,9 @@
 // номер у агента — под блокировкой агента до фиксации. Событие без подписи до ПАО 1.5.0 — сигнал, статус — через GET.
 // Второй источник — переход запроса подтверждения П6 (РП51 п. 1–4): та же лента и номер, без записи журнала.
 // Третий — итог операции П8 (РП52 п. 7): operation.authorized / .declined, а с клиринга — .settled (РП53 п. 9); data — только {op_ref}.
+// Четвёртый — смена статуса допуска агента П1 (РП54 п. 8): agent.suspended / .reinstated; data — только {agent_code}.
 import { createHash } from "node:crypto";
+import type { AgentStatus } from "../registry/model.js";
 import type { Event } from "../shared/pao.js";
 
 export type PaoEventType = Event["type"];
@@ -17,8 +19,15 @@ export interface EventDraft {
   readonly push?: boolean;
 }
 
-/** Ссылка события: мандат (запись журнала), запрос подтверждения (переход П6, РП51 п. 5) или операция (итог П8, РП52 п. 7). */
-export type EventData = { readonly mandate_id: string } | { readonly confirmation_id: string } | { readonly op_ref: string };
+/**
+ * Ссылка события: мандат (запись журнала), запрос подтверждения (переход П6, РП51 п. 5), операция (итог П8, РП52 п. 7)
+ * или агент (смена статуса П1, РП54 п. 8).
+ */
+export type EventData =
+  | { readonly mandate_id: string }
+  | { readonly confirmation_id: string }
+  | { readonly op_ref: string }
+  | { readonly agent_code: string };
 
 /** Событие перехода запроса подтверждения: тип confirmation.*, data — только {confirmation_id} (РП51 п. 2, 5). */
 export interface ConfirmationEventDraft extends EventDraft {
@@ -30,6 +39,16 @@ export interface ConfirmationEventDraft extends EventDraft {
 export interface OperationEventDraft extends EventDraft {
   readonly type: Extract<PaoEventType, "operation.authorized" | "operation.declined" | "operation.settled">;
   readonly data: { readonly op_ref: string };
+}
+
+/**
+ * Событие смены статуса допуска: agent.suspended / .reinstated, data — только {agent_code}, без основания (РП54 п. 8).
+ * version — row_version записи реестра после смены: по ней event_id и UNIQUE (agent_code, agent_status_version).
+ */
+export interface AgentStatusEventDraft extends EventDraft {
+  readonly type: Extract<PaoEventType, "agent.suspended" | "agent.reinstated">;
+  readonly data: { readonly agent_code: string };
+  readonly version: number;
 }
 
 /**
@@ -47,6 +66,7 @@ export interface StoredEvent extends Omit<EventDraft, "push"> {
 export const EVENT_ID_DOMAIN = "pao:event-id:v1";
 export const CONFIRMATION_EVENT_ID_DOMAIN = "pao:confirmation-event-id:v1";
 export const OPERATION_EVENT_ID_DOMAIN = "pao:operation-event-id:v1";
+export const AGENT_STATUS_EVENT_ID_DOMAIN = "pao:agent-status-event-id:v1";
 export const EVENT_SEQ_LOCK_DOMAIN = "pao:event-seq-lock:v1";
 
 export const EVENT_ID = /^evt_[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -68,6 +88,21 @@ export function operationEventIdFor(op_ref: string, type: OperationEventDraft["t
   if (op_ref === "" || op_ref.includes("\n")) throw new Error("operationEventIdFor: операция");
   return uuidV8(`${OPERATION_EVENT_ID_DOMAIN}\n${op_ref}\n${type}`);
 }
+
+/** event_id смены статуса агента (РП54 п. 2): от версии записи реестра — повтор действия даёт тот же id. */
+export function agentStatusEventIdFor(agent_code: string, version: number): string {
+  if (agent_code === "" || agent_code.includes("\n") || !Number.isSafeInteger(version) || version < 2) {
+    throw new Error("agentStatusEventIdFor: смена статуса агента");
+  }
+  return uuidV8(`${AGENT_STATUS_EVENT_ID_DOMAIN}\n${agent_code}\n${version}`);
+}
+
+/**
+ * Push по событию (РП40 п. 5–7, РП54 п. 9): агенту ACTIVE; при SUSPENDED — только agent.suspended, иначе
+ * приостановленный агент узнал бы о нём лишь по 403; EXCLUDED и неизвестный статус — никогда.
+ */
+export const pushAllowed = (status: AgentStatus | undefined, type: PaoEventType): boolean =>
+  status === "ACTIVE" || (status === "SUSPENDED" && type === "agent.suspended");
 
 function uuidV8(input: string): string {
   const b = createHash("sha256").update(input, "utf8").digest().subarray(0, 16);
