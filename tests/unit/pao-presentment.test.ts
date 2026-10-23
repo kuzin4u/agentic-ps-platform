@@ -147,6 +147,22 @@ describe("клиринг PRESENTMENT → закрепление, запись о
     expect(await settled(o)).toHaveLength(1);
   });
 
+  it("одобрение эмитента после прохода срока: итог AUTHORIZED и событие пишутся (эмитент одобрил), нового резерва нет; клиринг — NOT_RESERVED (РП53 п. 11)", async () => {
+    const m = await mandates(100_000);
+    const o = `OPKC-PS14-${randomUUID()}`;
+    expect(await decide(await pay().auth(m.cart, 60_000, o))).toMatchObject({ decision: "APPROVE" });
+    stand.setClock(new Date(stand.now().getTime() + 7 * 86_400_000 + 1_000));
+    try {
+      expect(await stand.expireReservations()).toBeGreaterThanOrEqual(2);
+      expect(await issuer(o, true)).toBe(202);
+      expect(await op(o)).toMatchObject({ status: "AUTHORIZED" });
+      expect(await present(o, 60_000)).toBe(202);
+      expect(await op(o)).toMatchObject({ status: "SETTLED", fulfilment: { scope_check: "NOT_RESERVED", spent_position: 0 } });
+    } finally {
+      stand.setClock(T0);
+    }
+  });
+
   it("позднее представление: удержание освобождено проходом срока — запись NOT_RESERVED, бюджет не меняется, settled (РП53 п. 6)", async () => {
     const m = await mandates(100_000);
     const o = await authorized(m, 60_000);
