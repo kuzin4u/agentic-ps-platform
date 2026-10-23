@@ -288,7 +288,7 @@ paths:
   /adp/v1/events:
     post:
       summary: ПИ-3 События операции
-      description: 'С PS-16 ч. 1 (РП52) обрабатывается ISSUER_RESPONSE: по операции с APPROVE ADP issuer_approved true — итог AUTHORIZED и operation.authorized агенту, false — освобождение резерва, итог DECLINED / ISSUER_DECLINED и operation.declined. Итог по op_ref один (повтор — без второго события). С PS-16 ч. 2 (РП53) — PRESENTMENT (amount — целое > 0, currency — ISO 4217): по операции с итогом AUTHORIZED закрепление каждого удержания записи операции суммой представления (не больше удержанной, остаток освобождается), запись об исполнении (scope_check WITHIN_LIMITS, EXCEEDS_AUTHORIZATION — сумма больше одобренной, NOT_RESERVED — удержание уже освобождено) и operation.settled; запись по op_ref одна. REVERSAL, REFUND, AUTH_EXPIRED, CHARGEBACK — до PS-16 ч. 3 и PS-22 503. Тело ответа {}.'
+      description: 'С PS-16 ч. 1 (РП52) обрабатывается ISSUER_RESPONSE: по операции с APPROVE ADP issuer_approved true — итог AUTHORIZED и operation.authorized агенту, false — освобождение резерва, итог DECLINED / ISSUER_DECLINED и operation.declined. Итог по op_ref один (повтор — без второго события). С PS-16 ч. 2 (РП53) — PRESENTMENT (amount — целое > 0, currency — три заглавные латинские буквы, валюта операции): по операции с итогом AUTHORIZED закрепление каждого удержания записи операции суммой представления (не больше удержанной, остаток освобождается), запись об исполнении (scope_check WITHIN_LIMITS, EXCEEDS_AUTHORIZATION — сумма больше одобренной, NOT_RESERVED — удержание уже освобождено) и operation.settled; запись по op_ref одна. REVERSAL, REFUND, AUTH_EXPIRED, CHARGEBACK — до PS-16 ч. 3 и PS-22 503. Тело ответа {}.'
       requestBody:
         required: true
         content:
@@ -299,7 +299,7 @@ paths:
         '202':
           description: 'Принято: итог записан, повтор того же итога, op_ref без записи ADP (BYPASS, неагентская — без действий, РП4) или ответ эмитента по операции без APPROVE ADP (инцидент, итог прежний); PRESENTMENT — записан или повтор, по операции без одобрения эмитента или второе представление с другой суммой (инцидент, без закрепления, запись прежняя).'
         '400':
-          description: 'Сообщение не по форме: тело не объект, op_ref пуст, msg_type не строка, у ISSUER_RESPONSE issuer_approved не булево, у PRESENTMENT amount не целое > 0 или currency не ISO 4217; валюта PRESENTMENT не валюта операции (инцидент, без закрепления).'
+          description: 'Сообщение не по форме: тело не объект, op_ref пуст, msg_type не строка, у ISSUER_RESPONSE issuer_approved не булево, у PRESENTMENT amount не целое > 0 или currency не три заглавные латинские буквы; валюта PRESENTMENT не валюта операции (инцидент, без закрепления).'
         '503':
           description: 'Не обработано, процессинг повторяет: решение ADP по op_ref ещё не записано, PRESENTMENT раньше ответа эмитента, сбой хранилища или закрепления, msg_type, который ещё не обрабатывается (PS-16 ч. 3).'
   /participants/v1/principals/{ref}/limits:

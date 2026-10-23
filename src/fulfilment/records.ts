@@ -231,8 +231,10 @@ export async function acceptPresentment(deps: PresentmentDeps, msg: Readonly<Rec
     else if (h.code !== "RESERVATION_RELEASED") return 503;
   }
   if (!authorized) {
+    // Запись до sql/114 без фактов и с освобождённым удержанием: сумму и валюту операции не установить — 202 и инцидент,
+    // а не бесконечный 503 (ревью КТ1 № 4).
     log("warn", { op_ref, incident: true }, "П8: одобренная сумма операции не установлена — представление не принято");
-    return 503;
+    return 202;
   }
   if (currency !== authorized.currency) {
     log("warn", { op_ref, currency, expected: authorized.currency, incident: true }, "П8: валюта представления не совпадает с валютой операции");
@@ -243,8 +245,11 @@ export async function acceptPresentment(deps: PresentmentDeps, msg: Readonly<Rec
     if (prior.final_amount !== amount) log("warn", { op_ref, prior: prior.final_amount, amount, incident: true }, "П8: второе представление с другой суммой — запись прежняя");
     return 202;
   }
-  // Закрепление по удержаниям в порядке резерва (РП53 п. 2): повтор распознаёт П3; освобождённое — NOT_RESERVED (п. 6).
+  // Закрепление по удержаниям в порядке резерва (РП53 п. 2): повтор распознаёт П3. Освобождённое — NOT_RESERVED, открытые
+  // закрепляются (п. 6, решение владельца на КТ1 № 3: бюджет — в безопасную сторону).
   let notReserved = rec.holds.length === 0;
+  /** Удержания, закреплённые прежде другой суммой (сбой между закреплением и записью, КТ1 № 1): сумма из П3. */
+  const conflicts: { hold_id: string; committed: number }[] = [];
   for (const hold_id of rec.holds) {
     const h = await deps.state.hold(hold_id);
     if (!h.ok) {
@@ -257,13 +262,16 @@ export async function acceptPresentment(deps: PresentmentDeps, msg: Readonly<Rec
     if (r.code === "RESERVATION_RELEASED") {
       notReserved = true;
     } else if (r.code === "COMMIT_CONFLICT") {
-      log("warn", { op_ref, hold_id, amount, incident: true }, "П8: удержание уже закреплено другой суммой — представление не принято");
-      return 202;
+      const read = await deps.state.hold(hold_id);
+      if (!read.ok) return 503;
+      conflicts.push({ hold_id, committed: read.hold.committed });
     } else {
       log("warn", { op_ref, hold_id, code: r.code }, "П8: удержание не закреплено — 503, процессинг повторит");
       return 503;
     }
   }
+  // Записи нет, а удержание закреплено другой суммой: запись — по сумме повтора, в инциденте — обе суммы (КТ1 № 1).
+  if (conflicts.length > 0) log("warn", { op_ref, amount, committed: conflicts, incident: true }, "П8: удержания закреплены другой суммой — запись по сумме представления");
   const spent = rec.mandate_id === null ? 0 : await deps.state.committed(rec.mandate_id);
   if (spent === undefined) return 503;
   const scope_check: ScopeCheck = notReserved ? "NOT_RESERVED" : amount > authorized.amount ? "EXCEEDS_AUTHORIZATION" : "WITHIN_LIMITS";

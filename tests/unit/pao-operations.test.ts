@@ -133,6 +133,20 @@ describe("GET /pao/v1/operations/{op_ref} на стенде (РП52 п. 10, РП
     expect((await get(forgedOp)).statusCode).toBe(400);
   });
 
+  it("AOI_MISMATCH — итог владельцу токена без aoi: чужой код агента и мандат не отдаются (решение владельца на КТ1 № 10)", async () => {
+    const m = await cart(50_000);
+    const op = `OPKC-GET-${randomUUID()}`;
+    const msg = await pay().auth(m, 10_000, op);
+    const lie = { ...msg, aoi: { ...msg.aoi, agent_code: OTHER, mandate_id: "mnd_someone_else" } } as CanonicalMessage;
+    expect(await decide(lie)).toMatchObject({ decision: "DECLINE", reason: "AOI_MISMATCH" });
+    const r = await get(op);
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ op_ref: op, status: "DECLINED", reason: "AOI_MISMATCH" });
+    expect(r.json()).not.toHaveProperty("aoi");
+    expect(r.body).not.toContain(OTHER);
+    expect(r.body).not.toContain("mnd_someone_else");
+  });
+
   it("SUSPENDED — 403 AGENT_SUSPENDED; после снятия — итог", async () => {
     const op = `OPKC-GET-${randomUUID()}`;
     await limitDecline(op);

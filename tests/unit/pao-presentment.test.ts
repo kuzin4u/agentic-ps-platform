@@ -3,8 +3,12 @@
 // исполнении и одно operation.settled; GET — SETTLED с fulfilment. Раньше ответа эмитента — 503; по отказу — 202 без
 // записи; больше одобренной — закреплена одобренная, EXCEEDS_AUTHORIZATION; удержание освобождено — NOT_RESERVED.
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { fulfilmentRefFor } from "../../src/fulfilment/records.js";
+import { readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { MemoryOperationStore, type OperationRecord } from "../../src/adp/operations.js";
+import { MemoryOutcomeStore } from "../../src/fulfilment/outcomes.js";
+import { acceptPresentment, fulfilmentRefFor, MemoryFulfilmentStore } from "../../src/fulfilment/records.js";
+import type { StateResult } from "../../src/state/index.js";
 import { operationEventIdFor } from "../../src/pao/events.js";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import { createStand, type Stand } from "../../src/stand/index.js";
@@ -15,6 +19,9 @@ import { standPay } from "../support/stand-pay.js";
 const CODE = "nspk:agent:ps-fourteen:v1";
 const PRINCIPAL = "prn_ps_fourteen";
 const T0 = new Date("2026-10-23T09:00:00Z");
+/** Срок резерва стенда (reservation_ttl_sec) и секунда сверху — после него проход срока освобождает удержания. */
+const PAST_TTL_MS =
+  (JSON.parse(readFileSync(new URL("../../config/params.stand.json", import.meta.url), "utf8")) as { reservation_ttl_sec: number }).reservation_ttl_sec * 1000 + 1_000;
 
 type Feed = readonly { readonly event_id: string; readonly type: string; readonly data: Record<string, unknown> }[];
 interface Mandates {
@@ -151,7 +158,7 @@ describe("клиринг PRESENTMENT → закрепление, запись о
     const m = await mandates(100_000);
     const o = `OPKC-PS14-${randomUUID()}`;
     expect(await decide(await pay().auth(m.cart, 60_000, o))).toMatchObject({ decision: "APPROVE" });
-    stand.setClock(new Date(stand.now().getTime() + 7 * 86_400_000 + 1_000));
+    stand.setClock(new Date(stand.now().getTime() + PAST_TTL_MS));
     try {
       expect(await stand.expireReservations()).toBeGreaterThanOrEqual(2);
       expect(await issuer(o, true)).toBe(202);
@@ -163,12 +170,82 @@ describe("клиринг PRESENTMENT → закрепление, запись о
     }
   });
 
+  it("spent_position — только по CART операции: два CART под одним INTENT, второй клиринг не включает первый (ревью КТ1 № 5)", async () => {
+    const p = pay();
+    const intent = await p.mandate({ amount_limit: 200_000 });
+    const a: Mandates = { intent, cart: await p.cart(intent, 100_000) };
+    const b: Mandates = { intent, cart: await p.cart(intent, 100_000) };
+    const oa = await authorized(a, 60_000);
+    expect(await present(oa, 60_000)).toBe(202);
+    const ob = await authorized(b, 30_000);
+    expect(await present(ob, 30_000)).toBe(202);
+    expect(await op(oa)).toMatchObject({ fulfilment: { spent_position: 60_000 } });
+    expect(await op(ob)).toMatchObject({ fulfilment: { spent_position: 30_000 } });
+    expect(await left(intent)).toBe(110_000);
+  });
+
+  it("частичное с лимитом клиента: остаток освобождён и на счёте периода клиента (ревью КТ1 № 8)", async () => {
+    const principal = `prn_ps14_${randomUUID().slice(0, 8)}`;
+    expect((await stand.issuer.setLimits(principal, { per_period: 100_000, period: "DAY", currency: "RUB" }, 1)).statusCode).toBe(200);
+    const pp = standPay(stand, side, CODE, principal);
+    const cartOf = async () => pp.cart(await pp.mandate({ amount_limit: 100_000 }), 100_000);
+    const first = await cartOf();
+    const o = `OPKC-PS14-${randomUUID()}`;
+    expect(await decide(await pp.auth(first, 60_000, o))).toMatchObject({ decision: "APPROVE" });
+    expect(await issuer(o, true)).toBe(202);
+    expect(await present(o, 45_000)).toBe(202);
+    // У клиента за период осталось 55 000: без освобождения остатка клиента — только 40 000.
+    const second = await cartOf();
+    expect(await decide(await pp.auth(second, 55_001))).toMatchObject({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
+    expect(await decide(await pp.auth(second, 55_000))).toMatchObject({ decision: "APPROVE" });
+  });
+
+  it("сбой записи после закрепления, повтор с другой суммой — запись по сумме повтора, событие; бюджет — по первой (решение КТ1 № 1)", async () => {
+    const m = await mandates(100_000);
+    const o = await authorized(m, 60_000);
+    const spy = vi.spyOn(MemoryFulfilmentStore.prototype, "record").mockRejectedValueOnce(new Error("П8 недоступно"));
+    try {
+      expect(await present(o, 50_000)).toBe(503);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await settled(o)).toEqual([]);
+    expect(await left(m.cart), "закреплено 50 000 до сбоя записи").toBe(50_000);
+    expect(await present(o, 40_000)).toBe(202);
+    expect(await op(o)).toMatchObject({ status: "SETTLED", fulfilment: { final_amount: 40_000, scope_check: "WITHIN_LIMITS", spent_position: 50_000 } });
+    expect(await settled(o)).toHaveLength(1);
+    expect(await left(m.cart)).toBe(50_000);
+    // Тот же сбой и повтор той же суммой — обычный повтор.
+    const o2 = await authorized(m, 30_000);
+    const spy2 = vi.spyOn(MemoryFulfilmentStore.prototype, "record").mockRejectedValueOnce(new Error("П8 недоступно"));
+    try {
+      expect(await present(o2, 30_000)).toBe(503);
+    } finally {
+      spy2.mockRestore();
+    }
+    expect(await present(o2, 30_000)).toBe(202);
+    expect(await op(o2)).toMatchObject({ fulfilment: { final_amount: 30_000, spent_position: 80_000 } });
+  });
+
+  it("одновременные представления с разными суммами — одна запись, одно событие, каждое удержание закреплено один раз (ревью КТ1 № 6)", async () => {
+    const m = await mandates(100_000);
+    const o = await authorized(m, 60_000);
+    const codes = await Promise.all([present(o, 50_000), present(o, 40_000)]);
+    expect(codes).toEqual([202, 202]);
+    expect(await settled(o)).toHaveLength(1);
+    const f = (await op(o)).fulfilment as { final_amount: number };
+    expect([50_000, 40_000]).toContain(f.final_amount);
+    // Каждое удержание закреплено одной из сумм: остаток — 100 000 минус она, не меньше 50 000.
+    expect([50_000, 60_000]).toContain(await left(m.cart));
+    expect([50_000, 60_000]).toContain(await left(m.intent));
+  });
+
   it("позднее представление: удержание освобождено проходом срока — запись NOT_RESERVED, бюджет не меняется, settled (РП53 п. 6)", async () => {
     const m = await mandates(100_000);
     const o = await authorized(m, 60_000);
     // Срок резерва (reservation_ttl_sec — 7 дней) больше срока мандата: остаток verify после него — 0 по статусу мандата,
     // поэтому «бюджет не изменился» проверяется закреплённым по мандату (spent_position 0) — нового резерва нет.
-    stand.setClock(new Date(stand.now().getTime() + 7 * 86_400_000 + 1_000));
+    stand.setClock(new Date(stand.now().getTime() + PAST_TTL_MS));
     try {
       expect(await stand.expireReservations()).toBeGreaterThanOrEqual(2);
       expect(await present(o, 60_000)).toBe(202);
@@ -177,5 +254,70 @@ describe("клиринг PRESENTMENT → закрепление, запись о
     } finally {
       stand.setClock(T0);
     }
+  });
+});
+
+describe("acceptPresentment — смешанное состояние удержаний и записи до sql/114 (решение КТ1 № 3, ревью № 4)", () => {
+  const AT = "2026-10-23T09:00:00.000Z";
+  const approve = { decision: "APPROVE", reason: null, decided_in_ms: 1 } as const;
+  const hold = (id: string, committed = 0) => ({ id, account: "a", ref: "r", currency: "RUB", amount: 60_000, committed, released: 0, state: "RESERVED", expires_at: null });
+
+  const setup = (rec: OperationRecord, released: readonly string[], committed: number) => {
+    const outcomes = new MemoryOutcomeStore(new MemoryOperationStore());
+    const fulfilments = new MemoryFulfilmentStore();
+    const commits: string[] = [];
+    const logs: { msg: string; fields: Record<string, unknown> }[] = [];
+    const deps = {
+      operations: { get: () => rec },
+      outcomes,
+      fulfilments,
+      state: {
+        hold: async (id: string): Promise<StateResult> =>
+          released.includes(id) ? { ok: false, code: "RESERVATION_RELEASED" } : ({ ok: true, hold: hold(id) } as StateResult),
+        commit: async (id: string): Promise<StateResult> => {
+          commits.push(id);
+          return { ok: true, hold: hold(id, 1) } as StateResult;
+        },
+        committed: async () => committed,
+      },
+      now: () => new Date(AT),
+      log: (_l: "info" | "warn", fields: Record<string, unknown>, msg: string) => void logs.push({ msg, fields }),
+    };
+    return { deps, outcomes, fulfilments, commits, logs };
+  };
+  const rec = (over: Partial<OperationRecord> = {}): OperationRecord => ({
+    op_ref: "OP-mix",
+    msg_hash: "h",
+    decision: approve,
+    mandate_id: "cart",
+    holds: ["h-cart", "h-intent", "h-client"],
+    at: AT,
+    facts: { agent_code: CODE, order_ref: "ORD-1", channel: "CARD", merchant_id: "MER-1042", amount: 60_000, currency: "RUB", aoi: null },
+    ...over,
+  });
+
+  it("CART освобождён, INTENT и клиент открыты: открытые закреплены, NOT_RESERVED перекрывает EXCEEDS_AUTHORIZATION, spent_position — как прочитано", async () => {
+    const s = setup(rec(), ["h-cart"], 0);
+    await s.outcomes.record({ op_ref: "OP-mix", agent_code: CODE, status: "AUTHORIZED", reason: null, source: "ISSUER", at: AT }, undefined);
+    expect(await acceptPresentment(s.deps, { op_ref: "OP-mix", msg_type: "PRESENTMENT", amount: 70_000, currency: "RUB" })).toBe(202);
+    expect(s.commits).toEqual(["h-intent", "h-client"]);
+    expect(await s.fulfilments.get("OP-mix")).toMatchObject({ scope_check: "NOT_RESERVED", final_amount: 70_000, spent_position: 0 });
+  });
+
+  it("CART закреплён, INTENT освобождён: NOT_RESERVED при ненулевом spent_position", async () => {
+    const s = setup(rec(), ["h-intent"], 60_000);
+    await s.outcomes.record({ op_ref: "OP-mix", agent_code: CODE, status: "AUTHORIZED", reason: null, source: "ISSUER", at: AT }, undefined);
+    expect(await acceptPresentment(s.deps, { op_ref: "OP-mix", msg_type: "PRESENTMENT", amount: 60_000, currency: "RUB" })).toBe(202);
+    expect(s.commits).toEqual(["h-cart", "h-client"]);
+    expect(await s.fulfilments.get("OP-mix")).toMatchObject({ scope_check: "NOT_RESERVED", spent_position: 60_000 });
+  });
+
+  it("запись до sql/114 без фактов, первое удержание освобождено — 202 и инцидент, без записи (не бесконечный 503)", async () => {
+    const s = setup(rec({ facts: undefined }), ["h-cart"], 0);
+    await s.outcomes.record({ op_ref: "OP-mix", agent_code: CODE, status: "AUTHORIZED", reason: null, source: "ISSUER", at: AT }, undefined);
+    expect(await acceptPresentment(s.deps, { op_ref: "OP-mix", msg_type: "PRESENTMENT", amount: 60_000, currency: "RUB" })).toBe(202);
+    expect(s.commits).toEqual([]);
+    expect(await s.fulfilments.get("OP-mix")).toBeUndefined();
+    expect(s.logs.some((l) => l.fields.incident === true)).toBe(true);
   });
 });

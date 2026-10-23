@@ -2,6 +2,7 @@
 // op_ref; событие — в транзакции записи (третий источник ленты sql/114); одновременные представления с двух экземпляров —
 // одна запись и одно событие; ПИ-3 PRESENTMENT по записям ADP и итогам на базе; GET — SETTLED с fulfilment.
 // П3 здесь — подмена (закрепление удержаний ядра на PG проверяют тесты П3). В CI (РП30 п. 7); локально без базы — пропуск.
+import { PgHoldLedger } from "@kuzin4u/agentic-core";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PgOperationStore, type OperationFacts } from "../../src/adp/operations.js";
@@ -9,7 +10,7 @@ import { PgOutcomeStore, type OperationOutcome } from "../../src/fulfilment/outc
 import { acceptPresentment, fulfilmentRefFor, PgFulfilmentStore, settledEventFor, type FulfilmentRecord } from "../../src/fulfilment/records.js";
 import { operationFor } from "../../src/fulfilment/view.js";
 import { operationEventIdFor } from "../../src/pao/events.js";
-import type { StateResult } from "../../src/state/index.js";
+import { accountId, holdRef, StateService, type StateResult } from "../../src/state/index.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
 const AGENT = "nspk:agent:fulfil-pg:v1";
@@ -143,6 +144,53 @@ describe.skipIf(!DATABASE_URL)("запись об исполнении и operat
     expect(ra).toBeUndefined();
     expect(rb).toEqual(f);
     expect((await events("OP-ful-race")).map((e) => e.type)).toEqual(["operation.settled"]);
+  });
+
+  it("сквозной: настоящий П3 на PgHoldLedger, два экземпляра одновременно с разными суммами — каждое удержание закреплено один раз, одна запись, одно событие, инцидент (ревью КТ1 № 7)", async () => {
+    const op_ref = "OP-ful-e2e";
+    const cart = "mnd_e2e_cart";
+    const root = "mnd_e2e_root";
+    const ledger = new PgHoldLedger(db.pool);
+    const rub = (amount: number) => ({ amount, currency: "RUB" });
+    await ledger.openAccount(accountId(cart), rub(100_000));
+    await ledger.openAccount(accountId(root), rub(1_000_000));
+    const expires = Date.parse(AT) + 600_000;
+    const hc = await ledger.reserve(accountId(cart), rub(60_000), holdRef(cart, op_ref), expires);
+    const hr = await ledger.reserve(accountId(root), rub(60_000), holdRef(root, op_ref), expires);
+    const ops = new PgOperationStore(db.pool, { lockTimeoutMs: 5_000 });
+    expect(await ops.begin(op_ref, HASH, AT)).toBeUndefined();
+    await ops.finish({
+      op_ref,
+      msg_hash: HASH,
+      decision: { decision: "APPROVE", reason: null, reservation_id: hc.id, decided_in_ms: 1 },
+      mandate_id: cart,
+      holds: [hc.id, hr.id],
+      at: AT,
+      facts,
+    });
+    await new PgOutcomeStore(db.pool).record({ op_ref, agent_code: AGENT, status: "AUTHORIZED", reason: null, source: "ISSUER", at: AT }, undefined);
+    const budgets = { budget: async () => ({ status: "ACTIVE" as const, amount_limit: 100_000, currency: "RUB" }) };
+    const incidents: Record<string, unknown>[] = [];
+    const instance = (pool: pg.Pool) => ({
+      operations: new PgOperationStore(pool, { lockTimeoutMs: 5_000 }),
+      outcomes: new PgOutcomeStore(pool),
+      fulfilments: new PgFulfilmentStore(pool),
+      state: new StateService(new PgHoldLedger(pool), budgets, { reservationTtlSec: 600 }),
+      now: () => new Date(AT),
+      log: (_l: "info" | "warn", fields: Record<string, unknown>) => void (fields.incident === true && incidents.push(fields)),
+    });
+    const msg = (amount: number) => ({ op_ref, msg_type: "PRESENTMENT", amount, currency: "RUB" });
+    expect(await Promise.all([acceptPresentment(instance(db.pool), msg(50_000)), acceptPresentment(instance(pool2), msg(40_000))])).toEqual([202, 202]);
+    // Каждое удержание закреплено ровно один раз (одной из сумм), остаток освобождён — ни копейки сверх одобренного.
+    for (const h of [hc, hr]) {
+      const got = await ledger.get(h.id);
+      expect([50_000, 40_000]).toContain(got.committed);
+      expect(got.committed + got.released).toBe(60_000);
+    }
+    const rows = (await db.pool.query<{ final_amount: string }>("SELECT final_amount FROM fulfilments WHERE op_ref = $1", [op_ref])).rows;
+    expect(rows).toHaveLength(1);
+    expect((await events(op_ref)).map((e) => e.type)).toEqual(["operation.settled"]);
+    expect(incidents.length, "второе представление с другой суммой — инцидент").toBeGreaterThanOrEqual(1);
   });
 
   it("ПИ-3 PRESENTMENT по записям на базе: закреплены оба удержания суммой представления, запись и событие; GET — SETTLED с fulfilment", async () => {

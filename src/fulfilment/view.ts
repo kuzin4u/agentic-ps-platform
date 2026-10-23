@@ -62,7 +62,9 @@ export async function operationFor(deps: OperationViewDeps, agent_code: string, 
     ...(f?.channel != null ? { channel: f.channel } : {}),
     ...(f ? { amount: f.amount } : {}),
     ...(f?.merchant_id != null ? { merchant_id: f.merchant_id } : {}),
-    ...paoAoi(f?.aoi),
+    // AOI_MISMATCH: признак называет другого агента и чужой мандат — агенту не отдаётся (решение владельца на КТ1 № 10);
+    // полный признак остаётся в записи Платформы для спора (PS-22).
+    ...(result.reason === "AOI_MISMATCH" ? {} : paoAoi(f?.aoi)),
     status: settled ? "SETTLED" : result.status,
     reason: settled ? null : result.reason,
     fulfilment: settled ? fulfilmentView(settled) : null,
