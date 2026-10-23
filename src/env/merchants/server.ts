@@ -33,6 +33,14 @@ export interface MerchantsOptions {
   readonly shops?: readonly Shop[];
   /** Лимит обращений к витринам с одного адреса в минуту — на все маршруты /v1 (стендовый параметр). */
   readonly rateLimitPerMin: number;
+  /** Управляемый отказ списка витрин из теста (#49, РП56 п. 6); null — список отдаётся. Читается при каждом обращении. */
+  readonly shopListFailure?: () => ShopListFailure | null;
+}
+
+/** Отказ списка витрин: 503 или 429 с Retry-After — отказ стадии 2 агента на ответе эмулятора, а не на подмене. */
+export interface ShopListFailure {
+  readonly code: "UPSTREAM_UNAVAILABLE" | "RATE_LIMITED";
+  readonly retryAfterSec: number;
 }
 
 /** PAYING — оплата в процессе: ставится до первого обращения к эквайреру, повторная оплата невозможна. */
@@ -162,7 +170,15 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
       }
     };
 
-    app.get("/v1/shops", async () => ({ shops: shops.map(shopView) }));
+    // Список опознаёт агента так же, как каталог (#49): подпись по каталогу ключей, отказы — MERCHANT_ERROR_CODES;
+    // без подписи — человек, список отдаётся.
+    app.get("/v1/shops", async (req, reply) => {
+      const failure = opts.shopListFailure?.() ?? null;
+      if (failure) return fail(reply.header("retry-after", String(failure.retryAfterSec)), failure.code);
+      const who = await identify(req);
+      if ("error" in who) return fail(reply, who.error);
+      return { shops: shops.map(shopView) };
+    });
 
     app.get<{ Params: { id: string }; Querystring: { query?: string; limit?: string } }>(
       "/v1/shops/:id/catalog",

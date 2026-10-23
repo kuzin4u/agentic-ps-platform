@@ -321,6 +321,8 @@ export function createStand(opts: StandOptions = {}): Stand {
       // Решение человека по подтверждению (РП50 п. 4–5): то же хранилище П6, что у ADP; допуск часов — окно подписи.
       confirmations: { store: confirmationStore, skewSec: params.signature_skew_sec },
     },
+    // API для продавцов (РП56): каталог ключей агентов и статус агента — реестр стенда, контур sandbox.
+    merchants: { registry, keys, contour: "sandbox", params },
     // ADP стенда (ПИ-1, РП43): реестр, журнал и П3 стенда, записи операций в памяти; только 127.0.0.1 (доп. РП43 п. 21).
     // Мандат — с клиентом из журнала, лимиты клиента — из записей банка стенда (РП45 п. 1–2).
     adp: {

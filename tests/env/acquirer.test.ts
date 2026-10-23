@@ -103,7 +103,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
     expect(s.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
     const opkc = new OpkcStub();
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: false, opkc });
-    const verifier = new MerchantAgentVerifier(() => s.keys.jwks(), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
+    const verifier = new MerchantAgentVerifier(() => s.keys.jwks("sandbox"), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
     const reconciliation = {
       submit: async () => {
         throw new Error("API для продавцов недоступен");
