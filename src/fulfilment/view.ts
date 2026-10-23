@@ -6,6 +6,7 @@ import type { Aoi as CanonicalAoi } from "../shared/canonical.generated.js";
 import type { Aoi, Operation } from "../shared/pao.js";
 import type { OperationOutcome, OutcomeStatus, OutcomeStore } from "./outcomes.js";
 import type { FulfilmentRecord, FulfilmentStore } from "./records.js";
+import type { ReversalStore } from "./reversals.js";
 
 /** Объект fulfilment ПАО 1.4.0 (РП53 п. 8): currency и прочие поля записи агенту — с 1.5.0 (#37). */
 const fulfilmentView = (f: FulfilmentRecord): NonNullable<Operation["fulfilment"]> => ({
@@ -21,6 +22,8 @@ export interface OperationViewDeps {
   readonly outcomes: Pick<OutcomeStore, "get">;
   /** Записи об исполнении (РП53 п. 10): есть — SETTLED с fulfilment; без хранилища — как до ч. 2. */
   readonly fulfilments?: Pick<FulfilmentStore, "get">;
+  /** Реверсалы (РП55 п. 1): есть — REVERSED с reason REVERSAL / AUTH_EXPIRED; без хранилища — как до ч. 3. */
+  readonly reversals?: Pick<ReversalStore, "get">;
 }
 
 /** Агент операции: из итога, а без него — как у сборщика (факты, затем столбец уведомителя у записей до sql/114). */
@@ -51,7 +54,10 @@ export async function operationFor(deps: OperationViewDeps, agent_code: string, 
   if (!rec) return undefined;
   const outcome = await deps.outcomes.get(op_ref);
   if (agentOf(rec, outcome) !== agent_code) return undefined;
-  const result = outcome ? { status: outcome.status, reason: outcome.status === "DECLINED" ? outcome.reason : null } : fromDecision(rec);
+  const decided = outcome ? { status: outcome.status, reason: outcome.status === "DECLINED" ? outcome.reason : null } : fromDecision(rec);
+  // Реверсал — по APPROVE ADP с итогом AUTHORIZED или до ответа эмитента (РП55 п. 1); после клиринга не записывается.
+  const reversal = rec.decision?.decision === "APPROVE" && (!outcome || outcome.status === "AUTHORIZED") ? await deps.reversals?.get(op_ref) : undefined;
+  const result: { status: Operation["status"]; reason: string | null } | undefined = reversal ? { status: "REVERSED", reason: reversal.kind } : decided;
   if (!result) return undefined;
   // Клиринг — только после AUTHORIZED (РП53 п. 3): запись об исполнении меняет статус на SETTLED.
   const settled = result.status === "AUTHORIZED" ? await deps.fulfilments?.get(op_ref) : undefined;

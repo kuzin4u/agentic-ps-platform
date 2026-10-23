@@ -9,6 +9,7 @@ import { insertOperationEventTx, type MemoryConsentStore, type TxSqlPool } from 
 import type { OperationEventDraft } from "../pao/events.js";
 import type { StateService } from "../state/index.js";
 import { acceptIssuerResponse, type CollectorLog, type IssuerResponseDeps, type IssuerResponseStatus, type OutcomeStore, type PushFor } from "./outcomes.js";
+import { acceptReversal, REVERSAL_KINDS, type ReversalStore } from "./reversals.js";
 
 /** Сопоставление с пределами (РП53 п. 5, 6, 8); перечень — текстом AGENT-PROTOCOL §5, enum — ПАО 1.5.0 (#37). */
 export type ScopeCheck = "WITHIN_LIMITS" | "EXCEEDS_AUTHORIZATION" | "NOT_RESERVED";
@@ -163,11 +164,17 @@ async function readFulfilment(client: SqlClient, op_ref: string): Promise<Fulfil
   );
 }
 
-/** ПИ-3 целиком: ответ эмитента (РП52) и клиринг (РП53); без fulfilments PRESENTMENT — 503, как до ч. 2. */
+/**
+ * ПИ-3 целиком: ответ эмитента (РП52), клиринг (РП53), реверсал и истечение авторизации (РП55); без своего хранилища тип —
+ * 503, как до своей части.
+ */
 export interface OperationEventDeps extends IssuerResponseDeps {
   readonly state: Pick<StateService, "release" | "hold" | "commit" | "committed">;
   readonly outcomes?: Pick<OutcomeStore, "get">;
   readonly fulfilments?: FulfilmentStore;
+  readonly reversals?: ReversalStore;
+  /** event_reorder_window_ms (РП55 п. 5): событие без предшественника дольше окна от решения ADP — инцидент. */
+  readonly reorder_window_ms?: number;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -175,15 +182,34 @@ const isUnits = (v: unknown): v is number => typeof v === "number" && Number.isS
 const CURRENCY = /^[A-Z]{3}$/;
 
 /**
- * ПИ-3 POST /adp/v1/events: ISSUER_RESPONSE — РП52 (acceptIssuerResponse), PRESENTMENT — РП53 (acceptPresentment);
- * прочие типы — 503 до PS-16 ч. 3 (процессинг повторит). Снимок входа до первого await (Р-205).
+ * ПИ-3 POST /adp/v1/events: ISSUER_RESPONSE — РП52 (acceptIssuerResponse), PRESENTMENT — РП53 (acceptPresentment),
+ * REVERSAL и AUTH_EXPIRED — РП55 (acceptReversal); прочие типы — 503 (процессинг повторит). Снимок входа до первого
+ * await (Р-205).
  */
 export async function acceptOperationEvent(deps: OperationEventDeps, raw: unknown): Promise<IssuerResponseStatus> {
   if (!isObj(raw)) return 400;
   const msg = structuredClone(raw);
   if (typeof msg.op_ref !== "string" || msg.op_ref === "" || typeof msg.msg_type !== "string") return 400;
-  if (msg.msg_type === "PRESENTMENT" && deps.fulfilments) return acceptPresentment({ ...deps, fulfilments: deps.fulfilments, outcomes: deps.outcomes ?? deps.store }, msg);
+  const outcomes = deps.outcomes ?? deps.store;
+  if (msg.msg_type === "PRESENTMENT" && deps.fulfilments) return acceptPresentment({ ...deps, fulfilments: deps.fulfilments, outcomes }, msg);
+  if (REVERSAL_KINDS.includes(msg.msg_type) && deps.reversals) return acceptReversal({ ...deps, reversals: deps.reversals, outcomes }, msg);
   return acceptIssuerResponse(deps, msg);
+}
+
+/**
+ * Событие без предшественника (РП55 п. 5): 503, процессинг повторяет; от решения ADP прошло больше event_reorder_window_ms
+ * — тот же 503 и инцидент «предшественник не пришёл». Очереди нет: принять без предшественника — догадка (инвариант 3).
+ */
+export function awaitPredecessor(
+  deps: { readonly reorder_window_ms?: number; readonly now?: () => Date; readonly log?: CollectorLog },
+  fields: { readonly op_ref: string; readonly msg_type: string; readonly decided_at: string; readonly missing: string },
+): 503 {
+  const log = deps.log ?? (() => {});
+  const age = (deps.now ?? (() => new Date()))().getTime() - Date.parse(fields.decided_at);
+  const late = deps.reorder_window_ms !== undefined && !(age <= deps.reorder_window_ms);
+  if (late) log("warn", { ...fields, age_ms: age, incident: true }, "П8: предшественник не пришёл за event_reorder_window_ms — 503, процессинг повторит");
+  else log("info", { ...fields, age_ms: age }, "П8: событие раньше предшественника — 503, процессинг повторит");
+  return 503;
 }
 
 export interface PresentmentDeps {
@@ -194,6 +220,7 @@ export interface PresentmentDeps {
   readonly pushFor?: PushFor;
   readonly now?: () => Date;
   readonly log?: CollectorLog;
+  readonly reorder_window_ms?: number;
 }
 
 /**
@@ -215,10 +242,7 @@ export async function acceptPresentment(deps: PresentmentDeps, msg: Readonly<Rec
     return 202;
   }
   const outcome = await deps.outcomes.get(op_ref);
-  if (!outcome) {
-    log("info", { op_ref }, "П8: представление раньше ответа эмитента — 503, процессинг повторит");
-    return 503;
-  }
+  if (!outcome) return awaitPredecessor(deps, { op_ref, msg_type: "PRESENTMENT", decided_at: rec.at, missing: "ISSUER_RESPONSE" });
   if (outcome.status !== "AUTHORIZED") {
     log("warn", { op_ref, status: outcome.status, incident: true }, "П8: представление по операции без одобрения эмитента");
     return 202;

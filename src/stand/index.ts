@@ -19,6 +19,7 @@ import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { MemoryOutcomeStore, OperationOutcomeCollector, type CollectorResult } from "../fulfilment/outcomes.js";
 import { MemoryFulfilmentStore } from "../fulfilment/records.js";
+import { MemoryReversalStore } from "../fulfilment/reversals.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
 import { pushAllowed, type PaoEventType } from "../pao/events.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
@@ -250,6 +251,8 @@ export function createStand(opts: StandOptions = {}): Stand {
   const outcomeStore = new MemoryOutcomeStore(operations, consentStore);
   // Записи об исполнении (РП53): та же лента журнала стенда.
   const fulfilmentStore = new MemoryFulfilmentStore(consentStore);
+  // Реверсалы и истечение авторизации (РП55 п. 1): записи в памяти, событий нет до ПАО 1.5.0.
+  const reversalStore = new MemoryReversalStore();
   const outcomes = new OperationOutcomeCollector(outcomeStore, {
     horizonSec: params.operation_outcome_horizon_sec,
     maxDelaySec: params.operation_outcome_max_delay_sec,
@@ -298,7 +301,7 @@ export function createStand(opts: StandOptions = {}): Stand {
       // Запрос подтверждения агенту (РП51 п. 8–10): то же хранилище П6, часы стенда, link — на страницу УПК.
       confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url },
       // Операция агенту (РП52 п. 10): записи ADP и итоги П8 — те же хранилища в памяти, что у ADP и ПИ-3.
-      operations: { operations, outcomes: outcomeStore, fulfilments: fulfilmentStore },
+      operations: { operations, outcomes: outcomeStore, fulfilments: fulfilmentStore, reversals: reversalStore },
       resolveHost: dns.resolve,
       stand: true,
     },
@@ -333,8 +336,18 @@ export function createStand(opts: StandOptions = {}): Stand {
         now,
       }),
       // ПИ-3 стенда (РП52 п. 1 (б), РП53): ответ эмитента — итог и событие в ленту журнала стенда, освобождение — П3 стенда;
-      // клиринг — закрепление П3 стенда, запись об исполнении и operation.settled.
-      events: { operations, store: outcomeStore, state, pushFor, now, fulfilments: fulfilmentStore },
+      // клиринг — закрепление П3 стенда, запись об исполнении и operation.settled; реверсал и истечение авторизации —
+      // освобождение П3 стенда и запись (РП55 п. 1); событие без предшественника — 503, за окном — инцидент (п. 5).
+      events: {
+        operations,
+        store: outcomeStore,
+        state,
+        pushFor,
+        now,
+        fulfilments: fulfilmentStore,
+        reversals: reversalStore,
+        reorder_window_ms: params.event_reorder_window_ms,
+      },
     },
   });
   const issuer: StandIssuer = {
