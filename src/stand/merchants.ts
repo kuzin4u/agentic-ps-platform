@@ -1,7 +1,7 @@
 // Эмуляторы продавцов и эквайрера для тестов агента (РП22 п. 8, AG-09): витрины проверяют подпись агента
-// по каталогу ключей реестра стенда (та же функция, что отдаст HTTP-адрес PS-30). ОПКЦ — заглушка до PS-11.
-// Значений merchant_jwks_max_age_sec и merchant_jwks_refetch_min_sec ещё нет (PS-30): по умолчанию стенд
-// читает каталог при каждом обращении — отзыв ключа виден витрине сразу.
+// по каталогу ключей реестра стенда (та же функция, что отдаёт GET /.well-known/agent-keys). ОПКЦ — заглушка до PS-11.
+// Срок кэша и окно перечитывания — merchant_jwks_max_age_sec и merchant_jwks_refetch_min_sec (РП56 п. 3; на стенде
+// 1 и 1 с): отзыв ключа виден витрине не позже чем через секунду; явные значения — для тестов окна.
 import type { FastifyInstance } from "fastify";
 import { Acquirer, OpkcStub } from "../env/acquirer/index.js";
 import {
@@ -40,9 +40,9 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
   const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: opts.aoiSupport ?? true, opkc, now: stand.now });
   const submitted: PackageMetadata[] = [];
   const reconciliation: ReconciliationPort = { submit: async (m) => void submitted.push(m) };
-  const verifier = new MerchantAgentVerifier(() => stand.keys.jwks(), {
-    maxAgeMs: opts.jwksMaxAgeMs ?? 0,
-    refetchMinMs: opts.jwksRefetchMinMs ?? 0,
+  const verifier = new MerchantAgentVerifier(() => stand.keys.jwks("sandbox"), {
+    maxAgeMs: opts.jwksMaxAgeMs ?? stand.params.merchant_jwks_max_age_sec * 1000,
+    refetchMinMs: opts.jwksRefetchMinMs ?? stand.params.merchant_jwks_refetch_min_sec * 1000,
     skewSec: stand.params.signature_skew_sec,
     now: stand.now,
   });

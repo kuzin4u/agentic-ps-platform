@@ -41,6 +41,10 @@ export interface Params {
   readonly unavailable_retry_after_sec: number;
   /** Лимит обращений к витринам эмулятора продавцов с одного адреса в минуту (PS-12); на стенде — щедрый. */
   readonly merchant_rate_limit_per_min: number;
+  /** Срок кэша каталога ключей агентов у продавца, с: Cache-Control max-age у GET /.well-known/agent-keys (РП22 п. 2, РП56 п. 3). */
+  readonly merchant_jwks_max_age_sec: number;
+  /** Не чаще одного перечитывания каталога по неизвестному kid за столько секунд (РП22 п. 3, РП56 п. 3). */
+  readonly merchant_jwks_refetch_min_sec: number;
   /** Срок хранения результата идемпотентности ПАО, с; ≥ 60 — не меньше аренды захвата ядра (РП30 п. 3). */
   readonly idempotency_ttl_sec: number;
   readonly pao_rate_limit_per_30s: number;
@@ -157,6 +161,8 @@ const RULES: Record<keyof Params, Rule> = {
   signature_skew_sec: int(1),
   unavailable_retry_after_sec: int(0, 30),
   merchant_rate_limit_per_min: int(1),
+  merchant_jwks_max_age_sec: int(1),
+  merchant_jwks_refetch_min_sec: int(1),
   idempotency_ttl_sec: int(60),
   pao_rate_limit_per_30s: int(1),
   key_ttl_days: int(1),

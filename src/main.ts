@@ -224,6 +224,8 @@ async function serve(): Promise<void> {
       // Лента уведомлений клиента (РП46 (б) п. 3) — из Outbox участника в базе; без базы уведомлений нет.
       ...(notifyStore ? { notifications: notifyStore } : {}),
     },
+    // API для продавцов (РП56): среды dev и sandbox — контур ключей sandbox; контура оператора у сервера нет до PS-31.
+    merchants: { registry, keys, contour: "sandbox", params },
   });
   app.log.info({ params }, "стендовые параметры загружены");
   if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce, идемпотентность, журнал согласий, удержания П3 и лимиты клиента в памяти — один процесс, повтор после перезапуска не ловится");

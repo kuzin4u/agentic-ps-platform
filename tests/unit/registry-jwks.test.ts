@@ -22,7 +22,7 @@ function setup() {
 describe("РП22 п. 1: формат JWK", () => {
   it("члены RFC 8037 и частные agent_code, nbf, exp; kid — отпечаток RFC 7638 из {crv, kty, x} и равен Key.kid ПАО", () => {
     const { s, a } = setup();
-    const jwk = s.keys.jwks().keys.find((k) => k.agent_code === A);
+    const jwk = s.keys.jwks("sandbox").keys.find((k) => k.agent_code === A);
     expect(jwk).toBeDefined();
     expect(Object.keys(jwk!).sort()).toEqual(["agent_code", "alg", "crv", "exp", "kid", "kty", "nbf", "use", "x"]);
     expect(jwk).toMatchObject({ kty: "OKP", crv: "Ed25519", alg: "EdDSA", use: "sig", agent_code: A });
@@ -37,7 +37,7 @@ describe("РП22 п. 1: формат JWK", () => {
 
   it("закрытой части ключа (d) в каталоге нет", () => {
     const { s } = setup();
-    for (const k of s.keys.jwks().keys) expect(k).not.toHaveProperty("d");
+    for (const k of s.keys.jwks("sandbox").keys) expect(k).not.toHaveProperty("d");
   });
 });
 
@@ -45,7 +45,7 @@ describe("РП22 п. 2: только действующие ключи аген�
   it("отозванный ключ удаляется, остальные остаются", () => {
     const { s, a } = setup();
     s.keys.revoke(A, a.kid);
-    const kids = s.keys.jwks().keys.map((k) => k.agent_code);
+    const kids = s.keys.jwks("sandbox").keys.map((k) => k.agent_code);
     expect(kids).not.toContain(A);
     expect(kids).toContain(B);
   });
@@ -53,24 +53,24 @@ describe("РП22 п. 2: только действующие ключи аген�
   it("истёкший ключ удаляется", () => {
     const { s, t0 } = setup();
     s.setClock(new Date(t0.getTime() + (s.params.key_ttl_days + 1) * DAY));
-    expect(s.keys.jwks().keys).toEqual([]);
+    expect(s.keys.jwks("sandbox").keys).toEqual([]);
   });
 
   it("ключи приостановленного и исключённого агента удаляются; после снятия приостановления — возвращаются", () => {
     const { s } = setup();
     s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
     s.registry.changeStatus(B, { to: "EXCLUDED", ground: "WITHDRAWN" });
-    expect(s.keys.jwks().keys).toEqual([]);
+    expect(s.keys.jwks("sandbox").keys).toEqual([]);
     s.registry.changeStatus(A, { to: "ACTIVE" });
-    expect(s.keys.jwks().keys.map((k) => k.agent_code)).toEqual([A]);
+    expect(s.keys.jwks("sandbox").keys.map((k) => k.agent_code)).toEqual([A]);
   });
 
   it("при ротации в каталоге оба ключа на время перекрытия, после — только новый", () => {
     const { s, t0 } = setup();
     const next = newAgentSide();
     s.keys.register(A, { alg: "ed25519", public_key: next.publicKey });
-    expect(s.keys.jwks().keys.filter((k) => k.agent_code === A)).toHaveLength(2);
+    expect(s.keys.jwks("sandbox").keys.filter((k) => k.agent_code === A)).toHaveLength(2);
     s.setClock(new Date(t0.getTime() + (s.params.key_overlap_days + 1) * DAY));
-    expect(s.keys.jwks().keys.filter((k) => k.agent_code === A).map((k) => k.kid)).toEqual([next.kid]);
+    expect(s.keys.jwks("sandbox").keys.filter((k) => k.agent_code === A).map((k) => k.kid)).toEqual([next.kid]);
   });
 });

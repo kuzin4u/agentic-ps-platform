@@ -22,6 +22,7 @@
 | `signature_skew_sec` | 300 | Окно подписи ПАО | прогон |
 | `unavailable_retry_after_sec` | 1 | `Retry-After` у ответов ПАО 503 (`UPSTREAM_UNAVAILABLE`, `STATE_UNAVAILABLE`) | прогон (РП24) |
 | `merchant_rate_limit_per_min` | 6 000 | Лимит обращений к витринам эмулятора продавцов с одного адреса в минуту (все маршруты `/v1`); превышение — 429 `RATE_LIMITED` с `Retry-After`. На стенде щедрый: тесты агента не упираются | прогон песочницы для сторонних агентов (PS-26) |
+| `merchant_jwks_max_age_sec` / `merchant_jwks_refetch_min_sec` | 1 / 1 | Каталог ключей агентов у продавца (РП22 п. 2–3, РП56 п. 3): срок кэша — `Cache-Control: max-age` у `GET /.well-known/agent-keys`, отзыв доходит до продавца не дольше этого срока; не чаще одного перечитывания по неизвестному `kid` за окно. Рабочее значение — **300 / 30**; на стенде 1 / 1 — тесты агента отзывают ключ и ждут отказа витрины почти сразу. Оба — целые ≥ 1 | прогон песочницы для сторонних продавцов (PS-26) |
 | `idempotency_ttl_sec` | 86 400 | Срок хранения результата по `Idempotency-Key` ПАО (пара «агент + ключ»): повтор в этот срок возвращает прежний ответ (РП30) | прогон; публикация агентам — `/.well-known/pao-configuration` (ПАО 1.5.0, РП37) |
 | `pao_rate_limit_per_30s` | 3 000 | Грубый лимит обращений к шлюзу ПАО с одного адреса за окно 30 с (все маршруты `/pao`, до проверки подписи); превышение — 429 `RATE_LIMITED` с `Retry-After` ≤ 30 (окно 30 с — граница РП24). На стенде щедрый (≈ 6 000 в минуту): тесты агента не упираются. Лимит по уровню агента — отдельно (РП32 п. 6) | прогон песочницы для сторонних агентов (PS-26) |
 | `key_ttl_days` / `key_overlap_days` | 90 / 7 | Ключи агентов | O02 |
@@ -47,7 +48,7 @@
 
 | Правило | Почему |
 |---|---|
-| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `participant_notify_max_delay_sec`, `participant_notify_horizon_sec`, `operation_outcome_every_ms`, `operation_outcome_max_delay_sec`, `operation_outcome_horizon_sec`, `operation_reread_interval_sec`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
+| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `participant_notify_max_delay_sec`, `participant_notify_horizon_sec`, `operation_outcome_every_ms`, `operation_outcome_max_delay_sec`, `operation_outcome_horizon_sec`, `operation_reread_interval_sec`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `merchant_jwks_max_age_sec`, `merchant_jwks_refetch_min_sec`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
 | Целые ≥ 0: `bypass_overhead_ms`, `event_reorder_window_ms`, `key_overlap_days` | ноль допустим |
 | `split_min_ops` ≥ 2 | дробление — от двух операций |
 | `aoi_rollout_phase` ∈ 1…3 | A1 п. 8.3 |
@@ -89,3 +90,5 @@
 | 22.10.2026 | `operation_outcome_max_delay_sec` | — | 30 | PS-16 ч. 1 К0, предел задержки `operation.declined` по отказу ADP; решение владельца 22.10 (РП52 п. 12, условие ревью из чата) |
 | 22.10.2026 | `operation_outcome_horizon_sec` | — | 86 400 | PS-16 ч. 1 К0, горизонт прохода сборщика; решение владельца 22.10 (РП52 «Дополнения» п. 1, 3) |
 | 23.10.2026 | `operation_reread_interval_sec` | — | 3 600 | PS-16 ч. 3 К0, перечитывание `GET` операции агентом до `SETTLED` / `REVERSED`; решение владельца 23.10 (РП55 п. 2, ревью из чата п. 1) |
+| 23.10.2026 | `merchant_jwks_max_age_sec` | — | 1 (рабочее — 300) | PS-30 ч. 1 К1, срок кэша каталога ключей агентов у продавца; решение владельца 23.10 (РП56 п. 3) |
+| 23.10.2026 | `merchant_jwks_refetch_min_sec` | — | 1 (рабочее — 30) | PS-30 ч. 1 К1, окно перечитывания каталога по неизвестному `kid`; решение владельца 23.10 (РП56 п. 3) |

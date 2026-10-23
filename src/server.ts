@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { adpRoutes, type AdpDeps } from "./adp/routes.js";
 import type { CollectorHealth } from "./fulfilment/outcomes.js";
 import type { NotifierHealth } from "./participants/notifications.js";
+import { merchantApiRoutes, type MerchantApiDeps } from "./participants/merchant-api.js";
 import { participantRoutes, type ParticipantDeps } from "./participants/routes.js";
 import { paoRoutes, type PaoDeps } from "./pao/routes.js";
 
@@ -25,6 +26,8 @@ export interface ServerOptions {
   pao?: PaoDeps;
   /** Шлюз участников (П10, ПИ-8): подпись мандата по подписи участника (РП36); без него маршрутов /participants нет. */
   participants?: ParticipantDeps;
+  /** API для продавцов и площадок (П10, РП56): каталог ключей агентов и статус агента, без подписи; без него маршрутов нет. */
+  merchants?: MerchantApiDeps;
   /** Доверенные адреса прокси (РП32 п. 5); без них X-Forwarded-For не читается, ключ лимита — адрес соединения. */
   trustedProxies?: readonly string[];
   /**
@@ -114,6 +117,9 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   // Шлюз участников — своим контекстом: проверка обращения ПАО к нему не относится, подпись — в теле (РП36 п. 4).
   const participants = opts.participants;
   if (participants) void app.register(async (scope) => participantRoutes(scope, participants));
+  // API для продавцов — своим контекстом: без подписи, проверки ПАО и ПИ-8 к нему не относятся (РП56).
+  const merchants = opts.merchants;
+  if (merchants) void app.register(async (scope) => merchantApiRoutes(scope, merchants));
   // ADP — своим контекстом: обращение процессинга, не агента; проверки ПАО к нему не относятся.
   const adp = opts.adp;
   if (adp) void app.register(async (scope) => adpRoutes(scope, adp));

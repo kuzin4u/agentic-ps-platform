@@ -1,0 +1,62 @@
+// П10 API для продавцов и площадок, ч. 1 (РП56): каталог ключей агентов и статус агента — без подписи и без входа.
+// Каталог — только своего контура ключей (РП56 п. 2); сбой реестра — 503, а не пустой каталог: пустой продавец
+// закешировал бы как «все ключи отозваны» (инвариант 3). Знак готовности и сверка пакета — ч. 2 (РП57).
+import type { FastifyInstance, FastifyReply } from "fastify";
+import type { AgentJwks } from "../registry/jwks.js";
+import type { AgentRecord, Contour } from "../registry/model.js";
+import { isAgentCode } from "../registry/code.js";
+import type { Params } from "../shared/config.js";
+
+export interface MerchantApiDeps {
+  readonly registry: { get(agent_code: string): AgentRecord | undefined };
+  readonly keys: { jwks(contour: Contour): AgentJwks };
+  /** Контур ключей сервера: среды dev и sandbox — sandbox (РП56 п. 2). */
+  readonly contour: Contour;
+  readonly params: Pick<Params, "merchant_jwks_max_age_sec" | "unavailable_retry_after_sec">;
+}
+
+/** Адрес каталога (РП56 п. 1). */
+export const AGENT_KEYS_PATH = "/.well-known/agent-keys";
+export const JWK_SET_CONTENT_TYPE = "application/jwk-set+json";
+
+export async function merchantApiRoutes(app: FastifyInstance, deps: MerchantApiDeps): Promise<void> {
+  const unavailable = (reply: FastifyReply) =>
+    reply.code(503).header("retry-after", String(deps.params.unavailable_retry_after_sec)).send({ code: "UPSTREAM_UNAVAILABLE" });
+  // Отказы Fastify до обработчика — тело `{code}`, как у ПИ-8.
+  app.setErrorHandler((err: { statusCode?: number }, _req, reply) => {
+    const http = err.statusCode ?? 500;
+    if (http >= 400 && http < 500) return reply.code(400).send({ code: "REQUEST_INVALID" });
+    return unavailable(reply);
+  });
+
+  app.get(AGENT_KEYS_PATH, async (req, reply) => {
+    let jwks: AgentJwks;
+    try {
+      jwks = deps.keys.jwks(deps.contour);
+    } catch (e) {
+      req.log.error({ err: e }, "API продавцов: каталог ключей агентов недоступен");
+      return unavailable(reply);
+    }
+    return reply
+      .header("content-type", JWK_SET_CONTENT_TYPE)
+      .header("cache-control", `public, max-age=${deps.params.merchant_jwks_max_age_sec}`)
+      // Байтами: у строки Fastify дописал бы `; charset=utf-8`, а у application/jwk-set+json параметров нет (RFC 7517 §8.5).
+      .send(Buffer.from(JSON.stringify(jwks)));
+  });
+
+  // Статус агента (РП56 п. 4): только код, статус и класс из реестра; сведений об операторе и принципалах нет (A2 п. 1.2).
+  // Неизвестный, не по форме и чужого контура — один ответ 404: продавец не отличает «нет» от «не в этом контуре».
+  app.get<{ Params: { code: string } }>("/merchants/v1/agents/:code", async (req, reply) => {
+    const code = req.params.code;
+    if (!isAgentCode(code)) return reply.code(404).send({ code: "AGENT_UNKNOWN" });
+    let rec: AgentRecord | undefined;
+    try {
+      rec = deps.registry.get(code);
+    } catch (e) {
+      req.log.error({ err: e }, "API продавцов: реестр агентов недоступен");
+      return unavailable(reply);
+    }
+    if (!rec || rec.contour !== deps.contour) return reply.code(404).send({ code: "AGENT_UNKNOWN" });
+    return { agent_code: rec.agent_code, status: rec.status, class: rec.class };
+  });
+}

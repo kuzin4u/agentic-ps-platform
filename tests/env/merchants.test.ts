@@ -364,7 +364,7 @@ describe("Заказ и пакет: привязка к агенту", () => {
       reverse: async () => {},
     };
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc });
-    const verifier = new MerchantAgentVerifier(() => s.keys.jwks(), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
+    const verifier = new MerchantAgentVerifier(() => s.keys.jwks("sandbox"), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
     const app = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT });
     const who = { side: a, agentCode: A, now: s.now() };
     const o = (await order(app, who, "SHOP-1042", "BRD-1042-01")).json();

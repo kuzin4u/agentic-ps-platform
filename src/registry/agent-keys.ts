@@ -161,12 +161,16 @@ export class AgentKeys {
    * Каталог ключей агентов для продавцов и площадок (РП22 п. 1–2): только действующие ключи агентов ACTIVE;
    * отозванный, истёкший ключ и ключи приостановленного или исключённого агента в каталог не попадают.
    * Одна функция для эмулятора продавцов (PS-12) и HTTP-адреса каталога (PS-30).
+   * Только агенты своего контура (РП56 п. 2): ключ песочницы в каталоге контура оператора — подпись прошла бы у боевого продавца.
    */
-  jwks(): AgentJwks {
+  jwks(contour: Contour): AgentJwks {
     const now = this.now();
     const keys = this.store
       .agentCodes()
-      .filter((code) => this.store.get(code)?.status === "ACTIVE")
+      .filter((code) => {
+        const rec = this.store.get(code);
+        return rec?.status === "ACTIVE" && rec.contour === contour;
+      })
       .flatMap((code) => this.store.keysOf(code))
       .filter((k) => keyStatus(k, now) === "ACTIVE" && Date.parse(k.valid_from) <= now.getTime())
       .map(agentJwk)
