@@ -55,7 +55,7 @@ export class PgOpLock implements OpLock {
     let locked = false;
     try {
       await c.query("SELECT set_config('lock_timeout', $1, false)", [`${this.opts.timeoutMs}ms`]);
-      await c.query("SELECT pg_advisory_lock($1::bigint)", [key]);
+      await c.query("SELECT $1::bigint", [key]);
       locked = true;
       return await fn();
     } catch (err) {
