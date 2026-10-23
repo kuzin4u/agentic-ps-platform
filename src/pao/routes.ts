@@ -14,7 +14,7 @@ import { CONFIRMATION_ID, type ConfirmationRecord } from "../confirm/model.js";
 import type { ConfirmationStore } from "../confirm/store.js";
 import { CREDENTIAL_REF } from "../credentials/model.js";
 import type { Credentials } from "../credentials/service.js";
-import { operationFor, type OperationViewDeps } from "../fulfilment/view.js";
+import { operationFor, operationsFor, type OperationViewDeps } from "../fulfilment/view.js";
 import { credentialRequestBody, hasPaymentDetails, keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
 import { consentErrorReply } from "./consent-errors.js";
 import { EVENT_ID, EventCursorUnknown } from "./events.js";
@@ -489,6 +489,33 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         return send(reply, paoError("STATE_UNAVAILABLE", "A3 п. 4.5"));
       }
     });
+
+    // Операции этого агента по мандату (ПАО §5; РП55 п. 6): мандат — как у GET мандата (чужой, неизвестный, не по форме и
+    // без параметра — один ответ 404 MANDATE_NOT_FOUND); операции — только с итогом, по времени решения; записей больше
+    // event_page_max — 400 REQUEST_INVALID (постраничный вывод — ПАО 1.5.0). В YAML 1.4.0 — только 200 (расхождение № 41).
+    const list = operations.list;
+    if (list) {
+      app.get<{ Querystring: Record<string, unknown> }>("/pao/v1/operations", async (req, reply) => {
+        const agent = req.paoAgent as AgentRecord;
+        const id = req.query.mandate_id;
+        if (typeof id !== "string" || !MANDATE_ID.test(id)) return send(reply, paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+        try {
+          if (!(await deps.consent.get(id, agent.agent_code))) return send(reply, paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+        } catch (err) {
+          const e = consentErrorReply(err);
+          req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — мандат списка операций не прочитан");
+          return send(reply, e ?? paoError("UPSTREAM_UNAVAILABLE"));
+        }
+        try {
+          const r = await operationsFor({ ...operations, list }, agent.agent_code, id, deps.params.event_page_max);
+          if (!r.ok) return send(reply, paoError("REQUEST_INVALID", "ПАО §5"));
+          return reply.code(200).send(r.operations);
+        } catch (err) {
+          req.log.error({ err, agent_code: agent.agent_code }, "ПАО: П8 — операции по мандату не прочитаны");
+          return send(reply, paoError("STATE_UNAVAILABLE", "A3 п. 4.5"));
+        }
+      });
+    }
   }
 
   // Лента событий этого агента (ПАО §5; РП39 п. 7): после курсора after, по номеру, не больше event_page_max.

@@ -105,7 +105,17 @@ export interface OperationReader {
   get(op_ref: string): Promise<OperationRecord | undefined> | OperationRecord | undefined;
 }
 
-export class MemoryOperationStore implements OperationStore {
+/**
+ * Записи операций по мандату — для GET /pao/v1/operations?mandate_id (РП55 п. 6): mandate_id записи равен запрошенному,
+ * по времени записи (at, затем op_ref), не больше limit; сбой — исключение.
+ */
+export interface OperationsByMandate {
+  byMandate(mandate_id: string, limit: number): Promise<readonly OperationRecord[]>;
+}
+
+const byTime = (a: OperationRecord, b: OperationRecord): number => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.op_ref < b.op_ref ? -1 : a.op_ref > b.op_ref ? 1 : 0);
+
+export class MemoryOperationStore implements OperationStore, OperationsByMandate {
   readonly #map = new Map<string, OperationRecord>();
   /** Входы окна по op_ref: заполняются один раз, решение их не меняет (как столбцы окна на PG). */
   readonly #window = new Map<string, WindowEntry>();
@@ -126,6 +136,14 @@ export class MemoryOperationStore implements OperationStore {
   get(op_ref: string): OperationRecord | undefined {
     const r = this.#map.get(op_ref);
     return r && structuredClone(r);
+  }
+
+  async byMandate(mandate_id: string, limit: number): Promise<readonly OperationRecord[]> {
+    return [...this.#map.values()]
+      .filter((r) => r.mandate_id === mandate_id)
+      .sort(byTime)
+      .slice(0, limit)
+      .map((r) => structuredClone(r));
   }
 
   async finish(rec: OperationRecord): Promise<void> {
@@ -184,7 +202,27 @@ interface FactsRow extends OperationRow {
  * из одновременных запросов с разных экземпляров к резерву проходит один. Решение — UPDATE только строки «в работе» с тем
  * же хэшем; решённую строку триггер не даёт изменить или удалить.
  */
-export class PgOperationStore implements OperationStore {
+const FACTS_COLUMNS = "op_ref, msg_hash, decision, mandate_id, holds, at, agent_code, order_ref, channel, merchant_id, msg_amount, msg_currency, aoi";
+
+/** Строка adp_operations → запись; у записей до sql/114 (нет суммы) фактов нет. */
+function recordOf(x: FactsRow): OperationRecord {
+  const base: OperationRecord = { op_ref: x.op_ref, msg_hash: x.msg_hash.trim(), decision: x.decision, mandate_id: x.mandate_id, holds: x.holds, at: x.at };
+  if (x.msg_amount === null || x.msg_currency === null) return base;
+  return {
+    ...base,
+    facts: {
+      agent_code: x.agent_code,
+      order_ref: x.order_ref,
+      channel: x.channel,
+      merchant_id: x.merchant_id,
+      amount: Number(x.msg_amount),
+      currency: x.msg_currency.trim(),
+      aoi: x.aoi,
+    },
+  };
+}
+
+export class PgOperationStore implements OperationStore, OperationsByMandate {
   private readonly hooks: PgOperationHooks;
   private readonly lockTimeoutMs: number;
 
@@ -219,27 +257,18 @@ export class PgOperationStore implements OperationStore {
    * установлен («Нюансы реализации» п. 4).
    */
   async get(op_ref: string): Promise<OperationRecord | undefined> {
-    const r = await this.client.query<FactsRow>(
-      `SELECT op_ref, msg_hash, decision, mandate_id, holds, at, agent_code, order_ref, channel, merchant_id, msg_amount, msg_currency, aoi
-         FROM adp_operations WHERE op_ref = $1`,
-      [op_ref],
-    );
+    const r = await this.client.query<FactsRow>(`SELECT ${FACTS_COLUMNS} FROM adp_operations WHERE op_ref = $1`, [op_ref]);
     const x = r.rows[0];
-    if (!x) return undefined;
-    const base: OperationRecord = { op_ref: x.op_ref, msg_hash: x.msg_hash.trim(), decision: x.decision, mandate_id: x.mandate_id, holds: x.holds, at: x.at };
-    if (x.msg_amount === null || x.msg_currency === null) return base;
-    return {
-      ...base,
-      facts: {
-        agent_code: x.agent_code,
-        order_ref: x.order_ref,
-        channel: x.channel,
-        merchant_id: x.merchant_id,
-        amount: Number(x.msg_amount),
-        currency: x.msg_currency.trim(),
-        aoi: x.aoi,
-      },
-    };
+    return x && recordOf(x);
+  }
+
+  /** По индексу adp_operations_mandate (sql/117, РП55 п. 6). */
+  async byMandate(mandate_id: string, limit: number): Promise<readonly OperationRecord[]> {
+    const r = await this.client.query<FactsRow>(
+      `SELECT ${FACTS_COLUMNS} FROM adp_operations WHERE mandate_id = $1 ORDER BY at, op_ref LIMIT $2`,
+      [mandate_id, limit],
+    );
+    return r.rows.map(recordOf);
   }
 
   async finish(rec: OperationRecord): Promise<void> {

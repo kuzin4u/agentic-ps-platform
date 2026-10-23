@@ -274,6 +274,22 @@ describe.skipIf(!DATABASE_URL)("реверсал на PostgreSQL (РП55, sql/11
     }
   });
 
+  it("записи операций по мандату (К2.1): только этот mandate_id, по времени, не больше предела; факты — как у get", async () => {
+    const ops = new PgOperationStore(db.pool, { lockTimeoutMs: 5_000 });
+    const put = async (op_ref: string, mandate_id: string, at: string) => {
+      expect(await ops.begin(op_ref, HASH, at)).toBeUndefined();
+      await ops.finish({ op_ref, msg_hash: HASH, decision: { decision: "APPROVE", reason: null, reservation_id: "h", decided_in_ms: 1 }, mandate_id, holds: ["h"], at, facts });
+    };
+    await put("OP-bym-2", "mnd_bym", "2026-10-23T12:00:02.000Z");
+    await put("OP-bym-1", "mnd_bym", "2026-10-23T12:00:01.000Z");
+    await put("OP-bym-3", "mnd_bym", "2026-10-23T12:00:03.000Z");
+    await put("OP-bym-x", "mnd_bym_other", "2026-10-23T12:00:00.000Z");
+    expect((await ops.byMandate("mnd_bym", 10)).map((r) => r.op_ref)).toEqual(["OP-bym-1", "OP-bym-2", "OP-bym-3"]);
+    expect((await ops.byMandate("mnd_bym", 2)).map((r) => r.op_ref)).toEqual(["OP-bym-1", "OP-bym-2"]);
+    expect((await ops.byMandate("mnd_bym", 1))[0]).toEqual(await ops.get("OP-bym-1"));
+    expect(await ops.byMandate("mnd_bym_none", 10)).toEqual([]);
+  });
+
   it("индекс записей операций по мандату (РП55 п. 6)", async () => {
     const r = await db.pool.query<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE tablename = 'adp_operations' AND indexname = 'adp_operations_mandate'");
     expect(r.rows).toHaveLength(1);
