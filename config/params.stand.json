@@ -37,6 +37,7 @@
   "operation_outcome_every_ms": 1000,
   "operation_outcome_max_delay_sec": 30,
   "operation_outcome_horizon_sec": 86400,
+  "operation_reread_interval_sec": 3600,
   "upk_page_base_url": "https://upk.stand",
   "upk_sbp_enabled": false
 }

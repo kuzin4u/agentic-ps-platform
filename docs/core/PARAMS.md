@@ -11,7 +11,7 @@
 | `adp_availability_target` | 99,95 % | Цель песочницы | нормативы оператора |
 | `revocation_propagation_max_ms` | 1 000 | Отзыв ключа или мандата до ADP и шлюза | прогон (A7 п. 6.3 «без задержки») |
 | `reservation_ttl_sec` | 7 дней | Жизнь резерва без клиринга: `expires_at` удержания; освобождение — проход `expire` раз в 60 с (РП41 п. 6). Должен быть не меньше срока подтверждения авторизации банком — параметра пока нет, вопрос к PS-07 (STATUS «Открыто») | правила ПС о сроке авторизации |
-| `event_reorder_window_ms` / `event_retry_max` | 5 000 / 8 | Порядок событий и доставка агенту | прогон |
+| `event_reorder_window_ms` / `event_retry_max` | 5 000 / 8 | Порядок событий ПИ-3: событие без предшественника — 503, процессинг повторяет; дольше окна от решения ADP — тот же 503 и инцидент в журнале процесса, очереди нет (РП55 п. 5) / доставка агенту | прогон |
 | `event_page_max` | 100 | Не больше стольких событий в одном ответе ленты `GET /pao/v1/events` (РП39 п. 7); дальше — следующий запрос с `after` | прогон |
 | `event_delivery_timeout_ms` | 5 000 | Тайм-аут одной попытки push-доставки события: разрешение имени, соединение, отправка, статус ответа — один предел (РП40 доп. п. 10); тело ответа не читается (РП40 п. 4) | прогон |
 | `event_subscription_allow_hosts` | `["agent-emulator.stand"]` | Разрешённые хосты адреса подписки `PUT /pao/v1/subscription` — точное имя DNS, без масок. Пустой список — подписка запрещена всем (РП40 п. 2); в бою — из соглашения участника (PS-20) | соглашение участника |
@@ -26,7 +26,7 @@
 | `pao_rate_limit_per_30s` | 3 000 | Грубый лимит обращений к шлюзу ПАО с одного адреса за окно 30 с (все маршруты `/pao`, до проверки подписи); превышение — 429 `RATE_LIMITED` с `Retry-After` ≤ 30 (окно 30 с — граница РП24). На стенде щедрый (≈ 6 000 в минуту): тесты агента не упираются. Лимит по уровню агента — отдельно (РП32 п. 6) | прогон песочницы для сторонних агентов (PS-26) |
 | `key_ttl_days` / `key_overlap_days` | 90 / 7 | Ключи агентов | O02 |
 | `qualified_signature_above_*` | 50 000 ₽ / 30 дней | Усиленная подпись мандата | юридическая оценка (O08, Р9) |
-| `restore_budget_on_refund` | false | Восстановление бюджета при возврате | юридическая оценка (В8, РП9) |
+| `restore_budget_on_refund` | false | Восстановление бюджета при возврате; `true` до PS-23 — отказ запуска (РП55 п. 4) | юридическая оценка (В8, РП9) |
 | `aoi_rollout_phase` | 3 | Очередь внедрения признака | A1 п. 8.3 |
 | `protocol_overlap_days` | 180 | Параллельная работа версий ПАО | решение владельца |
 | `issuer_mode_default` | ON_BEHALF | Режим эмитента по умолчанию | РП3 |
@@ -38,6 +38,7 @@
 | `operation_outcome_every_ms` | 1000 | Интервал прохода сборщика итогов операций по решённым записям ADP вне пути авторизации (РП52 п. 11) | решение владельца 22.10 |
 | `operation_outcome_max_delay_sec` | 30 | Наибольшая задержка события `operation.declined` по отказу ADP после решения (РП52 п. 12); публикуется агенту (AGENT-PROTOCOL §5), отставание — `OPERATION_OUTCOME_LAGGING` | решение владельца 22.10 |
 | `operation_outcome_horizon_sec` | 86 400 | Горизонт прохода сборщика (РП52 «Дополнения» п. 1): записи операций старше — не разбираются, события по ним нет; итог — по `GET /pao/v1/operations/{op_ref}` из записи операции ADP (с PS-16 ч. 2) | решение владельца 22.10 |
+| `operation_reread_interval_sec` | 3 600 | Для агента, Платформа не читает (РП55 п. 2): после `operation.authorized` без `operation.settled` агент перечитывает `GET /pao/v1/operations/{op_ref}` не чаще этого интервала и прекращает на `SETTLED`, `REFUNDED`, `REVERSED` или через `reservation_ttl_sec`; публикуется в AGENT-PROTOCOL §5, с ПАО 1.5.0 — в `/.well-known/pao-configuration` | решение владельца 23.10 |
 | `upk_page_base_url` | `https://upk.stand` | Начало адреса страницы УПК в `link` запроса подтверждения: `link` = значение + `/c/` + `confirmation_id` (РП51 п. 10); только `https://` и имя хоста, без порта, пути, запроса и фрагмента | соглашение с оператором УПК |
 | `upk_sbp_enabled` | false | Выбор СБП на странице УПК эмулятора (РП51 п. 16; читается с v0.17.0, используется страницей УПК с v0.18.0, PS-19 ч. 3): при `false` — только карта, решение с `SBP` — отказ страницы; до PS-21 путь СБП в ADP не подтверждён, выбор СБП давал бы тупик заказа | PS-21 — включить по умолчанию |
 
@@ -46,7 +47,7 @@
 
 | Правило | Почему |
 |---|---|
-| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `participant_notify_max_delay_sec`, `participant_notify_horizon_sec`, `operation_outcome_every_ms`, `operation_outcome_max_delay_sec`, `operation_outcome_horizon_sec`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
+| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `participant_notify_max_delay_sec`, `participant_notify_horizon_sec`, `operation_outcome_every_ms`, `operation_outcome_max_delay_sec`, `operation_outcome_horizon_sec`, `operation_reread_interval_sec`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
 | Целые ≥ 0: `bypass_overhead_ms`, `event_reorder_window_ms`, `key_overlap_days` | ноль допустим |
 | `split_min_ops` ≥ 2 | дробление — от двух операций |
 | `aoi_rollout_phase` ∈ 1…3 | A1 п. 8.3 |
@@ -56,6 +57,8 @@
 | `key_overlap_days` < `key_ttl_days` | перекрытие ключей короче их жизни |
 | `participant_notify_horizon_sec` ≥ 2 × `participant_notify_max_delay_sec` | признак отставания — половина горизонта; она не короче наибольшей задержки уведомления (РП46 доп. п. 9 (о2)) |
 | `operation_outcome_every_ms` < `operation_outcome_max_delay_sec` × 1000; `operation_outcome_horizon_sec` ≥ 2 × `operation_outcome_max_delay_sec` | проход чаще предела задержки; горизонт не короче двух пределов (РП52 «Дополнения» п. 1, 3) |
+| `operation_reread_interval_sec` — целое ≥ 1, меньше `reservation_ttl_sec` | перечитывание укладывается в срок авторизации хотя бы раз (РП55 п. 2) |
+| `restore_budget_on_refund` — булево; `true` — отказ запуска до PS-23 | восстановление бюджета не реализовано: `true` дал бы молчаливое расхождение с параметром (РП55 п. 4, инвариант 3) |
 | `idempotency_ttl_sec` — целое ≥ 60 | не меньше аренды захвата ключа ядра (60 с, условие К6 agentic-core: аренда ≤ ttl; РП30 п. 3) |
 | `unavailable_retry_after_sec` — целое 0…30 | 0 — «повторить сразу» (ПАО `minimum: 0`); верхняя граница — `maxRetryAfterSec` клиента ПАО agentic-core (30): больший `Retry-After` эталонный клиент отвергает (РП24) |
 | `event_subscription_allow_hosts` — массив имён DNS в нижнем регистре (метки `a-z0-9-`, не IP), без повторов; пустой допустим | пустой — fail-closed: подписка запрещена всем (РП40 п. 2) |
@@ -85,3 +88,4 @@
 | 22.10.2026 | `operation_outcome_every_ms` | — | 1000 | PS-16 ч. 1 К0, интервал сборщика итогов операций; решение владельца 22.10 (РП52 п. 11, «Дополнения» п. 3) |
 | 22.10.2026 | `operation_outcome_max_delay_sec` | — | 30 | PS-16 ч. 1 К0, предел задержки `operation.declined` по отказу ADP; решение владельца 22.10 (РП52 п. 12, условие ревью из чата) |
 | 22.10.2026 | `operation_outcome_horizon_sec` | — | 86 400 | PS-16 ч. 1 К0, горизонт прохода сборщика; решение владельца 22.10 (РП52 «Дополнения» п. 1, 3) |
+| 23.10.2026 | `operation_reread_interval_sec` | — | 3 600 | PS-16 ч. 3 К0, перечитывание `GET` операции агентом до `SETTLED` / `REVERSED`; решение владельца 23.10 (РП55 п. 2, ревью из чата п. 1) |

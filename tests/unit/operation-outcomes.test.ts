@@ -176,7 +176,7 @@ describe("итог операции и operation.* на стенде (РП52)", 
     expect(await decide(await pay().auth(m, 60_000))).toMatchObject({ decision: "DECLINE", reason: "LIMIT_EXCEEDED" });
   });
 
-  it("ПИ-3: op_ref без записи ADP — 202 без действий (инвариант 2); ответ по отказу ADP — 202, итог ADP прежний; форма — 400; типы ч. 3 — 503", async () => {
+  it("ПИ-3: op_ref без записи ADP — 202 без действий (инвариант 2); ответ по отказу ADP — 202, итог ADP прежний; форма — 400; CHARGEBACK — 503", async () => {
     expect(await issuer(`OPKC-BYPASS-${randomUUID()}`, true)).toBe(202);
     const op = `OPKC-PS16-${randomUUID()}`;
     await limitDecline(op);
@@ -186,8 +186,13 @@ describe("итог операции и operation.* на стенде (РП52)", 
     expect(await issuer(op, "yes")).toBe(400);
     expect(await issuer("", true)).toBe(400);
     expect((await stand.app.inject({ method: "POST", url: "/adp/v1/events", payload: [] })).statusCode).toBe(400);
-    // PRESENTMENT — с ч. 2 (РП53, pao-presentment.test.ts); REFUND, REVERSAL, AUTH_EXPIRED — 503 до ч. 3.
-    for (const msg_type of ["REFUND", "REVERSAL", "AUTH_EXPIRED"]) expect(await issuer(op, true, { msg_type }), msg_type).toBe(503);
+    // PRESENTMENT — с ч. 2 (РП53, pao-presentment.test.ts); REVERSAL и AUTH_EXPIRED — с ч. 3 (РП55, pao-reversal.test.ts):
+    // по отказу ADP — 202 без действий. REFUND (РП55, pao-refund.test.ts): без суммы — 400, по отказу ADP — 202 и инцидент.
+    // CHARGEBACK — до PS-22: 503.
+    for (const msg_type of ["REVERSAL", "AUTH_EXPIRED"]) expect(await issuer(op, true, { msg_type }), msg_type).toBe(202);
+    expect(await issuer(op, true, { msg_type: "REFUND" })).toBe(400);
+    expect(await issuer(op, true, { msg_type: "REFUND", amount: 1_000, currency: "RUB" })).toBe(202);
+    expect(await issuer(op, true, { msg_type: "CHARGEBACK" })).toBe(503);
   });
 
   it("горизонт ограничивает только события: отказ старше operation_outcome_horizon_sec — события нет (итог — GET, К2)", async () => {

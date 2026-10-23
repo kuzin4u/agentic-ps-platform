@@ -8,6 +8,7 @@ import type { StateService } from "../state/index.js";
 import { insertOperationEventTx, type MemoryConsentStore, type TxSqlPool } from "../consent/store.js";
 import type { OperationEventDraft, PaoEventType } from "../pao/events.js";
 import type { Decision } from "../shared/canonical.generated.js";
+import type { ReversalStore } from "./reversals.js";
 
 export type OutcomeStatus = "AUTHORIZED" | "DECLINED" | "CONFIRMATION_REQUIRED";
 export type OutcomeSource = "ADP" | "ISSUER";
@@ -229,6 +230,8 @@ export interface IssuerResponseDeps {
   readonly store: OutcomeStore;
   /** hold — проверка удержаний при одобрении эмитента (РП53 п. 11); без него проверки нет. */
   readonly state: Pick<StateService, "release"> & Partial<Pick<StateService, "hold">>;
+  /** Реверсалы (РП55 п. 1): ответ эмитента после реверсала — инцидент, итог не пишется; без хранилища — как до ч. 3. */
+  readonly reversals?: Pick<ReversalStore, "get">;
   readonly pushFor?: PushFor;
   readonly now?: () => Date;
   readonly log?: CollectorLog;
@@ -250,7 +253,7 @@ export async function acceptIssuerResponse(deps: IssuerResponseDeps, raw: unknow
   const op_ref = msg.op_ref;
   if (typeof op_ref !== "string" || op_ref === "") return 400;
   if (msg.msg_type !== "ISSUER_RESPONSE") {
-    // Прочие типы ПИ-3 — PS-16 ч. 2 (РП52 п. 13): 503, а не 202 — процессинг повторит, событие не теряется молча
+    // Типы ПИ-3 без обработчика (CHARGEBACK до PS-22; прочие — без своих хранилищ): 503, а не 202 — процессинг повторит, событие не теряется молча
     // (PRESENTMENT без закрепления вернул бы бюджет по reservation_ttl — инвариант 4).
     if (typeof msg.msg_type !== "string") return 400;
     log("warn", { op_ref, msg_type: msg.msg_type }, "П8: тип события ПИ-3 ещё не обрабатывается — 503");
@@ -263,6 +266,11 @@ export async function acceptIssuerResponse(deps: IssuerResponseDeps, raw: unknow
   if (rec.decision === null) return 503;
   if (rec.decision.decision !== "APPROVE") {
     log("warn", { op_ref, decision: rec.decision.decision, issuer_approved: approved, incident: true }, "П8: ответ эмитента по операции без APPROVE ADP");
+    return 202;
+  }
+  // Реверсал раньше ответа эмитента (РП55 п. 1): удержания освобождены, операция отменена — итог не пишется, события нет.
+  if (await deps.reversals?.get(op_ref)) {
+    log("warn", { op_ref, issuer_approved: approved, incident: true }, "П8: ответ эмитента после реверсала — итог не пишется");
     return 202;
   }
   const o: OperationOutcome = {
