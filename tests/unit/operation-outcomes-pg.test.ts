@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { factsOf } from "../../src/adp/decide.js";
 import { PgOperationStore, type OperationFacts } from "../../src/adp/operations.js";
 import { acceptIssuerResponse, eventFor, OperationOutcomeCollector, PgOutcomeStore, type OperationOutcome } from "../../src/fulfilment/outcomes.js";
+import { operationFor } from "../../src/fulfilment/view.js";
 import { operationEventIdFor } from "../../src/pao/events.js";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
@@ -125,6 +126,10 @@ describe.skipIf(!DATABASE_URL)("итог операции и operation.* на Po
     await decided("OP-pg-old", decline("LIMIT_EXCEEDED"), AGENT, "2026-10-01T00:00:00.000Z");
     await new OperationOutcomeCollector(new PgOutcomeStore(db.pool), { horizonSec: 86_400, maxDelaySec: 30, now: () => Date.parse(AT) }).runOnce();
     expect(await events("OP-pg-old")).toEqual([]);
+    // Условие к д1 (РП52 «Дополнения» п. 1, РП53 п. 10): итог агенту — из записи операции ADP, без итога сборщика.
+    const view = { operations: new PgOperationStore(db.pool, { lockTimeoutMs: 5_000 }), outcomes: new PgOutcomeStore(db.pool) };
+    expect(await operationFor(view, AGENT, "OP-pg-old")).toMatchObject({ op_ref: "OP-pg-old", status: "DECLINED", reason: "LIMIT_EXCEEDED", amount: 60_000, order_ref: "ORD-pg-1" });
+    expect(await operationFor(view, "nspk:agent:someone-else:v1", "OP-pg-old")).toBeUndefined();
   });
 
   it("второй иной итог — прежний возвращается, события нет; итог и событие не меняются и не удаляются (триггеры)", async () => {

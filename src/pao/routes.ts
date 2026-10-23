@@ -14,6 +14,7 @@ import { CONFIRMATION_ID, type ConfirmationRecord } from "../confirm/model.js";
 import type { ConfirmationStore } from "../confirm/store.js";
 import { CREDENTIAL_REF } from "../credentials/model.js";
 import type { Credentials } from "../credentials/service.js";
+import { operationFor, type OperationViewDeps } from "../fulfilment/view.js";
 import { credentialRequestBody, hasPaymentDetails, keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
 import { consentErrorReply } from "./consent-errors.js";
 import { EVENT_ID, EventCursorUnknown } from "./events.js";
@@ -62,6 +63,11 @@ export interface PaoDeps {
     readonly now: () => Date;
     readonly upk_page_base_url: string;
   };
+  /**
+   * Записи операций ADP и итоги П8 (РП52 п. 10, РП53 п. 10); без них GET /pao/v1/operations/{op_ref} не регистрируется:
+   * ADP в рабочем сервере не подключена — только стенд и тесты.
+   */
+  readonly operations?: OperationViewDeps;
   /** Стенд (РП40 п. 8): только он принимает стендовые порты; в рабочем сервере стендовый порт — отказ запуска. */
   readonly stand?: boolean;
   /** Монотонные часы предела обработчика (РП33 доп.); по умолчанию performance.now — в тестах подменяются. */
@@ -462,6 +468,24 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         return reply.code(200).send(confirmationView(r, confirmations.upk_page_base_url));
       } catch (err) {
         req.log.error({ err, agent_code: agent.agent_code }, "ПАО: П6 — состояние запроса подтверждения не подтверждено");
+        return send(reply, paoError("STATE_UNAVAILABLE", "A3 п. 4.5"));
+      }
+    });
+  }
+
+  // Операция этого агента (ПАО §5; РП52 п. 10, РП53 п. 10): итог — из записи итога, а без неё — из решения в записи
+  // операции ADP, независимо от сборщика. Чужая, неизвестная, без установленного агента и без итога — один ответ
+  // 400 REQUEST_INVALID (OPERATION_NOT_FOUND — ПАО 1.5.0). SUSPENDED/EXCLUDED — 403 до обработчика. Сбой — 503.
+  const operations = deps.operations;
+  if (operations) {
+    app.get<{ Params: { op_ref: string } }>("/pao/v1/operations/:op_ref", async (req, reply) => {
+      const agent = req.paoAgent as AgentRecord;
+      try {
+        const op = await operationFor(operations, agent.agent_code, req.params.op_ref);
+        if (!op) return send(reply, paoError("REQUEST_INVALID", "ПАО §5"));
+        return reply.code(200).send(op);
+      } catch (err) {
+        req.log.error({ err, agent_code: agent.agent_code }, "ПАО: П8 — итог операции не прочитан");
         return send(reply, paoError("STATE_UNAVAILABLE", "A3 п. 4.5"));
       }
     });

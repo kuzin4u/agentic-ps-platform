@@ -273,6 +273,8 @@ export function createStand(opts: StandOptions = {}): Stand {
       credentials,
       // Запрос подтверждения агенту (РП51 п. 8–10): то же хранилище П6, часы стенда, link — на страницу УПК.
       confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url },
+      // Операция агенту (РП52 п. 10): записи ADP и итоги П8 — те же хранилища в памяти, что у ADP и ПИ-3.
+      operations: { operations, outcomes: outcomeStore },
       resolveHost: dns.resolve,
       stand: true,
     },
