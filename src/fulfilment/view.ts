@@ -5,10 +5,22 @@ import type { OperationReader, OperationRecord } from "../adp/operations.js";
 import type { Aoi as CanonicalAoi } from "../shared/canonical.generated.js";
 import type { Aoi, Operation } from "../shared/pao.js";
 import type { OperationOutcome, OutcomeStatus, OutcomeStore } from "./outcomes.js";
+import type { FulfilmentRecord, FulfilmentStore } from "./records.js";
+
+/** Объект fulfilment ПАО 1.4.0 (РП53 п. 8): currency и прочие поля записи агенту — с 1.5.0 (#37). */
+const fulfilmentView = (f: FulfilmentRecord): NonNullable<Operation["fulfilment"]> => ({
+  fulfilment_ref: f.fulfilment_ref,
+  final_amount: f.final_amount,
+  scope_check: f.scope_check,
+  spent_position: f.spent_position,
+  at: f.at,
+});
 
 export interface OperationViewDeps {
   readonly operations: OperationReader;
   readonly outcomes: Pick<OutcomeStore, "get">;
+  /** Записи об исполнении (РП53 п. 10): есть — SETTLED с fulfilment; без хранилища — как до ч. 2. */
+  readonly fulfilments?: Pick<FulfilmentStore, "get">;
 }
 
 /** Агент операции: из итога, а без него — как у сборщика (факты, затем столбец уведомителя у записей до sql/114). */
@@ -41,6 +53,8 @@ export async function operationFor(deps: OperationViewDeps, agent_code: string, 
   if (agentOf(rec, outcome) !== agent_code) return undefined;
   const result = outcome ? { status: outcome.status, reason: outcome.status === "DECLINED" ? outcome.reason : null } : fromDecision(rec);
   if (!result) return undefined;
+  // Клиринг — только после AUTHORIZED (РП53 п. 3): запись об исполнении меняет статус на SETTLED.
+  const settled = result.status === "AUTHORIZED" ? await deps.fulfilments?.get(op_ref) : undefined;
   const f = rec.facts;
   return {
     op_ref,
@@ -49,9 +63,9 @@ export async function operationFor(deps: OperationViewDeps, agent_code: string, 
     ...(f ? { amount: f.amount } : {}),
     ...(f?.merchant_id != null ? { merchant_id: f.merchant_id } : {}),
     ...paoAoi(f?.aoi),
-    status: result.status,
-    reason: result.reason,
-    fulfilment: null,
+    status: settled ? "SETTLED" : result.status,
+    reason: settled ? null : result.reason,
+    fulfilment: settled ? fulfilmentView(settled) : null,
     deal_ref: null,
   };
 }
