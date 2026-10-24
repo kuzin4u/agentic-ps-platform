@@ -39,7 +39,7 @@ cd ~/repos/agentic-ps-platform && git checkout main && git pull && claude
 
 За владельцем:
 - **PR #65** — слияние, тег `v0.24.0` по команде чата (PR #63 и тег `v0.23.0` — сделано);
-- **передача AG-09 ч. 2 / AG-10** (PS-30 ч. 2, v0.24.0) — текст в «Передаче агенту»; задачу в `agentic-buyer-ref` (метка «передача») — по «да» владельца; kuzin4u/agentic-buyer-ref#64 (PS-30 ч. 1) — открыта;
+- **передача AG-09 ч. 2 / AG-10** (PS-30 ч. 2, v0.24.0) — передано: kuzin4u/agentic-buyer-ref#67 (24.10); kuzin4u/agentic-buyer-ref#64 (PS-30 ч. 1) — открыта;
 - **#37** — добавить путь `GET /pao/v1/merchants/{merchant_id}/readiness` в перечень пакета ПАО 1.5.0 (РП57 п. 4);
 - **развилка «несколько эквайреров у продавца»** — к пересмотру при первом пилотном продавце с двумя эквайрерами (РП57 п. 1);
 - **расхождение № 33** — A1 п. 8.3 в NORMS: сверить с пулом норм;
@@ -682,7 +682,7 @@ cd ~/repos/agentic-ps-platform && git checkout main && git pull && claude
 
 ## Передача агенту (AG-03 Подписант)
 
-**PS-30 ч. 2 (РП57 с доп. 1–5; PR #65, тег v0.24.0 — по команде чата; к AG-09 ч. 2 → точка Б3 и AG-10; задача в `agentic-buyer-ref` — по «да» владельца):**
+**PS-30 ч. 2 (РП57 с доп. 1–5; PR #65, тег v0.24.0; передано задачей [`agentic-buyer-ref` #67](https://github.com/kuzin4u/agentic-buyer-ref/issues/67), 24.10.2026; к AG-09 ч. 2 → точка Б3 и AG-10):**
 - **Знак готовности витрины — по API Платформы:** `GET /pao/v1/merchants/{merchant_id}/readiness`, подписанный запрос, пустое тело; ответ `{merchant_id, status, since}`, `status` — `ACTIVE` | `SUSPENDED` | `NONE` (неизвестный продавец — `NONE`); `Cache-Control: no-store` — перечитывать при каждом решении о зоне; `SUSPENDED` / `EXCLUDED` агент — 403 `AGENT_SUSPENDED`; `merchant_id` пустой или длиннее 128 — 400 `REQUEST_INVALID`. **Пути нет в `agent-protocol.yaml` до ПАО 1.5.0** — клиент ПАО агента описывает его вручную; `PAO_SPEC_SHA256` копии прежний (`48bd3397…`). Знак берёт одна функция адаптера `adapters/shops` (условие Б3 агента).
 - **Знаки витрин стенда:** эквайрер стенда подаёт `ACTIVE` витринам с `readiness_mark: true`, у MKT-77 — `NONE`; `readiness_mark` витрины остаётся — это слова витрины, зону брать из ПАО. Приостановление в тесте — `stand.suspendReadiness(merchant_id, reason)`, снятие — `stand.reinstateReadiness`.
 - **Стенд:** `stand.acquirerParticipant` (знак, метаданные, сверка, статус агента для эквайрера); `createStand` загружает приложение сразу — маршрут или хук в `stand.app` после создания не добавить; сбой начальной подачи знаков — `listen()` отказывает.
