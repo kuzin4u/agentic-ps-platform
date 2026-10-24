@@ -5,6 +5,140 @@
 ставит владелец на коммит слияния в `main`. Версия ПАО — `info.version` в `docs/core/agent-protocol.yaml`, сверка копий —
 по `PAO_SPEC_SHA256` (`src/shared/pao-errors.generated.ts`). Записи до v0.4.0 — в описаниях PR и тегах.
 
+## v0.24.0 — 24.10.2026
+
+PS-30 ч. 2 «Знак готовности и сверка пакета», PR #65. Решение РП57 с дополнениями 1–5. **PS-30 закрыта**; со стороны
+Платформы готово условие точки Б3: знак готовности витрины — по API Платформы.
+
+- **ПАО** — по-прежнему 1.4.0, `PAO_SPEC_SHA256` не меняется (`48bd3397…9ad9da`), `agent-protocol.yaml` не менялся.
+  - Новый путь `GET /pao/v1/merchants/{merchant_id}/readiness` **в YAML не объявлен до ПАО 1.5.0** (как № 41, #37).
+  - Описан в AGENT-PROTOCOL §3–4, там же — общее правило длины параметра пути.
+- **ПИ** — `processing-interface.yaml` изменён:
+  - пять маршрутов эквайрера ПИ-8;
+  - схемы `MerchantReadiness` и `PaymentReconciliation`;
+  - общие параметры подписи участника.
+  - `PI_SPEC_SHA256` `5414b7cb4bd222d380b718976d5ce5c283ab8fc958e5cbcd976e487745a2f02c` (было `a3ca48a8…c9ec`).
+- **Ядро** — `#v0.11.0` без изменений.
+- **Миграции** — `sql/118_merchant_readiness.sql`, `sql/119_payment_metadata.sql`.
+- **Новый стендовый параметр** — `merchant_readiness_max_age_sec`: на стенде 1, рабочее значение 60.
+- **Транспорт:** параметр пути длиннее 256 знаков — HTTP 414 до проверки обращения (было — длиннее 100). До 256 знаков
+  форму и длину проверяет обработчик своим кодом (РП57 доп. 1).
+  - **Закрыто расхождение № 43:** код агента длиной 101–256 знаков у `GET /merchants/v1/agents/{code}` получал 414 вместо
+    200 / 404. Остаток — предел длины кода при допуске (PS-05б / PS-31).
+- **Не в этом выпуске:**
+  - объявление пути знака и ответов в `agent-protocol.yaml` — ПАО 1.5.0 (#37);
+  - HTTP оператора для приостановления знака — PS-31; на стенде — `stand.suspendReadiness` / `reinstateReadiness`;
+  - метаданные пакета и сверка в рабочем сервере — после подключения токен-сервиса оператора (ПИ-4); сейчас только стенд;
+  - несколько эквайреров у продавца — развилка «к пересмотру»;
+  - предел длины кода агента при допуске (расхождение № 43, остаток);
+  - #62 и #45 — отдельные задачи.
+
+### Безопасность
+
+- **fastify `^5.12.6`** (#64, dependabot): исправление GHSA-389g-gv7q-r4x8, низкая степень. Затрагивает схемы с
+  `propertyNames`; в коде Платформы `propertyNames` нет — Платформа не была затронута, обновление — по правилу зависимостей.
+- **Известные, не закрыты этим выпуском** (`npm audit`, средняя степень; отдельной задачей, STATUS «Открыто»):
+  - `fast-uri` 3.1.8 и 4.2.1 — через `fastify` → `@fastify/ajv-compiler` → `ajv` и напрямую у `@fastify/ajv-compiler` /
+    `fast-json-stringify`; исправлены в 3.1.9 и 4.2.3;
+  - `ip-address` 10.7.2 — через `@fastify/rate-limit` (закреплён `overrides`); исправлен в 10.7.4.
+- Новые угрозы в SECURITY.md:
+  - С3в — подделка заявки на знак или метаданных за чужого продавца, обход приостановления эквайрером;
+  - С3г — длинный параметр пути (транспортный предел 256).
+  - С3б дополнена: перебор продавцов по знаку.
+
+### Эквайреру
+
+- **Роль участника `ACQUIRER`** в файле доверенных участников (`PARTICIPANT_KEYS_PATH`):
+  - запись `{participant_code, kid, alg, public_key, role: "ACQUIRER", merchants: [...]}`;
+  - `revocation_order` и `notify_url` у эквайрера нет;
+  - один `merchant_id` в перечнях двух участников — отказ запуска.
+  - Подпись эквайрера на маршрутах эмитента — 401; подпись эмитента или УПК на маршрутах эквайрера — 401.
+- **`POST /participants/v1/merchants/{id}/readiness`** — знак готовности своего продавца.
+  - Подписанная запись с меткой `pao:participant-merchant-readiness:v1`: `ACTIVE` — подать и подтвердить, `WITHDRAWN` —
+    снять.
+  - `readiness_ref` уникален навсегда; повтор той же записи — 200 без изменения статуса; та же ссылка с другой записью —
+    409 `READINESS_CONFLICT`.
+  - Знак приостановлен оператором — 409 `READINESS_SUSPENDED`, и на `ACTIVE`, и на `WITHDRAWN`.
+  - Продавец не из перечня — 403 `MERCHANT_NOT_SERVED`; `issued_at` в будущем сверх `signature_skew_sec` — 401.
+- **`GET /participants/v1/merchants/{id}/readiness`** — статус с причиной приостановления (подпись запроса).
+  - Чужой продавец — 404 `MERCHANT_NOT_FOUND`. Различие с 403 у `POST` намеренное: чужие перечни не раскрываются.
+- **`POST /participants/v1/merchants/{id}/payments`** — метаданные пакета за продавца.
+  - Подписанная запись с меткой `pao:participant-payment-metadata:v1`; `aoi` — если эквайрер его получил.
+  - Ответ — сверка `credential_ref` → `op_ref` по записи реквизита:
+    - `MATCHED` с `op_ref` — в том числе после реверсала;
+    - `MISMATCH` с `fields` — при любом статусе реквизита;
+    - `PENDING`;
+    - `NOT_USED` с причиной `MANDATE_REVOKED` → `AGENT_SUSPENDED` → `EXPIRED`;
+    - `aoi_checked: false` — без `aoi`.
+  - Неизвестный или чужой реквизит — 404 `CREDENTIAL_NOT_FOUND`, в сверку не пишется.
+  - `metadata_ref` с другой записью — 409 `METADATA_CONFLICT`.
+  - **Только на стенде** до подключения токен-сервиса оператора.
+- **`GET /participants/v1/merchants/{id}/payments/{credential_ref}`** — та же сверка по последней записи.
+- **`GET /participants/v1/agents/{code}/status`** — статус агента с подписью эквайрера; тело и коды — как у
+  `GET /merchants/v1/agents/{code}`.
+- Решение ADP от знака и метаданных не зависит.
+
+### Продавцам и площадкам
+
+- **`GET /merchants/v1/merchants/{merchant_id}/readiness`** — знак готовности продавца, без подписи.
+  - Ответ: `{merchant_id, status, since}`, `status` — `ACTIVE`, `SUSPENDED` или `NONE`.
+  - `Cache-Control: public, max-age=<merchant_readiness_max_age_sec>`: приостановление доходит до продавца не дольше
+    этого срока.
+  - Неизвестный продавец — `NONE`; причина приостановления продавцу не отдаётся.
+  - В режиме «только BYPASS» — 503 с `Retry-After: 30` без `Cache-Control`.
+- **Заявку на знак и метаданные пакета подаёт эквайрер** по ПИ-8. Канала от продавца без подписи нет.
+- Знак не влияет на порядок выдачи (A5 п. 5.2, A6 п. 2.1).
+- `docs/core/MERCHANT-API.md` — ч. 2: знак (п. 6), метаданные и сверка (п. 7).
+
+### Агенту (AG-09 ч. 2 → точка Б3) и тем, кто подключает стенд
+
+- **`GET /pao/v1/merchants/{merchant_id}/readiness`** — знак готовности витрины по записи Платформы (условие точки Б3).
+  - Подписанный запрос агента, пустое тело.
+  - Ответ: `{merchant_id, status, since}`, `status` — `ACTIVE`, `SUSPENDED` или `NONE`; неизвестный продавец — `NONE`.
+  - `Cache-Control: no-store` — перечитывать при каждом решении о зоне.
+  - Агент `SUSPENDED` / `EXCLUDED` — 403 `AGENT_SUSPENDED`; `merchant_id` пустой или длиннее 128 знаков — 400
+    `REQUEST_INVALID`.
+  - **Пути нет в `agent-protocol.yaml` до ПАО 1.5.0** — клиент ПАО описывает его вручную; `PAO_SPEC_SHA256` копии не
+    меняется.
+- **Знаки витрин стенда.** Эквайрер стенда (`stand:acquirer-emulator`) при старте подаёт `ACTIVE` витринам с
+  `readiness_mark: true`; у MKT-77 — `NONE`.
+  - `readiness_mark` у витрин эмулятора остаётся — это то, что витрина сообщает о себе; зону берите из ПАО.
+- **Новое на стенде:**
+  - `stand.acquirerParticipant` — `submitReadiness`, `getReadiness`, `submitPaymentMetadata`, `getReconciliation`,
+    `getAgentStatus`, `signRequest`;
+  - `stand.suspendReadiness(merchant_id, reason)` и `stand.reinstateReadiness(merchant_id)` — действие оператора.
+- **`createStand` загружает приложение стенда сразу** — знаки подаются через `app.inject` при создании.
+  - Добавить маршрут или хук в `stand.app` после `createStand` нельзя (ошибка Fastify).
+  - Сбой начальной подачи — `listen()` отказывает, чтения знака отвечают 503.
+- **`createMerchants`: метаданные пакета эквайрер присылает Платформе после авторизации в обоих режимах** (с `aoi` при
+  поддержке).
+  - Ответы Платформы — `reconciliationReplies`.
+  - Локальный список `reconciliation` — как прежде, только у эквайрера без `aoi`.
+- **Параметр пути длиннее 256 знаков** — 414 до проверки обращения, тело не по ПАО §6, `retry` нет — не повторять.
+- **Переход стенда на v0.24.0 снимает у агента уязвимость низкой степени fastify** (GHSA-389g-gv7q-r4x8): fastify
+  `^5.12.6`.
+  - **В lock агента обновить и записи зависимостей стенда, не только запись `agentic-ps-platform` (Р45 п. 1):**
+    `node_modules/fastify` — 5.12.6 (5.12.5 вне `^5.12.6`, `npm ci` откажет) и `node_modules/fast-uri` по дереву стенда.
+  - Проверка: `npm ls fastify fast-uri` и `npm ci` без ошибок.
+
+### Стенд
+
+- Знак, метаданные и сверка — хранилища в памяти; эквайрер стенда — участник ПИ-8 с ключом в памяти.
+- Сверка читает записи реквизитов П5, журнал согласий и реестр стенда.
+- Тесты:
+  - `tests/unit/readiness.test.ts`, `payments.test.ts`, `main-merchants-wiring.test.ts`;
+  - PostgreSQL — `readiness-pg.test.ts`, `payments-pg.test.ts`;
+  - контракт — `tests/contract/pao-readiness-path.test.ts`.
+
+### Переход с 0.23.x
+
+- Миграции (только вставка, триггеры на UPDATE / DELETE / TRUNCATE):
+  - `sql/118_merchant_readiness.sql` — таблица `merchant_readiness`;
+  - `sql/119_payment_metadata.sql` — таблица `payment_metadata`.
+- Параметры: новый обязательный ключ `merchant_readiness_max_age_sec` — целое ≥ 1.
+- Файл доверенных участников: запись `role: "ACQUIRER"` — с `merchants` вместо `revocation_order`. Коды эмуляторов стенда
+  (`stand:issuer-emulator`, `stand:upk-emulator`, `stand:acquirer-emulator`) вне стенда — отказ запуска при любой роли.
+
 ## v0.23.0 — 23.10.2026
 
 PS-30 ч. 1 «API для продавцов и площадок: каталог ключей агентов и статус агента», PR #63. Решение — РП56 (с уточнениями

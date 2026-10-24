@@ -44,7 +44,7 @@ export interface AdpAgents {
  * Выдано раньше последнего приостановления агента (РП54 п. 5–6): реквизит и confirmation_ref не действуют и после снятия.
  * Время не разбирается — «раньше» (fail-closed, инвариант 3).
  */
-function issuedBeforeSuspension(created_at: string, suspended_at: string | null | undefined): boolean {
+export function issuedBeforeSuspension(created_at: string, suspended_at: string | null | undefined): boolean {
   if (suspended_at === null || suspended_at === undefined) return false;
   const issued = Date.parse(created_at);
   const suspended = Date.parse(suspended_at);

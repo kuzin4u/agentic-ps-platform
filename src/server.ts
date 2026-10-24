@@ -60,6 +60,13 @@ export interface BypassOnly {
   readonly alarm?: (fields: Record<string, unknown>, msg: string) => void;
 }
 
+/**
+ * Транспортный предел длины параметра пути (РП57 доп. 1): по умолчанию у Fastify — 100, и merchant_id до 128 знаков
+ * (processing-interface.yaml) получал бы 414 раньше обработчика и проверки обращения. Форму и длину параметра проверяет
+ * обработчик (400 / 404 по ПАО §6 и ПИ-8); длиннее предела — 414 Fastify до проверки, общим правилом ПАО и ПИ.
+ */
+export const MAX_PATH_PARAM_LENGTH = 256;
+
 /** Минимальная длина префикса доверенного прокси (РП32, дополнение п. 2); шире — отдельным решением. */
 export const TRUSTED_PROXY_MIN_PREFIX = Object.freeze({ v4: 16, v6: 32 });
 
@@ -88,7 +95,11 @@ export function parseTrustedProxies(value: string | undefined): string[] {
 
 export function buildServer(opts: ServerOptions): FastifyInstance {
   const proxies = opts.trustedProxies ?? [];
-  const app = Fastify({ logger: opts.logger ?? false, trustProxy: proxies.length > 0 ? [...proxies] : false });
+  const app = Fastify({
+    logger: opts.logger ?? false,
+    trustProxy: proxies.length > 0 ? [...proxies] : false,
+    routerOptions: { maxParamLength: MAX_PATH_PARAM_LENGTH },
+  });
 
   const bypass = opts.bypassOnly;
   if (bypass) {

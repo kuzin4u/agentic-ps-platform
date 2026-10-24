@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.23.0** (API для продавцов и площадок, PS-30 ч. 1: каталог ключей агентов `GET /.well-known/agent-keys` своего контура с кэшем по `merchant_jwks_max_age_sec`, статус агента `GET /merchants/v1/agents/{code}`, `GET /v1/shops` эмулятора опознаёт агента, `failShopList`; документ `docs/core/MERCHANT-API.md`). Подробности — `CHANGELOG.md`.
+Текущая версия — **v0.24.0** (API для продавцов и площадок, PS-30 ч. 2: знак готовности продавца через эквайрера — роль участника `ACQUIRER` по ПИ-8, чтение продавцом `GET /merchants/v1/merchants/{id}/readiness` и агентом через ПАО `GET /pao/v1/merchants/{id}/readiness`; метаданные пакета и сверка `credential_ref` → `op_ref`; статус агента для эквайрера по ПИ-8; транспортный предел параметра пути 256; fastify `^5.12.6`). Подробности — `CHANGELOG.md`.
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.23.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.24.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.

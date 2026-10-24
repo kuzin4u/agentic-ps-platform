@@ -15,6 +15,8 @@ import type { ConfirmationStore } from "../confirm/store.js";
 import { CREDENTIAL_REF } from "../credentials/model.js";
 import type { Credentials } from "../credentials/service.js";
 import { operationFor, operationsFor, type OperationViewDeps } from "../fulfilment/view.js";
+import { publicReadiness, type ReadinessStore } from "../participants/readiness.js";
+import { isMerchantId } from "../participants/trusted.js";
 import { credentialRequestBody, hasPaymentDetails, keyRegistrationBody, mandateRequestBody, subscriptionBody } from "./body.js";
 import { consentErrorReply } from "./consent-errors.js";
 import { EVENT_ID, EventCursorUnknown } from "./events.js";
@@ -68,6 +70,11 @@ export interface PaoDeps {
    * ADP в рабочем сервере не подключена — только стенд и тесты.
    */
   readonly operations?: OperationViewDeps;
+  /**
+   * Знак готовности продавца (РП57 п. 3–4); без хранилища GET /pao/v1/merchants/{merchant_id}/readiness не
+   * регистрируется. В agent-protocol.yaml пути нет до ПАО 1.5.0 (как № 41).
+   */
+  readonly readiness?: Pick<ReadinessStore, "current">;
   /** Стенд (РП40 п. 8): только он принимает стендовые порты; в рабочем сервере стендовый порт — отказ запуска. */
   readonly stand?: boolean;
   /** Монотонные часы предела обработчика (РП33 доп.); по умолчанию performance.now — в тестах подменяются. */
@@ -516,6 +523,25 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         }
       });
     }
+  }
+
+  // Знак готовности продавца агенту (ПАО §4; РП57 п. 3–4): только через ПАО — зону агент берёт из записи Платформы, а не
+  // со слов витрины. Без причины приостановления; неизвестный продавец — NONE; no-store — ответ личный. SUSPENDED/EXCLUDED
+  // — 403 до обработчика. В agent-protocol.yaml пути нет до ПАО 1.5.0 (контрактный тест фиксирует отсутствие).
+  const readiness = deps.readiness;
+  if (readiness) {
+    app.get<{ Params: { merchant_id: string } }>("/pao/v1/merchants/:merchant_id/readiness", async (req, reply) => {
+      const agent = req.paoAgent as AgentRecord;
+      const merchant_id = req.params.merchant_id;
+      if (!isMerchantId(merchant_id)) return send(reply, paoError("REQUEST_INVALID", "ПАО §3"));
+      try {
+        const view = publicReadiness(await readiness.current(merchant_id));
+        return reply.code(200).header("cache-control", "no-store").send(view);
+      } catch (err) {
+        req.log.error({ err, agent_code: agent.agent_code, merchant_id }, "ПАО: знак готовности продавца не прочитан");
+        return send(reply, paoError("STATE_UNAVAILABLE", "A3 п. 4.5"));
+      }
+    });
   }
 
   // Лента событий этого агента (ПАО §5; РП39 п. 7): после курсора after, по номеру, не больше event_page_max.

@@ -92,6 +92,8 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
       expect(r.json().status).toBe("PAID");
       expect(m.reconciliation).toEqual([{ merchant_id: "MER-1042", credential_ref: "CRD-1", order_ref: o.id, aoi: p.aoi }]);
       expect(m.opkc.messages[0]).not.toHaveProperty("aoi");
+      // Эквайрер прислал метаданные Платформе по ПИ-8 (РП57 п. 7): реквизит CRD-1 Платформе неизвестен — 404.
+      expect(m.reconciliationReplies).toEqual([{ statusCode: 404, body: { code: "CREDENTIAL_NOT_FOUND" } }]);
     } finally {
       await m.close();
     }
@@ -123,7 +125,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
     expect(() => buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT })).toThrow(/порт сверки/);
   });
 
-  it("с поддержкой aoi метаданные не передаются", async () => {
+  it("с поддержкой aoi локального списка нет, метаданные с aoi эквайрер присылает Платформе (РП57 п. 7)", async () => {
     const s = createStand();
     const side = newAgentSide();
     expect(s.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
@@ -135,6 +137,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
       expect(r.json().status).toBe("PAID");
       expect(m.opkc.messages[0]).toHaveProperty("aoi");
       expect(m.reconciliation).toEqual([]);
+      expect(m.reconciliationReplies).toEqual([{ statusCode: 404, body: { code: "CREDENTIAL_NOT_FOUND" } }]);
     } finally {
       await m.close();
     }

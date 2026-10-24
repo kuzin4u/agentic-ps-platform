@@ -31,6 +31,8 @@ export interface MerchantsStand {
   readonly opkc: OpkcStub;
   /** Метаданные пакетов, переданные для сверки при эквайрере без aoi. */
   readonly reconciliation: readonly PackageMetadata[];
+  /** Ответы Платформы на метаданные эквайрера стенда (ПИ-8, РП57 п. 5): сверка или `{code}` — по порядку оплат. */
+  readonly reconciliationReplies: readonly { readonly statusCode: number; readonly body: unknown }[];
   readonly verifier: MerchantAgentVerifier;
   /** Отказ списка витрин из теста (#49): 503 UPSTREAM_UNAVAILABLE или 429 RATE_LIMITED с Retry-After; null — снять. */
   failShopList(failure: ShopListFailure | null): void;
@@ -40,9 +42,24 @@ export interface MerchantsStand {
 
 export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}): MerchantsStand {
   const opkc = new OpkcStub(opts.decide);
-  const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: opts.aoiSupport ?? true, opkc, now: stand.now });
+  const aoiSupport = opts.aoiSupport ?? true;
+  const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport, opkc, now: stand.now });
   const submitted: PackageMetadata[] = [];
-  const reconciliation: ReconciliationPort = { submit: async (m) => void submitted.push(m) };
+  const replies: { readonly statusCode: number; readonly body: unknown }[] = [];
+  // Эквайрер стенда присылает метаданные Платформе по ПИ-8 (РП57 п. 5, 7): без поддержки aoi — без признака. Локальный
+  // список — как прежде, только при эквайрере без aoi; ответы сверки Платформы — reconciliationReplies.
+  const reconciliation: ReconciliationPort = {
+    submit: async (m) => {
+      if (!aoiSupport) submitted.push(m);
+      const { aoi, ...rest } = m;
+      replies.push(
+        await stand.acquirerParticipant.submitPaymentMetadata(m.merchant_id, {
+          ...rest,
+          ...(aoiSupport ? { aoi: { agent_code: aoi.agent_code, mandate_id: aoi.mandate_id } } : {}),
+        }),
+      );
+    },
+  };
   const verifier = new MerchantAgentVerifier(() => stand.keys.jwks("sandbox"), {
     maxAgeMs: opts.jwksMaxAgeMs ?? stand.params.merchant_jwks_max_age_sec * 1000,
     refetchMinMs: opts.jwksRefetchMinMs ?? stand.params.merchant_jwks_refetch_min_sec * 1000,
@@ -62,6 +79,7 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     acquirer,
     opkc,
     reconciliation: submitted,
+    reconciliationReplies: replies,
     verifier,
     failShopList: (failure) => void (shopListFailure = failure),
     async listen() {

@@ -64,15 +64,18 @@ describe("режим «только BYPASS» (РП43 п. 8)", () => {
     expect(res.json()).toEqual({});
   });
 
-  it("маршрутов ПАО и П10 нет", async () => {
+  it("маршрутов ПАО и П10 нет — в том числе знака готовности для агента и эквайрера (РП57 п. 3)", async () => {
     const { app } = bypassOnly();
     expect((await app.inject({ method: "GET", url: "/pao/v1/agent" })).statusCode).toBe(404);
     expect((await app.inject({ method: "POST", url: "/participants/v1/mandates/mnd_x/sign", payload: {} })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: "/pao/v1/merchants/MER-1042/readiness" })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: "/participants/v1/merchants/MER-1042/readiness" })).statusCode).toBe(404);
+    expect((await app.inject({ method: "POST", url: "/participants/v1/merchants/MER-1042/readiness", payload: {} })).statusCode).toBe(404);
   });
 
-  it("API для продавцов — 503 UPSTREAM_UNAVAILABLE с Retry-After и без Cache-Control, а не 404 (уточнение РП56, № 42)", async () => {
+  it("API для продавцов — 503 UPSTREAM_UNAVAILABLE с Retry-After и без Cache-Control, а не 404 (уточнение РП56, № 42; знак — РП57 п. 3)", async () => {
     const { app } = bypassOnly();
-    for (const url of [AGENT_KEYS_PATH, "/merchants/v1/agents/nspk:agent:a:v1"]) {
+    for (const url of [AGENT_KEYS_PATH, "/merchants/v1/agents/nspk:agent:a:v1", "/merchants/v1/merchants/MER-1042/readiness"]) {
       const res = await app.inject({ method: "GET", url });
       expect(res.statusCode).toBe(503);
       expect(res.headers["retry-after"]).toBe(String(BYPASS_RETRY_AFTER_SEC));

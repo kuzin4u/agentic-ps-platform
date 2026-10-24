@@ -3,6 +3,7 @@
 // Тестовый интерфейс, не публичный контракт: публичный контракт для агентов — только ПАО (инвариант 10).
 // Оператор при допуске — от вызывающего: обход расхождения №9 допустим только здесь. Рабочий сервер
 // (src/main.ts и его граф импортов) этот модуль не импортирует — проверяет tests/unit/stand-boundary.test.ts.
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { Adp, MemoryOperationStore } from "../adp/index.js";
 import { ConsentJournal, MemoryConsentStore } from "../consent/index.js";
@@ -13,7 +14,10 @@ import { createUpkEmulator } from "../env/upk/index.js";
 import { UpkCodes } from "../env/upk/codes.js";
 import { createUpkPage, type UpkPageSettings } from "../env/upk/page.js";
 import { createTokenServiceEmulator, type TokenServiceEmulator } from "../env/tsp/index.js";
-import { merchantDirectory } from "../env/merchants/shops.js";
+import { merchantDirectory, SHOPS } from "../env/merchants/shops.js";
+import { createAcquirerParticipant } from "../env/acquirer/participant.js";
+import { MemoryReadinessStore, type ReadinessStore, type ReadinessSuspendReason } from "../participants/readiness.js";
+import { MemoryPaymentMetadataStore } from "../participants/payments.js";
 import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
 import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../confirm/index.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
@@ -98,6 +102,49 @@ export interface StandIssuer {
   upkCode(confirmationId: string): Promise<string | undefined>;
 }
 
+/**
+ * Эквайрер стенда — участник ПИ-8 с ролью ACQUIRER (РП57 п. 1, 7): перечень продавцов — merchant_id всех витрин эмулятора;
+ * при старте стенда подаёт знак ACTIVE витринам с readiness_mark тем же POST ПИ-8. Чтения знака продавцом и агентом,
+ * методы этого объекта, действия оператора и listen() ждут этой подачи; её сбой — 503 у чтений и отказ listen().
+ * Подача идёт через app.inject внутри createStand: приложение стенда загружено сразу, маршруты в stand.app после
+ * создания не добавляются (передача агенту, ревью КТ1 № 4).
+ */
+export interface StandAcquirer {
+  readonly participant_code: string;
+  readonly trustedKey: TrustedParticipantKey;
+  /**
+   * Запись знака эквайрера (ПИ-8 `POST /participants/v1/merchants/{id}/readiness`): ответ — 200 `{merchant_id, status,
+   * since}` или `{code}`. opts — для тестов: своя ссылка записи и время issued_at.
+   */
+  submitReadiness(
+    merchant_id: string,
+    status: "ACTIVE" | "WITHDRAWN",
+    opts?: { readonly readiness_ref?: string; readonly issued_at?: string },
+  ): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /** Статус знака своего продавца с причиной (ПИ-8 `GET …/readiness`) с подписью запроса эквайрера. */
+  getReadiness(merchant_id: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /**
+   * Метаданные пакета за продавца (ПИ-8 `POST /participants/v1/merchants/{id}/payments`, РП57 п. 5): ответ — 200 сверка
+   * `{credential_ref, result, aoi_checked, op_ref?, fields?, reason?}` или `{code}`. aoi — если эквайрер его получил.
+   */
+  submitPaymentMetadata(
+    merchant_id: string,
+    m: {
+      readonly credential_ref: string;
+      readonly order_ref: string;
+      readonly aoi?: { readonly agent_code: string; readonly mandate_id: string };
+      readonly metadata_ref?: string;
+      readonly submitted_at?: string;
+    },
+  ): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /** Сверка по реквизиту (ПИ-8 `GET …/payments/{credential_ref}`) с подписью запроса эквайрера. */
+  getReconciliation(merchant_id: string, credential_ref: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /** Статус агента для эквайрера (ПИ-8 `GET /participants/v1/agents/{code}/status`, РП57 п. 6) с подписью запроса. */
+  getAgentStatus(agent_code: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /** Заголовки подписанного запроса эквайрера без тела (RFC 9421) — для тестов отказов. */
+  signRequest(method: string, path: string, query: string, at: Date): Record<string, string>;
+}
+
 /** Страница УПК стенда (РП51 п. 15): адрес link — upk_page_base_url + /c/{id}; здесь — путь /c/{id}. */
 export interface StandUpk {
   readonly app: FastifyInstance;
@@ -180,6 +227,15 @@ export interface Stand {
   suspendAgent(agent_code: string, ground: string): Promise<AgentRecord>;
   /** Снятие приостановления и событие agent.reinstated (РП54 п. 1, 10). */
   reinstateAgent(agent_code: string): Promise<AgentRecord>;
+  /** Эквайрер стенда — участник ПИ-8 (РП57 п. 1): знак готовности витрин. */
+  readonly acquirerParticipant: StandAcquirer;
+  /**
+   * Действие оператора Системы (A5 п. 5.3, РП57 п. 2): приостановление знака готовности с причиной; действует, пока
+   * оператор его не снимет, какие бы записи ни присылал эквайрер. HTTP оператора — PS-31.
+   */
+  suspendReadiness(merchant_id: string, reason: ReadinessSuspendReason): Promise<void>;
+  /** Снятие приостановления знака оператором: статус снова — по записям эквайрера. */
+  reinstateReadiness(merchant_id: string): Promise<void>;
   /** Запуск на 127.0.0.1 и свободном порту; возвращает базовый адрес для клиента ПАО. */
   listen(): Promise<string>;
   close(): Promise<void>;
@@ -206,7 +262,22 @@ export function createStand(opts: StandOptions = {}): Stand {
   // Адрес вебхука банка стенда — в записи доверенного участника (РП46 доп. п. 9 (о4)).
   // Оператор УПК стенда (РП51 п. 12): роль UPK, только решения по подтверждению; боевой UPK — отказ запуска.
   const upkEmulator = createUpkEmulator();
-  const trusted = new TrustedParticipants([{ ...emulator.trustedKey, notify_url: STAND_ISSUER_NOTIFY_URL }, upkEmulator.trustedKey], { stand: true });
+  // Эквайрер стенда (РП57 п. 1, 7): роль ACQUIRER, продавцы — все витрины эмулятора.
+  const acquirerEmulator = createAcquirerParticipant(SHOPS.map((s) => s.merchant_id));
+  const trusted = new TrustedParticipants(
+    [{ ...emulator.trustedKey, notify_url: STAND_ISSUER_NOTIFY_URL }, upkEmulator.trustedKey, acquirerEmulator.trustedKey],
+    { stand: true },
+  );
+  // Знак готовности (РП57 п. 2): записи в памяти. Чтения продавца и агента ждут подачи знаков витрин при старте (ниже);
+  // маршруты ПИ-8 эквайрера — нет: подача сама идёт через них.
+  const readinessStore = new MemoryReadinessStore();
+  let readinessSeeded: Promise<void> = Promise.resolve();
+  const seededReadiness: Pick<ReadinessStore, "current"> = {
+    current: async (merchant_id) => {
+      await readinessSeeded;
+      return readinessStore.current(merchant_id);
+    },
+  };
   // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6).
   // Outbox участника стенда — в памяти; журнал согласий пишет в него client.mandate_exhausted и client.revoked_all.
   const operations = new MemoryOperationStore();
@@ -306,6 +377,8 @@ export function createStand(opts: StandOptions = {}): Stand {
       confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url },
       // Операция агенту (РП52 п. 10): записи ADP и итоги П8 — те же хранилища в памяти, что у ADP и ПИ-3.
       operations: { operations, outcomes: outcomeStore, fulfilments: fulfilmentStore, reversals: reversalStore, refunds: refundStore, list: operations },
+      // Знак готовности агенту (РП57 п. 3–4): то же хранилище, что у ПИ-8 и API продавцов.
+      readiness: seededReadiness,
       resolveHost: dns.resolve,
       stand: true,
     },
@@ -320,9 +393,24 @@ export function createStand(opts: StandOptions = {}): Stand {
       notifications,
       // Решение человека по подтверждению (РП50 п. 4–5): то же хранилище П6, что у ADP; допуск часов — окно подписи.
       confirmations: { store: confirmationStore, skewSec: params.signature_skew_sec },
+      // Знак готовности (РП57 п. 2): записи эквайрера стенда; допуск часов issued_at — окно подписи.
+      readiness: { store: readinessStore, skewSec: params.signature_skew_sec },
+      // Метаданные пакета и сверка (РП57 п. 5): записи реквизитов — то же хранилище П5, мандат — журнал, отсечка — реестр.
+      payments: {
+        store: new MemoryPaymentMetadataStore(),
+        reconcile: {
+          credentials: credentialStore,
+          mandateStatus: async (id, agent_code) => (await consent.adpMandate(id, agent_code))?.status,
+          suspendedAt: (agent_code) => registry.get(agent_code)?.suspended_at ?? null,
+          now,
+        },
+        skewSec: params.signature_skew_sec,
+      },
+      // Статус агента для эквайрера (РП57 п. 6): реестр стенда, контур sandbox.
+      agentStatus: { registry, contour: "sandbox" },
     },
-    // API для продавцов (РП56): каталог ключей агентов и статус агента — реестр стенда, контур sandbox.
-    merchants: { registry, keys, contour: "sandbox", params },
+    // API для продавцов (РП56, РП57 п. 3): каталог ключей, статус агента — реестр стенда, контур sandbox; знак — записи стенда.
+    merchants: { registry, keys, contour: "sandbox", params, readiness: seededReadiness },
     // ADP стенда (ПИ-1, РП43): реестр, журнал и П3 стенда, записи операций в памяти; только 127.0.0.1 (доп. РП43 п. 21).
     // Мандат — с клиентом из журнала, лимиты клиента — из записей банка стенда (РП45 п. 1–2).
     adp: {
@@ -483,6 +571,72 @@ export function createStand(opts: StandOptions = {}): Stand {
       return `http://127.0.0.1:${addr.port}`;
     },
   };
+  // Подача знака эквайрером — тем же POST ПИ-8; начальная подача стенда вызывает её напрямую, публичный метод — после неё.
+  const submitReadiness: StandAcquirer["submitReadiness"] = async (merchant_id, status, opts = {}) => {
+    const record = {
+      participant_code: acquirerEmulator.participant_code,
+      kid: acquirerEmulator.trustedKey.kid,
+      merchant_id,
+      readiness_ref: opts.readiness_ref ?? `rdy-${randomUUID()}`,
+      status,
+      issued_at: opts.issued_at ?? now().toISOString(),
+    } as const;
+    const { merchant_id: _id, ...body } = { ...record, signature: acquirerEmulator.signReadiness(record) };
+    void _id;
+    const res = await app.inject({ method: "POST", url: `/participants/v1/merchants/${encodeURIComponent(merchant_id)}/readiness`, payload: body });
+    return { statusCode: res.statusCode, body: res.json() };
+  };
+  const acquirerParticipant: StandAcquirer = {
+    participant_code: acquirerEmulator.participant_code,
+    trustedKey: acquirerEmulator.trustedKey,
+    // После начальной подачи (ревью КТ1 № 2): иначе снятие сразу после createStand легло бы раньше начальной ACTIVE.
+    async submitReadiness(merchant_id, status, opts) {
+      await readinessSeeded;
+      return submitReadiness(merchant_id, status, opts);
+    },
+    async getReadiness(merchant_id) {
+      await readinessSeeded;
+      const path = `/participants/v1/merchants/${encodeURIComponent(merchant_id)}/readiness`;
+      const res = await app.inject({ method: "GET", url: path, headers: acquirerEmulator.signRequest("GET", path, "", now()) });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    async submitPaymentMetadata(merchant_id, m) {
+      const record = {
+        participant_code: acquirerEmulator.participant_code,
+        kid: acquirerEmulator.trustedKey.kid,
+        merchant_id,
+        metadata_ref: m.metadata_ref ?? `meta-${randomUUID()}`,
+        credential_ref: m.credential_ref,
+        order_ref: m.order_ref,
+        ...(m.aoi ? { aoi: { agent_code: m.aoi.agent_code, mandate_id: m.aoi.mandate_id } } : {}),
+        submitted_at: m.submitted_at ?? now().toISOString(),
+      };
+      const { merchant_id: _id, ...body } = { ...record, signature: acquirerEmulator.signPaymentMetadata(record) };
+      void _id;
+      const res = await app.inject({ method: "POST", url: `/participants/v1/merchants/${encodeURIComponent(merchant_id)}/payments`, payload: body });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    async getReconciliation(merchant_id, credential_ref) {
+      const path = `/participants/v1/merchants/${encodeURIComponent(merchant_id)}/payments/${encodeURIComponent(credential_ref)}`;
+      const res = await app.inject({ method: "GET", url: path, headers: acquirerEmulator.signRequest("GET", path, "", now()) });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    async getAgentStatus(agent_code) {
+      const path = `/participants/v1/agents/${encodeURIComponent(agent_code)}/status`;
+      const res = await app.inject({ method: "GET", url: path, headers: acquirerEmulator.signRequest("GET", path, "", now()) });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    signRequest: (method, path, query, at) => acquirerEmulator.signRequest(method, path, query, at),
+  };
+  // Знаки витрин стенда (РП57 п. 7): эквайрер подаёт ACTIVE витринам с readiness_mark тем же POST ПИ-8; у MKT-77 — NONE.
+  // Сбой подачи — чтения знака продавцом и агентом отвечают 503 (fail-closed), а не «знака нет».
+  readinessSeeded = (async () => {
+    for (const shop of SHOPS.filter((s) => s.readiness_mark)) {
+      const r = await submitReadiness(shop.merchant_id, "ACTIVE", { readiness_ref: `seed-${shop.merchant_id}` });
+      if (r.statusCode !== 200) throw new Error(`стенд: знак ${shop.merchant_id} не подан — ${r.statusCode} ${JSON.stringify(r.body)}`);
+    }
+  })();
+  readinessSeeded.catch(() => undefined);
   return {
     params,
     registry,
@@ -515,7 +669,18 @@ export function createStand(opts: StandOptions = {}): Stand {
     admit: (application, operator) => registry.admit(application, { contour: "sandbox", operator }),
     suspendAgent: (agent_code, ground) => agentStatus.suspend(agent_code, ground),
     reinstateAgent: (agent_code) => agentStatus.reinstate(agent_code),
+    acquirerParticipant,
+    async suspendReadiness(merchant_id, reason) {
+      await readinessSeeded;
+      await readinessStore.putOperator({ merchant_id, action: "SUSPENDED", reason, received_at: now().toISOString() });
+    },
+    async reinstateReadiness(merchant_id) {
+      await readinessSeeded;
+      await readinessStore.putOperator({ merchant_id, action: "REINSTATED", reason: null, received_at: now().toISOString() });
+    },
     async listen() {
+      // Сбой начальной подачи знаков роняет запуск, а не всплывает первым 503 (ревью КТ1 № 3).
+      await readinessSeeded;
       await app.listen({ host: "127.0.0.1", port: 0 });
       const addr = app.server.address();
       if (!addr || typeof addr === "string") throw new Error("нет адреса сервера стенда");
