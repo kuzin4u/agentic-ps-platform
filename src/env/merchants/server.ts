@@ -13,7 +13,10 @@ import type { MerchantAgentVerifier } from "./verify.js";
 
 export type { MerchantErrorCode };
 
-/** Метаданные пакета для сверки при эквайрере без поддержки aoi (РП22 п. 6; API для продавцов — PS-30). */
+/**
+ * Метаданные пакета для сверки (РП22 п. 6, РП57 п. 5, 7): продавец отдаёт их своему эквайреру после авторизации, эквайрер
+ * присылает Платформе по ПИ-8 (без aoi — если сам не переносит признак). aoi здесь — как в пакете.
+ */
 export interface PackageMetadata {
   readonly merchant_id: string;
   readonly credential_ref: string;
@@ -28,7 +31,7 @@ export interface ReconciliationPort {
 export interface MerchantsOptions {
   readonly verifier: MerchantAgentVerifier;
   readonly acquirer: Acquirer;
-  /** Заглушка API для продавцов (PS-30): нужна, когда эквайрер не переносит aoi. */
+  /** Порт сверки — продавец отдаёт метаданные эквайреру (РП57 п. 7); обязателен, когда эквайрер не переносит aoi. */
   readonly reconciliation?: ReconciliationPort;
   readonly shops?: readonly Shop[];
   /** Лимит обращений к витринам с одного адреса в минуту — на все маршруты /v1 (стендовый параметр). */
@@ -265,9 +268,10 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
 
         // Статус меняется до первого await: параллельная вторая оплата получит ORDER_NOT_PAYABLE, авторизация уйдёт одна.
         orders.set(order.id, { ...order, status: "PAYING" });
-        if (!opts.acquirer.aoiSupport && opts.reconciliation) {
-          // Метаданные — только для сверки и отчётности, решение ADP от них не зависит (РП22 п. 6):
-          // сбой порта сверки авторизацию не останавливает, расхождение найдёт сверка.
+        // Метаданные — после авторизации, через эквайрера (РП57 п. 5, 7): только для сверки и отчётности, решение ADP от
+        // них не зависит; сбой порта сверки ответ продавцу не меняет, расхождение найдёт сверка.
+        const submitMetadata = async () => {
+          if (!opts.reconciliation) return;
           try {
             await opts.reconciliation.submit({
               merchant_id: shop.merchant_id,
@@ -278,7 +282,7 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
           } catch (e) {
             req.log.error({ err: e }, "витрина: метаданные пакета для сверки не переданы");
           }
-        }
+        };
         let auth;
         try {
           auth = await opts.acquirer.authorize({
@@ -291,8 +295,10 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
         } catch {
           // Авторизация не ушла — заказ снова можно оплатить.
           orders.set(order.id, order);
+          await submitMetadata();
           return fail(reply, "UPSTREAM_UNAVAILABLE");
         }
+        await submitMetadata();
         let next: Order = { ...order, payment: { approved: auth.approved }, status: auth.approved ? "PAID" : "DECLINED" };
         if (auth.approved && shop.behaviour === "REJECTS_FULFILMENT") {
           try {

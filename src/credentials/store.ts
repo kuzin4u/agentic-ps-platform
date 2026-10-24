@@ -19,6 +19,11 @@ export interface CredentialStore {
    * хранилища — «не найдено», как неизвестный (тот же путь и то же время ответа); нет — undefined.
    */
   credentialByRef(credential_ref: string, agent_code: string): Promise<CredentialRecord | undefined>;
+  /**
+   * Реквизит продавца по credential_ref — для сверки метаданных пакета эквайрером (РП57 п. 5): одним запросом по паре,
+   * реквизит другого продавца — «не найдено», как неизвестный; нет — undefined.
+   */
+  credentialForMerchant(credential_ref: string, merchant_id: string): Promise<CredentialRecord | undefined>;
   /** Реквизит по токену и SHA-256 криптограммы (ADP п. 4); нет — undefined. */
   credentialByCryptogram(token_ref: string, cryptogram_sha256: string): Promise<CredentialRecord | undefined>;
   /**
@@ -80,6 +85,11 @@ export class MemoryCredentialStore implements CredentialStore {
   async credentialByRef(credential_ref: string, agent_code: string): Promise<CredentialRecord | undefined> {
     const c = this.#credentials.get(credential_ref);
     return c && c.agent_code === agent_code ? structuredClone(c) : undefined;
+  }
+
+  async credentialForMerchant(credential_ref: string, merchant_id: string): Promise<CredentialRecord | undefined> {
+    const c = this.#credentials.get(credential_ref);
+    return c && c.merchant_id === merchant_id ? structuredClone(c) : undefined;
   }
 
   async credentialByCryptogram(token_ref: string, cryptogram_sha256: string): Promise<CredentialRecord | undefined> {
@@ -211,6 +221,14 @@ export class PgCredentialStore implements CredentialStore {
     const r = await this.client.query<CredentialRow>(
       `SELECT ${CREDENTIAL_COLS} FROM agent_credentials WHERE credential_ref = $1 AND agent_code = $2`,
       [credential_ref, agent_code],
+    );
+    return r.rows[0] && credentialOf(r.rows[0]);
+  }
+
+  async credentialForMerchant(credential_ref: string, merchant_id: string): Promise<CredentialRecord | undefined> {
+    const r = await this.client.query<CredentialRow>(
+      `SELECT ${CREDENTIAL_COLS} FROM agent_credentials WHERE credential_ref = $1 AND merchant_id = $2`,
+      [credential_ref, merchant_id],
     );
     return r.rows[0] && credentialOf(r.rows[0]);
   }

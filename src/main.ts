@@ -230,6 +230,9 @@ async function serve(): Promise<void> {
       ...(notifyStore ? { notifications: notifyStore } : {}),
       // Знак готовности от эквайрера (РП57 п. 2); допуск часов issued_at — окно подписи.
       readiness: { store: readiness, skewSec: params.signature_skew_sec },
+      // Статус агента для эквайрера (РП57 п. 6) — тот же реестр и контур, что у API продавцов. Метаданные пакета и сверка
+      // (п. 5) не подключены: сверка идёт по записи реквизита П5, а П5 в рабочем сервере нет (токен-сервис оператора, ПИ-4).
+      agentStatus: { registry, contour: "sandbox" },
     },
     // API для продавцов (РП56, РП57 п. 3): среды dev и sandbox — контур ключей sandbox; контура оператора у сервера нет до PS-31.
     merchants: { registry, keys, contour: "sandbox", params, readiness },

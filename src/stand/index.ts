@@ -17,6 +17,7 @@ import { createTokenServiceEmulator, type TokenServiceEmulator } from "../env/ts
 import { merchantDirectory, SHOPS } from "../env/merchants/shops.js";
 import { createAcquirerParticipant } from "../env/acquirer/participant.js";
 import { MemoryReadinessStore, type ReadinessStore, type ReadinessSuspendReason } from "../participants/readiness.js";
+import { MemoryPaymentMetadataStore } from "../participants/payments.js";
 import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
 import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../confirm/index.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
@@ -122,6 +123,24 @@ export interface StandAcquirer {
   ): Promise<{ readonly statusCode: number; readonly body: unknown }>;
   /** Статус знака своего продавца с причиной (ПИ-8 `GET …/readiness`) с подписью запроса эквайрера. */
   getReadiness(merchant_id: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /**
+   * Метаданные пакета за продавца (ПИ-8 `POST /participants/v1/merchants/{id}/payments`, РП57 п. 5): ответ — 200 сверка
+   * `{credential_ref, result, aoi_checked, op_ref?, fields?, reason?}` или `{code}`. aoi — если эквайрер его получил.
+   */
+  submitPaymentMetadata(
+    merchant_id: string,
+    m: {
+      readonly credential_ref: string;
+      readonly order_ref: string;
+      readonly aoi?: { readonly agent_code: string; readonly mandate_id: string };
+      readonly metadata_ref?: string;
+      readonly submitted_at?: string;
+    },
+  ): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /** Сверка по реквизиту (ПИ-8 `GET …/payments/{credential_ref}`) с подписью запроса эквайрера. */
+  getReconciliation(merchant_id: string, credential_ref: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  /** Статус агента для эквайрера (ПИ-8 `GET /participants/v1/agents/{code}/status`, РП57 п. 6) с подписью запроса. */
+  getAgentStatus(agent_code: string): Promise<{ readonly statusCode: number; readonly body: unknown }>;
   /** Заголовки подписанного запроса эквайрера без тела (RFC 9421) — для тестов отказов. */
   signRequest(method: string, path: string, query: string, at: Date): Record<string, string>;
 }
@@ -376,6 +395,19 @@ export function createStand(opts: StandOptions = {}): Stand {
       confirmations: { store: confirmationStore, skewSec: params.signature_skew_sec },
       // Знак готовности (РП57 п. 2): записи эквайрера стенда; допуск часов issued_at — окно подписи.
       readiness: { store: readinessStore, skewSec: params.signature_skew_sec },
+      // Метаданные пакета и сверка (РП57 п. 5): записи реквизитов — то же хранилище П5, мандат — журнал, отсечка — реестр.
+      payments: {
+        store: new MemoryPaymentMetadataStore(),
+        reconcile: {
+          credentials: credentialStore,
+          mandateStatus: async (id, agent_code) => (await consent.adpMandate(id, agent_code))?.status,
+          suspendedAt: (agent_code) => registry.get(agent_code)?.suspended_at ?? null,
+          now,
+        },
+        skewSec: params.signature_skew_sec,
+      },
+      // Статус агента для эквайрера (РП57 п. 6): реестр стенда, контур sandbox.
+      agentStatus: { registry, contour: "sandbox" },
     },
     // API для продавцов (РП56, РП57 п. 3): каталог ключей, статус агента — реестр стенда, контур sandbox; знак — записи стенда.
     merchants: { registry, keys, contour: "sandbox", params, readiness: seededReadiness },
@@ -565,6 +597,32 @@ export function createStand(opts: StandOptions = {}): Stand {
     async getReadiness(merchant_id) {
       await readinessSeeded;
       const path = `/participants/v1/merchants/${encodeURIComponent(merchant_id)}/readiness`;
+      const res = await app.inject({ method: "GET", url: path, headers: acquirerEmulator.signRequest("GET", path, "", now()) });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    async submitPaymentMetadata(merchant_id, m) {
+      const record = {
+        participant_code: acquirerEmulator.participant_code,
+        kid: acquirerEmulator.trustedKey.kid,
+        merchant_id,
+        metadata_ref: m.metadata_ref ?? `meta-${randomUUID()}`,
+        credential_ref: m.credential_ref,
+        order_ref: m.order_ref,
+        ...(m.aoi ? { aoi: { agent_code: m.aoi.agent_code, mandate_id: m.aoi.mandate_id } } : {}),
+        submitted_at: m.submitted_at ?? now().toISOString(),
+      };
+      const { merchant_id: _id, ...body } = { ...record, signature: acquirerEmulator.signPaymentMetadata(record) };
+      void _id;
+      const res = await app.inject({ method: "POST", url: `/participants/v1/merchants/${encodeURIComponent(merchant_id)}/payments`, payload: body });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    async getReconciliation(merchant_id, credential_ref) {
+      const path = `/participants/v1/merchants/${encodeURIComponent(merchant_id)}/payments/${encodeURIComponent(credential_ref)}`;
+      const res = await app.inject({ method: "GET", url: path, headers: acquirerEmulator.signRequest("GET", path, "", now()) });
+      return { statusCode: res.statusCode, body: res.json() };
+    },
+    async getAgentStatus(agent_code) {
+      const path = `/participants/v1/agents/${encodeURIComponent(agent_code)}/status`;
       const res = await app.inject({ method: "GET", url: path, headers: acquirerEmulator.signRequest("GET", path, "", now()) });
       return { statusCode: res.statusCode, body: res.json() };
     },

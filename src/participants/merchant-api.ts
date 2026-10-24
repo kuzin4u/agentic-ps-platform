@@ -45,6 +45,20 @@ export async function merchantApiUnavailable(app: FastifyInstance): Promise<void
   app.get(MERCHANT_READINESS_PATH, unavailable);
 }
 
+/**
+ * Статус агента для продавца и эквайрера (РП56 п. 4, РП57 п. 6): только код, статус и класс из реестра. Неизвестный, не по
+ * форме и чужого контура — undefined (один ответ 404); сбой реестра — исключение (503).
+ */
+export function agentStatusView(
+  deps: Pick<MerchantApiDeps, "registry" | "contour">,
+  code: string,
+): { agent_code: string; status: AgentRecord["status"]; class: AgentRecord["class"] } | undefined {
+  if (!isAgentCode(code)) return undefined;
+  const rec = deps.registry.get(code);
+  if (!rec || rec.contour !== deps.contour) return undefined;
+  return { agent_code: rec.agent_code, status: rec.status, class: rec.class };
+}
+
 export async function merchantApiRoutes(app: FastifyInstance, deps: MerchantApiDeps): Promise<void> {
   const unavailable = (reply: FastifyReply) =>
     reply.code(503).header("retry-after", String(deps.params.unavailable_retry_after_sec)).send({ code: "UPSTREAM_UNAVAILABLE" });
@@ -73,17 +87,14 @@ export async function merchantApiRoutes(app: FastifyInstance, deps: MerchantApiD
   // Статус агента (РП56 п. 4): только код, статус и класс из реестра; сведений об операторе и принципалах нет (A2 п. 1.2).
   // Неизвестный, не по форме и чужого контура — один ответ 404: продавец не отличает «нет» от «не в этом контуре».
   app.get<{ Params: { code: string } }>(AGENT_STATUS_PATH, async (req, reply) => {
-    const code = req.params.code;
-    if (!isAgentCode(code)) return reply.code(404).send({ code: "AGENT_UNKNOWN" });
-    let rec: AgentRecord | undefined;
+    let view: ReturnType<typeof agentStatusView>;
     try {
-      rec = deps.registry.get(code);
+      view = agentStatusView(deps, req.params.code);
     } catch (e) {
       req.log.error({ err: e }, "API продавцов: реестр агентов недоступен");
       return unavailable(reply);
     }
-    if (!rec || rec.contour !== deps.contour) return reply.code(404).send({ code: "AGENT_UNKNOWN" });
-    return { agent_code: rec.agent_code, status: rec.status, class: rec.class };
+    return view ?? reply.code(404).send({ code: "AGENT_UNKNOWN" });
   });
 
   // Знак готовности продавца (РП57 п. 3): открытое сведение, без подписи; причины приостановления нет. Неизвестный

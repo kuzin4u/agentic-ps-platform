@@ -25,6 +25,8 @@ import {
 import type { StateService } from "../state/service.js";
 import { limitsBody, type LimitsStore } from "./limits.js";
 import { NOTIFICATION_ID, NotificationCursorUnknown, type ParticipantNotificationStore } from "./notifications.js";
+import { agentStatusView, type MerchantApiDeps } from "./merchant-api.js";
+import { isPaymentRef, maskRef, paymentMetadataBody, reconcile, type PaymentMetadataStore, type ReconcileDeps } from "./payments.js";
 import { readinessBody, type ReadinessStore } from "./readiness.js";
 import { ACQUIRER_ONLY, isMerchantId, type ParticipantRole, type TrustedParticipants } from "./trusted.js";
 import type { ParticipantRequestVerifier } from "./verify.js";
@@ -53,6 +55,13 @@ export interface ParticipantDeps {
    * для issued_at (signature_skew_sec). GET — с подписью запроса участника роли ACQUIRER (requests).
    */
   readonly readiness?: { readonly store: Pick<ReadinessStore, "putAcquirer" | "current">; readonly skewSec: number };
+  /**
+   * Метаданные пакета и сверка credential_ref → op_ref (РП57 п. 5): без них маршрутов …/payments нет. Сверка — по записи
+   * реквизита П5: в рабочем сервере П5 не подключено (токен-сервис оператора, ПИ-4), поэтому маршруты — только стенд и тесты.
+   */
+  readonly payments?: { readonly store: PaymentMetadataStore; readonly reconcile: ReconcileDeps; readonly skewSec: number };
+  /** Статус агента для эквайрера (РП57 п. 6): реестр и контур сервера; без них маршрута нет. */
+  readonly agentStatus?: Pick<MerchantApiDeps, "registry" | "contour">;
 }
 
 /** Коды ответа ПИ-8 подписи (processing-interface.yaml); тело ошибки — `{code}`, причина — в журнале процесса. */
@@ -73,6 +82,9 @@ const HTTP: Readonly<Record<string, number>> = {
   MERCHANT_NOT_FOUND: 404,
   READINESS_CONFLICT: 409,
   READINESS_SUSPENDED: 409,
+  CREDENTIAL_NOT_FOUND: 404,
+  METADATA_CONFLICT: 409,
+  AGENT_UNKNOWN: 404,
   STATE_UNAVAILABLE: 503,
   UPSTREAM_UNAVAILABLE: 503,
 };
@@ -476,6 +488,123 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
         }
       });
     }
+  }
+
+  // Метаданные пакета и сверка (ПИ-8 «Эквайрер», РП57 п. 5): тело → подпись эквайрера (401) → submitted_at не в будущем
+  // сверх допуска (401) → продавец из перечня (403) → реквизит этого продавца (404, без записи) → только вставка (повтор —
+  // 200, та же ссылка с другой записью — 409) → сверка по записи реквизита на момент ответа. ADP метаданные не читает.
+  const payments = deps.payments;
+  if (payments) {
+    app.post<{ Params: { id: string } }>("/participants/v1/merchants/:id/payments", async (req, reply) => {
+      const fail = (code: keyof typeof HTTP) => {
+        const http = HTTP[code]!;
+        if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+        return reply.code(http).send({ code });
+      };
+      const merchant_id = req.params.id;
+      const b = paymentMetadataBody(merchant_id, req.body);
+      if (!b) return fail("REQUEST_INVALID");
+      const { record, signature } = b;
+      // В журнал процесса — маска credential_ref, без тела записи (РП57 доп. 5 (г)).
+      const fields = { participant_code: record.participant_code, merchant_id, metadata_ref: record.metadata_ref, credential_ref: maskRef(record.credential_ref) };
+      if (!deps.trusted.verifyPaymentMetadata(record, signature)) {
+        req.log.info(fields, "ПИ-8: метаданные пакета — подпись эквайрера не проверена");
+        return fail("SIGNATURE_INVALID");
+      }
+      const now = (deps.now ?? (() => new Date()))();
+      if (parseRfc3339(record.submitted_at) > now.getTime() + payments.skewSec * 1000) {
+        req.log.info(fields, "ПИ-8: метаданные пакета — submitted_at в будущем сверх допуска часов");
+        return fail("SIGNATURE_INVALID");
+      }
+      if (!deps.trusted.serves(record.participant_code, merchant_id)) {
+        req.log.info(fields, "ПИ-8: метаданные пакета — продавца нет в перечне эквайрера");
+        return fail("MERCHANT_NOT_SERVED");
+      }
+      try {
+        // Реквизит другого продавца — как неизвестный (РП57 п. 5); метаданные по нему не пишутся.
+        const before = await reconcile(payments.reconcile, record);
+        if (!before) {
+          // Попытка — в журнал процесса (РП57 доп. 5 (г)): кто, по какому продавцу, маска ссылки; в сверку не пишется.
+          req.log.warn(fields, "ПИ-8: метаданные пакета по неизвестному реквизиту или реквизиту другого продавца — не записаны");
+          return fail("CREDENTIAL_NOT_FOUND");
+        }
+        const put = await payments.store.put({ ...record, signature, received_at: now.toISOString() });
+        if (put === "conflict") {
+          req.log.info(fields, "ПИ-8: метаданные пакета — тот же metadata_ref с другой записью");
+          return fail("METADATA_CONFLICT");
+        }
+        if (before.result === "MISMATCH") {
+          // Вход для решения оператора о знаке (РП57 п. 2): автоматического приостановления нет.
+          req.log.warn({ ...fields, mismatch: before.fields }, "ПИ-8: метаданные пакета расходятся с записью реквизита");
+        }
+        req.log.info({ ...fields, put, result: before.result }, put === "replayed" ? "ПИ-8: повтор метаданных — записи нет" : "ПИ-8: метаданные пакета приняты");
+        return reply.code(200).send(before);
+      } catch (err) {
+        req.log.error({ err, ...fields }, "ПИ-8: сверка метаданных — хранилище недоступно");
+        return fail("STATE_UNAVAILABLE");
+      }
+    });
+
+    const requests = deps.requests;
+    if (requests) {
+      // Сверка по реквизиту (РП57 п. 5): последняя запись метаданных; чужой продавец, нет записи или реквизита — 404.
+      app.get<{ Params: { id: string; credential_ref: string } }>("/participants/v1/merchants/:id/payments/:credential_ref", async (req, reply) => {
+        const fail = (code: keyof typeof HTTP) => {
+          const http = HTTP[code]!;
+          if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+          return reply.code(http).send({ code });
+        };
+        const auth = await verifyRead(requests, req, ACQUIRER_ONLY);
+        if (!auth.ok) {
+          if (auth.code === "UPSTREAM_UNAVAILABLE") {
+            req.log.error({ err: auth.cause }, "ПИ-8: GET сверки — сбой хранилища nonce");
+            return fail("UPSTREAM_UNAVAILABLE");
+          }
+          return fail("SIGNATURE_INVALID");
+        }
+        const { id: merchant_id, credential_ref } = req.params;
+        if (!isMerchantId(merchant_id) || !isPaymentRef(credential_ref)) return fail("REQUEST_INVALID");
+        if (!deps.trusted.serves(auth.participant_code, merchant_id)) return fail("CREDENTIAL_NOT_FOUND");
+        try {
+          const last = await payments.store.latest(merchant_id, credential_ref);
+          const r = last && (await reconcile(payments.reconcile, last));
+          if (!r) return fail("CREDENTIAL_NOT_FOUND");
+          return reply.code(200).send(r);
+        } catch (err) {
+          req.log.error({ err, merchant_id, credential_ref: maskRef(credential_ref) }, "ПИ-8: сверка метаданных — хранилище недоступно");
+          return fail("STATE_UNAVAILABLE");
+        }
+      });
+    }
+  }
+
+  // Статус агента для эквайрера (ПИ-8, РП57 п. 6): подпись запроса роли ACQUIRER; тело и коды — как у API продавцов.
+  const agentStatus = deps.agentStatus;
+  if (agentStatus && deps.requests) {
+    const requests = deps.requests;
+    app.get<{ Params: { code: string } }>("/participants/v1/agents/:code/status", async (req, reply) => {
+      const fail = (code: keyof typeof HTTP) => {
+        const http = HTTP[code]!;
+        if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+        return reply.code(http).send({ code });
+      };
+      const auth = await verifyRead(requests, req, ACQUIRER_ONLY);
+      if (!auth.ok) {
+        if (auth.code === "UPSTREAM_UNAVAILABLE") {
+          req.log.error({ err: auth.cause }, "ПИ-8: статус агента — сбой хранилища nonce");
+          return fail("UPSTREAM_UNAVAILABLE");
+        }
+        return fail("SIGNATURE_INVALID");
+      }
+      let view: ReturnType<typeof agentStatusView>;
+      try {
+        view = agentStatusView(agentStatus, req.params.code);
+      } catch (err) {
+        req.log.error({ err }, "ПИ-8: статус агента — реестр недоступен");
+        return fail("UPSTREAM_UNAVAILABLE");
+      }
+      return view ? reply.code(200).send(view) : fail("AGENT_UNKNOWN");
+    });
   }
 
   const limits = deps.limits;

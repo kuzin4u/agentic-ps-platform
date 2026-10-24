@@ -41,6 +41,9 @@ export type ParticipantRole = "ISSUER" | "UPK" | "ACQUIRER";
 /** Метка подписи записи знака готовности (РП57 п. 2): своя — подписи других записей участника не подходят. */
 export const PARTICIPANT_READINESS_CONTEXT = "pao:participant-merchant-readiness:v1";
 
+/** Метка подписи метаданных пакета (РП57 п. 5): своя — подпись записи знака как метаданные не годится, и наоборот. */
+export const PARTICIPANT_PAYMENT_METADATA_CONTEXT = "pao:participant-payment-metadata:v1";
+
 /**
  * Не больше одного боевого участника (эмулятор стенда не считается), пока мандат не привязан к банку (РП36 доп.):
  * иначе банк Б подписал бы мандат клиента банка А. Привязка — Б2, вместе с форматом principal_ref.
@@ -234,6 +237,11 @@ export class TrustedParticipants {
     return this.verifyInput(record.participant_code, record.kid, participantReadinessSigningInput(record), signature, ACQUIRER_ONLY);
   }
 
+  /** Подпись эквайрера над метаданными пакета (РП57 п. 5): только роль ACQUIRER, своя метка. */
+  verifyPaymentMetadata(record: PaymentMetadataSignedRecord, signature: string): boolean {
+    return this.verifyInput(record.participant_code, record.kid, participantPaymentMetadataSigningInput(record), signature, ACQUIRER_ONLY);
+  }
+
   /**
    * Подпись участника над записью о решении; неизвестный участник или ключ — false, как неверная подпись. Здесь и в
    * прочих проверках банка UPK — false, как чужой банк (РП51 п. 12): он подписывает только решения по подтверждению.
@@ -297,6 +305,35 @@ export interface ReadinessSignedRecord {
   readonly status: "ACTIVE" | "WITHDRAWN";
   readonly issued_at: string;
 }
+
+/** Подписываемая эквайрером запись метаданных пакета за продавца (РП57 п. 5); aoi — если эквайрер получил его из пакета. */
+export interface PaymentMetadataSignedRecord {
+  readonly participant_code: string;
+  readonly kid: string;
+  readonly merchant_id: string;
+  readonly metadata_ref: string;
+  readonly credential_ref: string;
+  readonly order_ref: string;
+  readonly aoi?: { readonly agent_code: string; readonly mandate_id: string };
+  readonly submitted_at: string;
+}
+
+/** Байты подписи метаданных: canonicalJson записи с меткой; без aoi ключа aoi в записи нет (не null). */
+export const participantPaymentMetadataSigningInput = (r: PaymentMetadataSignedRecord): Buffer =>
+  Buffer.from(
+    canonicalJson({
+      context: PARTICIPANT_PAYMENT_METADATA_CONTEXT,
+      participant_code: r.participant_code,
+      kid: r.kid,
+      merchant_id: r.merchant_id,
+      metadata_ref: r.metadata_ref,
+      credential_ref: r.credential_ref,
+      order_ref: r.order_ref,
+      ...(r.aoi ? { aoi: { agent_code: r.aoi.agent_code, mandate_id: r.aoi.mandate_id } } : {}),
+      submitted_at: r.submitted_at,
+    }),
+    "utf8",
+  );
 
 /** Байты подписи знака: canonicalJson записи с меткой pao:participant-merchant-readiness:v1, UTF-8. */
 export const participantReadinessSigningInput = (r: ReadinessSignedRecord): Buffer =>

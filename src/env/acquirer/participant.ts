@@ -5,8 +5,10 @@ import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:cryp
 import { signRequest } from "@kuzin4u/agentic-core";
 import { ED25519, parseKey } from "../../registry/keys.js";
 import {
+  participantPaymentMetadataSigningInput,
   participantReadinessSigningInput,
   STAND_ACQUIRER_CODE,
+  type PaymentMetadataSignedRecord,
   type ReadinessSignedRecord,
   type TrustedParticipantKey,
 } from "../../participants/trusted.js";
@@ -18,6 +20,8 @@ export interface AcquirerParticipant {
   readonly trustedKey: TrustedParticipantKey;
   /** Подпись записи знака готовности (base64url, РП57 п. 2). */
   signReadiness(record: ReadinessSignedRecord): string;
+  /** Подпись метаданных пакета за продавца (base64url, РП57 п. 5). */
+  signPaymentMetadata(record: PaymentMetadataSignedRecord): string;
   /** Заголовки подписанного запроса эквайрера без тела (RFC 9421, РП46 (в)) — для чтений ПИ-8. */
   signRequest(method: string, path: string, query: string, at: Date): Record<string, string>;
 }
@@ -32,6 +36,7 @@ export function createAcquirerParticipant(merchants: readonly string[], particip
     participant_code,
     trustedKey: { participant_code, kid: parsed.kid, alg: "ed25519", public_key, role: "ACQUIRER", merchants: [...merchants] },
     signReadiness: (record) => sign(null, participantReadinessSigningInput(record), secret).toString("base64url"),
+    signPaymentMetadata: (record) => sign(null, participantPaymentMetadataSigningInput(record), secret).toString("base64url"),
     signRequest: (method, path, query, at) =>
       signRequest(
         {
