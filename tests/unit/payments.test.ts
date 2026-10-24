@@ -29,6 +29,7 @@ interface Issued {
 
 describe("ПИ-8 POST /participants/v1/merchants/{id}/payments — сверка credential_ref → op_ref (РП57 п. 5)", () => {
   let s: Stand;
+  let valid_to: string;
   let side: AgentSide;
   let code: string;
   let principal: string;
@@ -42,7 +43,7 @@ describe("ПИ-8 POST /participants/v1/merchants/{id}/payments — сверка 
       subject: "продукты",
       amount_limit: 100_000,
       currency: "RUB",
-      valid_to: "2026-10-26T00:00:00Z",
+      valid_to,
       merchant_scope: [MER],
       principal_ref: principal,
       mode: "IMMEDIATE",
@@ -92,6 +93,9 @@ describe("ПИ-8 POST /participants/v1/merchants/{id}/payments — сверка 
 
   beforeEach(async () => {
     s = createStand();
+    // От часов стенда, не литералом: стенд сверяет срок по настоящим часам (К1.2 MER-62-45). Один на тест — срок CART
+    // не позже родителя, иначе MANDATE_SCOPE.
+    valid_to = new Date(s.now().getTime() + 7 * 86_400_000).toISOString();
     side = newAgentSide();
     code = `nspk:agent:rcn-${letters()}:v1`;
     principal = opaquePrincipalRef("prn_rcn_");

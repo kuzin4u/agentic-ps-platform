@@ -322,7 +322,8 @@ describe("ПАО relinquish и отзыв клиентом на стенде (Р
   it("relinquish родителя: 200 Mandate REVOKED, CART — REVOKED при GET; повтор тем же ключом — тот же ответ, новым — 200 без записи", async () => {
     const p = await create(intent({ valid_to }));
     expect((await stand.issuer.sign(p)).statusCode).toBe(200);
-    const k = await create(cart(p));
+    // Срок CART — от часов теста, как у INTENT: литерал cart() рассчитан на подставные часы T0 (К1.2 MER-62-45).
+    const k = await create({ ...cart(p), valid_to });
     const idem = randomUUID();
     const res = await relinquish(p, side, code, idem);
     expect(res.statusCode).toBe(200);
