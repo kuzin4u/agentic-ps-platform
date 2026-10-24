@@ -1,9 +1,9 @@
 // Сгенерировано scripts/gen-shared.mjs из docs/core/processing-interface.yaml — не править вручную.
-// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 a3ca48a87a2beb34ed6bacae9f6319ee921feee98f0feffec0748ab88b9fc9ec
+// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 ff3612e49e30824ef7af8d378067b1f5022176e4835405f8ed94c3019e4d2a79
 // Номера полей и кодов внешних форматов здесь нет: только каноническая модель [альбом] (РП6).
 
 export const PI_VERSION = "1.0.0-draft";
-export const PI_SPEC_SHA256 = "a3ca48a87a2beb34ed6bacae9f6319ee921feee98f0feffec0748ab88b9fc9ec";
+export const PI_SPEC_SHA256 = "ff3612e49e30824ef7af8d378067b1f5022176e4835405f8ed94c3019e4d2a79";
 
 export interface Instrument {
   kind: "AGENT_TOKEN" | "ACCOUNT_LINK" | "CARD_TOKEN";
@@ -103,6 +103,28 @@ export interface DealOutcome {
   evidence_hash?: string;
 }
 
+/** Статус знака готовности продавца (A5 п. 5, РП57 п. 3) — один для продавца, эквайрера и агента */
+export interface MerchantReadiness {
+  merchant_id: string;
+  status: "ACTIVE" | "SUSPENDED" | "NONE";
+  /** время записи, от которой действует статус; у NONE без записей — null */
+  since: string | null;
+}
+
+/** Сверка метаданных пакета с записью реквизита (РП22 п. 6, РП57 п. 5); op_ref — результат, а не вход */
+export interface PaymentReconciliation {
+  credential_ref: string;
+  result: "MATCHED" | "MISMATCH" | "PENDING" | "NOT_USED";
+  /** false — aoi не прислан, сверка только по merchant_id и order_ref */
+  aoi_checked: boolean;
+  /** только при MATCHED */
+  op_ref?: string;
+  /** только при MISMATCH — несовпавшие поля; реквизит другого продавца — 404, а не MISMATCH */
+  fields?: Array<"order_ref" | "aoi.agent_code" | "aoi.mandate_id">;
+  /** только при NOT_USED */
+  reason?: "EXPIRED" | "MANDATE_REVOKED" | "AGENT_SUSPENDED";
+}
+
 // Перечни значений: «СХЕМА_ПОЛЕ».
 export const INSTRUMENT_KIND = ["AGENT_TOKEN","ACCOUNT_LINK","CARD_TOKEN"] as const;
 export const CANONICAL_MESSAGE_MSG_TYPE = ["AUTH_REQUEST","ISSUER_RESPONSE","REVERSAL","PRESENTMENT","REFUND","CHARGEBACK","AUTH_EXPIRED"] as const;
@@ -112,6 +134,9 @@ export const DECISION_REASON = ["AOI_MISSING","AOI_MISMATCH","AGENT_UNKNOWN","AG
 export const LIMITS_PERIOD = ["DAY","MONTH"] as const;
 export const DEAL_VIEW_STATUS = ["AWAITING_FUNDING","FUNDED","RELEASED","RETURNED","PARTIAL","CANCELLED"] as const;
 export const DEAL_OUTCOME_OUTCOME = ["RELEASED","RETURNED","PARTIAL"] as const;
+export const MERCHANT_READINESS_STATUS = ["ACTIVE","SUSPENDED","NONE"] as const;
+export const PAYMENT_RECONCILIATION_RESULT = ["MATCHED","MISMATCH","PENDING","NOT_USED"] as const;
+export const PAYMENT_RECONCILIATION_REASON = ["EXPIRED","MANDATE_REVOKED","AGENT_SUSPENDED"] as const;
 
 /** components.schemas как в спецификации — для проверок в тестах. */
 export const PI_SCHEMAS: Record<string, unknown> = {
@@ -467,6 +492,86 @@ export const PI_SCHEMAS: Record<string, unknown> = {
       },
       "evidence_hash": {
         "type": "string"
+      }
+    }
+  },
+  "MerchantReadiness": {
+    "type": "object",
+    "description": "Статус знака готовности продавца (A5 п. 5, РП57 п. 3) — один для продавца, эквайрера и агента",
+    "required": [
+      "merchant_id",
+      "status",
+      "since"
+    ],
+    "properties": {
+      "merchant_id": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "ACTIVE",
+          "SUSPENDED",
+          "NONE"
+        ]
+      },
+      "since": {
+        "type": "string",
+        "format": "date-time",
+        "nullable": true,
+        "description": "время записи, от которой действует статус; у NONE без записей — null"
+      }
+    }
+  },
+  "PaymentReconciliation": {
+    "type": "object",
+    "description": "Сверка метаданных пакета с записью реквизита (РП22 п. 6, РП57 п. 5); op_ref — результат, а не вход",
+    "required": [
+      "credential_ref",
+      "result",
+      "aoi_checked"
+    ],
+    "properties": {
+      "credential_ref": {
+        "type": "string"
+      },
+      "result": {
+        "type": "string",
+        "enum": [
+          "MATCHED",
+          "MISMATCH",
+          "PENDING",
+          "NOT_USED"
+        ]
+      },
+      "aoi_checked": {
+        "type": "boolean",
+        "description": "false — aoi не прислан, сверка только по merchant_id и order_ref"
+      },
+      "op_ref": {
+        "type": "string",
+        "description": "только при MATCHED"
+      },
+      "fields": {
+        "type": "array",
+        "description": "только при MISMATCH — несовпавшие поля; реквизит другого продавца — 404, а не MISMATCH",
+        "items": {
+          "type": "string",
+          "enum": [
+            "order_ref",
+            "aoi.agent_code",
+            "aoi.mandate_id"
+          ]
+        }
+      },
+      "reason": {
+        "type": "string",
+        "description": "только при NOT_USED",
+        "enum": [
+          "EXPIRED",
+          "MANDATE_REVOKED",
+          "AGENT_SUSPENDED"
+        ]
       }
     }
   }

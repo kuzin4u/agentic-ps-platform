@@ -264,6 +264,114 @@ components:
           format: date-time
         evidence_hash:
           type: string
+    MerchantReadiness:
+      type: object
+      description: Статус знака готовности продавца (A5 п. 5, РП57 п. 3) — один для продавца, эквайрера и агента
+      required:
+      - merchant_id
+      - status
+      - since
+      properties:
+        merchant_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - SUSPENDED
+          - NONE
+        since:
+          type: string
+          format: date-time
+          nullable: true
+          description: время записи, от которой действует статус; у NONE без записей — null
+    PaymentReconciliation:
+      type: object
+      description: Сверка метаданных пакета с записью реквизита (РП22 п. 6, РП57 п. 5); op_ref — результат, а не вход
+      required:
+      - credential_ref
+      - result
+      - aoi_checked
+      properties:
+        credential_ref:
+          type: string
+        result:
+          type: string
+          enum:
+          - MATCHED
+          - MISMATCH
+          - PENDING
+          - NOT_USED
+        aoi_checked:
+          type: boolean
+          description: false — aoi не прислан, сверка только по merchant_id и order_ref
+        op_ref:
+          type: string
+          description: только при MATCHED
+        fields:
+          type: array
+          description: только при MISMATCH — несовпавшие поля; реквизит другого продавца — 404, а не MISMATCH
+          items:
+            type: string
+            enum:
+            - order_ref
+            - aoi.agent_code
+            - aoi.mandate_id
+        reason:
+          type: string
+          description: только при NOT_USED
+          enum:
+          - EXPIRED
+          - MANDATE_REVOKED
+          - AGENT_SUSPENDED
+  parameters:
+    ParticipantCode:
+      name: x-participant-code
+      in: header
+      required: true
+      schema:
+        type: string
+    ParticipantTimestamp:
+      name: x-timestamp
+      in: header
+      required: true
+      schema:
+        type: string
+        format: date-time
+    ParticipantNonce:
+      name: x-nonce
+      in: header
+      required: true
+      schema:
+        type: string
+    ParticipantEmptyDigest:
+      name: content-digest
+      in: header
+      required: true
+      description: digest пустого тела
+      schema:
+        type: string
+    ParticipantSignatureInput:
+      name: signature-input
+      in: header
+      required: true
+      schema:
+        type: string
+    ParticipantSignature:
+      name: signature
+      in: header
+      required: true
+      schema:
+        type: string
+    MerchantId:
+      name: id
+      in: path
+      required: true
+      description: merchant_id продавца — то же ограничение, что у `merchant_id` в `POST /pao/v1/credentials` (непустая строка до 128 знаков), и `merchant.id` канонической модели
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
 paths:
   /adp/v1/decide:
     post:
@@ -876,28 +984,250 @@ paths:
           description: OK
   /participants/v1/agents/{code}/status:
     get:
-      summary: Статус агента для продавца
+      summary: ПИ-8 Статус агента для эквайрера (РП57 п. 6)
+      description: "Подпись HTTP-запроса участника роли ACQUIRER — профиль как у `GET …/limits` (РП46 (в)); подпись ISSUER или UPK — 401. Тело и коды — как у `GET /merchants/v1/agents/{code}` API продавцов (РП56 п. 4): только код, статус и класс из реестра, сведений об операторе и принципалах нет (A2 п. 1.2)."
       parameters:
       - name: code
         in: path
         required: true
+        description: код агента `nspk:agent:<id>:v<N>`
         schema:
           type: string
+      - $ref: '#/components/parameters/ParticipantCode'
+      - $ref: '#/components/parameters/ParticipantTimestamp'
+      - $ref: '#/components/parameters/ParticipantNonce'
+      - $ref: '#/components/parameters/ParticipantEmptyDigest'
+      - $ref: '#/components/parameters/ParticipantSignatureInput'
+      - $ref: '#/components/parameters/ParticipantSignature'
       responses:
         '200':
-          description: OK
+          description: Статус агента
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - agent_code
+                - status
+                - class
+                properties:
+                  agent_code:
+                    type: string
+                  status:
+                    type: string
+                    enum:
+                    - ACTIVE
+                    - SUSPENDED
+                    - EXCLUDED
+                  class:
+                    type: string
+        '401':
+          description: "`SIGNATURE_INVALID` — нет подписи, неизвестный участник или ключ, роль не ACQUIRER, состав не по профилю, вне окна, повтор nonce"
+        '404':
+          description: "`AGENT_UNKNOWN` — неизвестный, не по форме или из другого контура"
+        '503':
+          description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
   /participants/v1/merchants/{id}/readiness:
     post:
-      summary: Заявка на знак готовности
+      summary: ПИ-8 Знак готовности продавца (эквайрер, A5 п. 5, РП57 п. 2)
+      description: "Эквайрер подаёт и подтверждает (`ACTIVE`) или снимает (`WITHDRAWN`) знак своего продавца записью, подписанной ключом Ed25519. Подписываемая строка — canonicalJson записи с полем `context` = `pao:participant-merchant-readiness:v1` и `merchant_id` из пути; в теле `context` и `merchant_id` нет. Записи — только вставкой, порядок — номер записи Платформы. `readiness_ref` уникален у участника навсегда: повтор той же записи — 200 без записи и без изменения статуса, та же ссылка с другой записью — 409 `READINESS_CONFLICT`. `issued_at` не позже часов Платформы больше чем на `signature_skew_sec`. Приостанавливает (`SUSPENDED`) и снимает приостановление только оператор (A5 п. 5.3); при `SUSPENDED` эквайрер знак не меняет — 409 `READINESS_SUSPENDED`. Статус: последняя запись оператора `SUSPENDED` → `SUSPENDED`; иначе по последней записи эквайрера — `ACTIVE` или `NONE`. Знак не влияет на порядок выдачи и не читается ADP (A5 п. 5.2, A6 п. 2.1)."
       parameters:
-      - name: id
+      - $ref: '#/components/parameters/MerchantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - participant_code
+              - kid
+              - readiness_ref
+              - status
+              - issued_at
+              - signature
+              properties:
+                participant_code:
+                  type: string
+                kid:
+                  type: string
+                  description: отпечаток JWK ключа участника по RFC 7638
+                readiness_ref:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{1,64}$'
+                status:
+                  type: string
+                  enum:
+                  - ACTIVE
+                  - WITHDRAWN
+                issued_at:
+                  type: string
+                  format: date-time
+                signature:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{86}$
+                  description: Ed25519 (64 байта), base64url без дополнения
+      responses:
+        '200':
+          description: "Записано или повтор той же записи — текущий статус знака"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MerchantReadiness'
+        '400':
+          description: "`REQUEST_INVALID` — тело не по форме"
+        '401':
+          description: "`SIGNATURE_INVALID` — подпись, неизвестный участник или ключ, роль не ACQUIRER, `issued_at` в будущем сверх `signature_skew_sec`"
+        '403':
+          description: "`MERCHANT_NOT_SERVED` — продавца нет в перечне этого эквайрера"
+        '409':
+          description: "`READINESS_CONFLICT` — тот же `readiness_ref` с другой записью; `READINESS_SUSPENDED` — знак приостановлен оператором"
+        '503':
+          description: "`STATE_UNAVAILABLE`, Retry-After"
+    get:
+      summary: ПИ-8 Статус знака своего продавца (эквайрер, РП57 п. 3)
+      description: "Подпись HTTP-запроса участника роли ACQUIRER — профиль как у `GET …/limits` (РП46 (в)). Только свои продавцы: чужой — 404, как нет записи (намеренно, в отличие от 403 у `POST`: чужие перечни не раскрываются). С причиной приостановления."
+      parameters:
+      - $ref: '#/components/parameters/MerchantId'
+      - $ref: '#/components/parameters/ParticipantCode'
+      - $ref: '#/components/parameters/ParticipantTimestamp'
+      - $ref: '#/components/parameters/ParticipantNonce'
+      - $ref: '#/components/parameters/ParticipantEmptyDigest'
+      - $ref: '#/components/parameters/ParticipantSignatureInput'
+      - $ref: '#/components/parameters/ParticipantSignature'
+      responses:
+        '200':
+          description: Статус знака
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/MerchantReadiness'
+                - type: object
+                  properties:
+                    reason:
+                      type: string
+                      enum:
+                      - DISCREPANCY
+                      - AGENT_REFUSALS
+                      - SYSTEMATIC_CANCELLATION
+                      description: только при `SUSPENDED`
+        '400':
+          description: "`REQUEST_INVALID` — id не по форме (после проверенной подписи)"
+        '401':
+          description: "`SIGNATURE_INVALID` — нет подписи, неизвестный участник или ключ, роль не ACQUIRER, состав не по профилю, вне окна, повтор nonce"
+        '404':
+          description: "`MERCHANT_NOT_FOUND` — продавца нет в перечне этого эквайрера"
+        '503':
+          description: "`STATE_UNAVAILABLE`, Retry-After"
+  /participants/v1/merchants/{id}/payments:
+    post:
+      summary: ПИ-8 Метаданные пакета и сверка credential_ref → op_ref (эквайрер, РП22 п. 6, РП57 п. 5)
+      description: "Эквайрер за своего продавца присылает метаданные пакета агентской оплаты записью, подписанной ключом Ed25519; подписываемая строка — canonicalJson записи с `context` = `pao:participant-payment-metadata:v1` и `merchant_id` из пути. Только вставка; `metadata_ref` уникален у участника навсегда, повтор той же записи — 200 с пересчитанной сверкой, та же ссылка с другой записью — 409 `METADATA_CONFLICT`; `submitted_at` не позже часов Платформы сверх `signature_skew_sec`. Ответ — сверка по записи реквизита: `op_ref` — результат, а не вход. После реверсала и возврата — `MATCHED` с тем же `op_ref`, состояние операции в ответ не входит. Решение ADP от метаданных не зависит; `MISMATCH` — в журнал процесса, приостановление знака — решение оператора. Суммы и `payload` пакета (криптограмма) в записи нет (инварианты 1, 5)."
+      parameters:
+      - $ref: '#/components/parameters/MerchantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - participant_code
+              - kid
+              - metadata_ref
+              - credential_ref
+              - order_ref
+              - submitted_at
+              - signature
+              properties:
+                participant_code:
+                  type: string
+                kid:
+                  type: string
+                metadata_ref:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{1,64}$'
+                credential_ref:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                order_ref:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                aoi:
+                  type: object
+                  additionalProperties: false
+                  description: из пакета, если эквайрер его получил; без поддержки aoi (РП22 п. 6) — нет
+                  required:
+                  - agent_code
+                  - mandate_id
+                  properties:
+                    agent_code:
+                      type: string
+                    mandate_id:
+                      type: string
+                submitted_at:
+                  type: string
+                  format: date-time
+                signature:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{86}$
+      responses:
+        '200':
+          description: Результат сверки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentReconciliation'
+        '400':
+          description: "`REQUEST_INVALID`"
+        '401':
+          description: "`SIGNATURE_INVALID` — подпись, неизвестный участник или ключ, роль не ACQUIRER, `submitted_at` в будущем сверх `signature_skew_sec`"
+        '403':
+          description: "`MERCHANT_NOT_SERVED` — продавца нет в перечне этого эквайрера"
+        '404':
+          description: "`CREDENTIAL_NOT_FOUND` — неизвестный реквизит или реквизит другого продавца"
+        '409':
+          description: "`METADATA_CONFLICT` — тот же `metadata_ref` с другой записью"
+        '503':
+          description: "`STATE_UNAVAILABLE`, Retry-After"
+  /participants/v1/merchants/{id}/payments/{credential_ref}:
+    get:
+      summary: ПИ-8 Сверка по реквизиту (эквайрер, РП57 п. 5)
+      description: "Тот же расчёт, что в ответе `POST …/payments`, по последней записи метаданных этого реквизита; подпись запроса участника роли ACQUIRER. Нет записи метаданных, неизвестный реквизит или реквизит другого продавца — 404."
+      parameters:
+      - $ref: '#/components/parameters/MerchantId'
+      - name: credential_ref
         in: path
         required: true
         schema:
           type: string
+          minLength: 1
+          maxLength: 128
+      - $ref: '#/components/parameters/ParticipantCode'
+      - $ref: '#/components/parameters/ParticipantTimestamp'
+      - $ref: '#/components/parameters/ParticipantNonce'
+      - $ref: '#/components/parameters/ParticipantEmptyDigest'
+      - $ref: '#/components/parameters/ParticipantSignatureInput'
+      - $ref: '#/components/parameters/ParticipantSignature'
       responses:
-        '202':
-          description: Принято
+        '200':
+          description: Результат сверки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentReconciliation'
+        '401':
+          description: "`SIGNATURE_INVALID`"
+        '404':
+          description: "`CREDENTIAL_NOT_FOUND`"
+        '503':
+          description: "`STATE_UNAVAILABLE`, Retry-After"
   /disputes/v1/scope-check:
     post:
       summary: ПИ-7/П7 Вычисление in_scope по op_ref
