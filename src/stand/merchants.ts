@@ -81,6 +81,7 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     rateLimitPerMin: opts.rateLimitPerMin ?? stand.params.merchant_rate_limit_per_min,
     shopListFailure: () => shopListFailure,
     orderReplyFailure: () => orderReplyFailure,
+    now: stand.now,
   });
   return {
     app,

@@ -41,6 +41,8 @@ export interface MerchantsOptions {
   readonly shopListFailure?: () => ShopListFailure | null;
   /** Управляемый обрыв ответа на POST …/orders после записи заказа (#62, РП58 п. 4); null — ответ отдаётся. */
   readonly orderReplyFailure?: () => OrderReplyFailure | null;
+  /** Часы продавца: `responded_at` каталога и `updated_at` карточек (РП58 п. 6–7); на стенде — часы стенда. */
+  readonly now?: () => Date;
 }
 
 /** RESET — соединение закрыто без ответа; GARBLED — 201 с телом не по форме заказа (обрезанный JSON). */
@@ -85,13 +87,19 @@ export interface Order {
 const fail = (reply: FastifyReply, code: MerchantErrorCode): FastifyReply =>
   reply.code(MERCHANT_ERROR_HTTP[code]).send({ code });
 
-const shopView = (s: Shop) => ({
+/** Вид магазина — один для списка и каталога, для человека и агента; факты модели каталога — РП58 п. 5. */
+export const shopView = (s: Shop) => ({
   id: s.id,
   merchant_id: s.merchant_id,
   name: s.name,
   category: s.category,
   zone: zoneOf(s),
   readiness_mark: s.readiness_mark,
+  inn: s.inn,
+  mcc: s.mcc,
+  payment_methods: s.payment_methods,
+  delivery_regions: s.delivery_regions,
+  ...(s.returns ? { returns: s.returns } : {}),
 });
 
 const LIMIT_MAX = 100;
@@ -122,6 +130,7 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
   const shops = [...(opts.shops ?? SHOPS)].sort(byShopId);
   const byId = new Map(shops.map((s) => [s.id, s]));
   const orders = new Map<string, Order>();
+  const now = opts.now ?? (() => new Date());
   if (!opts.acquirer.aoiSupport && !opts.reconciliation) {
     throw new Error("Эквайрер без поддержки aoi: нужен порт сверки (РП22 п. 6)");
   }
@@ -200,11 +209,13 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
         if (shop.behaviour === "REJECTS_UNIDENTIFIED" && who.agent === null) return fail(reply, "AGENT_UNIDENTIFIED");
         const query = (req.query.query ?? "").toLowerCase();
         const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? "", 10) || LIMIT_MAX, 1), LIMIT_MAX);
+        // Одно чтение часов на ответ: responded_at и updated_at карточек — от одного момента (РП58 п. 6–7).
+        const at = now();
         const items = shop.items
           .filter((i) => !query || [i.title, i.description, i.category].some((t) => t?.toLowerCase().includes(query)))
           .slice(0, limit)
-          .map((i) => catalogView(i, who.agent !== null));
-        return { shop: shopView(shop), items };
+          .map((i) => catalogView(i, who.agent !== null, at));
+        return { shop: shopView(shop), items, responded_at: at.toISOString() };
       },
     );
 
