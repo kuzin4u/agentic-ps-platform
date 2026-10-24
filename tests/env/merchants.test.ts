@@ -1,11 +1,12 @@
 // PS-12: эмулятор продавцов — тест на каждый тип витрины (К6 пула, A5), подпись агента по каталогу ключей (РП22).
 import { afterEach, describe, expect, it } from "vitest";
+import { checkProductA5, checkShopA5, isGtin, isInn, validateProduct, validateShop, type CatalogProduct, type CatalogShop } from "@kuzin4u/agentic-core/catalog";
 import { SHOPS, SHOP_BEHAVIOURS, buildMerchantsServer, MerchantAgentVerifier } from "../../src/env/merchants/index.js";
 import { Acquirer, OpkcStub } from "../../src/env/acquirer/index.js";
 import { createMerchants, createStand, type MerchantsStand, type Stand } from "../../src/stand/index.js";
 import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
-import { merchantCall } from "../support/merchant-call.js";
+import { merchantCall, merchantFetch, signedMerchantRequest } from "../support/merchant-call.js";
 
 const LIMIT = loadParams().merchant_rate_limit_per_min;
 const A = "nspk:agent:shop-a:v1";
@@ -65,8 +66,9 @@ describe("К6: список витрин и зоны", () => {
     const opkc = new OpkcStub();
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc });
     const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
-    const one = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT });
-    const two = buildMerchantsServer({ verifier, acquirer, shops: flipped, rateLimitPerMin: LIMIT });
+    // Одни часы: updated_at карточек — от момента ответа (РП58 п. 6), сравнение — без разницы часов.
+    const one = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT, now: () => T0 });
+    const two = buildMerchantsServer({ verifier, acquirer, shops: flipped, rateLimitPerMin: LIMIT, now: () => T0 });
     const list = async (app: typeof one) => (await merchantCall(app, { path: "/v1/shops" })).json().shops as { id: string; zone: string }[];
     const [a, b] = [await list(one), await list(two)];
     // Зоны действительно разные (у каждой витрины CONTOUR ↔ OUTSIDE), порядок — один.
@@ -341,6 +343,203 @@ describe("Лимит частоты витрин по адресу (CodeQL js/mi
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub() });
     const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
     for (const v of [0, 1.5, Number.NaN]) expect(() => buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: v })).toThrow();
+  });
+});
+
+/* eslint-disable @typescript-eslint/no-explicit-any -- ответ витрины переводится в модель К8 как недоверенные данные */
+/** Перевод ответа витрины в модель каталога ядра К8 — как это сделает адаптер агента (РП58 п. 10); пропуски — как есть. */
+const toCoreShop = (s: any): CatalogShop =>
+  ({ id: s.id, inn: s.inn, mcc: s.mcc, paymentMethods: s.payment_methods, deliveryRegions: s.delivery_regions, returns: s.returns, readiness: { zone: s.zone, mark: s.readiness_mark } }) as CatalogShop;
+const toCoreProduct = (i: any): CatalogProduct =>
+  ({
+    sku: i.sku, gtin: i.gtin, brand: i.brand, model: i.model, attributes: i.attributes, title: i.title, category: i.category,
+    price: i.price === undefined ? undefined : { amount: i.price, currency: i.currency },
+    availability: i.in_stock === undefined ? undefined : { inStock: i.in_stock },
+    delivery: i.delivery_options?.map((d: any) => ({ method: d.method, ...(d.region ? { region: d.region } : {}), minDays: d.min_days, maxDays: d.max_days, cost: { amount: d.cost, currency: d.currency } })),
+    updatedAt: i.updated_at, description: i.description,
+  }) as CatalogProduct;
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+describe("#45 (РП58 п. 5–9): факты модели каталога в ответе витрин", () => {
+  const catalog = async (app: Stand["app"], who: object, shop: string) => (await merchantCall(app, { ...who, path: `/v1/shops/${shop}/catalog` })).json();
+
+  it("полные витрины проходят валидатор ядра К8 без замечаний; SHOP-5501 неполна и по новым фактам", async () => {
+    const { app, asA } = setup();
+    for (const s of SHOPS) {
+      const body = await catalog(app, asA(), s.id);
+      const shop = toCoreShop(body.shop);
+      const shopIssues = validateShop(shop);
+      const productIssues = body.items.map((i: unknown) => validateProduct(toCoreProduct(i), shop));
+      if (s.behaviour === "INCOMPLETE") {
+        expect(shopIssues, s.id).toEqual([{ code: "REQUIRED", path: "$.returns" }]);
+        for (const issues of productIssues) {
+          expect(issues, s.id).toEqual(expect.arrayContaining([{ code: "REQUIRED", path: "$.delivery" }, { code: "REQUIRED", path: "$.updatedAt" }]));
+        }
+      } else {
+        expect(shopIssues, s.id).toEqual([]);
+        expect(productIssues, s.id).toEqual(body.items.map(() => []));
+      }
+    }
+  });
+
+  it("ИНН — вымышленный (регион 00) с верной контрольной цифрой; MCC — как у витрины; GTIN — диапазон 2 с верной цифрой", () => {
+    for (const s of SHOPS) {
+      expect(isInn(s.inn) && s.inn.startsWith("00"), s.id).toBe(true);
+      expect(s.inn.length, s.id).toBe(s.id === "MKT-77" ? 12 : 10);
+      for (const i of s.items) if (typeof i.gtin === "string") expect(isGtin(i.gtin) && i.gtin.startsWith("2"), i.sku).toBe(true);
+    }
+  });
+
+  it("возврат: продовольствие — 0 дней, текст по закону; строка товара — тот же текст; срок и текст согласованы (проверка A5 ядра)", async () => {
+    const { app, asA } = setup();
+    for (const s of SHOPS.filter((x) => x.returns)) {
+      const body = await catalog(app, asA(), s.id);
+      expect(body.shop.returns, s.id).toEqual(s.returns);
+      expect(body.shop.returns.days, s.id).toBe(s.mcc === "5732" ? 14 : 0);
+      for (const i of body.items) expect(i.returns, i.sku).toBe(body.shop.returns.text);
+      expect(checkShopA5(toCoreShop(body.shop)), s.id).toEqual([]);
+    }
+    // Противоречивая карточка остаётся противоречивой: цена в описании не та, что в price (A5 п. 1.2).
+    const c = await catalog(app, asA(), "SHOP-3301");
+    expect(checkProductA5(toCoreProduct(c.items[0]), 2).map((x) => x.code)).toEqual(["A5_PRICE_MISMATCH"]);
+  });
+
+  it("responded_at — часы стенда; updated_at — часы стенда − 2 ч; стоимость доставки — парой с валютой", async () => {
+    const { app, s, asA } = setup();
+    const body = await catalog(app, asA(), "SHOP-5003");
+    expect(body.responded_at).toBe(s.now().toISOString());
+    expect(body.items[0].updated_at).toBe(new Date(s.now().getTime() - 7_200_000).toISOString());
+    for (const d of body.items[0].delivery_options) expect([typeof d.cost, d.currency]).toEqual(["number", "RUB"]);
+    s.setClock(new Date(T0.getTime() + 60_000));
+    const later = await catalog(app, asA(), "SHOP-5003");
+    expect(later.responded_at).toBe(new Date(T0.getTime() + 60_000).toISOString());
+    expect(Date.parse(later.responded_at) - Date.parse(later.items[0].updated_at)).toBe(7_200_000);
+    expect(later.items[0]).not.toHaveProperty("updated_age_sec");
+  });
+
+  it("тот же объём человеку и агенту (A5 п. 1.2): факты одни, разница — только цена у DUAL_PRICE", async () => {
+    const { app, asA } = setup();
+    for (const s of SHOPS.filter((x) => x.behaviour !== "REJECTS_UNIDENTIFIED")) {
+      const [human, agent] = [await catalog(app, {}, s.id), await catalog(app, asA(), s.id)];
+      expect(agent.shop, s.id).toEqual(human.shop);
+      const strip = (b: { items: { price?: number }[] }) => b.items.map((i) => ({ ...i, price: undefined }));
+      expect(strip(agent), s.id).toEqual(strip(human));
+      const differ = agent.items.some((i: { price?: number }, k: number) => i.price !== human.items[k].price);
+      expect(differ, s.id).toBe(s.behaviour === "DUAL_PRICE");
+    }
+    const list = (await merchantCall(app, { path: "/v1/shops" })).json().shops;
+    expect(list.find((x: { id: string }) => x.id === "SHOP-1042")).toMatchObject({ inn: "0010420004", mcc: "5462", payment_methods: ["card", "sbp"] });
+  });
+});
+
+describe("#62 (РП58 п. 1–4): чтение заказа агентом и управляемый обрыв ответа на заказ", () => {
+  const list = (app: Stand["app"], who: object, mandate: string | null, shop = "SHOP-1042") =>
+    merchantCall(app, { ...who, path: `/v1/shops/${shop}/orders`, query: mandate === null ? "" : `cart_mandate_id=${mandate}` });
+
+  it("по мандату корзины — только свои заказы этой витрины в порядке создания, та же запись, что у POST; пусто — 200", async () => {
+    const { app, s, b, asA } = setup();
+    const asB = { side: b, agentCode: B, now: s.now() };
+    const o1 = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    const o2 = (await order(app, asA(), "SHOP-1042", "BRD-1042-02", 2)).json();
+    await order(app, asA(), "SHOP-1042", "BRD-1042-01", 1, { cart_mandate_id: "MND-cart-2" });
+    await order(app, asA(), "SHOP-4401", "BRD-4401-01");
+    const ob = (await order(app, asB, "SHOP-1042", "BRD-1042-01")).json();
+    const r = await list(app, asA(), "MND-cart-1");
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ orders: [o1, o2] });
+    expect((await list(app, asB, "MND-cart-1")).json()).toEqual({ orders: [ob] });
+    expect((await list(app, asA(), "MND-unknown")).json()).toEqual({ orders: [] });
+    // Состояние — текущее: после оплаты — PAID.
+    expect((await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o1.id}/payment`, body: pkg(o1.id) })).statusCode).toBe(200);
+    expect((await list(app, asA(), "MND-cart-1")).json().orders.map((o: { status: string }) => o.status)).toEqual(["PAID", "CREATED"]);
+  });
+
+  it("по номеру — свой заказ; чужой агент, другая витрина, неизвестный номер — 404 ORDER_NOT_FOUND", async () => {
+    const { app, s, b, asA } = setup();
+    const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    const one = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}` });
+    expect([one.statusCode, one.json()]).toEqual([200, o]);
+    for (const [who, path] of [
+      [{ side: b, agentCode: B, now: s.now() }, `/v1/shops/SHOP-1042/orders/${o.id}`],
+      [asA(), `/v1/shops/SHOP-4401/orders/${o.id}`],
+      [asA(), "/v1/shops/SHOP-1042/orders/ORD-unknown"],
+    ] as const) {
+      const r = await merchantCall(app, { ...who, path });
+      expect([r.statusCode, r.json()], path).toEqual([404, { code: "ORDER_NOT_FOUND" }]);
+    }
+  });
+
+  it("опознание и отказы — как у POST: без подписи 403, подпись чужим ключом 401, строка запроса под подписью, витрины нет 404", async () => {
+    const { app, s, a, asA } = setup();
+    for (const path of ["/v1/shops/SHOP-1042/orders", "/v1/shops/SHOP-1042/orders/ORD-x"]) {
+      const r = await merchantCall(app, { path, query: "cart_mandate_id=MND-cart-1" });
+      expect([r.statusCode, r.json()], path).toEqual([403, { code: "AGENT_UNIDENTIFIED" }]);
+      const m2 = await merchantCall(app, { side: a, agentCode: B, now: s.now(), path, query: "cart_mandate_id=MND-cart-1" });
+      expect([m2.statusCode, m2.json()], path).toEqual([401, { code: "AGENT_MISMATCH" }]);
+    }
+    // Подпись покрывает cart_mandate_id: подмена мандата после подписи — SIGNATURE_INVALID, чужой список не читается.
+    const req = signedMerchantRequest({ ...asA(), path: "/v1/shops/SHOP-1042/orders", query: "cart_mandate_id=MND-cart-1" });
+    const forged = await app.inject({ method: "GET", url: "/v1/shops/SHOP-1042/orders?cart_mandate_id=MND-cart-2", headers: req.headers });
+    expect([forged.statusCode, forged.json()]).toEqual([401, { code: "SIGNATURE_INVALID" }]);
+    const none = await list(app, asA(), "MND-cart-1", "SHOP-0000");
+    expect([none.statusCode, none.json()]).toEqual([404, { code: "SHOP_NOT_FOUND" }]);
+  });
+
+  it("каталог ключей недоступен — 503 UPSTREAM_UNAVAILABLE на обоих адресах чтения (инвариант 3)", async () => {
+    const { s, a } = setup();
+    const verifier = new MerchantAgentVerifier(() => { throw new Error("каталог недоступен"); }, { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
+    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub(), now: s.now }), rateLimitPerMin: LIMIT });
+    for (const [path, query] of [["/v1/shops/SHOP-1042/orders", "cart_mandate_id=MND-cart-1"], ["/v1/shops/SHOP-1042/orders/ORD-x", ""]] as const) {
+      const r = await merchantCall(app, { side: a, agentCode: A, now: s.now(), path, query });
+      expect([r.statusCode, r.json()], path).toEqual([503, { code: "UPSTREAM_UNAVAILABLE" }]);
+    }
+    await app.close();
+  });
+
+  it("cart_mandate_id нет, пустой или повторён — 422 QUERY_INVALID; у READ_ONLY чтение разрешено, список пуст", async () => {
+    const { app, asA } = setup();
+    for (const query of ["", "cart_mandate_id=", "cart_mandate_id=MND-cart-1&cart_mandate_id=MND-cart-2", "mandate_id=MND-cart-1"]) {
+      const r = await merchantCall(app, { ...asA(), path: "/v1/shops/SHOP-1042/orders", query });
+      expect([r.statusCode, r.json()], query).toEqual([422, { code: "QUERY_INVALID" }]);
+    }
+    expect((await list(app, asA(), "MND-cart-1", "MKT-77")).json()).toEqual({ orders: [] });
+  });
+
+  it("RESET: соединение закрыто без ответа, заказ записан — сверка по мандату находит его, оплата проходит; null — ответ снова", async () => {
+    const { s, m, asA } = setup();
+    const base = await m.listen();
+    m.failOrderReply("RESET");
+    const call = { ...asA(), path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], cart_mandate_id: "MND-cart-1" } };
+    await expect(merchantFetch(base, call)).rejects.toThrow();
+    // Через inject обрыв тоже виден отказом, а не зависанием (light-my-request: ответ уничтожен до конца).
+    await expect(merchantCall(m.app, call)).rejects.toThrow();
+    const found = (await list(m.app, { ...asA(), now: s.now() }, "MND-cart-1")).json().orders;
+    expect(found).toHaveLength(2);
+    found.pop();
+    expect(found[0]).toMatchObject({ status: "CREATED", total: 39000, agent_code: A });
+    const paid = await merchantCall(m.app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${found[0].id}/payment`, body: pkg(found[0].id) });
+    expect(paid.json().status).toBe("PAID");
+    m.failOrderReply(null);
+    const again = await merchantFetch(base, { ...call, nonce: undefined });
+    expect(again.status).toBe(201);
+    expect((await list(m.app, asA(), "MND-cart-1")).json().orders).toHaveLength(3);
+  });
+
+  it("GARBLED: 201 с телом не по форме заказа, заказ записан — читается по номеру из сверки; чтение и оплата обрывом не затронуты", async () => {
+    const { app, m, asA } = setup();
+    m.failOrderReply("GARBLED");
+    const r = await order(app, asA(), "SHOP-1042", "BRD-1042-01");
+    expect(r.statusCode).toBe(201);
+    expect(() => JSON.parse(r.body)).toThrow();
+    expect(r.headers["content-type"]).toMatch(/^application\/json/);
+    const [found] = (await list(app, asA(), "MND-cart-1")).json().orders;
+    // Тело — начало записи именно этого заказа, обрезанное.
+    expect(r.body.length).toBeGreaterThan(0);
+    expect(JSON.stringify(found).startsWith(r.body)).toBe(true);
+    expect(r.body.length).toBeLessThan(JSON.stringify(found).length);
+    const one = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${found.id}` });
+    expect([one.statusCode, one.json()]).toEqual([200, found]);
+    expect((await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${found.id}/payment`, body: pkg(found.id) })).json().status).toBe("PAID");
   });
 });
 

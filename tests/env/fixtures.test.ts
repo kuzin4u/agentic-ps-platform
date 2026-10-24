@@ -24,6 +24,19 @@ function scan(node: unknown, out: { keys: string[]; values: string[] } = { keys:
   return out;
 }
 
+/**
+ * Каталог без времени: `updated_at` фикстур — на момент загрузки модуля, у витрины — по часам ответа (РП58 п. 6). Время
+ * сверяется отдельно: у ответа — `updated_at` = `responded_at` − возраст карточки; здесь — только наличие.
+ */
+function timeless(body: { items: readonly { updated_at?: string }[]; responded_at?: string }) {
+  if (body.responded_at !== undefined) {
+    for (const i of body.items) {
+      if (i.updated_at !== undefined) expect(Date.parse(body.responded_at) - Date.parse(i.updated_at)).toBe(7_200_000);
+    }
+  }
+  return body.items.map(({ updated_at, ...rest }) => ({ ...rest, has_updated_at: updated_at !== undefined }));
+}
+
 function expectNoCardData(node: unknown): void {
   const { keys, values } = scan(node);
   expect(keys.filter((k) => PAN_KEYS.test(k))).toEqual([]);
@@ -53,10 +66,14 @@ describe("Фикстуры витрин", () => {
         const path = `/v1/shops/${f.id}/catalog`;
         const human = await merchantCall(m.app, { path });
         if (f.behaviour === "REJECTS_UNIDENTIFIED") expect(human.statusCode).toBe(403);
-        else expect(human.json().items).toEqual(f.items);
+        else expect(timeless(human.json())).toEqual(timeless({ items: f.items }));
         const asAgent = await merchantCall(m.app, { path, side, agentCode: agent.agent_code });
-        expect(asAgent.json().items).toEqual(f.agent_items);
-        expect(asAgent.json().shop).toMatchObject({ id: f.id, merchant_id: f.merchant_id, zone: f.zone, readiness_mark: f.readiness_mark });
+        expect(timeless(asAgent.json())).toEqual(timeless({ items: f.agent_items }));
+        const { inn, mcc, payment_methods, delivery_regions, returns } = f;
+        expect(asAgent.json().shop).toEqual({
+          id: f.id, merchant_id: f.merchant_id, name: f.name, category: f.category, zone: f.zone, readiness_mark: f.readiness_mark,
+          inn, mcc, payment_methods, delivery_regions, ...(returns ? { returns } : {}),
+        });
       }
     } finally {
       await m.close();

@@ -2,9 +2,20 @@
 // что эмулятор продавцов (src/env/merchants/shops.ts): один источник. Тестовый интерфейс, не контракт (инвариант 10).
 // Закрытых ключей нет: пару генерирует потребитель, Платформа получает только открытый ключ (РП23 п. 2).
 import { MERCHANT_ERROR_HTTP, type MerchantErrorCode } from "../env/merchants/errors.js";
-import { SHOPS, byShopId, catalogView, zoneOf, type ShopBehaviour, type ShopItem, type Zone } from "../env/merchants/shops.js";
+import {
+  SHOPS,
+  byShopId,
+  catalogView,
+  zoneOf,
+  type CatalogItemView,
+  type DeliveryOption,
+  type ShopBehaviour,
+  type ShopItem,
+  type ShopReturns,
+  type Zone,
+} from "../env/merchants/shops.js";
 
-export type { MerchantErrorCode, ShopBehaviour, ShopItem, Zone };
+export type { CatalogItemView, DeliveryOption, MerchantErrorCode, ShopBehaviour, ShopItem, ShopReturns, Zone };
 
 /**
  * Коды отказа витрин эмулятора с HTTP-статусами (Р26 п. 5 агента; AG-04, AG-09): тело отказа витрины — `{code}`.
@@ -20,16 +31,26 @@ export interface MerchantFixture {
   readonly id: string;
   readonly merchant_id: string;
   readonly name: string;
+  readonly inn: string;
   readonly mcc: string;
   readonly category: string;
+  readonly payment_methods: readonly string[];
+  readonly delivery_regions: readonly string[];
+  /** Нет у неполной витрины SHOP-5501 (РП58 п. 9). */
+  readonly returns?: ShopReturns;
   readonly zone: Zone;
   readonly readiness_mark: boolean;
   readonly behaviour: ShopBehaviour;
-  /** Каталог, как его видит человек (запрос без подписи). */
-  readonly items: readonly Omit<ShopItem, "agent_price">[];
+  /**
+   * Каталог, как его видит человек (запрос без подписи). `updated_at` — на момент загрузки модуля; ответ витрины считает
+   * его по часам стенда в момент ответа (РП58 п. 6) — сравнивать по форме, не по значению.
+   */
+  readonly items: readonly CatalogItemView[];
   /** Каталог, как его видит опознанный агент: у DUAL_PRICE цена ниже (A5 п. 1.2). */
-  readonly agent_items: readonly Omit<ShopItem, "agent_price">[];
+  readonly agent_items: readonly CatalogItemView[];
 }
+
+const LOADED_AT = new Date();
 
 export const MERCHANT_FIXTURES: readonly MerchantFixture[] = Object.freeze(
   [...SHOPS]
@@ -39,13 +60,17 @@ export const MERCHANT_FIXTURES: readonly MerchantFixture[] = Object.freeze(
         id: s.id,
         merchant_id: s.merchant_id,
         name: s.name,
+        inn: s.inn,
         mcc: s.mcc,
         category: s.category,
+        payment_methods: s.payment_methods,
+        delivery_regions: s.delivery_regions,
+        ...(s.returns ? { returns: s.returns } : {}),
         zone: zoneOf(s),
         readiness_mark: s.readiness_mark,
         behaviour: s.behaviour,
-        items: Object.freeze(s.items.map((i) => Object.freeze(catalogView(i, false)))),
-        agent_items: Object.freeze(s.items.map((i) => Object.freeze(catalogView(i, true)))),
+        items: Object.freeze(s.items.map((i) => Object.freeze(catalogView(i, false, LOADED_AT)))),
+        agent_items: Object.freeze(s.items.map((i) => Object.freeze(catalogView(i, true, LOADED_AT)))),
       }),
     ),
 );

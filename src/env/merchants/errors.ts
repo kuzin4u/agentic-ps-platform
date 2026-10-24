@@ -11,6 +11,7 @@ export type MerchantErrorCode =
   | "ORDERS_NOT_ACCEPTED"
   | "ITEM_INVALID"
   | "ITEM_INCOMPLETE"
+  | "QUERY_INVALID"
   | "PACKAGE_INVALID"
   | "PACKAGE_MISMATCH"
   | "ORDER_NOT_PAYABLE"
@@ -28,6 +29,8 @@ export const MERCHANT_ERROR_HTTP: Readonly<Record<MerchantErrorCode, number>> = 
   ORDERS_NOT_ACCEPTED: 409,
   ITEM_INVALID: 422,
   ITEM_INCOMPLETE: 422,
+  // Чтение заказов без cart_mandate_id, с пустым или повторённым (РП58 п. 3).
+  QUERY_INVALID: 422,
   PACKAGE_INVALID: 422,
   PACKAGE_MISMATCH: 409,
   ORDER_NOT_PAYABLE: 409,
