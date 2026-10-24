@@ -7,7 +7,7 @@
 | [`SPEC.md`](SPEC.md) | ТЗ на Платформу: компоненты П1–П11, бюджет, порядок проверок ADP, ФП1–ФП16, НФТ |
 | [`PROCESSING-INTERFACE.md`](PROCESSING-INTERFACE.md) + [`processing-interface.yaml`](processing-interface.yaml) | Интерфейсы с процессингом и системами оператора ПИ-1–ПИ-9 |
 | [`AGENT-PROTOCOL.md`](AGENT-PROTOCOL.md) + [`agent-protocol.yaml`](agent-protocol.yaml) | Протокол агентских операций (ПАО) v1 для BuyerAgent |
-| [`MERCHANT-API.md`](MERCHANT-API.md) | API для продавцов и площадок: каталог ключей агентов, статус агента, проверка подписи у продавца, отличия от Visa TAP (РП22, РП56; знак готовности и сверка — ч. 2, РП57) |
+| [`MERCHANT-API.md`](MERCHANT-API.md) | API для продавцов и площадок: каталог ключей агентов, статус агента, проверка подписи у продавца, отличия от Visa TAP, знак готовности через эквайрера, метаданные пакета и сверка `credential_ref` → `op_ref` (РП22, РП56, РП57) |
 | [`CONDITIONAL-EXECUTION.md`](CONDITIONAL-EXECUTION.md) | Точка расширения «условное исполнение» и интерфейс `/cx/v1` для НСВР |
 | [`NORMS.md`](NORMS.md) | Нормы A1–A9 |
 | [`SCENARIOS.md`](SCENARIOS.md) | 28 сценариев Платформы |
