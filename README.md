@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.25.0** (эмулятор продавцов, MER-62-45: чтение заказа агентом по мандату корзины и по номеру, управляемый обрыв ответа на заказ; факты модели каталога у витрин — ИНН, MCC, способы оплаты, регионы, возврат числом, способы получения, время обновления карточки, `responded_at`). Подробности — `CHANGELOG.md`.
+Текущая версия — **v0.25.1** (DEP-1: зависимости с известными уязвимостями — `fast-uri` 3.1.9 / 4.2.3, `ip-address` 10.7.4, fastify точно 5.12.6; `npm audit` — 0; поведение стенда — как в v0.25.0). Подробности — `CHANGELOG.md`.
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.25.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.25.1"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.

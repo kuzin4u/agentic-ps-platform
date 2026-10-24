@@ -1,6 +1,6 @@
 {
   "name": "agentic-ps-platform",
-  "version": "0.25.0",
+  "version": "0.25.1",
   "private": true,
   "description": "Агентная платформа платёжной системы: ADP, журнал согласий, ПАО, эмуляторы окружения",
   "type": "module",
@@ -50,11 +50,11 @@
   "dependencies": {
     "@fastify/rate-limit": "11.2.0",
     "@kuzin4u/agentic-core": "git+https://github.com/kuzin4u/agentic-core.git#v0.11.0",
-    "fastify": "^5.12.6",
+    "fastify": "5.12.6",
     "pg": "8.23.0"
   },
   "overrides": {
     "fastify-plugin": "6.0.0",
-    "ip-address": "10.7.2"
+    "ip-address": "10.7.4"
   }
 }
