@@ -16,7 +16,8 @@ export interface MerchantCall {
   nonce?: string;
 }
 
-export async function merchantCall(app: FastifyInstance, c: MerchantCall): Promise<LightMyRequestResponse> {
+/** Подписанное обращение без отправки: метод, тело, заголовки и адрес — для тестов подмены после подписи. */
+export function signedMerchantRequest(c: MerchantCall) {
   const method = c.method ?? (c.body === undefined ? "GET" : "POST");
   const body = c.body === undefined ? "" : JSON.stringify(c.body);
   const query = c.query ?? "";
@@ -30,5 +31,16 @@ export async function merchantCall(app: FastifyInstance, c: MerchantCall): Promi
     };
     headers = signRequest({ method, path: c.path, query, headers, body }, c.side.signer).headers;
   }
-  return app.inject({ method, url: query ? `${c.path}?${query}` : c.path, headers, ...(body ? { payload: body } : {}) });
+  return { method, body, headers, url: query ? `${c.path}?${query}` : c.path };
+}
+
+export async function merchantCall(app: FastifyInstance, c: MerchantCall): Promise<LightMyRequestResponse> {
+  const { method, body, headers, url } = signedMerchantRequest(c);
+  return app.inject({ method, url, headers, ...(body ? { payload: body } : {}) });
+}
+
+/** То же обращение по настоящему HTTP — для обрыва соединения (RESET), которого inject не показывает. */
+export async function merchantFetch(base: string, c: MerchantCall): Promise<Response> {
+  const { method, body, headers, url } = signedMerchantRequest(c);
+  return fetch(`${base}${url}`, { method, headers, ...(body ? { body } : {}) });
 }

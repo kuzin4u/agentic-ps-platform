@@ -1,5 +1,6 @@
 // Эмулятор продавцов: форма API — К6 пула (GET /v1/shops, GET /v1/shops/{id}/catalog, POST /v1/shops/{id}/orders),
-// плюс приём пакета агентской оплаты (POST /v1/shops/{id}/orders/{order_id}/payment, РП22 п. 5).
+// плюс приём пакета агентской оплаты (POST /v1/shops/{id}/orders/{order_id}/payment, РП22 п. 5) и чтение заказа агентом
+// для сверки после потерянного ответа (GET /v1/shops/{id}/orders?cart_mandate_id, GET …/orders/{order_id}; РП58).
 // Эмулятор, а не контракт Платформы: публичный контракт для агентов — только ПАО (инвариант 10).
 // Сумму заказа считает продавец по своей цене; в авторизацию её переносит эквайрер (инвариант 5).
 import { randomUUID } from "node:crypto";
@@ -38,7 +39,12 @@ export interface MerchantsOptions {
   readonly rateLimitPerMin: number;
   /** Управляемый отказ списка витрин из теста (#49, РП56 п. 6); null — список отдаётся. Читается при каждом обращении. */
   readonly shopListFailure?: () => ShopListFailure | null;
+  /** Управляемый обрыв ответа на POST …/orders после записи заказа (#62, РП58 п. 4); null — ответ отдаётся. */
+  readonly orderReplyFailure?: () => OrderReplyFailure | null;
 }
+
+/** RESET — соединение закрыто без ответа; GARBLED — 201 с телом не по форме заказа (обрезанный JSON). */
+export type OrderReplyFailure = "RESET" | "GARBLED";
 
 /** Отказ списка витрин: 503 или 429 с Retry-After — отказ стадии 2 агента на ответе эмулятора, а не на подмене. */
 export interface ShopListFailure {
@@ -244,7 +250,46 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
         fulfilment_refused: false,
       };
       orders.set(order.id, order);
+      // Обрыв — после записи: у продавца заказ есть, агент о нём не знает (SHOP_ORDER_STATE_UNKNOWN), сверка — чтением.
+      const failure = opts.orderReplyFailure?.() ?? null;
+      if (failure === "RESET") {
+        reply.hijack();
+        reply.raw.destroy();
+        return reply;
+      }
+      if (failure === "GARBLED") {
+        const text = JSON.stringify(order);
+        return reply.code(201).type("application/json").send(text.slice(0, text.length >> 1));
+      }
       return reply.code(201).send(order);
+    });
+
+    // Чтение заказов агентом (РП58 п. 1–3): опознание и отказы — как у POST …/orders; видны только свои заказы.
+    app.get<{ Params: { id: string }; Querystring: { cart_mandate_id?: string | string[] } }>(
+      "/v1/shops/:id/orders",
+      async (req, reply) => {
+        const shop = byId.get(req.params.id);
+        if (!shop) return fail(reply, "SHOP_NOT_FOUND");
+        const agent = await requireAgent(req, reply);
+        if (!agent) return reply;
+        const cart_mandate_id = req.query.cart_mandate_id;
+        if (typeof cart_mandate_id !== "string" || cart_mandate_id === "") return fail(reply, "QUERY_INVALID");
+        // Пусто — 200 {orders: []}: «заказа нет» — ответ сверки; чужие заказы не видны и не выдают себя.
+        const found = [...orders.values()].filter(
+          (o) => o.shop_id === shop.id && o.agent_code === agent && o.cart_mandate_id === cart_mandate_id,
+        );
+        return { orders: found };
+      },
+    );
+
+    app.get<{ Params: { id: string; order_id: string } }>("/v1/shops/:id/orders/:order_id", async (req, reply) => {
+      const shop = byId.get(req.params.id);
+      if (!shop) return fail(reply, "SHOP_NOT_FOUND");
+      const agent = await requireAgent(req, reply);
+      if (!agent) return reply;
+      const order = orders.get(req.params.order_id);
+      if (!order || order.shop_id !== shop.id || order.agent_code !== agent) return fail(reply, "ORDER_NOT_FOUND");
+      return order;
     });
 
     app.post<{ Params: { id: string; order_id: string } }>(

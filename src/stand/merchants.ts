@@ -7,6 +7,7 @@ import { Acquirer, OpkcStub } from "../env/acquirer/index.js";
 import {
   MerchantAgentVerifier,
   buildMerchantsServer,
+  type OrderReplyFailure,
   type PackageMetadata,
   type ReconciliationPort,
   type ShopListFailure,
@@ -36,6 +37,11 @@ export interface MerchantsStand {
   readonly verifier: MerchantAgentVerifier;
   /** Отказ списка витрин из теста (#49): 503 UPSTREAM_UNAVAILABLE или 429 RATE_LIMITED с Retry-After; null — снять. */
   failShopList(failure: ShopListFailure | null): void;
+  /**
+   * Обрыв ответа на POST …/orders после записи заказа (#62, РП58 п. 4): RESET — соединение закрыто без ответа, GARBLED —
+   * 201 с обрезанным телом; действует до снятия (null). Сверка — чтением заказа по cart_mandate_id или номеру.
+   */
+  failOrderReply(failure: OrderReplyFailure | null): void;
   listen(): Promise<string>;
   close(): Promise<void>;
 }
@@ -67,12 +73,14 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     now: stand.now,
   });
   let shopListFailure: ShopListFailure | null = null;
+  let orderReplyFailure: OrderReplyFailure | null = null;
   const app = buildMerchantsServer({
     verifier,
     acquirer,
     reconciliation,
     rateLimitPerMin: opts.rateLimitPerMin ?? stand.params.merchant_rate_limit_per_min,
     shopListFailure: () => shopListFailure,
+    orderReplyFailure: () => orderReplyFailure,
   });
   return {
     app,
@@ -82,6 +90,7 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     reconciliationReplies: replies,
     verifier,
     failShopList: (failure) => void (shopListFailure = failure),
+    failOrderReply: (failure) => void (orderReplyFailure = failure),
     async listen() {
       await app.listen({ host: "127.0.0.1", port: 0 });
       const addr = app.server.address();

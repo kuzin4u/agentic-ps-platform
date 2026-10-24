@@ -5,7 +5,7 @@ import { Acquirer, OpkcStub } from "../../src/env/acquirer/index.js";
 import { createMerchants, createStand, type MerchantsStand, type Stand } from "../../src/stand/index.js";
 import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
-import { merchantCall } from "../support/merchant-call.js";
+import { merchantCall, merchantFetch, signedMerchantRequest } from "../support/merchant-call.js";
 
 const LIMIT = loadParams().merchant_rate_limit_per_min;
 const A = "nspk:agent:shop-a:v1";
@@ -341,6 +341,117 @@ describe("Лимит частоты витрин по адресу (CodeQL js/mi
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub() });
     const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
     for (const v of [0, 1.5, Number.NaN]) expect(() => buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: v })).toThrow();
+  });
+});
+
+describe("#62 (РП58 п. 1–4): чтение заказа агентом и управляемый обрыв ответа на заказ", () => {
+  const list = (app: Stand["app"], who: object, mandate: string | null, shop = "SHOP-1042") =>
+    merchantCall(app, { ...who, path: `/v1/shops/${shop}/orders`, query: mandate === null ? "" : `cart_mandate_id=${mandate}` });
+
+  it("по мандату корзины — только свои заказы этой витрины в порядке создания, та же запись, что у POST; пусто — 200", async () => {
+    const { app, s, b, asA } = setup();
+    const asB = { side: b, agentCode: B, now: s.now() };
+    const o1 = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    const o2 = (await order(app, asA(), "SHOP-1042", "BRD-1042-02", 2)).json();
+    await order(app, asA(), "SHOP-1042", "BRD-1042-01", 1, { cart_mandate_id: "MND-cart-2" });
+    await order(app, asA(), "SHOP-4401", "BRD-4401-01");
+    const ob = (await order(app, asB, "SHOP-1042", "BRD-1042-01")).json();
+    const r = await list(app, asA(), "MND-cart-1");
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ orders: [o1, o2] });
+    expect((await list(app, asB, "MND-cart-1")).json()).toEqual({ orders: [ob] });
+    expect((await list(app, asA(), "MND-unknown")).json()).toEqual({ orders: [] });
+    // Состояние — текущее: после оплаты — PAID.
+    expect((await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o1.id}/payment`, body: pkg(o1.id) })).statusCode).toBe(200);
+    expect((await list(app, asA(), "MND-cart-1")).json().orders.map((o: { status: string }) => o.status)).toEqual(["PAID", "CREATED"]);
+  });
+
+  it("по номеру — свой заказ; чужой агент, другая витрина, неизвестный номер — 404 ORDER_NOT_FOUND", async () => {
+    const { app, s, b, asA } = setup();
+    const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    const one = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}` });
+    expect([one.statusCode, one.json()]).toEqual([200, o]);
+    for (const [who, path] of [
+      [{ side: b, agentCode: B, now: s.now() }, `/v1/shops/SHOP-1042/orders/${o.id}`],
+      [asA(), `/v1/shops/SHOP-4401/orders/${o.id}`],
+      [asA(), "/v1/shops/SHOP-1042/orders/ORD-unknown"],
+    ] as const) {
+      const r = await merchantCall(app, { ...who, path });
+      expect([r.statusCode, r.json()], path).toEqual([404, { code: "ORDER_NOT_FOUND" }]);
+    }
+  });
+
+  it("опознание и отказы — как у POST: без подписи 403, подпись чужим ключом 401, строка запроса под подписью, витрины нет 404", async () => {
+    const { app, s, a, asA } = setup();
+    for (const path of ["/v1/shops/SHOP-1042/orders", "/v1/shops/SHOP-1042/orders/ORD-x"]) {
+      const r = await merchantCall(app, { path, query: "cart_mandate_id=MND-cart-1" });
+      expect([r.statusCode, r.json()], path).toEqual([403, { code: "AGENT_UNIDENTIFIED" }]);
+      const m2 = await merchantCall(app, { side: a, agentCode: B, now: s.now(), path, query: "cart_mandate_id=MND-cart-1" });
+      expect([m2.statusCode, m2.json()], path).toEqual([401, { code: "AGENT_MISMATCH" }]);
+    }
+    // Подпись покрывает cart_mandate_id: подмена мандата после подписи — SIGNATURE_INVALID, чужой список не читается.
+    const req = signedMerchantRequest({ ...asA(), path: "/v1/shops/SHOP-1042/orders", query: "cart_mandate_id=MND-cart-1" });
+    const forged = await app.inject({ method: "GET", url: "/v1/shops/SHOP-1042/orders?cart_mandate_id=MND-cart-2", headers: req.headers });
+    expect([forged.statusCode, forged.json()]).toEqual([401, { code: "SIGNATURE_INVALID" }]);
+    const none = await list(app, asA(), "MND-cart-1", "SHOP-0000");
+    expect([none.statusCode, none.json()]).toEqual([404, { code: "SHOP_NOT_FOUND" }]);
+  });
+
+  it("каталог ключей недоступен — 503 UPSTREAM_UNAVAILABLE на обоих адресах чтения (инвариант 3)", async () => {
+    const { s, a } = setup();
+    const verifier = new MerchantAgentVerifier(() => { throw new Error("каталог недоступен"); }, { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
+    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub(), now: s.now }), rateLimitPerMin: LIMIT });
+    for (const [path, query] of [["/v1/shops/SHOP-1042/orders", "cart_mandate_id=MND-cart-1"], ["/v1/shops/SHOP-1042/orders/ORD-x", ""]] as const) {
+      const r = await merchantCall(app, { side: a, agentCode: A, now: s.now(), path, query });
+      expect([r.statusCode, r.json()], path).toEqual([503, { code: "UPSTREAM_UNAVAILABLE" }]);
+    }
+    await app.close();
+  });
+
+  it("cart_mandate_id нет, пустой или повторён — 422 QUERY_INVALID; у READ_ONLY чтение разрешено, список пуст", async () => {
+    const { app, asA } = setup();
+    for (const query of ["", "cart_mandate_id=", "cart_mandate_id=MND-cart-1&cart_mandate_id=MND-cart-2", "mandate_id=MND-cart-1"]) {
+      const r = await merchantCall(app, { ...asA(), path: "/v1/shops/SHOP-1042/orders", query });
+      expect([r.statusCode, r.json()], query).toEqual([422, { code: "QUERY_INVALID" }]);
+    }
+    expect((await list(app, asA(), "MND-cart-1", "MKT-77")).json()).toEqual({ orders: [] });
+  });
+
+  it("RESET: соединение закрыто без ответа, заказ записан — сверка по мандату находит его, оплата проходит; null — ответ снова", async () => {
+    const { s, m, asA } = setup();
+    const base = await m.listen();
+    m.failOrderReply("RESET");
+    const call = { ...asA(), path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], cart_mandate_id: "MND-cart-1" } };
+    await expect(merchantFetch(base, call)).rejects.toThrow();
+    // Через inject обрыв тоже виден отказом, а не зависанием (light-my-request: ответ уничтожен до конца).
+    await expect(merchantCall(m.app, call)).rejects.toThrow();
+    const found = (await list(m.app, { ...asA(), now: s.now() }, "MND-cart-1")).json().orders;
+    expect(found).toHaveLength(2);
+    found.pop();
+    expect(found[0]).toMatchObject({ status: "CREATED", total: 39000, agent_code: A });
+    const paid = await merchantCall(m.app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${found[0].id}/payment`, body: pkg(found[0].id) });
+    expect(paid.json().status).toBe("PAID");
+    m.failOrderReply(null);
+    const again = await merchantFetch(base, { ...call, nonce: undefined });
+    expect(again.status).toBe(201);
+    expect((await list(m.app, asA(), "MND-cart-1")).json().orders).toHaveLength(3);
+  });
+
+  it("GARBLED: 201 с телом не по форме заказа, заказ записан — читается по номеру из сверки; чтение и оплата обрывом не затронуты", async () => {
+    const { app, m, asA } = setup();
+    m.failOrderReply("GARBLED");
+    const r = await order(app, asA(), "SHOP-1042", "BRD-1042-01");
+    expect(r.statusCode).toBe(201);
+    expect(() => JSON.parse(r.body)).toThrow();
+    expect(r.headers["content-type"]).toMatch(/^application\/json/);
+    const [found] = (await list(app, asA(), "MND-cart-1")).json().orders;
+    // Тело — начало записи именно этого заказа, обрезанное.
+    expect(r.body.length).toBeGreaterThan(0);
+    expect(JSON.stringify(found).startsWith(r.body)).toBe(true);
+    expect(r.body.length).toBeLessThan(JSON.stringify(found).length);
+    const one = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${found.id}` });
+    expect([one.statusCode, one.json()]).toEqual([200, found]);
+    expect((await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${found.id}/payment`, body: pkg(found.id) })).json().status).toBe("PAID");
   });
 });
 
