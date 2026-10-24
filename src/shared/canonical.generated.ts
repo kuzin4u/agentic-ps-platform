@@ -1,9 +1,9 @@
 // Сгенерировано scripts/gen-shared.mjs из docs/core/processing-interface.yaml — не править вручную.
-// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 ff3612e49e30824ef7af8d378067b1f5022176e4835405f8ed94c3019e4d2a79
+// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 d877dd231e9a106a3e7838ade862e6b35d6409b78c03098f12263ee9f76a17e2
 // Номера полей и кодов внешних форматов здесь нет: только каноническая модель [альбом] (РП6).
 
 export const PI_VERSION = "1.0.0-draft";
-export const PI_SPEC_SHA256 = "ff3612e49e30824ef7af8d378067b1f5022176e4835405f8ed94c3019e4d2a79";
+export const PI_SPEC_SHA256 = "d877dd231e9a106a3e7838ade862e6b35d6409b78c03098f12263ee9f76a17e2";
 
 export interface Instrument {
   kind: "AGENT_TOKEN" | "ACCOUNT_LINK" | "CARD_TOKEN";
@@ -107,7 +107,7 @@ export interface DealOutcome {
 export interface MerchantReadiness {
   merchant_id: string;
   status: "ACTIVE" | "SUSPENDED" | "NONE";
-  /** время записи, от которой действует статус; у NONE без записей — null */
+  /** received_at последней записи знака (эквайрера или оператора), при SUSPENDED — записи приостановления; в том числе записи, не менявшей статус (ACTIVE поверх ACTIVE, снятие приостановления); записей нет — null */
   since: string | null;
 }
 
@@ -519,7 +519,7 @@ export const PI_SCHEMAS: Record<string, unknown> = {
         "type": "string",
         "format": "date-time",
         "nullable": true,
-        "description": "время записи, от которой действует статус; у NONE без записей — null"
+        "description": "received_at последней записи знака (эквайрера или оператора), при SUSPENDED — записи приостановления; в том числе записи, не менявшей статус (ACTIVE поверх ACTIVE, снятие приостановления); записей нет — null"
       }
     }
   },

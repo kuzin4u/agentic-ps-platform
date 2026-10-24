@@ -284,7 +284,7 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: время записи, от которой действует статус; у NONE без записей — null
+          description: "received_at последней записи знака (эквайрера или оператора), при SUSPENDED — записи приостановления; в том числе записи, не менявшей статус (ACTIVE поверх ACTIVE, снятие приостановления); записей нет — null"
     PaymentReconciliation:
       type: object
       description: Сверка метаданных пакета с записью реквизита (РП22 п. 6, РП57 п. 5); op_ref — результат, а не вход
@@ -1031,7 +1031,7 @@ paths:
   /participants/v1/merchants/{id}/readiness:
     post:
       summary: ПИ-8 Знак готовности продавца (эквайрер, A5 п. 5, РП57 п. 2)
-      description: "Эквайрер подаёт и подтверждает (`ACTIVE`) или снимает (`WITHDRAWN`) знак своего продавца записью, подписанной ключом Ed25519. Подписываемая строка — canonicalJson записи с полем `context` = `pao:participant-merchant-readiness:v1` и `merchant_id` из пути; в теле `context` и `merchant_id` нет. Записи — только вставкой, порядок — номер записи Платформы. `readiness_ref` уникален у участника навсегда: повтор той же записи — 200 без записи и без изменения статуса, та же ссылка с другой записью — 409 `READINESS_CONFLICT`. `issued_at` не позже часов Платформы больше чем на `signature_skew_sec`. Приостанавливает (`SUSPENDED`) и снимает приостановление только оператор (A5 п. 5.3); при `SUSPENDED` эквайрер знак не меняет — 409 `READINESS_SUSPENDED`. Статус: последняя запись оператора `SUSPENDED` → `SUSPENDED`; иначе по последней записи эквайрера — `ACTIVE` или `NONE`. Знак не влияет на порядок выдачи и не читается ADP (A5 п. 5.2, A6 п. 2.1)."
+      description: "Эквайрер подаёт и подтверждает (`ACTIVE`) или снимает (`WITHDRAWN`) знак своего продавца записью, подписанной ключом Ed25519. Подписываемая строка — canonicalJson записи с полем `context` = `pao:participant-merchant-readiness:v1` и `merchant_id` из пути; в теле `context` и `merchant_id` нет. Записи — только вставкой, порядок — номер записи Платформы. `readiness_ref` уникален у участника навсегда: повтор той же записи — 200 без записи и без изменения статуса (повтор проверяется раньше приостановления: та же запись при `SUSPENDED` — тоже 200 с текущим статусом), та же ссылка с другой записью — 409 `READINESS_CONFLICT`. `issued_at` не позже часов Платформы больше чем на `signature_skew_sec`. Приостанавливает (`SUSPENDED`) и снимает приостановление только оператор (A5 п. 5.3); при `SUSPENDED` эквайрер знак не меняет — 409 `READINESS_SUSPENDED`. Статус: последняя запись оператора `SUSPENDED` → `SUSPENDED`; иначе по последней записи эквайрера — `ACTIVE` или `NONE`. Знак не влияет на порядок выдачи и не читается ADP (A5 п. 5.2, A6 п. 2.1)."
       parameters:
       - $ref: '#/components/parameters/MerchantId'
       requestBody:
@@ -1121,7 +1121,7 @@ paths:
         '404':
           description: "`MERCHANT_NOT_FOUND` — продавца нет в перечне этого эквайрера"
         '503':
-          description: "`STATE_UNAVAILABLE`, Retry-After"
+          description: "`STATE_UNAVAILABLE` — сбой хранилища знака; `UPSTREAM_UNAVAILABLE` — сбой хранилища nonce при проверке подписи запроса; Retry-After"
   /participants/v1/merchants/{id}/payments:
     post:
       summary: ПИ-8 Метаданные пакета и сверка credential_ref → op_ref (эквайрер, РП22 п. 6, РП57 п. 5)
@@ -1227,7 +1227,7 @@ paths:
         '404':
           description: "`CREDENTIAL_NOT_FOUND`"
         '503':
-          description: "`STATE_UNAVAILABLE`, Retry-After"
+          description: "`STATE_UNAVAILABLE` — сбой хранилища; `UPSTREAM_UNAVAILABLE` — сбой хранилища nonce при проверке подписи запроса; Retry-After"
   /disputes/v1/scope-check:
     post:
       summary: ПИ-7/П7 Вычисление in_scope по op_ref

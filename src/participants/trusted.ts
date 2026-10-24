@@ -24,12 +24,22 @@ export const STAND_ISSUER_CODE = "stand:issuer-emulator";
 /** Код эмулятора оператора УПК стенда (РП51 п. 12): роль UPK, ключ при старте стенда и только в памяти. */
 export const STAND_UPK_CODE = "stand:upk-emulator";
 
+/** Код эмулятора эквайрера стенда (РП57 п. 1): роль ACQUIRER, ключ при старте стенда и только в памяти. */
+export const STAND_ACQUIRER_CODE = "stand:acquirer-emulator";
+
+/** Коды эмуляторов стенда: в рабочем сервере — отказ запуска при любой роли. */
+const STAND_CODES: ReadonlySet<string> = new Set([STAND_ISSUER_CODE, STAND_UPK_CODE, STAND_ACQUIRER_CODE]);
+
 /**
- * Роль участника (РП51 п. 12): ISSUER — банк (мандаты, отзыв, лимиты, лента, решение по подтверждению своего клиента);
- * UPK — оператор страницы УПК, подписывает только решения по подтверждению. Боевой UPK — отказ запуска: решение
- * оператора не привязано к аутентификации у эмитента, подделанное одобрение неотличимо от настоящего.
+ * Роль участника (РП51 п. 12, РП57 п. 1): ISSUER — банк (мандаты, отзыв, лимиты, лента, решение по подтверждению своего
+ * клиента); UPK — оператор страницы УПК, подписывает только решения по подтверждению; ACQUIRER — эквайрер, подписывает
+ * только маршруты эквайрера ПИ-8 (знак, метаданные, статус агента) и только для продавцов из своего перечня. Боевой UPK —
+ * отказ запуска: решение оператора не привязано к аутентификации у эмитента, подделанное одобрение неотличимо от настоящего.
  */
-export type ParticipantRole = "ISSUER" | "UPK";
+export type ParticipantRole = "ISSUER" | "UPK" | "ACQUIRER";
+
+/** Метка подписи записи знака готовности (РП57 п. 2): своя — подписи других записей участника не подходят. */
+export const PARTICIPANT_READINESS_CONTEXT = "pao:participant-merchant-readiness:v1";
 
 /**
  * Не больше одного боевого участника (эмулятор стенда не считается), пока мандат не привязан к банку (РП36 доп.):
@@ -54,7 +64,13 @@ export interface TrustedParticipantKey {
    * один; смена — новой записью участника. Нет — уведомления только лентой. Форма и адреса имени — при каждой отправке.
    */
   readonly notify_url?: string;
+  /** Перечень продавцов эквайрера (РП57 п. 1): у ACQUIRER обязателен и непуст, у всех ключей один; у прочих ролей — нет. */
+  readonly merchants?: readonly string[];
 }
+
+/** merchant_id — как в POST /pao/v1/credentials: непустая строка до 128 знаков (processing-interface.yaml, MerchantId). */
+export const MERCHANT_ID_MAX = 128;
+export const isMerchantId = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= MERCHANT_ID_MAX;
 
 /** Порядок отзыва на стенде (РП37 п. 5). */
 export const STAND_REVOCATION_ORDER = "bank:stand:issuer-emulator:revocation:v1";
@@ -77,6 +93,10 @@ export class TrustedParticipants {
   private readonly notifyUrls = new Map<string, string | null>();
   /** Роль по участнику (РП51 п. 12). */
   private readonly roles = new Map<string, ParticipantRole>();
+  /** Эквайрер продавца (РП57 п. 1): один продавец — один эквайрер. */
+  private readonly acquirers = new Map<string, string>();
+  /** Перечень продавцов по эквайреру — для сверки записей ключей одного участника. */
+  private readonly merchantLists = new Map<string, string>();
 
   constructor(list: readonly TrustedParticipantKey[], opts: TrustedParticipantsOptions) {
     const live = new Set<string>();
@@ -84,10 +104,10 @@ export class TrustedParticipants {
       if (typeof k.participant_code !== "string" || !PARTICIPANT_CODE.test(k.participant_code)) {
         throw new Error(`Доверенные участники: недопустимый participant_code «${String(k.participant_code)}»`);
       }
-      // Ключа нет — ISSUER; ключ есть — только ISSUER или UPK: null и прочее — отказ, а не банк по умолчанию (fail-closed).
+      // Ключа нет — ISSUER; ключ есть — только ISSUER, UPK или ACQUIRER: null и прочее — отказ, а не банк по умолчанию (fail-closed).
       const role = "role" in k ? k.role : "ISSUER";
-      if (role !== "ISSUER" && role !== "UPK") {
-        throw new Error(`Доверенные участники: недопустимая role «${String(role)}» у ${k.participant_code} (РП51 п. 12)`);
+      if (role !== "ISSUER" && role !== "UPK" && role !== "ACQUIRER") {
+        throw new Error(`Доверенные участники: недопустимая role «${String(role)}» у ${k.participant_code} (РП51 п. 12, РП57 п. 1)`);
       }
       if (this.roles.has(k.participant_code) && this.roles.get(k.participant_code) !== role) {
         throw new Error(`Доверенные участники: у ${k.participant_code} разные role в записях ключей (РП51 п. 12)`);
@@ -103,7 +123,43 @@ export class TrustedParticipants {
       if ((k.participant_code === STAND_UPK_CODE) !== (role === "UPK")) {
         throw new Error(`Доверенные участники: роль UPK — только у эмулятора ${STAND_UPK_CODE} и только на стенде (РП51 п. 12)`);
       }
-      if (role === "UPK") {
+      // Коды эмуляторов стенда вне стенда — отказ при любой роли (ревью КТ1 PS-30 ч. 2 № 11): иначе эквайрер с кодом
+      // stand:issuer-emulator путал бы журнал процесса.
+      if (!opts.stand && STAND_CODES.has(k.participant_code)) {
+        throw new Error(`Доверенные участники: код эмулятора ${k.participant_code} допустим только на стенде (РП36 доп., РП51 п. 12, РП57 п. 1)`);
+      }
+      if (k.participant_code === STAND_ACQUIRER_CODE && (role !== "ACQUIRER" || !opts.stand)) {
+        throw new Error(`Доверенные участники: ключ эмулятора ${STAND_ACQUIRER_CODE} — роль ACQUIRER и только на стенде (РП57 п. 1)`);
+      }
+      if (role !== "ACQUIRER" && k.merchants !== undefined) {
+        throw new Error(`Доверенные участники: перечень merchants — только у роли ACQUIRER, у ${k.participant_code} — ${role} (РП57 п. 1)`);
+      }
+      if (role === "ACQUIRER") {
+        // Эквайрер (РП57 п. 1): только перечень продавцов; порядка отзыва и вебхука нет — он не банк клиента.
+        if (k.revocation_order !== undefined || k.notify_url !== undefined) {
+          throw new Error(`Доверенные участники: у ${k.participant_code} (ACQUIRER) нет revocation_order и notify_url (РП57 п. 1)`);
+        }
+        const merchants = k.merchants;
+        if (!Array.isArray(merchants) || merchants.length === 0 || !merchants.every(isMerchantId) || new Set(merchants).size !== merchants.length) {
+          throw new Error(`Доверенные участники: у ${k.participant_code} (ACQUIRER) перечень merchants — непустой, без повторов, merchant_id до ${MERCHANT_ID_MAX} знаков (РП57 п. 1)`);
+        }
+        const listKey = JSON.stringify([...merchants].sort());
+        const known = this.merchantLists.get(k.participant_code);
+        if (known !== undefined && known !== listKey) {
+          throw new Error(`Доверенные участники: у ${k.participant_code} разные перечни merchants в записях ключей (РП57 п. 1)`);
+        }
+        if (known === undefined) {
+          this.merchantLists.set(k.participant_code, listKey);
+          for (const m of merchants) {
+            // Один продавец — один эквайрер (РП57 п. 1, вопрос 1): иначе чей знак действует — неоднозначно (fail-closed).
+            const other = this.acquirers.get(m);
+            if (other !== undefined) {
+              throw new Error(`Доверенные участники: продавец ${m} в перечнях двух эквайреров (${other}, ${k.participant_code}) — один продавец, один эквайрер (РП57 п. 1)`);
+            }
+            this.acquirers.set(m, k.participant_code);
+          }
+        }
+      } else if (role === "UPK") {
         if (k.revocation_order !== undefined) {
           throw new Error(`Доверенные участники: у ${k.participant_code} (UPK) порядка отзыва нет — он не банк клиента (РП51 п. 12)`);
         }
@@ -168,6 +224,16 @@ export class TrustedParticipants {
     return this.roles.get(participant_code);
   }
 
+  /** Продавец в перечне этого эквайрера (РП57 п. 1); не эквайрер или чужой продавец — false. */
+  serves(participant_code: string, merchant_id: string): boolean {
+    return this.acquirers.get(merchant_id) === participant_code;
+  }
+
+  /** Подпись эквайрера над записью знака готовности (РП57 п. 2): только роль ACQUIRER, своя метка. */
+  verifyReadiness(record: ReadinessSignedRecord, signature: string): boolean {
+    return this.verifyInput(record.participant_code, record.kid, participantReadinessSigningInput(record), signature, ACQUIRER_ONLY);
+  }
+
   /**
    * Подпись участника над записью о решении; неизвестный участник или ключ — false, как неверная подпись. Здесь и в
    * прочих проверках банка UPK — false, как чужой банк (РП51 п. 12): он подписывает только решения по подтверждению.
@@ -196,9 +262,12 @@ export class TrustedParticipants {
     return this.verifyInput(record.participant_code, record.kid, participantConfirmationSigningInput(record), signature, ANY_ROLE);
   }
 
-  /** Подпись Ed25519 над готовыми байтами (основа подписи запроса RFC 9421, РП46 (в)); неизвестный ключ и UPK — false. */
-  verifyRaw(participant_code: string, kid: string, data: Buffer, sig: Buffer): boolean {
-    if (!ISSUER_ONLY.has(this.roles.get(participant_code) as ParticipantRole)) return false;
+  /**
+   * Подпись Ed25519 над готовыми байтами (основа подписи запроса RFC 9421, РП46 (в)); неизвестный ключ и роль вне roles —
+   * false. По умолчанию — только ISSUER (чтения эмитента); чтения эквайрера — ACQUIRER (РП57 п. 3, 6).
+   */
+  verifyRaw(participant_code: string, kid: string, data: Buffer, sig: Buffer, roles: ReadonlySet<ParticipantRole> = ISSUER_ONLY): boolean {
+    if (!roles.has(this.roles.get(participant_code) as ParticipantRole)) return false;
     const key = this.keys.get(keyId(participant_code, kid));
     return key !== undefined && sig.length === 64 && verify(null, data, key, sig);
   }
@@ -215,8 +284,34 @@ export class TrustedParticipants {
 
 const keyId = (participant_code: string, kid: string): string => `${participant_code}\n${kid}`;
 
-const ISSUER_ONLY: ReadonlySet<ParticipantRole> = new Set(["ISSUER"]);
+export const ISSUER_ONLY: ReadonlySet<ParticipantRole> = new Set(["ISSUER"]);
+export const ACQUIRER_ONLY: ReadonlySet<ParticipantRole> = new Set(["ACQUIRER"]);
 const ANY_ROLE: ReadonlySet<ParticipantRole> = new Set(["ISSUER", "UPK"]);
+
+/** Подписываемая эквайрером запись знака готовности (РП57 п. 2); метка контекста добавляется при подписи. */
+export interface ReadinessSignedRecord {
+  readonly participant_code: string;
+  readonly kid: string;
+  readonly merchant_id: string;
+  readonly readiness_ref: string;
+  readonly status: "ACTIVE" | "WITHDRAWN";
+  readonly issued_at: string;
+}
+
+/** Байты подписи знака: canonicalJson записи с меткой pao:participant-merchant-readiness:v1, UTF-8. */
+export const participantReadinessSigningInput = (r: ReadinessSignedRecord): Buffer =>
+  Buffer.from(
+    canonicalJson({
+      context: PARTICIPANT_READINESS_CONTEXT,
+      participant_code: r.participant_code,
+      kid: r.kid,
+      merchant_id: r.merchant_id,
+      readiness_ref: r.readiness_ref,
+      status: r.status,
+      issued_at: r.issued_at,
+    }),
+    "utf8",
+  );
 
 /** Подписываемая участником запись о решении клиента (РП36 доп.); метка контекста добавляется при подписи. */
 export type ParticipantSignedRecord = Omit<MandateDecisionPayload, "signature">;
@@ -291,10 +386,19 @@ export function loadTrustedParticipants(path: string | undefined, opts: TrustedP
     throw new Error(`PARTICIPANT_KEYS_PATH=${path}: ожидается {"participants": [...]}`);
   }
   for (const k of list) {
-    // role — необязательное (РП51 п. 12); UPK в рабочем сервере отвергнет конструктор.
+    // role — необязательное (РП51 п. 12); UPK в рабочем сервере отвергнет конструктор. У ACQUIRER вместо порядка отзыва —
+    // перечень merchants (РП57 п. 1); его форму проверяет конструктор.
     const fields = k !== null && typeof k === "object" ? Object.keys(k).filter((f) => f !== "role").sort().join(",") : "";
-    if (fields !== FILE_FIELDS && !(fields === "alg,kid,participant_code,public_key" && (k as { role?: unknown }).role === "UPK")) {
-      throw new Error(`PARTICIPANT_KEYS_PATH=${path}: запись — ровно participant_code, kid, alg, public_key, revocation_order и необязательное role`);
+    const role = (k as { role?: unknown } | null)?.role;
+    const ok =
+      fields === FILE_FIELDS ||
+      (fields === "alg,kid,participant_code,public_key" && role === "UPK") ||
+      (fields === "alg,kid,merchants,participant_code,public_key" && role === "ACQUIRER");
+    if (!ok) {
+      throw new Error(
+        `PARTICIPANT_KEYS_PATH=${path}: запись — ровно participant_code, kid, alg, public_key, revocation_order и необязательное role; ` +
+          `у role ACQUIRER — merchants вместо revocation_order`,
+      );
     }
   }
   return new TrustedParticipants(list as TrustedParticipantKey[], opts);

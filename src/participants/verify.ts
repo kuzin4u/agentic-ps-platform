@@ -6,7 +6,7 @@
 import { contentDigest, signatureBase, type AsyncNonceStore } from "@kuzin4u/agentic-core";
 import type { PaoRequest } from "../pao/verify.js";
 import { paoNonceStore } from "../pao/stores.js";
-import type { TrustedParticipants } from "./trusted.js";
+import { ISSUER_ONLY, type ParticipantRole, type TrustedParticipants } from "./trusted.js";
 
 /** Состав подписи запроса участника — ровно эти компоненты (порядок — как в Signature-Input). */
 export const PARTICIPANT_COMPONENTS = ["@method", "@path", "@query", "content-digest", "x-participant-code", "x-timestamp", "x-nonce"] as const;
@@ -45,10 +45,12 @@ export class ParticipantRequestVerifier {
   }
 
   /**
-   * Любой отказ проверки — SIGNATURE_INVALID одним кодом (нет подписи, неизвестный участник или ключ, вне окна,
-   * повтор nonce); сбой хранилища nonce — UPSTREAM_UNAVAILABLE (503), не ошибка участника.
+   * Любой отказ проверки — SIGNATURE_INVALID одним кодом (нет подписи, неизвестный участник или ключ, роль вне roles,
+   * вне окна, повтор nonce); сбой хранилища nonce — UPSTREAM_UNAVAILABLE (503), не ошибка участника. roles — роли,
+   * которым открыт маршрут: по умолчанию ISSUER (чтения эмитента), у маршрутов эквайрера — ACQUIRER (РП57 п. 3, 6).
+   * Роль проверяется до nonce: подпись чужой роли nonce не занимает.
    */
-  async verify(req: PaoRequest): Promise<ParticipantAuthResult> {
+  async verify(req: PaoRequest, roles: ReadonlySet<ParticipantRole> = ISSUER_ONLY): Promise<ParticipantAuthResult> {
     const h: Record<string, string> = {};
     for (const [name, value] of Object.entries(req.headers)) {
       if (value === undefined) continue;
@@ -74,7 +76,7 @@ export class ParticipantRequestVerifier {
     } catch {
       return invalid;
     }
-    if (!this.trusted.verifyRaw(participant_code, m[2]!, Buffer.from(base), Buffer.from(s[1]!, "base64"))) return invalid;
+    if (!this.trusted.verifyRaw(participant_code, m[2]!, Buffer.from(base), Buffer.from(s[1]!, "base64"), roles)) return invalid;
     let seen: boolean;
     try {
       seen = await this.nonces.seen(participantNonceValue(participant_code, nonce));

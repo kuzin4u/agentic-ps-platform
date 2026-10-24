@@ -2,6 +2,7 @@ import pg from "pg";
 import { buildServer, parseEnv, parseTrustedProxies, type PlatformEnv } from "./server.js";
 import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
 import { MemoryLimitsStore, PgLimitsStore } from "./participants/limits.js";
+import { MemoryReadinessStore, PgReadinessStore } from "./participants/readiness.js";
 import { OperationOutcomeCollector, PgOutcomeStore, startOutcomeCollector } from "./fulfilment/outcomes.js";
 import { ParticipantNotifier, PgParticipantNotificationStore, startParticipantNotifier } from "./participants/notifications.js";
 import { WebhookDeliverer } from "./participants/webhook.js";
@@ -205,6 +206,10 @@ async function serve(): Promise<void> {
       })
     : undefined;
 
+  // Знак готовности продавца (РП57 п. 2–3): записи эквайрера и оператора — PostgreSQL при DATABASE_URL, иначе (dev) память.
+  // Одно хранилище для ПИ-8 эквайрера, API продавцов и ПАО. Действие оператора по HTTP — с кабинетом оператора (PS-31).
+  const readiness = pool ? new PgReadinessStore(pool) : new MemoryReadinessStore();
+
   const app = buildServer({
     env,
     logger: true,
@@ -212,7 +217,7 @@ async function serve(): Promise<void> {
     ...(outcomes ? { outcomes } : {}),
     trustedProxies,
     // Подписка — в записи агента (РП40 п. 1); разрешение имени — системное (стендового порта здесь нет, РП40 п. 8).
-    pao: { verifier, keys, idempotency, params, consent, subscriptions: { set: registry.subscribe.bind(registry) } },
+    pao: { verifier, keys, idempotency, params, consent, subscriptions: { set: registry.subscribe.bind(registry) }, readiness },
     // Подпись запроса участника (РП46 (в)): nonce — в хранилище ПАО с приставкой participant: (одна очистка).
     participants: {
       trusted,
@@ -223,9 +228,11 @@ async function serve(): Promise<void> {
       requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, nonces }),
       // Лента уведомлений клиента (РП46 (б) п. 3) — из Outbox участника в базе; без базы уведомлений нет.
       ...(notifyStore ? { notifications: notifyStore } : {}),
+      // Знак готовности от эквайрера (РП57 п. 2); допуск часов issued_at — окно подписи.
+      readiness: { store: readiness, skewSec: params.signature_skew_sec },
     },
-    // API для продавцов (РП56): среды dev и sandbox — контур ключей sandbox; контура оператора у сервера нет до PS-31.
-    merchants: { registry, keys, contour: "sandbox", params },
+    // API для продавцов (РП56, РП57 п. 3): среды dev и sandbox — контур ключей sandbox; контура оператора у сервера нет до PS-31.
+    merchants: { registry, keys, contour: "sandbox", params, readiness },
   });
   app.log.info({ params }, "стендовые параметры загружены");
   if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce, идемпотентность, журнал согласий, удержания П3 и лимиты клиента в памяти — один процесс, повтор после перезапуска не ловится");

@@ -25,7 +25,8 @@ import {
 import type { StateService } from "../state/service.js";
 import { limitsBody, type LimitsStore } from "./limits.js";
 import { NOTIFICATION_ID, NotificationCursorUnknown, type ParticipantNotificationStore } from "./notifications.js";
-import type { TrustedParticipants } from "./trusted.js";
+import { readinessBody, type ReadinessStore } from "./readiness.js";
+import { ACQUIRER_ONLY, isMerchantId, type ParticipantRole, type TrustedParticipants } from "./trusted.js";
 import type { ParticipantRequestVerifier } from "./verify.js";
 
 export interface ParticipantDeps {
@@ -47,6 +48,11 @@ export interface ParticipantDeps {
    * для decided_at (signature_skew_sec).
    */
   readonly confirmations?: { readonly store: Pick<ConfirmationStore, "get" | "decide" | "expire">; readonly skewSec: number };
+  /**
+   * Знак готовности продавца (РП57 п. 2–3): записи эквайрера; без хранилища маршрутов знака нет. skewSec — допуск часов
+   * для issued_at (signature_skew_sec). GET — с подписью запроса участника роли ACQUIRER (requests).
+   */
+  readonly readiness?: { readonly store: Pick<ReadinessStore, "putAcquirer" | "current">; readonly skewSec: number };
 }
 
 /** Коды ответа ПИ-8 подписи (processing-interface.yaml); тело ошибки — `{code}`, причина — в журнале процесса. */
@@ -63,6 +69,10 @@ const HTTP: Readonly<Record<string, number>> = {
   CONFIRMATION_TOTALS_MISMATCH: 409,
   CONFIRMATION_NOT_PENDING: 409,
   QUALIFIED_SIGNATURE_REQUIRED: 422,
+  MERCHANT_NOT_SERVED: 403,
+  MERCHANT_NOT_FOUND: 404,
+  READINESS_CONFLICT: 409,
+  READINESS_SUSPENDED: 409,
   STATE_UNAVAILABLE: 503,
   UPSTREAM_UNAVAILABLE: 503,
 };
@@ -387,6 +397,87 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
     });
   }
 
+  // Знак готовности продавца (ПИ-8 «Эквайрер», РП57 п. 2): тело → подпись эквайрера (401 до хранилища; роль без
+  // проверенной подписи не раскрывается) → issued_at не в будущем сверх допуска (401) → продавец из перечня (403) →
+  // только вставка: повтор той же записи — 200 без записи, та же ссылка с другой записью — 409, приостановлено — 409.
+  const readiness = deps.readiness;
+  if (readiness) {
+    app.post<{ Params: { id: string } }>("/participants/v1/merchants/:id/readiness", async (req, reply) => {
+      const fail = (code: keyof typeof HTTP) => {
+        const http = HTTP[code]!;
+        if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+        return reply.code(http).send({ code });
+      };
+      const merchant_id = req.params.id;
+      const b = readinessBody(merchant_id, req.body);
+      if (!b) return fail("REQUEST_INVALID");
+      const { record, signature } = b;
+      const fields = { participant_code: record.participant_code, merchant_id, readiness_ref: record.readiness_ref, status: record.status };
+      if (!deps.trusted.verifyReadiness(record, signature)) {
+        req.log.info(fields, "ПИ-8: знак готовности — подпись эквайрера не проверена");
+        return fail("SIGNATURE_INVALID");
+      }
+      const now = (deps.now ?? (() => new Date()))();
+      if (parseRfc3339(record.issued_at) > now.getTime() + readiness.skewSec * 1000) {
+        req.log.info(fields, "ПИ-8: знак готовности — issued_at в будущем сверх допуска часов");
+        return fail("SIGNATURE_INVALID");
+      }
+      // Намеренно 403, а не 404 (РП57 п. 3): эквайрер ошибся в своём перечне; на GET чужой продавец — 404.
+      if (!deps.trusted.serves(record.participant_code, merchant_id)) {
+        req.log.info(fields, "ПИ-8: знак готовности — продавца нет в перечне эквайрера");
+        return fail("MERCHANT_NOT_SERVED");
+      }
+      try {
+        const put = await readiness.store.putAcquirer({ ...record, signature, received_at: now.toISOString() });
+        if (put === "conflict") {
+          req.log.info(fields, "ПИ-8: знак готовности — тот же readiness_ref с другой записью");
+          return fail("READINESS_CONFLICT");
+        }
+        if (put === "suspended") {
+          req.log.info(fields, "ПИ-8: знак готовности приостановлен оператором — запись эквайрера не принята");
+          return fail("READINESS_SUSPENDED");
+        }
+        const view = await readiness.store.current(merchant_id);
+        req.log.info({ ...fields, put, current: view.status }, put === "replayed" ? "ПИ-8: повтор записи знака — записи нет" : "ПИ-8: запись знака готовности принята");
+        return reply.code(200).send({ merchant_id: view.merchant_id, status: view.status, since: view.since });
+      } catch (err) {
+        req.log.error({ err, ...fields }, "ПИ-8: сбой хранилища знака готовности");
+        return fail("STATE_UNAVAILABLE");
+      }
+    });
+
+    const requests = deps.requests;
+    if (requests) {
+      // Статус знака своего продавца с причиной приостановления (РП57 п. 3): подпись запроса участника роли ACQUIRER;
+      // чужой продавец — 404, как нет записи (чужие перечни не раскрываются).
+      app.get<{ Params: { id: string } }>("/participants/v1/merchants/:id/readiness", async (req, reply) => {
+        const fail = (code: keyof typeof HTTP) => {
+          const http = HTTP[code]!;
+          if (http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
+          return reply.code(http).send({ code });
+        };
+        const auth = await verifyRead(requests, req, ACQUIRER_ONLY);
+        if (!auth.ok) {
+          if (auth.code === "UPSTREAM_UNAVAILABLE") {
+            req.log.error({ err: auth.cause }, "ПИ-8: GET знака — сбой хранилища nonce");
+            return fail("UPSTREAM_UNAVAILABLE");
+          }
+          req.log.info("ПИ-8: GET знака — подпись запроса эквайрера не проверена");
+          return fail("SIGNATURE_INVALID");
+        }
+        const merchant_id = req.params.id;
+        if (!isMerchantId(merchant_id)) return fail("REQUEST_INVALID");
+        if (!deps.trusted.serves(auth.participant_code, merchant_id)) return fail("MERCHANT_NOT_FOUND");
+        try {
+          return reply.code(200).send(await readiness.store.current(merchant_id));
+        } catch (err) {
+          req.log.error({ err, participant_code: auth.participant_code, merchant_id }, "ПИ-8: сбой хранилища знака готовности");
+          return fail("STATE_UNAVAILABLE");
+        }
+      });
+    }
+  }
+
   const limits = deps.limits;
   if (!limits) return;
   // Лимиты клиента (РП45 п. 1, 3): тело → подпись банка (401 до хранилища) → только вставка с версией. GET того же пути —
@@ -493,15 +584,21 @@ const confirmationView = (r: ConfirmationRecord) => ({
   ...(r.status === "APPROVED" && r.confirmation_ref ? { confirmation_ref: r.confirmation_ref } : {}),
 });
 
-/** Подпись запроса участника у чтения ПИ-8 (РП46 (в)): путь и запрос — как пришли, тело пустое. */
-function verifyRead(requests: ParticipantRequestVerifier, req: FastifyRequest) {
+/**
+ * Подпись запроса участника у чтения ПИ-8 (РП46 (в)): путь и запрос — как пришли, тело пустое. roles — кому открыт
+ * маршрут; по умолчанию — эмитенту (ISSUER).
+ */
+function verifyRead(requests: ParticipantRequestVerifier, req: FastifyRequest, roles?: ReadonlySet<ParticipantRole>) {
   const url = req.raw.url ?? "";
   const q = url.indexOf("?");
-  return requests.verify({
-    method: req.method,
-    path: q < 0 ? url : url.slice(0, q),
-    query: q < 0 ? "" : url.slice(q + 1),
-    headers: req.headers,
-    body: "",
-  });
+  return requests.verify(
+    {
+      method: req.method,
+      path: q < 0 ? url : url.slice(0, q),
+      query: q < 0 ? "" : url.slice(q + 1),
+      headers: req.headers,
+      body: "",
+    },
+    roles,
+  );
 }
