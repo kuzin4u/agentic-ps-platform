@@ -130,14 +130,13 @@ function target(req: FastifyRequest): { path: string; query: string } {
   return q < 0 ? { path: url, query: "" } : { path: url.slice(0, q), query: url.slice(q + 1) };
 }
 
-export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<void> {
-  // Предел обработчика с таймаутом базы — меньше аренды ключа (РП33 доп. п. 8).
-  assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS);
-  const clock = deps.clock ?? (() => performance.now());
-  const limit = deps.params.pao_rate_limit_per_30s;
+/**
+ * Первый слой лимита (РП32): по адресу, хук onRequest — до проверки обращения и до чтения тела; неподписанный поток тоже
+ * ограничен. Retry-After ставит плагин до выброса метки; 429 — тело ПАО §6. Счётчик — свой у каждой области, где вызвана
+ * (шлюз ПАО, обнаружение — РП60 п. 11). Маршруты области — после вызова: хук onRoute плагина видит каждый.
+ */
+export async function paoCoarseLimit(app: FastifyInstance, limit: number): Promise<void> {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("pao_rate_limit_per_30s — целое ≥ 1");
-  // Первый слой лимита (РП32): по адресу, хук onRequest — до проверки обращения и до чтения тела; неподписанный поток
-  // тоже ограничен. Retry-After ставит плагин до выброса метки. Маршруты — ниже: хук onRoute плагина видит каждый.
   await app.register(rateLimit, {
     global: true,
     max: limit,
@@ -145,6 +144,23 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     keyGenerator: (req) => rateLimitKey(req.ip),
     errorResponseBuilder: () => RATE_LIMITED,
   });
+  app.setErrorHandler((err, _req, reply) => {
+    if (err === RATE_LIMITED) {
+      // Остаток окна плагин считает по Date.now(): при переводе часов назад он больше окна — обрезаем до границы РП24.
+      const computed = Number(reply.getHeader("retry-after"));
+      const retryAfter = Number.isFinite(computed) ? Math.min(Math.max(computed, 0), MAX_RETRY_AFTER_SEC) : MAX_RETRY_AFTER_SEC;
+      void reply.header("retry-after", String(retryAfter));
+      return reply.code(429).send(paoError("RATE_LIMITED").body);
+    }
+    return reply.send(err);
+  });
+}
+
+export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<void> {
+  // Предел обработчика с таймаутом базы — меньше аренды ключа (РП33 доп. п. 8).
+  assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS);
+  const clock = deps.clock ?? (() => performance.now());
+  await paoCoarseLimit(app, deps.params.pao_rate_limit_per_30s);
   // Тело — строкой, как подписано: content-digest считается от байтов, а не от разобранного JSON. Любой тип содержимого —
   // строкой (UTF-8): тело с чужим типом доходит до проверки обращения и схемы и получает ответ ПАО §6, а не 415 Fastify.
   // Ответы Fastify до шлюза остаются: тело больше bodyLimit (413), неразборный Content-Type (STATUS «Открыто»).
@@ -158,17 +174,6 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     if (e.http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
     return reply.code(e.http).send(e.body);
   };
-
-  app.setErrorHandler((err, _req, reply) => {
-    if (err === RATE_LIMITED) {
-      // Остаток окна плагин считает по Date.now(): при переводе часов назад он больше окна — обрезаем до границы РП24.
-      const computed = Number(reply.getHeader("retry-after"));
-      const retryAfter = Number.isFinite(computed) ? Math.min(Math.max(computed, 0), MAX_RETRY_AFTER_SEC) : MAX_RETRY_AFTER_SEC;
-      void reply.header("retry-after", String(retryAfter));
-      return reply.code(429).send(paoError("RATE_LIMITED").body);
-    }
-    return reply.send(err);
-  });
 
   app.addHook("preHandler", async (req, reply) => {
     const { path, query } = target(req);

@@ -382,6 +382,8 @@ export function createStand(opts: StandOptions = {}): Stand {
       resolveHost: dns.resolve,
       stand: true,
     },
+    // Обнаружение ПАО (РП60 п. 13): как в рабочем сервере — та же функция, контур sandbox.
+    paoConfiguration: { contour: "sandbox", params },
     participants: {
       trusted,
       consent,

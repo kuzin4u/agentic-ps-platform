@@ -218,6 +218,8 @@ async function serve(): Promise<void> {
     trustedProxies,
     // Подписка — в записи агента (РП40 п. 1); разрешение имени — системное (стендового порта здесь нет, РП40 п. 8).
     pao: { verifier, keys, idempotency, params, consent, subscriptions: { set: registry.subscribe.bind(registry) }, readiness },
+    // Обнаружение ПАО (РП60 п. 9–13): контур ключей sandbox, как у API продавцов.
+    paoConfiguration: { contour: "sandbox", params },
     // Подпись запроса участника (РП46 (в)): nonce — в хранилище ПАО с приставкой participant: (одна очистка).
     participants: {
       trusted,
