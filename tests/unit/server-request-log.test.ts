@@ -49,7 +49,7 @@ async function walk(app: FastifyInstance, side?: AgentSide): Promise<void> {
   let i = 0;
   for (const r of sink.routes) {
     const n = i++;
-    const path = r.url.replace(/:[A-Za-z0-9_]+(\([^)]*\))?/g, `${mark}p${n}`).replace("*", `${mark}w${n}`);
+    const path = r.url.replace(/:[A-Za-z0-9_]+(\([^)]*\))?/g, `${mark}p${n}`).replaceAll("*", `${mark}w${n}`);
     const query = `q=${mark}q${n}&after=${mark}a${n}`;
     const signed = side && r.url.startsWith("/pao/") && ["GET", "POST", "PUT"].includes(r.method);
     if (signed) {
