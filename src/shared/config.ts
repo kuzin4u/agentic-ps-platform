@@ -206,6 +206,29 @@ const RULES: Record<keyof Params, Rule> = {
   upk_sbp_enabled: bool,
 };
 
+/**
+ * Второй слой лимита ПАО (РП63 п. 4, доп. 1): чётные целые ≥ 2, L1 ≤ L2 ≤ L3 — «уровень вне таблицы — L1» строжайший; L3 / 2
+ * ≤ pao_rate_limit_per_30s — не выше первого слоя. Общая проверка загрузчика и сборки шлюза (параметры в обход файла).
+ */
+export function agentRateLimitProblems(
+  p: Pick<Params, "pao_rate_limit_per_30s" | "pao_agent_rate_limit_per_min_l1" | "pao_agent_rate_limit_per_min_l2" | "pao_agent_rate_limit_per_min_l3">,
+): string[] {
+  const names = ["pao_agent_rate_limit_per_min_l1", "pao_agent_rate_limit_per_min_l2", "pao_agent_rate_limit_per_min_l3"] as const;
+  const bad = names.filter((n) => !Number.isSafeInteger(p[n]) || p[n] < 2 || p[n] % 2 !== 0);
+  if (bad.length > 0) return bad.map((n) => `${n}: ожидается чётное целое ≥ 2`);
+  const problems: string[] = [];
+  if (p.pao_agent_rate_limit_per_min_l1 > p.pao_agent_rate_limit_per_min_l2) {
+    problems.push("pao_agent_rate_limit_per_min_l1 больше pao_agent_rate_limit_per_min_l2");
+  }
+  if (p.pao_agent_rate_limit_per_min_l2 > p.pao_agent_rate_limit_per_min_l3) {
+    problems.push("pao_agent_rate_limit_per_min_l2 больше pao_agent_rate_limit_per_min_l3");
+  }
+  if (p.pao_agent_rate_limit_per_min_l3 / 2 > p.pao_rate_limit_per_30s) {
+    problems.push("pao_agent_rate_limit_per_min_l3 / 2 больше pao_rate_limit_per_30s");
+  }
+  return problems;
+}
+
 /** Служебные ключи файла, не параметры. */
 const SERVICE_KEYS = new Set(["_comment"]);
 
@@ -257,6 +280,8 @@ export function parseParams(raw: unknown): Params {
     }
     // Восстановление бюджета при возврате не реализовано до PS-23: true — молчаливое расхождение (РП55 п. 4).
     if (p.restore_budget_on_refund) problems.push("restore_budget_on_refund: true не поддерживается до PS-23");
+    // Второй слой лимита ПАО: порядок по уровням и не выше первого слоя (РП63 доп. 1).
+    problems.push(...agentRateLimitProblems(p));
   }
   if (problems.length) throw new ParamsError(problems);
   return Object.freeze(out) as unknown as Params;

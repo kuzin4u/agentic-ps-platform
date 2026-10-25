@@ -12,9 +12,9 @@ import { PAO_BODY_LIMIT_BYTES } from "../../src/pao/transport.js";
 import { PaoRequestVerifier } from "../../src/pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "../../src/registry/index.js";
 import { buildServer, type ServerOptions } from "../../src/server.js";
-import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { memoryConsent } from "../support/consent.js";
+import { coarseLimit } from "../support/rate-limit.js";
 import { signedInject } from "../support/signed-inject.js";
 import { stand, type Stand } from "../support/stand.js";
 
@@ -258,7 +258,7 @@ describe("404 в /pao — под грубым лимитом по адресу (
 
   /** Собранный сервер с шлюзом ПАО при пределе 2 — как в рабочей сборке, регистрация 404 с префиксом /pao (server.ts). */
   function server(): FastifyInstance {
-    const params = { ...loadParams(), pao_rate_limit_per_30s: 2 };
+    const params = coarseLimit(2);
     const store = new InMemoryAgentRegistryStore();
     const registry = new AgentRegistry(store, { keys: params });
     const keys = new AgentKeys(store, { keys: params });

@@ -9,7 +9,7 @@ import { KID_FORM } from "../registry/keys.js";
 import type { ConsentJournal } from "../consent/journal.js";
 import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
-import type { Params } from "../shared/config.js";
+import { agentRateLimitProblems, type Params } from "../shared/config.js";
 import type { AgentSelf, Credential } from "../shared/pao.js";
 import { CONFIRMATION_ID, type ConfirmationRecord } from "../confirm/model.js";
 import type { ConfirmationStore } from "../confirm/store.js";
@@ -245,19 +245,24 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS);
   const clock = deps.clock ?? (() => performance.now());
   await paoCoarseLimit(app, deps.params.pao_rate_limit_per_30s, paoTransportFailure(deps.params.unavailable_retry_after_sec));
-  for (const name of Object.values(AGENT_RATE_PARAMS)) {
-    const v = deps.params[name];
-    if (!Number.isSafeInteger(v) || v < 2 || v % 2 !== 0) throw new Error(`${name} — чётное целое ≥ 2`);
-  }
+  // Порядок значений держит «вне таблицы — L1, строжайший» (РП63 доп. 1): параметры в обход загрузчика — тот же отказ.
+  const problems = agentRateLimitProblems(deps.params);
+  if (problems.length > 0) throw new Error(problems.join("; "));
   // Второй слой (РП63 п. 1–7): по коду агента после верной подписи, окно 30 с, предел — половина минутного. Через
   // createRateLimit, а не app.rateLimit(): хук плагина отмечает запрос после первого слоя и второй пропустил бы; ответ —
-  // свой, без заголовков x-ratelimit-* (п. 2). Хранилище — своё, не общее с первым слоем.
+  // свой, своих заголовков x-ratelimit-* второй слой не ставит (п. 2). Хранилище — своё, не общее с первым слоем.
   // cache в типах CreateRateLimitOptions 11.2.0 не объявлен, но дочернее хранилище его читает (LocalStore.child).
-  const agentLimitOpts: CreateRateLimitOptions & { readonly cache: number } = {
+  // skipOnError, allowList и ban — явно (РП63 доп. 3): иначе наследуются от настроек первого слоя (mergeParams плагина),
+  // и fail-open первого слоя молча стал бы fail-open второго. groupId берётся из config.rateLimit маршрута — у маршрутов
+  // ПАО его нет.
+  const agentLimitOpts: CreateRateLimitOptions & { readonly cache: number; readonly ban: number } = {
     keyGenerator: (req) => (req.paoAgent as AgentRecord).agent_code,
     max: (req) => agentRateLimitPerMin(deps.params, (req.paoAgent as AgentRecord).level).perMin / 2,
     timeWindow: PAO_RATE_WINDOW_MS,
     cache: AGENT_RATE_CACHE,
+    skipOnError: false,
+    allowList: [],
+    ban: -1,
   };
   const agentLimit = app.createRateLimit(agentLimitOpts);
   // Тело — строкой, как подписано: content-digest считается от байтов, а не от разобранного JSON. Любой тип содержимого —

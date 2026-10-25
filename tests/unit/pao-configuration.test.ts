@@ -12,6 +12,7 @@ import { buildServer } from "../../src/server.js";
 import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
 import { memoryConsent } from "../support/consent.js";
+import { coarseLimit } from "../support/rate-limit.js";
 import { signedInject } from "../support/signed-inject.js";
 import { stand, type Stand } from "../support/stand.js";
 
@@ -88,7 +89,7 @@ describe("GET /.well-known/pao-configuration в buildServer (рабочая сб
   });
 
   it("счётчики конфигурации и шлюза ПАО раздельны: исчерпание одного не даёт 429 другому (РП60 п. 11; остаточный риск v0.26.0)", async () => {
-    const params = { ...loadParams(), pao_rate_limit_per_30s: 2 };
+    const params = coarseLimit(2);
     const store = new InMemoryAgentRegistryStore();
     const registry = new AgentRegistry(store, { keys: params });
     const keys = new AgentKeys(store, { keys: params });

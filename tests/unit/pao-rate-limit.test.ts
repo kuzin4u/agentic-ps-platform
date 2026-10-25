@@ -10,6 +10,7 @@ import { buyerApplication, newAgentSide } from "../support/agent.js";
 import { signedInject } from "../support/signed-inject.js";
 import { stand } from "../support/stand.js";
 import { memoryConsent } from "../support/consent.js";
+import { coarseLimit } from "../support/rate-limit.js";
 
 const A = "nspk:agent:buyref-01:v3";
 const LIMIT = 3;
@@ -22,7 +23,7 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
   });
 
   const platform = (limit = LIMIT, trustedProxies?: string[]) => {
-    const params = { ...loadParams(), pao_rate_limit_per_30s: limit };
+    const params = coarseLimit(limit);
     const store = new InMemoryAgentRegistryStore();
     const registry = new AgentRegistry(store, { keys: params });
     const keys = new AgentKeys(store, { keys: params });
@@ -200,19 +201,53 @@ describe("второй слой лимита — по агенту и уровн
     return { app, a, b, keys };
   };
 
-  const expect429 = (res: { statusCode: number; headers: Record<string, unknown>; json: () => unknown }) => {
+  /** sent — сколько обращений с адреса уже учёл первый слой, включая это: его заголовки остаются, своих второй не ставит. */
+  const expect429 = (res: { statusCode: number; headers: Record<string, unknown>; json: () => unknown }, sent?: number) => {
     expect(res.statusCode).toBe(429);
     expect(res.json()).toEqual({ code: "RATE_LIMITED", message: expect.any(String), retry: "same_key" });
     const ra = Number(res.headers["retry-after"]);
-    expect(Number.isInteger(ra) && ra >= 0 && ra <= 30).toBe(true);
-    // Заголовков плагина у второго слоя нет (п. 2): x-ratelimit-* ставит только первый слой.
+    // ≥ 1: при живом окне повтор без паузы снова получил бы 429; ≤ 30 — РП24.
+    expect(Number.isInteger(ra) && ra >= 1 && ra <= 30, String(ra)).toBe(true);
     expect(res.headers["x-ratelimit-limit"]).toBe("1000");
+    if (sent !== undefined) expect(res.headers["x-ratelimit-remaining"]).toBe(String(1000 - sent));
   };
 
   it("предел в окне 30 с — половина минутного: третье подписанное обращение — 429 RATE_LIMITED, Retry-After ≤ 30", async () => {
     const { app, a } = platform();
     for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
-    expect429(await signedInject(app, a, A));
+    expect429(await signedInject(app, a, A), 3);
+  });
+
+  it("окно — 30 с: на 29-й секунде — 429 с Retry-After = 1, с 30-й — снова 200 (РП63 п. 3)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const t = Date.now();
+      const { app, a } = platform();
+      for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
+      vi.setSystemTime(t + 29_000);
+      const res = await signedInject(app, a, A);
+      expect429(res);
+      expect(res.headers["retry-after"]).toBe("1");
+      vi.setSystemTime(t + 30_000);
+      expect((await signedInject(app, a, A)).statusCode).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("часы переведены назад внутри окна — Retry-After второго слоя всё равно 30 (РП24; РП32, дополнение п. 3)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const t = Date.now();
+      const { app, a } = platform();
+      for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
+      vi.setSystemTime(t - 60_000);
+      const res = await signedInject(app, a, A);
+      expect429(res);
+      expect(res.headers["retry-after"]).toBe("30");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("счётчик — по agent_code: два агента с одного адреса — раздельно", async () => {
@@ -260,15 +295,16 @@ describe("второй слой лимита — по агенту и уровн
     expect429(await signedInject(app, a, A));
   });
 
-  it("уровень вне таблицы — L1 (строжайший) с записью warn (п. 5, инвариант 3)", async () => {
+  it.each([4, 0, 1.5, Number.NaN])("уровень вне таблицы (%s) — L1 (строжайший) с записью warn (п. 5, инвариант 3)", async (level) => {
     const lines: string[] = [];
-    const { app, a } = platform({ level: 4, log: (l) => lines.push(l) });
+    const { app, a } = platform({ level, log: (l) => lines.push(l) });
     const self = await signedInject(app, a, A);
     expect(self.json().rate_limit_per_min).toBe(SMALL.pao_agent_rate_limit_per_min_l1);
     expect((await signedInject(app, a, A)).statusCode).toBe(200);
     expect429(await signedInject(app, a, A));
     const warn = lines.map((l) => JSON.parse(l)).find((r) => r.msg === "ПАО: уровень агента вне таблицы лимита — предел L1");
-    expect(warn).toMatchObject({ level: 40, agent_code: A, agent_level: 4 });
+    // NaN в JSON — null.
+    expect(warn).toMatchObject({ level: 40, agent_code: A, agent_level: Number.isFinite(level) ? level : null });
   });
 
   it("стенд: 3 000 / 4 500 / 6 000 в минуту (РП63 п. 4) — те же параметры у стенда для агента", () => {
@@ -282,6 +318,18 @@ describe("второй слой лимита — по агенту и уровн
     const verifier = new PaoRequestVerifier({ getAgent: () => undefined, lookupKey: () => undefined }, { skewSec: 1 });
     app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: 60 }), params, consent: memoryConsent() } });
     await expect(app.ready()).rejects.toThrow(/pao_agent_rate_limit_per_min_l2/);
+  });
+
+  it.each([
+    [{ pao_agent_rate_limit_per_min_l1: 8, pao_agent_rate_limit_per_min_l2: 6, pao_agent_rate_limit_per_min_l3: 8 }, /l1 больше pao_agent_rate_limit_per_min_l2/],
+    [{ pao_agent_rate_limit_per_min_l1: 4, pao_agent_rate_limit_per_min_l2: 10, pao_agent_rate_limit_per_min_l3: 8 }, /l2 больше pao_agent_rate_limit_per_min_l3/],
+    [{ ...SMALL, pao_rate_limit_per_30s: 3 }, /l3 \/ 2 больше pao_rate_limit_per_30s/],
+  ])("параметры в обход загрузчика: %o — отказ сборки шлюза (РП63 доп. 1)", async (patch, msg) => {
+    const params = { ...loadParams(), pao_rate_limit_per_30s: 1000, ...patch };
+    const keys = new AgentKeys(new InMemoryAgentRegistryStore(), { keys: params });
+    const verifier = new PaoRequestVerifier({ getAgent: () => undefined, lookupKey: () => undefined }, { skewSec: 1 });
+    app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: 60 }), params, consent: memoryConsent() } });
+    await expect(app.ready()).rejects.toThrow(msg);
   });
 });
 
