@@ -147,6 +147,17 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
     expect(await rows(nonceValue(A, n))).toBe(1);
   });
 
+  it("x-nonce 8 000 знаков — принят и записан хэшем, повтор — SIGNATURE_INVALID (РП62 п. 11; аудит К2.3 № 8)", async () => {
+    // Сырой x-nonce длиннее ≈ 2,7 КБ не помещался в индекс первичного ключа core_nonces — PostgreSQL отвечал ошибкой, 503.
+    const r = registry();
+    const n = "n".repeat(7_990) + fresh();
+    const g = r.gateway(db.pool);
+    const req = signed(r.sides.get(A)!, A, n);
+    expect(code(await g.verify(req))).toBe("OK");
+    expect(await rows(nonceValue(A, n))).toBe(1);
+    expect(code(await g.verify(req))).toBe("SIGNATURE_INVALID");
+  });
+
   it("пустой x-nonce — SIGNATURE_INVALID, в базу не попадает (приставка агента не делает его непустым)", async () => {
     const r = registry();
     expect(code(await r.gateway(db.pool).verify(signed(r.sides.get(A)!, A, "")))).toBe("SIGNATURE_INVALID");
