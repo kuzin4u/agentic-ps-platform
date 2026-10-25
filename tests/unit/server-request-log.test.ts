@@ -3,7 +3,8 @@
 // которая пишет журнал в массив, собирает маршруты и добавляет маршрут-сбой для записи 5xx.
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ServerOptions } from "../../src/server.js";
+import type { FastifyInstance } from "fastify";
+import { buildServer, type ServerOptions } from "../../src/server.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { signedInject } from "../support/signed-inject.js";
 import { stand, type Stand } from "../support/stand.js";
@@ -16,7 +17,8 @@ vi.mock("../../src/server.js", async (importOriginal) => {
     ...actual,
     buildServer: (opts: ServerOptions) => {
       const app = actual.buildServer({ ...opts, logger: { level: "info", stream: { write: (l: string) => void sink.lines.push(l) } } });
-      // Маршруты контекстов регистрируются при ready(): хук видит каждый.
+      // Маршруты контекстов регистрируются при ready(): хук видит их и маршрут-сбой ниже. /health buildServer регистрирует
+      // до хука — параметров у него нет.
       app.addHook("onRoute", (r) => {
         for (const method of [r.method].flat()) sink.routes.push({ method, url: r.url });
       });
@@ -36,43 +38,68 @@ const standard = (): Entry[] => entries().filter((e) => "req" in e || "res" in e
 
 const A = "nspk:agent:buyref-01:v3";
 const B = "nspk:agent:other-01:v1";
+const mark = `mark${randomUUID().replaceAll("-", "")}`;
+
+/**
+ * Обход всех собранных маршрутов: значения параметров пути и строки запроса — метки. Маршруты ПАО (кроме обнаружения) —
+ * с подписью агента side: обращение доходит до обработчика и его собственных записей (РП61 нюанс 3 — значение из пути
+ * пишется только после маски). Остальные — без подписи: проверка участника и маски у ПИ-8 — в обработчике.
+ */
+async function walk(app: FastifyInstance, side?: AgentSide): Promise<void> {
+  let i = 0;
+  for (const r of sink.routes) {
+    const n = i++;
+    const path = r.url.replace(/:[A-Za-z0-9_]+(\([^)]*\))?/g, `${mark}p${n}`).replace("*", `${mark}w${n}`);
+    const query = `q=${mark}q${n}&after=${mark}a${n}`;
+    const signed = side && r.url.startsWith("/pao/") && ["GET", "POST", "PUT"].includes(r.method);
+    if (signed) {
+      await signedInject(app, side, A, {
+        method: r.method as "GET" | "POST" | "PUT",
+        path,
+        query,
+        ...(r.method === "GET" ? {} : { headers: { "idempotency-key": randomUUID() } }),
+      });
+    } else {
+      await app.inject({ method: r.method as "GET", url: `${path}?${query}` });
+    }
+  }
+}
+
+/** Значений меток нет во всём журнале; у каждого собранного маршрута — запись incoming request с его шаблоном, без url. */
+function expectPathless(): void {
+  for (const e of entries()) expect(JSON.stringify(e)).not.toContain(mark);
+  const lines = standard();
+  const incoming = lines.filter((e) => e.msg === "incoming request").map((e) => `${String(e.req?.method)} ${String(e.req?.route)}`);
+  for (const r of sink.routes) expect(incoming).toContain(`${r.method} ${r.url}`);
+  for (const e of lines.filter((x) => "req" in x)) expect(e.req).not.toHaveProperty("url");
+}
 
 describe("журнал запросов без значений параметров пути (РП61)", () => {
   let s: Stand;
-  const mark = `mark${randomUUID().replaceAll("-", "")}`;
+  let a: AgentSide;
 
   beforeEach(async () => {
     sink.lines.length = 0;
     sink.routes.length = 0;
     s = stand();
+    a = newAgentSide();
+    expect(s.admit(buyerApplication(A, a), "op").admitted).toBe(true);
     await s.app.ready();
   });
   afterEach(async () => {
     await s.app.close();
   });
 
-  it("каждый маршрут с параметрами пути и строкой запроса: значений нет ни в одной записи о запросе, у найденного — шаблон", async () => {
+  it("каждый маршрут стенда, ПАО — с подписью: значений пути и строки запроса нет во всём журнале, у каждого — шаблон", async () => {
     const withParams = sink.routes.filter((r) => /[:*]/.test(r.url));
     // Все контексты стенда: ПАО, ПИ-8, API продавцов, ADP и маршрут-сбой.
     for (const prefix of ["/pao/", "/participants/", "/merchants/", "/test/boom/"]) {
       expect(withParams.some((r) => r.url.startsWith(prefix))).toBe(true);
     }
-    let i = 0;
-    const found: { method: string; url: string }[] = [];
-    for (const r of sink.routes) {
-      const n = i++;
-      const path = r.url.replace(/:[A-Za-z0-9_]+(\([^)]*\))?/g, `${mark}p${n}`).replace("*", `${mark}w${n}`);
-      const res = await s.app.inject({ method: r.method as "GET", url: `${path}?q=${mark}q${n}&after=${mark}a${n}` });
-      if (res.statusCode !== 404) found.push(r);
-    }
-    expect(found.length).toBeGreaterThan(withParams.length / 2);
-    // Обращения без подписи — собственных записей с kid нет (РП60 доп. 3): проверяется весь журнал, не только записи Fastify.
-    for (const e of entries()) expect(JSON.stringify(e)).not.toContain(mark);
+    await walk(s.app, a);
+    // Весь журнал, а не только записи Fastify: собственные записи обработчиков пишут значения из пути только после маски.
+    expectPathless();
     const lines = standard();
-    expect(lines.length).toBeGreaterThan(0);
-    const incoming = lines.filter((e) => e.msg === "incoming request").map((e) => `${String(e.req?.method)} ${String(e.req?.route)}`);
-    for (const r of found) expect(incoming).toContain(`${r.method} ${r.url}`);
-    for (const e of lines.filter((x) => "req" in x)) expect(e.req).not.toHaveProperty("url");
     // 5xx необработанного исключения — запись defaultErrorLog с req: шаблон есть, значения нет.
     const boom = lines.find((e) => e.msg === "сбой обработчика");
     expect(boom?.req).toMatchObject({ method: "GET", route: "/test/boom/:secret" });
@@ -89,6 +116,26 @@ describe("журнал запросов без значений параметр
     const notFound = entries().filter((e) => e.msg === "маршрут не найден");
     expect(notFound).toHaveLength(1);
     expect(notFound[0]?.req).toEqual({ method: "GET", host: "localhost:80", remoteAddress: "127.0.0.1" });
+  });
+});
+
+describe("журнал запросов в режиме «только BYPASS» (РП61, РП43 п. 8)", () => {
+  let app: FastifyInstance | undefined;
+  afterEach(async () => {
+    await app?.close();
+  });
+
+  it("каждый маршрут режима: значений пути и строки запроса нет, у каждого — шаблон", async () => {
+    sink.lines.length = 0;
+    sink.routes.length = 0;
+    app = buildServer({ env: "sandbox", bypassOnly: { failures: [], alarm: () => undefined } });
+    await app.ready();
+    // В режиме — ADP, API продавцов (503), обнаружение ПАО (503) и маршрут-сбой.
+    for (const prefix of ["/adp/", "/merchants/", "/.well-known/", "/test/boom/"]) {
+      expect(sink.routes.some((r) => r.url.startsWith(prefix))).toBe(true);
+    }
+    await walk(app);
+    expectPathless();
   });
 });
 

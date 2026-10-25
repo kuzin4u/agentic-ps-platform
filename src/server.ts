@@ -140,6 +140,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   const proxies = opts.trustedProxies ?? [];
   const app = Fastify({
     logger: withRequestSerializer(opts.logger),
+    // Экземпляр берётся как есть: опции сервера disableRequestLogging и requestIdLogLabel он не наследует — задавать здесь.
     logController: new PathlessLogController(),
     trustProxy: proxies.length > 0 ? [...proxies] : false,
     routerOptions: { maxParamLength: MAX_PATH_PARAM_LENGTH },
