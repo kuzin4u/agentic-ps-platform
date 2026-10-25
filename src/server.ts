@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
+import Fastify, { LogController, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from "fastify";
 import { adpRoutes, type AdpDeps } from "./adp/routes.js";
 import type { CollectorHealth } from "./fulfilment/outcomes.js";
 import type { NotifierHealth } from "./participants/notifications.js";
@@ -102,10 +102,46 @@ export function parseTrustedProxies(value: string | undefined): string[] {
   return items;
 }
 
+/**
+ * Запись о запросе (РП61 п. 1): метод и шаблон маршрута вместо url — значений параметров пути и строки запроса нет.
+ * Маршрут не найден или шаблона нет — без route. Не бросает: исключение сериализатора сорвало бы запись и сам запрос.
+ */
+export function requestLogFields(req: FastifyRequest): Record<string, unknown> {
+  try {
+    const route = req.is404 ? undefined : req.routeOptions?.url;
+    return {
+      method: req.method,
+      ...(typeof route === "string" ? { route } : {}),
+      host: req.host,
+      remoteAddress: req.ip,
+      remotePort: req.socket?.remotePort,
+    };
+  } catch {
+    return { method: req.method };
+  }
+}
+
+/** routeNotFound по умолчанию пишет сырой url строкой мимо сериализатора (РП61 п. 2); остальные записи — родительские. */
+class PathlessLogController extends LogController {
+  override routeNotFound(request: FastifyRequest): void {
+    if (this.isLogDisabled(request)) return;
+    request.log.info({ req: request }, "маршрут не найден");
+  }
+}
+
+/** Опции журнала с сериализатором req (РП61 п. 3): true — журнал Fastify по умолчанию, false — журнала нет. */
+function withRequestSerializer(logger: ServerOptions["logger"]): FastifyServerOptions["logger"] {
+  if (!logger) return false;
+  const base = logger === true ? {} : logger;
+  return { ...base, serializers: { ...base.serializers, req: requestLogFields } };
+}
+
 export function buildServer(opts: ServerOptions): FastifyInstance {
   const proxies = opts.trustedProxies ?? [];
   const app = Fastify({
-    logger: opts.logger ?? false,
+    logger: withRequestSerializer(opts.logger),
+    // Экземпляр берётся как есть: опции сервера disableRequestLogging и requestIdLogLabel он не наследует — задавать здесь.
+    logController: new PathlessLogController(),
     trustProxy: proxies.length > 0 ? [...proxies] : false,
     routerOptions: { maxParamLength: MAX_PATH_PARAM_LENGTH },
   });

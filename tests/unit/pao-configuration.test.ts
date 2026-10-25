@@ -5,9 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { parse } from "yaml";
 import { PAO_CONFIGURATION_PATH, paoConfiguration } from "../../src/pao/configuration.js";
+import { paoIdempotency } from "../../src/pao/idempotency.js";
+import { PaoRequestVerifier } from "../../src/pao/verify.js";
+import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "../../src/registry/index.js";
 import { buildServer } from "../../src/server.js";
 import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
+import { memoryConsent } from "../support/consent.js";
 import { signedInject } from "../support/signed-inject.js";
 import { stand, type Stand } from "../support/stand.js";
 
@@ -81,5 +85,27 @@ describe("GET /.well-known/pao-configuration в buildServer (рабочая сб
     expect(res.json()).toEqual({ code: "RATE_LIMITED", message: expect.any(String), retry: "same_key" });
     expect(Number(res.headers["retry-after"])).toBeGreaterThan(0);
     expect(Number(res.headers["retry-after"])).toBeLessThanOrEqual(30);
+  });
+
+  it("счётчики конфигурации и шлюза ПАО раздельны: исчерпание одного не даёт 429 другому (РП60 п. 11; остаточный риск v0.26.0)", async () => {
+    const params = { ...loadParams(), pao_rate_limit_per_30s: 2 };
+    const store = new InMemoryAgentRegistryStore();
+    const registry = new AgentRegistry(store, { keys: params });
+    const keys = new AgentKeys(store, { keys: params });
+    const verifier = new PaoRequestVerifier(
+      { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
+      { skewSec: params.signature_skew_sec },
+    );
+    app = buildServer({
+      env: "dev",
+      pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() },
+      paoConfiguration: { contour: "sandbox", params },
+    });
+    const conf = async () => (await app!.inject({ method: "GET", url: PAO_CONFIGURATION_PATH })).statusCode;
+    const gate = async () => (await app!.inject({ method: "GET", url: "/pao/v1/agent" })).statusCode;
+    expect([await conf(), await conf(), await conf()]).toEqual([200, 200, 429]);
+    // Шлюз — свой счётчик: без подписи 401, а не 429 исчерпанной конфигурации; затем исчерпывается сам.
+    expect([await gate(), await gate(), await gate()]).toEqual([401, 401, 429]);
+    expect(await conf()).toBe(429);
   });
 });
