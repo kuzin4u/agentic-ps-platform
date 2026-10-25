@@ -53,15 +53,19 @@ export const nonceValue = (agent_code: string, nonce: string): string => `${agen
 const STATUS_EXEMPT = new Set(["GET /pao/v1/agent"]);
 
 /**
- * Отказ от полномочий — и приостановленному (решение владельца 19.10.2026, #33; РП38 доп. п. 8): только снимает
- * полномочия, расширить их нельзя. Исключённому — нет. Регистрация ключа приостановленным — 403 (РП23 п. 6.3, доп. 8).
+ * Методы, доступные и приостановленному: только снимают полномочия, расширить их нельзя. Отказ от полномочий
+ * (решение владельца 19.10.2026, #33; РП38 доп. п. 8) и отзыв своего ключа (РП60 п. 3). Исключённому — нет.
+ * Регистрация ключа приостановленным — 403 (РП23 п. 6.3, доп. 8).
  */
-const SUSPENDED_RELINQUISH = /^\/pao\/v1\/mandates\/[^/]+\/relinquish$/;
+const SUSPENDED_ALLOWED: readonly RegExp[] = [
+  /^\/pao\/v1\/mandates\/[^/]+\/relinquish$/,
+  /^\/pao\/v1\/agent\/keys\/[^/]+\/revoke$/,
+];
 
 const statusAllows = (status: AgentRecord["status"], method: string, path: string): boolean =>
   status === "ACTIVE" ||
   STATUS_EXEMPT.has(`${method} ${path}`) ||
-  (status === "SUSPENDED" && method === "POST" && SUSPENDED_RELINQUISH.test(path));
+  (status === "SUSPENDED" && method === "POST" && SUSPENDED_ALLOWED.some((p) => p.test(path)));
 
 export interface PaoVerifierOptions {
   readonly skewSec: number;

@@ -3,6 +3,7 @@
 // mode: "bypass_only" и кодами непрошедших проверок, при входе в режим — запись «тревога» (инвариант 2, РП4).
 import { describe, expect, it } from "vitest";
 import { AGENT_KEYS_PATH, BYPASS_RETRY_AFTER_SEC } from "../../src/participants/merchant-api.js";
+import { PAO_CONFIGURATION_PATH } from "../../src/pao/configuration.js";
 import { buildServer } from "../../src/server.js";
 import type { CanonicalMessage } from "../../src/shared/canonical.generated.js";
 import { setup } from "../support/state.js";
@@ -82,6 +83,14 @@ describe("режим «только BYPASS» (РП43 п. 8)", () => {
       expect(res.headers["cache-control"]).toBeUndefined();
       expect(res.json()).toEqual({ code: "UPSTREAM_UNAVAILABLE" });
     }
+  });
+
+  it("обнаружение ПАО — 503 UPSTREAM_UNAVAILABLE по ПАО §6 с Retry-After, а не 404 (РП60 п. 12)", async () => {
+    const { app } = bypassOnly();
+    const res = await app.inject({ method: "GET", url: PAO_CONFIGURATION_PATH });
+    expect(res.statusCode).toBe(503);
+    expect(res.headers["retry-after"]).toBe(String(BYPASS_RETRY_AFTER_SEC));
+    expect(res.json()).toEqual({ code: "UPSTREAM_UNAVAILABLE", message: expect.any(String), retry: "same_key" });
   });
 
   it("в обычном режиме /health — как прежде, без mode", async () => {

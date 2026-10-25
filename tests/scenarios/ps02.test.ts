@@ -1,6 +1,7 @@
 // ПС02 · негатив · П1/П4/П9 · Отзыв ключа и распространение (A2 п. 5.4, ФП2, РП23 п. 5).
-// Закрыто по ПАО: 401 AGENT_KEY_REVOKED и время до проверки подписи. Замер внутрипроцессный (одно хранилище в памяти);
-// настоящая проверка ФП2 — после CO-1/CO-2 и PS-10 (распространение в ADP, хранилище PostgreSQL).
+// Закрыто по ПАО: агент отзывает ключ сам — POST /pao/v1/agent/keys/{kid}/revoke (РП60 п. 8, № 26); 401 AGENT_KEY_REVOKED
+// и время до проверки подписи. Отзыв оператором агента («оператор агента отзывает ключ») — PS-31. Замер внутрипроцессный
+// (одно хранилище в памяти); между экземплярами — после переезда реестра на PostgreSQL (PS-05в).
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -27,10 +28,20 @@ describe("ПС02: отзыв ключа и распространение", () =
     await s.app.close();
   });
 
-  it("оператор агента отзывает скомпрометированный ключ; обращение старым ключом — 401 AGENT_KEY_REVOKED, retry new_key", async () => {
+  // Отзыв по ПАО, подпись — signer (по умолчанию — сам отзываемый ключ: реакция на компрометацию).
+  const revoke = async (kid: string, signer: AgentSide = side) => {
+    const res = await signedInject(s.app, signer, CODE, {
+      method: "POST",
+      path: `/pao/v1/agent/keys/${kid}/revoke`,
+      headers: { "idempotency-key": randomUUID() },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ kid, status: "REVOKED" });
+  };
+
+  it("агент отзывает скомпрометированный ключ по ПАО; обращение старым ключом — 401 AGENT_KEY_REVOKED, retry new_key", async () => {
     expect((await signedInject(s.app, side, CODE)).statusCode).toBe(200);
-    // Оператор агента — вызывающий сервиса ключей; его аутентификация — SEC-1 (расхождение №9).
-    s.keys.revoke(CODE, side.kid);
+    await revoke(side.kid);
     const res = await signedInject(s.app, side, CODE);
     expect(res.statusCode).toBe(401);
     expect(res.json()).toEqual({
@@ -43,7 +54,7 @@ describe("ПС02: отзыв ключа и распространение", () =
 
   it("время распространения отзыва до проверки подписи ≤ revocation_propagation_max_ms — измерено (внутрипроцессно)", async () => {
     const t0 = performance.now();
-    s.keys.revoke(CODE, side.kid);
+    await revoke(side.kid);
     const res = await signedInject(s.app, side, CODE);
     const elapsed = performance.now() - t0;
     expect(res.json().code).toBe("AGENT_KEY_REVOKED");
@@ -51,17 +62,22 @@ describe("ПС02: отзыв ключа и распространение", () =
     expect(elapsed).toBeLessThanOrEqual(s.params.revocation_propagation_max_ms);
   });
 
-  it("после отзыва и регистрации нового ключа оператором: новый ключ — 200, старый — 401; в GET /agent только новый", async () => {
-    const before = await signedInject(s.app, side, CODE);
-    s.keys.revoke(CODE, side.kid);
-    expect(before.statusCode).toBe(200);
+  it("ротация по ПАО: новый ключ, затем отзыв старого новым — новый 200, старый 401; в GET /agent только новый", async () => {
     const next = newAgentSide();
-    s.keys.register(CODE, { alg: "ed25519", public_key: next.publicKey });
+    const reg = await signedInject(s.app, side, CODE, {
+      method: "POST",
+      path: "/pao/v1/agent/keys",
+      body: JSON.stringify({ alg: "ed25519", public_key: next.publicKey }),
+      headers: { "idempotency-key": randomUUID() },
+    });
+    expect(reg.statusCode).toBe(201);
+    await revoke(side.kid, next);
     expect((await signedInject(s.app, next, CODE)).statusCode).toBe(200);
     expect((await signedInject(s.app, side, CODE)).statusCode).toBe(401);
     expect((await signedInject(s.app, next, CODE)).json().keys.map((k: { kid: string }) => k.kid)).toEqual([next.kid]);
   });
 
+  it.todo("оператор агента отзывает ключ (формулировка ПС02) — PS-31, кабинет оператора (РП60 п. 8)");
   it.todo("авторизованное до отзыва исполняется (инвариант 8) — PS-10 (ADP), PS-14 (криптограмма)");
   it.todo("распространение отзыва в ADP ≤ revocation_propagation_max_ms — PS-10 (точка решения), PS-17");
   // Решение владельца 20.10 (РП47 доп. п. 8): отзыв ключа подписи не аннулирует выданный реквизит — он привязан к
@@ -102,7 +118,7 @@ describe("ПС02: отзыв ключа и распространение", () =
     expect(res.statusCode).toBe(201);
     const cred = res.json() as Credential;
 
-    s.keys.revoke(CODE, side.kid);
+    await revoke(side.kid);
     expect((await signedInject(s.app, side, CODE)).json().code).toBe("AGENT_KEY_REVOKED");
 
     const msg: CanonicalMessage = {

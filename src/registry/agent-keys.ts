@@ -35,10 +35,15 @@ export class KeyInvalidError extends Error {
   }
 }
 
+/**
+ * У агента нет такого ключа. Причина — только для журнала процесса (РП60 доп. 3): FOREIGN — kid другого агента, UNKNOWN —
+ * kid по форме, которого нет в реестре; агенту — один ответ.
+ */
 export class KeyNotFoundError extends Error {
   constructor(
     readonly agent_code: string,
     readonly kid: string,
+    readonly reason: "FOREIGN" | "UNKNOWN" = "UNKNOWN",
   ) {
     super(`У агента ${agent_code} нет ключа ${kid}`);
     this.name = "KeyNotFoundError";
@@ -138,7 +143,7 @@ export class AgentKeys {
   /** Отзыв своего ключа, включая последний (РП23 п. 5). Необратим; повторный отзыв возвращает отозванный ключ. */
   revoke(agent_code: string, kid: string): AgentKey {
     const cur = this.own(agent_code, kid);
-    if (!cur) throw new KeyNotFoundError(agent_code, kid);
+    if (!cur) throw new KeyNotFoundError(agent_code, kid, this.store.getKey(kid) ? "FOREIGN" : "UNKNOWN");
     if (cur.revoked_at !== null) return cur;
     const next = this.store.revokeKey(kid, cur.row_version, this.now().toISOString());
     if (!next) throw new ConcurrentChangeError(agent_code);

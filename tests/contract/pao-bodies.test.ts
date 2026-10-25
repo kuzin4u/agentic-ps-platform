@@ -145,6 +145,25 @@ describe("тело PUT /pao/v1/subscription — по схеме Subscription (PS
   });
 });
 
+// 400, 403, 409, 422, 503 метод отдаёт (РП60 п. 2–4), в YAML — только 200 и 401: объявляются в ПАО 1.5.0 (№ 44).
+describe("POST /pao/v1/agent/keys/{kid}/revoke — по ПАО 1.4.0 (PS-05б ч. 1, РП60)", () => {
+  const op = pao.paths["/pao/v1/agent/keys/{kid}/revoke"].post;
+
+  it("ответы — только 200 и 401; 200 — схема Key; тела нет; kid — строка в пути; Idempotency-Key — в параметрах", () => {
+    expect(Object.keys(op.responses).sort()).toEqual(["200", "401"]);
+    expect(op.responses["200"].content["application/json"].schema.$ref).toBe("#/components/schemas/Key");
+    expect(op.requestBody).toBeUndefined();
+    expect(op.parameters.find((p: { name?: string }) => p.name === "kid")).toMatchObject({ in: "path", required: true, schema: { type: "string" } });
+    expect(op.parameters.map((p: { $ref?: string }) => p.$ref)).toContain("#/components/parameters/IdempotencyKey");
+  });
+
+  it("Key — те поля, что отдаёт отзыв; status REVOKED — из перечня", () => {
+    const key = pao.components.schemas.Key;
+    expect(Object.keys(key.properties).sort()).toEqual(["alg", "kid", "public_key", "status", "valid_from", "valid_to"]);
+    expect(key.properties.status.enum).toContain("REVOKED");
+  });
+});
+
 describe("тело POST /pao/v1/credentials — по схеме CredentialRequest (PS-14, РП47)", () => {
   const schema = pao.components.schemas.CredentialRequest;
   const valid = { mandate_id: "mnd_x", order_ref: "ORD-1", merchant_id: "MER-1", amount_max: 1, currency: "RUB", kind: "CARD" };

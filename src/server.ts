@@ -1,10 +1,16 @@
 import { isIP } from "node:net";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import { adpRoutes, type AdpDeps } from "./adp/routes.js";
 import type { CollectorHealth } from "./fulfilment/outcomes.js";
 import type { NotifierHealth } from "./participants/notifications.js";
-import { merchantApiRoutes, merchantApiUnavailable, type MerchantApiDeps } from "./participants/merchant-api.js";
+import {
+  BYPASS_RETRY_AFTER_SEC,
+  merchantApiRoutes,
+  merchantApiUnavailable,
+  type MerchantApiDeps,
+} from "./participants/merchant-api.js";
 import { participantRoutes, type ParticipantDeps } from "./participants/routes.js";
+import { paoConfigurationRoutes, paoConfigurationUnavailable, type PaoConfigurationDeps } from "./pao/configuration.js";
 import { paoRoutes, type PaoDeps } from "./pao/routes.js";
 
 // Среды — SPEC §8, ARCHITECTURE «Среды». dev работает в памяти, без PostgreSQL.
@@ -21,9 +27,12 @@ export function parseEnv(value: string | undefined): PlatformEnv {
 
 export interface ServerOptions {
   env: PlatformEnv;
-  logger?: boolean;
+  /** Журнал процесса Fastify: true — по умолчанию (main.ts), опции — поток для тестов записи (РП60 доп. 3). */
+  logger?: FastifyServerOptions["logger"];
   /** Шлюз ПАО (П9); без него маршрутов /pao нет. */
   pao?: PaoDeps;
+  /** Обнаружение ПАО — GET /.well-known/pao-configuration без подписи (РП60 п. 9–13); без него маршрута нет. */
+  paoConfiguration?: PaoConfigurationDeps;
   /** Шлюз участников (П10, ПИ-8): подпись мандата по подписи участника (РП36); без него маршрутов /participants нет. */
   participants?: ParticipantDeps;
   /** API для продавцов и площадок (П10, РП56): каталог ключей агентов и статус агента, без подписи; без него маршрутов нет. */
@@ -109,6 +118,8 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     void app.register(async (scope) => adpRoutes(scope, {}));
     // API для продавцов — 503, а не 404 (уточнение РП56 по № 42): каталог и статус без самопроверки не отдаются.
     void app.register(merchantApiUnavailable);
+    // Обнаружение ПАО — 503 по ПАО §6 (РП60 п. 12): шлюза нет, агент отличает недоступность от отсутствия метода.
+    void app.register(async (scope) => paoConfigurationUnavailable(scope, BYPASS_RETRY_AFTER_SEC));
     const alarm = bypass.alarm ?? ((fields, msg) => app.log.fatal(fields, msg));
     alarm({ alarm: true, mode: "bypass_only", failures }, "Платформа: самопроверка не прошла — режим «только BYPASS», агентские операции не принимаются");
     return app;
@@ -127,6 +138,9 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   // Проверка обращения — в отдельном контексте: /health её не проходит.
   const pao = opts.pao;
   if (pao) void app.register(async (scope) => paoRoutes(scope, pao));
+  // Обнаружение ПАО — своим контекстом: без подписи, проверка обращения к нему не относится (РП60 п. 11).
+  const configuration = opts.paoConfiguration;
+  if (configuration) void app.register(async (scope) => paoConfigurationRoutes(scope, configuration));
   // Шлюз участников — своим контекстом: проверка обращения ПАО к нему не относится, подпись — в теле (РП36 п. 4).
   const participants = opts.participants;
   if (participants) void app.register(async (scope) => participantRoutes(scope, participants));

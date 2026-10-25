@@ -1,10 +1,11 @@
 // П9 Маршруты ПАО (AGENT-PROTOCOL.md §3). Каждое обращение проверяется до обработчика: агент → подпись → статус (РП23 п. 6).
 // Изменяющий метод затем: Idempotency-Key → тело по схеме (REQUEST_INVALID) → захват ключа → обработчик (РП30 п. 3, РП31).
-// /revoke — в PS-05б; POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
+// /revoke — PS-05б ч. 1 (РП60); POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
 import rateLimit, { normalizeIP } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, type AgentKeys } from "../registry/agent-keys.js";
+import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, KeyNotFoundError, type AgentKeys } from "../registry/agent-keys.js";
+import { KID_FORM } from "../registry/keys.js";
 import type { ConsentJournal } from "../consent/journal.js";
 import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
@@ -129,14 +130,13 @@ function target(req: FastifyRequest): { path: string; query: string } {
   return q < 0 ? { path: url, query: "" } : { path: url.slice(0, q), query: url.slice(q + 1) };
 }
 
-export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<void> {
-  // Предел обработчика с таймаутом базы — меньше аренды ключа (РП33 доп. п. 8).
-  assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS);
-  const clock = deps.clock ?? (() => performance.now());
-  const limit = deps.params.pao_rate_limit_per_30s;
+/**
+ * Первый слой лимита (РП32): по адресу, хук onRequest — до проверки обращения и до чтения тела; неподписанный поток тоже
+ * ограничен. Retry-After ставит плагин до выброса метки; 429 — тело ПАО §6. Счётчик — свой у каждой области, где вызвана
+ * (шлюз ПАО, обнаружение — РП60 п. 11). Маршруты области — после вызова: хук onRoute плагина видит каждый.
+ */
+export async function paoCoarseLimit(app: FastifyInstance, limit: number): Promise<void> {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("pao_rate_limit_per_30s — целое ≥ 1");
-  // Первый слой лимита (РП32): по адресу, хук onRequest — до проверки обращения и до чтения тела; неподписанный поток
-  // тоже ограничен. Retry-After ставит плагин до выброса метки. Маршруты — ниже: хук onRoute плагина видит каждый.
   await app.register(rateLimit, {
     global: true,
     max: limit,
@@ -144,6 +144,23 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     keyGenerator: (req) => rateLimitKey(req.ip),
     errorResponseBuilder: () => RATE_LIMITED,
   });
+  app.setErrorHandler((err, _req, reply) => {
+    if (err === RATE_LIMITED) {
+      // Остаток окна плагин считает по Date.now(): при переводе часов назад он больше окна — обрезаем до границы РП24.
+      const computed = Number(reply.getHeader("retry-after"));
+      const retryAfter = Number.isFinite(computed) ? Math.min(Math.max(computed, 0), MAX_RETRY_AFTER_SEC) : MAX_RETRY_AFTER_SEC;
+      void reply.header("retry-after", String(retryAfter));
+      return reply.code(429).send(paoError("RATE_LIMITED").body);
+    }
+    return reply.send(err);
+  });
+}
+
+export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<void> {
+  // Предел обработчика с таймаутом базы — меньше аренды ключа (РП33 доп. п. 8).
+  assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS);
+  const clock = deps.clock ?? (() => performance.now());
+  await paoCoarseLimit(app, deps.params.pao_rate_limit_per_30s);
   // Тело — строкой, как подписано: content-digest считается от байтов, а не от разобранного JSON. Любой тип содержимого —
   // строкой (UTF-8): тело с чужим типом доходит до проверки обращения и схемы и получает ответ ПАО §6, а не 415 Fastify.
   // Ответы Fastify до шлюза остаются: тело больше bodyLimit (413), неразборный Content-Type (STATUS «Открыто»).
@@ -157,17 +174,6 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     if (e.http === 503) void reply.header("retry-after", String(deps.params.unavailable_retry_after_sec));
     return reply.code(e.http).send(e.body);
   };
-
-  app.setErrorHandler((err, _req, reply) => {
-    if (err === RATE_LIMITED) {
-      // Остаток окна плагин считает по Date.now(): при переводе часов назад он больше окна — обрезаем до границы РП24.
-      const computed = Number(reply.getHeader("retry-after"));
-      const retryAfter = Number.isFinite(computed) ? Math.min(Math.max(computed, 0), MAX_RETRY_AFTER_SEC) : MAX_RETRY_AFTER_SEC;
-      void reply.header("retry-after", String(retryAfter));
-      return reply.code(429).send(paoError("RATE_LIMITED").body);
-    }
-    return reply.send(err);
-  });
 
   app.addHook("preHandler", async (req, reply) => {
     const { path, query } = target(req);
@@ -292,6 +298,31 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       }
     }),
   );
+
+  // Отзыв своего ключа (ПАО §3, A2 п. 5.4; РП23 п. 5, доп. 3; РП60 п. 1–4): любой свой, в том числе последний и тот, которым
+  // подписан сам запрос; повторный — тот же Key. Чужой, неизвестный и не по форме kid — один ответ 422 KEY_INVALID (РП60 п. 2).
+  // Приостановленному — можно, исключённому — 403 на проверке обращения (РП60 п. 3). Действует на следующую проверку подписи.
+  app.post<{ Params: { kid: string } }>("/pao/v1/agent/keys/:kid/revoke", async (req, reply) => {
+    const kid = req.params.kid;
+    return mutating(req, reply, emptyBody, (agent) => {
+      // Признак — в журнал процесса (РП60 доп. 3): чужой и неизвестный kid по форме — как есть, не по форме — только длина.
+      const notFound = (fields: Record<string, unknown>) => {
+        req.log.info({ agent_code: agent.agent_code, ...fields }, "ПАО: отзыв — у агента нет такого ключа (РП60 п. 2)");
+        return reply4xx(paoError("KEY_INVALID", "A2 п. 5.4"));
+      };
+      if (!KID_FORM.test(kid)) return notFound({ reason: "MALFORMED", kid_length: kid.length });
+      try {
+        deps.keys.revoke(agent.agent_code, kid);
+      } catch (err) {
+        if (err instanceof KeyNotFoundError) return notFound({ reason: err.reason, kid });
+        throw err;
+      }
+      const key = deps.keys.list(agent.agent_code).find((k) => k.kid === kid);
+      if (!key) throw new Error("ПАО: ключ после отзыва не найден");
+      req.log.info({ agent_code: agent.agent_code, kid, self: kid === req.paoKid }, "ПАО: агент отозвал свой ключ");
+      return { status: 200, body: key };
+    });
+  });
 
   // Запрос мандата (ПАО §3, A7 п. 1–3; РП33): PENDING_SIGNATURE, подпись — у принципала в банке. agent_code — из
   // проверенного обращения (инвариант 5). id — от (агент, ключ): повтор находит записанный мандат (РП33 доп.). Отказ журнала — код ПАО по РП33 п. 1; причина (поле) — только в журнал процесса.
