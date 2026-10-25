@@ -105,17 +105,27 @@ describe("журнал запросов без значений параметр
     expect(boom?.req).toMatchObject({ method: "GET", route: "/test/boom/:secret" });
   });
 
-  it("404, 414 и 400 bad url: значений пути и строки запроса нет; у 404 — запись без шаблона", async () => {
+  it("404, 414 и 400 bad url: значений пути и строки запроса нет; у 404 — запись без шаблона, в /pao — отказ транспорта", async () => {
     const r404 = await s.app.inject({ url: `/pao/v1/${mark}n?q=${mark}` });
     expect(r404.statusCode).toBe(404);
+    const other404 = await s.app.inject({ url: `/nope/${mark}n?q=${mark}` });
+    expect(other404.statusCode).toBe(404);
     const r414 = await s.app.inject({ method: "POST", url: `/pao/v1/agent/keys/${mark}${"x".repeat(300)}/revoke?q=${mark}` });
     expect(r414.statusCode).toBe(414);
     const r400 = await s.app.inject({ url: `/pao/v1/mandates/%zz${mark}?q=${mark}` });
     expect(r400.statusCode).toBe(400);
     for (const e of entries()) expect(JSON.stringify(e)).not.toContain(mark);
+    // Вне /pao — обработчик Fastify по умолчанию и routeNotFound РП61 п. 2.
     const notFound = entries().filter((e) => e.msg === "маршрут не найден");
     expect(notFound).toHaveLength(1);
     expect(notFound[0]?.req).toEqual({ method: "GET", host: "localhost:80", remoteAddress: "127.0.0.1" });
+    // В /pao и до маршрутизации — запись отказа транспорта (РП62 п. 5).
+    const rejects = entries().filter((e) => e.msg === "отказ транспорта").map((e) => [e.reject, e.status]);
+    expect(rejects).toEqual([
+      ["NOT_FOUND", 404],
+      ["FST_ERR_MAX_PARAM_LENGTH", 414],
+      ["FST_ERR_BAD_URL", 400],
+    ]);
   });
 });
 

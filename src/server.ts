@@ -11,7 +11,8 @@ import {
 } from "./participants/merchant-api.js";
 import { participantRoutes, type ParticipantDeps } from "./participants/routes.js";
 import { paoConfigurationRoutes, paoConfigurationUnavailable, type PaoConfigurationDeps } from "./pao/configuration.js";
-import { paoRoutes, type PaoDeps } from "./pao/routes.js";
+import { paoNotFound, paoRoutes, type PaoDeps } from "./pao/routes.js";
+import { frameworkErrors } from "./pao/transport.js";
 
 // Среды — SPEC §8, ARCHITECTURE «Среды». dev работает в памяти, без PostgreSQL.
 export const ENVIRONMENTS = ["dev", "sandbox"] as const;
@@ -107,8 +108,14 @@ export function parseTrustedProxies(value: string | undefined): string[] {
  * Маршрут не найден или шаблона нет — без route. Не бросает: исключение сериализатора сорвало бы запись и сам запрос.
  */
 export function requestLogFields(req: FastifyRequest): Record<string, unknown> {
+  // У запроса frameworkErrors (РП62 п. 1) контекста маршрута нет — is404 и routeOptions бросают; адрес при этом нужен.
+  let route: unknown;
   try {
-    const route = req.is404 ? undefined : req.routeOptions?.url;
+    route = req.is404 ? undefined : req.routeOptions?.url;
+  } catch {
+    route = undefined;
+  }
+  try {
     return {
       method: req.method,
       ...(typeof route === "string" ? { route } : {}),
@@ -144,6 +151,8 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     logController: new PathlessLogController(),
     trustProxy: proxies.length > 0 ? [...proxies] : false,
     routerOptions: { maxParamLength: MAX_PATH_PARAM_LENGTH },
+    // 414 и 400 bad url — до маршрутизации, одним обработчиком на сервер: тело без пути и запись отказа (РП62 п. 1, 3, 5).
+    frameworkErrors,
   });
 
   const bypass = opts.bypassOnly;
@@ -174,6 +183,8 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   // Проверка обращения — в отдельном контексте: /health её не проходит.
   const pao = opts.pao;
   if (pao) void app.register(async (scope) => paoRoutes(scope, pao));
+  // Нет маршрута в /pao — 404 по ПАО §6 под грубым лимитом (РП62 п. 1); обработчик «не найдено» действует по префиксу.
+  if (pao) void app.register(async (scope) => paoNotFound(scope, pao), { prefix: "/pao" });
   // Обнаружение ПАО — своим контекстом: без подписи, проверка обращения к нему не относится (РП60 п. 11).
   const configuration = opts.paoConfiguration;
   if (configuration) void app.register(async (scope) => paoConfigurationRoutes(scope, configuration));

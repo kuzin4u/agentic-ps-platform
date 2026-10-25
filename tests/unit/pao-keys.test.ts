@@ -413,11 +413,11 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
   });
 
   // До PS-05б ч. 2 (заделы № 8–9, № 43): транспортный предел и разбор пути — ответы Fastify, не ПАО §6; тест покраснеет с правкой.
-  it("kid длиннее 256 знаков → 414 Fastify, испорченное кодирование (%zz) → 400 Fastify; ключ не отозван", async () => {
+  it("kid длиннее 256 знаков → 414, испорченное кодирование (%zz) → 400, тело ПАО §6 (РП62 п. 1–2); ключ не отозван", async () => {
     const long = await revoke(a, "x".repeat(257));
-    expect([long.statusCode, long.json().code]).toEqual([414, "FST_ERR_MAX_PARAM_LENGTH"]);
+    expect([long.statusCode, long.json().code]).toEqual([414, "REQUEST_INVALID"]);
     const bad = await revoke(a, "%zz");
-    expect([bad.statusCode, bad.json().code]).toEqual([400, "FST_ERR_BAD_URL"]);
+    expect([bad.statusCode, bad.json().code]).toEqual([400, "REQUEST_INVALID"]);
     expect(statusOf(a.kid)).toBe("ACTIVE");
   });
 
