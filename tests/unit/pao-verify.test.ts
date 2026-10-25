@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   AsyncMemoryNonceStore,
@@ -355,7 +356,7 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
       "SIGNATURE_INVALID",
     );
     expect(code(await s.verifier.verify(signed(signer, A, { nonce: "victim", body: "" })))).toBe("OK");
-    expect((s.verifier.nonces as Counting).values).toEqual([`${A} victim`]);
+    expect((s.verifier.nonces as Counting).values).toEqual([nonceValue(A, "victim")]);
   });
 
   it("отклонённый по статусу запрос nonce занимает: подпись была верной", async () => {
@@ -382,6 +383,17 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
     expect(code(await s.verifier.verify({ ...req, headers: { ...req.headers, "x-nonce": ["a", "b"] } }))).toBe(
       "SIGNATURE_INVALID",
     );
+  });
+
+  it("тело у метода без тела (unexpectedBody) — SIGNATURE_INVALID после AGENT_UNKNOWN; nonce не занимается (РП62 п. 7)", async () => {
+    const s = stand();
+    const signer = s.admit(A);
+    const req = signed(signer, A);
+    expect(code(await s.verifier.verify({ ...req, unexpectedBody: true }))).toBe("SIGNATURE_INVALID");
+    // Порядок РП23 п. 6: неизвестный агент — AGENT_UNKNOWN и с телом.
+    expect(code(await s.verifier.verify({ ...signed(signer, B), unexpectedBody: true }))).toBe("AGENT_UNKNOWN");
+    // Тот же запрос без признака принимается: nonce отказом не занят.
+    expect(code(await s.verifier.verify(req))).toBe("OK");
   });
 
   it("сбой реестра или ключей — 503 UPSTREAM_UNAVAILABLE, не ошибка агента и не исключение (аудит PS-04 №2)", async () => {
@@ -513,11 +525,22 @@ describe("хранилище nonce", () => {
     expect(errors).toEqual([]);
   });
 
-  it("значение — код агента, пробел, x-nonce: разбор по первому пробелу однозначен (РП30 п. 2)", () => {
-    expect(nonceValue(A, "a b:c")).toBe(`${A} a b:c`);
+  it("значение — код агента, пробел, SHA-256 от x-nonce в base64url: длина постоянна, разбор однозначен (РП30 п. 2, РП62 п. 11)", () => {
+    expect(nonceValue(A, "a b:c")).toBe(`${A} ${createHash("sha256").update("a b:c", "utf8").digest("base64url")}`);
+    // Длина не зависит от x-nonce: 43 знака хэша при любом размере заголовка.
+    expect(nonceValue(A, "x".repeat(8000)).length).toBe(nonceValue(A, "x").length);
+    expect(nonceValue(A, "x").length).toBe(A.length + 1 + 43);
     // При «:» склейки двух допустимых кодов совпали бы; с пробелом — нет.
     expect(nonceValue("nspk:agent:id:v1", "z:v3:q")).not.toBe(nonceValue("nspk:agent:id:v1:z:v3", "q"));
     expect(PAO_NONCE_SCOPE).toBe("pao");
+  });
+
+  it("длинный x-nonce (8 000 знаков) принимается, повтор — SIGNATURE_INVALID (РП62 п. 11)", async () => {
+    const s = stand();
+    const signer = s.admit(A);
+    const req = signed(signer, A, { nonce: "n".repeat(7_990) + String(++nonceSeq) });
+    expect(code(await s.verifier.verify(req))).toBe("OK");
+    expect(code(await s.verifier.verify(req))).toBe("SIGNATURE_INVALID");
   });
 
   it("по умолчанию ttl = 2 × signature_skew_sec: повтор в пределах окна времени ловится всегда", async () => {

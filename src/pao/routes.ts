@@ -3,7 +3,7 @@
 // /revoke — PS-05б ч. 1 (РП60); POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
 import rateLimit, { normalizeIP } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, KeyNotFoundError, type AgentKeys } from "../registry/agent-keys.js";
 import { KID_FORM } from "../registry/keys.js";
 import type { ConsentJournal } from "../consent/journal.js";
@@ -33,8 +33,9 @@ import {
   type PaoReply,
 } from "./idempotency.js";
 import { PAO_DB_TIMEOUT_MS } from "./stores.js";
+import { errFields, logTransportReject, PAO_BODY_LIMIT_BYTES, paoTransportError } from "./transport.js";
 import { checkSubscriptionUrl, resolveGlobal, STAND_PORT, systemResolver, withTimeout, type HostResolver } from "./subscription.js";
-import type { PaoRequestVerifier } from "./verify.js";
+import { SIGNED_HEADERS, type PaoRequestVerifier } from "./verify.js";
 
 export interface PaoDeps {
   readonly verifier: PaoRequestVerifier;
@@ -123,6 +124,20 @@ declare module "fastify" {
   }
 }
 
+/**
+ * Все значения заголовка по сырым заголовкам (РП62 п. 6): req.headers склеивает повтор через «, ». По rawHeaders, а не
+ * headersDistinct — его нет у запроса light-my-request (inject), а сырые пары есть и там, и у Node.
+ */
+function headerValues(req: FastifyRequest, name: string): string[] {
+  const raw = req.raw.rawHeaders ?? [];
+  const values: string[] = [];
+  for (let i = 0; i + 1 < raw.length; i += 2) if (raw[i]!.toLowerCase() === name) values.push(raw[i + 1]!);
+  return values;
+}
+
+/** Методы с телом; у прочих тело — признак подмены (РП62 п. 7). */
+const BODY_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH"]);
+
 /** Путь и запрос — как пришли, без декодирования: их подписал агент (ПАО §2). */
 function target(req: FastifyRequest): { path: string; query: string } {
   const url = req.raw.url ?? "";
@@ -135,7 +150,12 @@ function target(req: FastifyRequest): { path: string; query: string } {
  * ограничен. Retry-After ставит плагин до выброса метки; 429 — тело ПАО §6. Счётчик — свой у каждой области, где вызвана
  * (шлюз ПАО, обнаружение — РП60 п. 11). Маршруты области — после вызова: хук onRoute плагина видит каждый.
  */
-export async function paoCoarseLimit(app: FastifyInstance, limit: number): Promise<void> {
+export async function paoCoarseLimit(
+  app: FastifyInstance,
+  limit: number,
+  /** Прочие ошибки области (РП62 п. 1); без него — ответ Fastify. Обработчик ошибок у области один (Fastify 5). */
+  otherError?: (err: FastifyError, req: FastifyRequest, reply: FastifyReply) => FastifyReply,
+): Promise<void> {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("pao_rate_limit_per_30s — целое ≥ 1");
   await app.register(rateLimit, {
     global: true,
@@ -144,7 +164,7 @@ export async function paoCoarseLimit(app: FastifyInstance, limit: number): Promi
     keyGenerator: (req) => rateLimitKey(req.ip),
     errorResponseBuilder: () => RATE_LIMITED,
   });
-  app.setErrorHandler((err, _req, reply) => {
+  app.setErrorHandler((err: FastifyError, req, reply) => {
     if (err === RATE_LIMITED) {
       // Остаток окна плагин считает по Date.now(): при переводе часов назад он больше окна — обрезаем до границы РП24.
       const computed = Number(reply.getHeader("retry-after"));
@@ -152,22 +172,61 @@ export async function paoCoarseLimit(app: FastifyInstance, limit: number): Promi
       void reply.header("retry-after", String(retryAfter));
       return reply.code(429).send(paoError("RATE_LIMITED").body);
     }
-    return reply.send(err);
+    return otherError ? otherError(err, req, reply) : reply.send(err);
   });
+}
+
+/**
+ * Ошибки области шлюза до обработчика и исключения кода (РП62 п. 1): 413 и 4xx разбора — тело §6 (REQUEST_INVALID при
+ * HTTP Fastify у 413, 400 у прочих), 5xx — 503 UPSTREAM_UNAVAILABLE: под ключом 5xx не сохраняется (РП33 п. 6).
+ */
+function paoTransportFailure(retryAfterSec: number) {
+  return (err: FastifyError, req: FastifyRequest, reply: FastifyReply): FastifyReply => {
+    const status = err.statusCode;
+    if (status !== undefined && status >= 400 && status < 500) {
+      const e = paoTransportError(status === 413 ? 413 : 400);
+      logTransportReject(req, { reject: err.code ?? "UNKNOWN", status: e.http, pao_code: e.body.code });
+      return reply.code(e.http).send(e.body);
+    }
+    const e = paoError("UPSTREAM_UNAVAILABLE");
+    logTransportReject(req, { reject: "UNHANDLED", status: e.http, pao_code: e.body.code, err });
+    return reply.code(e.http).header("retry-after", String(retryAfterSec)).send(e.body);
+  };
+}
+
+/**
+ * Нет маршрута в области /pao (РП62 п. 1): 404 с телом §6 (REQUEST_INVALID до ПАО 1.5.0) под грубым лимитом по адресу —
+ * свой счётчик, тот же предел (как обнаружение, РП60 п. 11); несуществующие пути лимит не обходят (аудит К4.3 № 6).
+ * Регистрируется с префиксом /pao: обработчик «не найдено» Fastify действует по префиксу контекста. Лимит и ответ — в
+ * onRequest, до разбора тела (КТ1 № 1): тело несуществующего пути не читается — иначе ошибка разбора отвечала бы мимо
+ * счётчика, а предел тела у контекста 404 — серверный 1 МиБ (Fastify 5.12, context.js), не предел области.
+ */
+export async function paoNotFound(app: FastifyInstance, deps: Pick<PaoDeps, "params">): Promise<void> {
+  await paoCoarseLimit(app, deps.params.pao_rate_limit_per_30s, paoTransportFailure(deps.params.unavailable_retry_after_sec));
+  const notFound = (req: FastifyRequest, reply: FastifyReply): FastifyReply => {
+    const e = paoTransportError(404);
+    logTransportReject(req, { reject: "NOT_FOUND", status: e.http, pao_code: e.body.code });
+    return reply.code(e.http).send(e.body);
+  };
+  // Хуки контекста без маршрутов действуют только на его 404; порядок — лимит, затем ответ.
+  app.addHook("onRequest", app.rateLimit());
+  app.addHook("onRequest", async (req, reply) => notFound(req, reply));
+  app.setNotFoundHandler(notFound);
 }
 
 export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<void> {
   // Предел обработчика с таймаутом базы — меньше аренды ключа (РП33 доп. п. 8).
   assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS);
   const clock = deps.clock ?? (() => performance.now());
-  await paoCoarseLimit(app, deps.params.pao_rate_limit_per_30s);
+  await paoCoarseLimit(app, deps.params.pao_rate_limit_per_30s, paoTransportFailure(deps.params.unavailable_retry_after_sec));
   // Тело — строкой, как подписано: content-digest считается от байтов, а не от разобранного JSON. Любой тип содержимого —
   // строкой (UTF-8): тело с чужим типом доходит до проверки обращения и схемы и получает ответ ПАО §6, а не 415 Fastify.
-  // Ответы Fastify до шлюза остаются: тело больше bodyLimit (413), неразборный Content-Type (STATUS «Открыто»).
+  // Тело больше PAO_BODY_LIMIT_BYTES (413) и неразборный Content-Type — тоже §6, обработчиком ошибок области (РП62 п. 1, 4).
   const asString = (_req: FastifyRequest, body: string | Buffer, done: (err: null, body: string) => void) =>
     done(null, String(body));
-  app.addContentTypeParser("application/json", { parseAs: "string" }, asString);
-  app.addContentTypeParser("*", { parseAs: "string" }, asString);
+  const parse = { parseAs: "string", bodyLimit: PAO_BODY_LIMIT_BYTES } as const;
+  app.addContentTypeParser("application/json", parse, asString);
+  app.addContentTypeParser("*", parse, asString);
 
   const send = (reply: FastifyReply, e: PaoErrorReply): FastifyReply => {
     // ПАО §2: Retry-After и с ответами 503 — из стендовых параметров (РП24).
@@ -176,12 +235,31 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   };
 
   app.addHook("preHandler", async (req, reply) => {
+    // HEAD — 404 по §6, как нет маршрута (РП62 п. 8). Проверкой метода, а не exposeHeadRoute из onRoute: Fastify 5.12
+    // решает о HEAD-маршруте до хуков onRoute (lib/route.js). Лимит к этому моменту посчитан хуком маршрута.
+    if (req.method === "HEAD") {
+      const e = paoTransportError(404);
+      logTransportReject(req, { reject: "NOT_FOUND", status: e.http, pao_code: e.body.code });
+      return reply.code(e.http).send(e.body);
+    }
     const { path, query } = target(req);
+    // Кодирование в пути ПАО не нужно ни одному идентификатору, а маршрутизатор путь декодирует: /pao/v1/%61gent вёл бы в
+    // /pao/v1/agent по подписи над другим путём (РП62 п. 8).
+    if (path.includes("%")) return send(reply, paoError("REQUEST_INVALID"));
+    // Повтор подписываемого заголовка — массивом (Node склеил бы его через «, »): verify отвечает SIGNATURE_INVALID (п. 6).
+    const headers: Record<string, string | readonly string[] | undefined> = { ...req.headers };
+    for (const name of SIGNED_HEADERS) {
+      const all = headerValues(req, name);
+      if (all.length > 1) headers[name] = all;
+    }
+    const cl = req.headers["content-length"];
+    const unexpectedBody = !BODY_METHODS.has(req.method) && ((cl !== undefined && cl !== "0") || req.headers["transfer-encoding"] !== undefined);
     const body = typeof req.body === "string" ? req.body : "";
-    const r = await deps.verifier.verify({ method: req.method, path, query, headers: req.headers, body });
+    const r = await deps.verifier.verify({ method: req.method, path, query, headers, body, unexpectedBody });
     if (!r.ok) {
       // Сбой источника — в журнал процесса, не в ответ агенту (повторный аудит PS-04 №4).
-      if (r.cause !== undefined) req.log.error({ err: r.cause }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
+      // Исключение — только имя, код, стек (РП62 доп. 2): detail и where PostgreSQL могут нести значения запроса.
+      if (r.cause !== undefined) req.log.error({ err: errFields(r.cause) }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
       return send(reply, paoError(r.code, r.norm));
     }
     req.paoAgent = r.agent;
@@ -216,6 +294,8 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   ): Promise<FastifyReply> {
     const agent = req.paoAgent as AgentRecord;
     const key = req.headers["idempotency-key"];
+    // Два Idempotency-Key — неоднозначность: Node склеил бы их в ключ «a, b» (РП62 п. 6).
+    if (headerValues(req, "idempotency-key").length > 1) return send(reply, paoError("REQUEST_INVALID"));
     if (typeof key !== "string" || key === "") return send(reply, paoError("IDEMPOTENCY_REQUIRED"));
     const raw = typeof req.body === "string" ? req.body : "";
     // Реквизиты карты в теле — 422 CREDENTIALS_FORBIDDEN до схемы и захвата ключа: номер не попадает ни в хранилище

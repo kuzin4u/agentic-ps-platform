@@ -2,6 +2,7 @@
 // Подпись проверяет agentic-core verifyRequestAsync — тот же код, которым подписывает агент (совместный тест С0).
 // Ключ ищется только среди ключей агента из x-agent-code: иначе агент A подписывал бы за агента B (инвариант 5).
 // Nonce — хранилище ядра, проверка и запись одной командой после верной подписи (РП30 п. 1–2, Ш3а).
+import { createHash } from "node:crypto";
 import { ed25519Verifier, verifyRequestAsync, type AsyncNonceStore, type Verifier } from "@kuzin4u/agentic-core";
 import type { KeyForVerify } from "../registry/agent-keys.js";
 import type { AgentRecord } from "../registry/model.js";
@@ -14,7 +15,18 @@ export interface PaoRequest {
   readonly query: string;
   readonly headers: Readonly<Record<string, string | readonly string[] | undefined>>;
   readonly body: string;
+  /**
+   * У метода без тела (GET, DELETE, HEAD) пришло тело — Content-Length не 0 или Transfer-Encoding (РП62 п. 7): подпись
+   * проверялась бы по digest пустого тела, а тело другое — SIGNATURE_INVALID.
+   */
+  readonly unexpectedBody?: boolean;
 }
+
+/**
+ * Подписываемые заголовки (ПАО §2): повтор любого — неоднозначность (РП62 п. 6). Node склеивает повтор через «, », поэтому
+ * вызывающий передаёт такой заголовок массивом из headersDistinct, а verify отвечает SIGNATURE_INVALID.
+ */
+export const SIGNED_HEADERS = ["x-agent-code", "x-timestamp", "x-nonce", "content-digest", "signature", "signature-input"] as const;
 
 export type PaoAuthError =
   | "AGENT_UNKNOWN"
@@ -43,11 +55,13 @@ export interface PaoAuthSources {
 }
 
 /**
- * Значение nonce в общей области `pao` (РП30 п. 2): код агента, пробел, x-nonce. Пробела нет в грамматике кода агента
- * (РП21: части [a-z0-9-] через «:»), поэтому разбор по первому пробелу однозначен; x-nonce — любой.
- * Пустой x-nonce сюда не попадает: с приставкой он стал бы непустым значением (см. verify).
+ * Значение nonce в общей области `pao` (РП30 п. 2; РП62 п. 11): код агента, пробел, SHA-256 от x-nonce в base64url. Длина
+ * не зависит от x-nonce: сырой x-nonce до 16 КБ заголовков не помещался в индекс core_nonces — ошибка агента становилась
+ * 503 Платформы. Пробела нет в грамматике кода агента (РП21), разбор по первому пробелу однозначен. Пустой x-nonce сюда
+ * не попадает (см. verify). Смена вида значения — развёртывание с остановкой не короче 2 × signature_skew_sec (нюанс 3).
  */
-export const nonceValue = (agent_code: string, nonce: string): string => `${agent_code} ${nonce}`;
+export const nonceValue = (agent_code: string, nonce: string): string =>
+  `${agent_code} ${createHash("sha256").update(nonce, "utf8").digest("base64url")}`;
 
 /** Метод, доступный приостановленному и исключённому агенту: узнать свой статус (РП23 п. 6.3). */
 const STATUS_EXEMPT = new Set(["GET /pao/v1/agent"]);
@@ -112,6 +126,7 @@ export class PaoRequestVerifier {
       return upstream(e);
     }
     if (!agentCode || !agent) return { ok: false, code: "AGENT_UNKNOWN", norm: "A2 п. 5.1" };
+    if (req.unexpectedBody) return fail("SIGNATURE_INVALID");
 
     const now = this.now().getTime();
     // Алгоритм подписи — атрибут ключа (РП5): alg из Signature-Input должен совпасть с alg ключа.

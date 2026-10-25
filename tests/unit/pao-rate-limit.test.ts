@@ -80,17 +80,17 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
     expect429(await unsigned(app));
   });
 
-  it("обработчик ошибок области не меняет прочие ответы Fastify: 404 и 413 — прежние (Ш14 — открыто)", async () => {
+  it("обработчик ошибок области отвечает на 404 и 413 по ПАО §6 (РП62 п. 1–2); тело 1,1 МБ — больше любого предела, сам предел 64 КиБ — в pao-transport-errors", async () => {
     const { app } = platform(100);
-    expect((await app.inject({ method: "GET", url: "/pao/v1/nope" })).statusCode).toBe(404);
+    const nope = await app.inject({ method: "GET", url: "/pao/v1/nope" });
+    expect([nope.statusCode, nope.json().code]).toEqual([404, "REQUEST_INVALID"]);
     const big = await app.inject({
       method: "POST",
       url: "/pao/v1/agent/keys",
       headers: { "content-type": "application/json", "x-agent-code": A },
       payload: "x".repeat(1_100_000),
     });
-    expect(big.statusCode).toBe(413);
-    expect(big.json()).toMatchObject({ code: "FST_ERR_CTP_BODY_TOO_LARGE" });
+    expect([big.statusCode, big.json().code]).toEqual([413, "REQUEST_INVALID"]);
   });
 
   it("стенд для агента — тот же лимит из параметров стенда (РП32 п. 7)", async () => {
