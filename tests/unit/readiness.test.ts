@@ -507,4 +507,18 @@ describe("Длина параметра пути: транспортный пр�
       await s.close();
     }
   });
+
+  it("№ 43 закрыт (РП63 п. 11): допущенный с кодом 256 знаков читается продавцом — 200; 257 знаков не допускается", async () => {
+    const s = createStand();
+    try {
+      const at = (n: number) => `nspk:agent:${"a".repeat(n - "nspk:agent::v1".length)}:v1`;
+      expect(s.admit(buyerApplication(at(256), newAgentSide()), "op").admitted).toBe(true);
+      const r = await s.app.inject({ method: "GET", url: `/merchants/v1/agents/${at(256)}` });
+      expect([r.statusCode, r.json()]).toEqual([200, { agent_code: at(256), status: "ACTIVE", class: "BUYER" }]);
+      const long = s.admit(buyerApplication(at(257), newAgentSide()), "op");
+      expect(long.admitted ? [] : long.reasons).toEqual(["CODE_INVALID"]);
+    } finally {
+      await s.close();
+    }
+  });
 });
