@@ -321,8 +321,18 @@ describe("GET /pao/v1/credentials/{ref} — реквизит по ссылке (
     await g.app.close();
   });
 
+  it("ref с % (нулевой символ кодированием) — 400 REQUEST_INVALID до проверки подписи и хранилища (РП62 п. 8)", async () => {
+    const g = await gateway();
+    const byRef = vi.spyOn(g.store, "credentialByRef");
+    const r = await signedInject(g.app, g.side, CODE, { method: "GET", path: "/pao/v1/credentials/crd_%00aaaaaaaaaaaaaaaaaaaaaaa" });
+    expect([r.statusCode, r.json().code]).toEqual([400, "REQUEST_INVALID"]);
+    expect(byRef).not.toHaveBeenCalled();
+    await g.app.close();
+  });
+
   it.each([
-    ["нулевой символ", "crd_%00aaaaaaaaaaaaaaaaaaaaaaa"],
+    // Знак вне алфавита, который в пути не кодируется; с кодированием — 400 (тест выше, РП62 п. 8).
+    ["знак вне алфавита", "crd_!aaaaaaaaaaaaaaaaaaaaaaa"],
     // Длиннее maxParamLength Fastify (100) путь отклоняет сам фреймворк (414) — до маршрута.
     ["длинная строка", `crd_${"a".repeat(90)}`],
     ["чужой префикс", `mnd_${"a".repeat(24)}`],

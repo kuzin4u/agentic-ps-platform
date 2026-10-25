@@ -2,6 +2,9 @@
 // {code}; каждый отказ — запись «отказ транспорта» без пути, строки запроса и err.message. Стенд собирается целиком,
 // журнал — в массив (как server-request-log).
 import { randomUUID } from "node:crypto";
+import { request } from "node:http";
+import type { AddressInfo } from "node:net";
+import { signRequest } from "@kuzin4u/agentic-core";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { paoIdempotency } from "../../src/pao/idempotency.js";
@@ -118,10 +121,10 @@ describe("ответы транспорта по ПАО §6 и запись от
     expect(res.json()).toMatchObject({ code: "AGENT_UNKNOWN" });
   });
 
-  it("исключение обработчика — 503 UPSTREAM_UNAVAILABLE с Retry-After, в записи err — только name, code, стек", async () => {
+  it("исключение обработчика — 503 UPSTREAM_UNAVAILABLE с Retry-After, в записи err — только name, code, кадры стека", async () => {
     vi.spyOn(s.keys, "list").mockImplementation(() => {
-      // Как у ошибок PostgreSQL: перечислимые detail и where со значениями запроса в запись не идут (КТ1 № 8).
-      throw Object.assign(new Error("сбой ключей"), { code: "XX000", detail: mark, where: mark });
+      // Как у ошибок PostgreSQL: message, detail и where со значениями запроса и путём в запись не идут (КТ1 № 8).
+      throw Object.assign(new Error(`сбой ключей /pao/v1/agent/${mark}\nзначение ${mark}`), { code: "XX000", detail: mark, where: mark });
     });
     const res = await signedInject(s.app, a, A, { query: `q=${mark}` });
     expect(res.statusCode).toBe(503);
@@ -131,6 +134,9 @@ describe("ответы транспорта по ПАО §6 и запись от
     expect(e).toMatchObject({ reject: "UNHANDLED", status: 503, pao_code: "UPSTREAM_UNAVAILABLE", area: "pao" });
     expect(Object.keys(e?.err as object).sort()).toEqual(["code", "name", "stack"]);
     expect(e?.err).toMatchObject({ name: "Error", code: "XX000" });
+    const stack = String((e?.err as { stack?: unknown }).stack);
+    expect(stack).toMatch(/^\s+at /);
+    for (const line of stack.split("\n")) expect(line).toMatch(/^\s+at /);
     for (const x of entries()) expect(JSON.stringify(x)).not.toContain(mark);
   });
 
@@ -148,6 +154,87 @@ describe("ответы транспорта по ПАО §6 и запись от
     }
     expect(rejects().map((e) => [e.reject, e.status, e.area])).toEqual(calls.map(() => ["NOT_FOUND", 404, "pao"]));
     for (const e of entries()) expect(JSON.stringify(e)).not.toContain(mark);
+  });
+
+  /** Подписанные заголовки, как у signedInject, — чтобы затем повторить или добавить заголовок в обход подписи. */
+  function signedHeaders(method: string, path: string, body = "", extra: Record<string, string> = {}): Record<string, string> {
+    const headers: Record<string, string> = {
+      "x-agent-code": A,
+      "x-timestamp": new Date().toISOString().slice(0, 19) + "Z",
+      "x-nonce": randomUUID(),
+      ...(body !== "" ? { "content-type": "application/json" } : {}),
+      ...extra,
+    };
+    return signRequest({ method, path, query: "", headers, body }, a.signer).headers;
+  }
+
+  it("повтор подписываемого заголовка — 401 SIGNATURE_INVALID, даже когда склейка Node совпала бы с подписанным (РП62 п. 6)", async () => {
+    // Подписано x-nonce «p, q»; пришло два заголовка «p» и «q» — Node склеил бы их ровно в подписанное значение, и без
+    // проверки повтора подпись сошлась бы. Прокси за шлюзом мог бы взять из них только первое.
+    // По настоящему HTTP: у inject массив заголовка остаётся массивом, склеивает его только сервер Node.
+    const nonce = `${randomUUID()}, ${randomUUID()}`;
+    const h = signedHeaders("GET", "/pao/v1/agent", "", { "x-nonce": nonce });
+    await s.app.listen({ port: 0, host: "127.0.0.1" });
+    const { port } = s.app.server.address() as AddressInfo;
+    const res = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const r = request({ host: "127.0.0.1", port, path: "/pao/v1/agent", headers: { ...h, "x-nonce": nonce.split(", ") } }, (m) => {
+        let body = "";
+        m.on("data", (c: Buffer) => (body += c.toString()));
+        m.on("end", () => resolve({ status: m.statusCode ?? 0, body }));
+      });
+      r.on("error", reject);
+      r.end();
+    });
+    expect([res.status, (JSON.parse(res.body) as { code: string }).code]).toEqual([401, "SIGNATURE_INVALID"]);
+    // Тот же подписанный «p, q» одним заголовком — принят: значение с запятой само по себе не отказ.
+    const one = await s.app.inject({ url: "/pao/v1/agent", headers: signedHeaders("GET", "/pao/v1/agent", "", { "x-nonce": nonce }) });
+    expect(one.statusCode).toBe(200);
+  });
+
+  it("два Idempotency-Key — 400 REQUEST_INVALID, ключ «a, b» не занят (РП62 п. 6)", async () => {
+    const body = "{}";
+    const h = signedHeaders("POST", "/pao/v1/mandates", body);
+    const res = await s.app.inject({ method: "POST", url: "/pao/v1/mandates", headers: { ...h, "idempotency-key": ["a", "b"] }, payload: body });
+    expect([res.statusCode, res.json().code]).toEqual([400, "REQUEST_INVALID"]);
+    // Ключ «a, b» не занят: с ним одним — обычный путь метода (тело {} не по схеме — тот же REQUEST_INVALID, но не конфликт).
+    const one = await s.app.inject({
+      method: "POST",
+      url: "/pao/v1/mandates",
+      headers: signedHeaders("POST", "/pao/v1/mandates", body, { "idempotency-key": "a, b" }),
+      payload: body,
+    });
+    expect([one.statusCode, one.json().code]).toEqual([400, "REQUEST_INVALID"]);
+  });
+
+  it("тело у GET (Content-Length или Transfer-Encoding) — 401 SIGNATURE_INVALID (РП62 п. 7)", async () => {
+    for (const extra of [{ "content-length": "2" }, { "transfer-encoding": "chunked" }]) {
+      const res = await s.app.inject({ url: "/pao/v1/agent", headers: { ...signedHeaders("GET", "/pao/v1/agent"), ...extra } });
+      expect([res.statusCode, res.json().code]).toEqual([401, "SIGNATURE_INVALID"]);
+    }
+  });
+
+  it("% в сыром пути существующего маршрута — 400 REQUEST_INVALID, подпись над сырым путём не спасает (РП62 п. 8)", async () => {
+    const path = `/pao/v1/mandates/%6D${mark}`;
+    const res = await s.app.inject({ url: path, headers: signedHeaders("GET", path) });
+    expect([res.statusCode, res.json().code]).toEqual([400, "REQUEST_INVALID"]);
+  });
+
+  it("HEAD на существующий путь — 404 с записью отказа транспорта (РП62 п. 8)", async () => {
+    const res = await s.app.inject({ method: "HEAD", url: `/pao/v1/agent?q=${mark}` });
+    expect(res.statusCode).toBe(404);
+    expect(rejects().map((e) => [e.reject, e.status, e.area])).toEqual([["NOT_FOUND", 404, "pao"]]);
+    for (const e of entries()) expect(JSON.stringify(e)).not.toContain(mark);
+  });
+
+  it("сбой источника при проверке обращения — 503, в записи err только name, code и кадры стека", async () => {
+    vi.spyOn(s.registry, "get").mockImplementation(() => {
+      throw Object.assign(new Error(`сбой реестра ${mark}`), { code: "XX000", detail: mark, where: mark });
+    });
+    const res = await signedInject(s.app, a, A);
+    expect(res.statusCode).toBe(503);
+    const e = entries().find((x) => typeof x.msg === "string" && x.msg.startsWith("ПАО: сбой источника"));
+    expect(Object.keys(e?.err as object).sort()).toEqual(["code", "name", "stack"]);
+    for (const x of entries()) expect(JSON.stringify(x)).not.toContain(mark);
   });
 
   it("вне /pao: 414 и 400 bad url — тем же HTTP, тело {code: REQUEST_INVALID}, без пути; запись area other", async () => {

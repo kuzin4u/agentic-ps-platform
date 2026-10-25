@@ -14,7 +14,18 @@ export interface PaoRequest {
   readonly query: string;
   readonly headers: Readonly<Record<string, string | readonly string[] | undefined>>;
   readonly body: string;
+  /**
+   * У метода без тела (GET, DELETE, HEAD) пришло тело — Content-Length не 0 или Transfer-Encoding (РП62 п. 7): подпись
+   * проверялась бы по digest пустого тела, а тело другое — SIGNATURE_INVALID.
+   */
+  readonly unexpectedBody?: boolean;
 }
+
+/**
+ * Подписываемые заголовки (ПАО §2): повтор любого — неоднозначность (РП62 п. 6). Node склеивает повтор через «, », поэтому
+ * вызывающий передаёт такой заголовок массивом из headersDistinct, а verify отвечает SIGNATURE_INVALID.
+ */
+export const SIGNED_HEADERS = ["x-agent-code", "x-timestamp", "x-nonce", "content-digest", "signature", "signature-input"] as const;
 
 export type PaoAuthError =
   | "AGENT_UNKNOWN"
@@ -112,6 +123,7 @@ export class PaoRequestVerifier {
       return upstream(e);
     }
     if (!agentCode || !agent) return { ok: false, code: "AGENT_UNKNOWN", norm: "A2 п. 5.1" };
+    if (req.unexpectedBody) return fail("SIGNATURE_INVALID");
 
     const now = this.now().getTime();
     // Алгоритм подписи — атрибут ключа (РП5): alg из Signature-Input должен совпасть с alg ключа.

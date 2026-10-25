@@ -168,11 +168,12 @@ describe("отзыв ключа: kid в собственной записи — 
 
   it("чужой → FOREIGN и kid, неизвестный → UNKNOWN и kid, не по форме → MALFORMED и длина; стандартные записи — без всех трёх", async () => {
     const unknown = newAgentSide().kid;
-    const malformed = `секрет-${randomUUID()}`;
+    // Не по форме без кодирования: с % в пути — 400 раньше маршрута (РП62 п. 8), записи MALFORMED не было бы.
+    const malformed = `sekret!${randomUUID()}`;
     for (const kid of [b.kid, unknown, malformed]) {
       const res = await signedInject(s.app, a, A, {
         method: "POST",
-        path: `/pao/v1/agent/keys/${encodeURIComponent(kid)}/revoke`,
+        path: `/pao/v1/agent/keys/${kid}/revoke`,
         headers: { "idempotency-key": randomUUID() },
       });
       expect(res.statusCode).toBe(422);

@@ -33,9 +33,9 @@ import {
   type PaoReply,
 } from "./idempotency.js";
 import { PAO_DB_TIMEOUT_MS } from "./stores.js";
-import { logTransportReject, PAO_BODY_LIMIT_BYTES, paoTransportError } from "./transport.js";
+import { errFields, logTransportReject, PAO_BODY_LIMIT_BYTES, paoTransportError } from "./transport.js";
 import { checkSubscriptionUrl, resolveGlobal, STAND_PORT, systemResolver, withTimeout, type HostResolver } from "./subscription.js";
-import type { PaoRequestVerifier } from "./verify.js";
+import { SIGNED_HEADERS, type PaoRequestVerifier } from "./verify.js";
 
 export interface PaoDeps {
   readonly verifier: PaoRequestVerifier;
@@ -123,6 +123,20 @@ declare module "fastify" {
     paoKid?: string;
   }
 }
+
+/**
+ * Все значения заголовка по сырым заголовкам (РП62 п. 6): req.headers склеивает повтор через «, ». По rawHeaders, а не
+ * headersDistinct — его нет у запроса light-my-request (inject), а сырые пары есть и там, и у Node.
+ */
+function headerValues(req: FastifyRequest, name: string): string[] {
+  const raw = req.raw.rawHeaders ?? [];
+  const values: string[] = [];
+  for (let i = 0; i + 1 < raw.length; i += 2) if (raw[i]!.toLowerCase() === name) values.push(raw[i + 1]!);
+  return values;
+}
+
+/** Методы с телом; у прочих тело — признак подмены (РП62 п. 7). */
+const BODY_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH"]);
 
 /** Путь и запрос — как пришли, без декодирования: их подписал агент (ПАО §2). */
 function target(req: FastifyRequest): { path: string; query: string } {
@@ -221,12 +235,31 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   };
 
   app.addHook("preHandler", async (req, reply) => {
+    // HEAD — 404 по §6, как нет маршрута (РП62 п. 8). Проверкой метода, а не exposeHeadRoute из onRoute: Fastify 5.12
+    // решает о HEAD-маршруте до хуков onRoute (lib/route.js). Лимит к этому моменту посчитан хуком маршрута.
+    if (req.method === "HEAD") {
+      const e = paoTransportError(404);
+      logTransportReject(req, { reject: "NOT_FOUND", status: e.http, pao_code: e.body.code });
+      return reply.code(e.http).send(e.body);
+    }
     const { path, query } = target(req);
+    // Кодирование в пути ПАО не нужно ни одному идентификатору, а маршрутизатор путь декодирует: /pao/v1/%61gent вёл бы в
+    // /pao/v1/agent по подписи над другим путём (РП62 п. 8).
+    if (path.includes("%")) return send(reply, paoError("REQUEST_INVALID"));
+    // Повтор подписываемого заголовка — массивом (Node склеил бы его через «, »): verify отвечает SIGNATURE_INVALID (п. 6).
+    const headers: Record<string, string | readonly string[] | undefined> = { ...req.headers };
+    for (const name of SIGNED_HEADERS) {
+      const all = headerValues(req, name);
+      if (all.length > 1) headers[name] = all;
+    }
+    const cl = req.headers["content-length"];
+    const unexpectedBody = !BODY_METHODS.has(req.method) && ((cl !== undefined && cl !== "0") || req.headers["transfer-encoding"] !== undefined);
     const body = typeof req.body === "string" ? req.body : "";
-    const r = await deps.verifier.verify({ method: req.method, path, query, headers: req.headers, body });
+    const r = await deps.verifier.verify({ method: req.method, path, query, headers, body, unexpectedBody });
     if (!r.ok) {
       // Сбой источника — в журнал процесса, не в ответ агенту (повторный аудит PS-04 №4).
-      if (r.cause !== undefined) req.log.error({ err: r.cause }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
+      // Исключение — только имя, код, стек (РП62 доп. 2): detail и where PostgreSQL могут нести значения запроса.
+      if (r.cause !== undefined) req.log.error({ err: errFields(r.cause) }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
       return send(reply, paoError(r.code, r.norm));
     }
     req.paoAgent = r.agent;
@@ -261,6 +294,8 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   ): Promise<FastifyReply> {
     const agent = req.paoAgent as AgentRecord;
     const key = req.headers["idempotency-key"];
+    // Два Idempotency-Key — неоднозначность: Node склеил бы их в ключ «a, b» (РП62 п. 6).
+    if (headerValues(req, "idempotency-key").length > 1) return send(reply, paoError("REQUEST_INVALID"));
     if (typeof key !== "string" || key === "") return send(reply, paoError("IDEMPOTENCY_REQUIRED"));
     const raw = typeof req.body === "string" ? req.body : "";
     // Реквизиты карты в теле — 422 CREDENTIALS_FORBIDDEN до схемы и захвата ключа: номер не попадает ни в хранилище

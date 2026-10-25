@@ -384,6 +384,17 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
     );
   });
 
+  it("тело у метода без тела (unexpectedBody) — SIGNATURE_INVALID после AGENT_UNKNOWN; nonce не занимается (РП62 п. 7)", async () => {
+    const s = stand();
+    const signer = s.admit(A);
+    const req = signed(signer, A);
+    expect(code(await s.verifier.verify({ ...req, unexpectedBody: true }))).toBe("SIGNATURE_INVALID");
+    // Порядок РП23 п. 6: неизвестный агент — AGENT_UNKNOWN и с телом.
+    expect(code(await s.verifier.verify({ ...signed(signer, B), unexpectedBody: true }))).toBe("AGENT_UNKNOWN");
+    // Тот же запрос без признака принимается: nonce отказом не занят.
+    expect(code(await s.verifier.verify(req))).toBe("OK");
+  });
+
   it("сбой реестра или ключей — 503 UPSTREAM_UNAVAILABLE, не ошибка агента и не исключение (аудит PS-04 №2)", async () => {
     const s = stand();
     const signer = s.admit(A);

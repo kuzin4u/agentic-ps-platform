@@ -25,13 +25,15 @@ export interface TransportReject {
 }
 
 /**
- * Исключение 5xx в запись — только name, code и стек (КТ1 № 8): перечислимые поля исключения (у PostgreSQL — detail,
- * where) могут нести значения из запроса, в том числе параметры пути.
+ * Исключение в запись — только name, code и кадры стека (КТ1 № 8; РП62 доп. 2): перечислимые поля (у PostgreSQL — detail,
+ * where) и message могут нести значения запроса, у Fastify — путь. Стек начинается строкой «Name: message» (сообщение
+ * бывает многострочным), поэтому берутся только строки кадров «at …».
  */
-function errFields(err: unknown): Record<string, unknown> {
+export function errFields(err: unknown): Record<string, unknown> {
   if (!(err instanceof Error)) return { name: typeof err };
   const code = (err as { code?: unknown }).code;
-  return { name: err.name, ...(typeof code === "string" ? { code } : {}), stack: err.stack };
+  const frames = (err.stack ?? "").split("\n").filter((line) => /^\s+at /.test(line));
+  return { name: err.name, ...(typeof code === "string" ? { code } : {}), stack: frames.join("\n") };
 }
 
 /** Запись «отказ транспорта» (п. 5): размер запроса — длиной сырого адреса и Content-Length, без самого адреса. */

@@ -516,18 +516,26 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke: признак kid в журна
       pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() },
     });
     const unknown = newAgentSide().kid;
-    const malformed = "секрет-не-kid";
+    // Не по форме без кодирования (длина, знаки ASCII вне base64url): с кодированием — 400 раньше маршрута (РП62 п. 8).
+    const malformed = "sekret!ne-kid";
     const bodies: string[] = [];
     for (const kid of [b.kid, unknown, malformed]) {
       const res = await signedInject(app, a, A, {
         method: "POST",
-        path: `${PATH}/${encodeURIComponent(kid)}/revoke`,
+        path: `${PATH}/${kid}/revoke`,
         headers: { "idempotency-key": randomUUID() },
       });
       expect(res.statusCode).toBe(422);
       bodies.push(res.body);
     }
     expect(new Set(bodies).size).toBe(1);
+    // Значение, которое в пути передаётся только кодированием, — 400 REQUEST_INVALID, записи MALFORMED нет.
+    const encoded = await signedInject(app, a, A, {
+      method: "POST",
+      path: `${PATH}/${encodeURIComponent("секрет-не-kid")}/revoke`,
+      headers: { "idempotency-key": randomUUID() },
+    });
+    expect([encoded.statusCode, encoded.json().code]).toEqual([400, "REQUEST_INVALID"]);
     // Собственная запись маршрута; записи Fastify о запросе — без значений пути (РП61, tests/unit/server-request-log.test.ts).
     const own = lines
       .map((l) => JSON.parse(l) as Record<string, unknown>)
