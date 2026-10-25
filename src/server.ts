@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import { adpRoutes, type AdpDeps } from "./adp/routes.js";
 import type { CollectorHealth } from "./fulfilment/outcomes.js";
 import type { NotifierHealth } from "./participants/notifications.js";
@@ -21,7 +21,8 @@ export function parseEnv(value: string | undefined): PlatformEnv {
 
 export interface ServerOptions {
   env: PlatformEnv;
-  logger?: boolean;
+  /** Журнал процесса Fastify: true — по умолчанию (main.ts), опции — поток для тестов записи (РП60 доп. 3). */
+  logger?: FastifyServerOptions["logger"];
   /** Шлюз ПАО (П9); без него маршрутов /pao нет. */
   pao?: PaoDeps;
   /** Шлюз участников (П10, ПИ-8): подпись мандата по подписи участника (РП36); без него маршрутов /participants нет. */

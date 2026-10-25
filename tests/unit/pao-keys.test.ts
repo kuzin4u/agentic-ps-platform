@@ -412,6 +412,15 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
     expect(statusOf(a.kid)).toBe("ACTIVE");
   });
 
+  // До PS-05б ч. 2 (заделы № 8–9, № 43): транспортный предел и разбор пути — ответы Fastify, не ПАО §6; тест покраснеет с правкой.
+  it("kid длиннее 256 знаков → 414 Fastify, испорченное кодирование (%zz) → 400 Fastify; ключ не отозван", async () => {
+    const long = await revoke(a, "x".repeat(257));
+    expect([long.statusCode, long.json().code]).toEqual([414, "FST_ERR_MAX_PARAM_LENGTH"]);
+    const bad = await revoke(a, "%zz");
+    expect([bad.statusCode, bad.json().code]).toEqual([400, "FST_ERR_BAD_URL"]);
+    expect(statusOf(a.kid)).toBe("ACTIVE");
+  });
+
   it("без Idempotency-Key → 400 IDEMPOTENCY_REQUIRED; непустое тело → 400 REQUEST_INVALID; ключ не отозван", async () => {
     const noKey = await revoke(a, n.kid, { key: null });
     expect(noKey.statusCode).toBe(400);
@@ -450,9 +459,24 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
     const failed = await revoke(a, n.kid, { key });
     expect(failed.statusCode).toBe(503);
     expect(failed.headers["retry-after"]).toBeDefined();
+    expect(failed.json()).toMatchObject({ code: "UPSTREAM_UNAVAILABLE", retry: "same_key" });
     expect(statusOf(n.kid)).toBe("ACTIVE");
     expect((await revoke(a, n.kid, { key })).statusCode).toBe(200);
     expect(statusOf(n.kid)).toBe("REVOKED");
+  });
+
+  it("сбой после отзыва, до ответа → 503 UPSTREAM_UNAVAILABLE; повтор тем же ключом — 200 тот же Key (РП23 доп. 3)", async () => {
+    const key = randomUUID();
+    vi.spyOn(s.keys, "list").mockImplementationOnce(() => {
+      throw new Error("сбой чтения после отзыва");
+    });
+    const failed = await revoke(a, n.kid, { key });
+    expect(failed.statusCode).toBe(503);
+    expect(failed.json()).toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
+    expect(statusOf(n.kid)).toBe("REVOKED");
+    const again = await revoke(a, n.kid, { key });
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toMatchObject({ kid: n.kid, status: "REVOKED" });
   });
 
   it("без подписи → 401, ключ не отозван", async () => {
@@ -463,6 +487,58 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
     });
     expect(res.statusCode).toBe(401);
     expect(statusOf(n.kid)).toBe("ACTIVE");
+  });
+});
+
+describe("POST /pao/v1/agent/keys/{kid}/revoke: признак kid в журнале процесса (РП60 доп. 3)", () => {
+  let app: FastifyInstance | undefined;
+  afterEach(async () => {
+    await app?.close();
+  });
+
+  it("чужой → FOREIGN и kid, неизвестный → UNKNOWN и kid, не по форме → MALFORMED и длина без значения; ответ один", async () => {
+    const params = loadParams();
+    const store = new InMemoryAgentRegistryStore();
+    const registry = new AgentRegistry(store, { keys: params });
+    const keys = new AgentKeys(store, { keys: params });
+    const a = newAgentSide();
+    const b = newAgentSide();
+    expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect(registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    const verifier = new PaoRequestVerifier(
+      { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
+      { skewSec: params.signature_skew_sec },
+    );
+    const lines: string[] = [];
+    app = buildServer({
+      env: "sandbox",
+      logger: { level: "info", stream: { write: (l: string) => void lines.push(l) } },
+      pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() },
+    });
+    const unknown = newAgentSide().kid;
+    const malformed = "секрет-не-kid";
+    const bodies: string[] = [];
+    for (const kid of [b.kid, unknown, malformed]) {
+      const res = await signedInject(app, a, A, {
+        method: "POST",
+        path: `${PATH}/${encodeURIComponent(kid)}/revoke`,
+        headers: { "idempotency-key": randomUUID() },
+      });
+      expect(res.statusCode).toBe(422);
+      bodies.push(res.body);
+    }
+    expect(new Set(bodies).size).toBe(1);
+    // Только собственная запись маршрута: запись Fastify о входящем запросе пишет полный req.url — до PS-05б ч. 2
+    // (РП60 доп. 4, STATUS «Открыто»).
+    const own = lines
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((e) => e.msg === "ПАО: отзыв — у агента нет такого ключа (РП60 п. 2)");
+    expect(own.map(({ reason, kid, kid_length }) => ({ reason, kid, kid_length }))).toEqual([
+      { reason: "FOREIGN", kid: b.kid, kid_length: undefined },
+      { reason: "UNKNOWN", kid: unknown, kid_length: undefined },
+      { reason: "MALFORMED", kid: undefined, kid_length: malformed.length },
+    ]);
+    for (const e of own) expect(JSON.stringify(e)).not.toContain(malformed);
   });
 });
 

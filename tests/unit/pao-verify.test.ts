@@ -225,6 +225,29 @@ describe("порядок проверки и коды (РП23 п. 6)", () => {
     }
   });
 
+  it("SUSPENDED: POST отзыв своего ключа доступен (РП60 п. 3), EXCLUDED — AGENT_SUSPENDED; похожие пути и методы — AGENT_SUSPENDED", async () => {
+    for (const to of ["SUSPENDED", "EXCLUDED"] as const) {
+      const s = stand();
+      const signer = s.admit(A);
+      s.registry.changeStatus(A, { to, ground: "KEY_COMPROMISE" });
+      const path = `/pao/v1/agent/keys/${signer.kid}/revoke`;
+      const res = await s.verifier.verify(signed(signer, A, { method: "POST", path, body: "" }));
+      expect([to, code(res)]).toEqual([to, to === "SUSPENDED" ? "OK" : "AGENT_SUSPENDED"]);
+      if (to === "SUSPENDED") {
+        const denied = [
+          signed(signer, A, { method: "POST", path: `${path}/`, body: "" }),
+          signed(signer, A, { method: "POST", path: "/pao/v1/agent/keys/a/b/revoke", body: "" }),
+          signed(signer, A, { method: "POST", path: "/pao/v1/agent/keys//revoke", body: "" }),
+          signed(signer, A, { method: "POST", path: `/x${path}`, body: "" }),
+          signed(signer, A, { path }),
+          // Регистрация ключа приостановленным — по-прежнему 403 (РП23 доп. 8).
+          signed(signer, A, { method: "POST", path: "/pao/v1/agent/keys", body: "{}" }),
+        ];
+        for (const req of denied) expect([req.method, req.path, code(await s.verifier.verify(req))]).toEqual([req.method, req.path, "AGENT_SUSPENDED"]);
+      }
+    }
+  });
+
   it.each(["SUSPENDED", "EXCLUDED"] as const)("%s: GET /pao/v1/agent доступен — агент узнаёт свой статус", async (to) => {
     const s = stand();
     const signer = s.admit(A);

@@ -76,6 +76,9 @@ export function jwkThumbprint(jwk: JwkMembers): string {
   return createHash("sha256").update(canonical, "utf8").digest("base64url");
 }
 
+/** Форма kid: SHA-256 в base64url без дополнения — 43 знака (RFC 7638). Не по форме — заведомо не ключ реестра. */
+export const KID_FORM = /^[A-Za-z0-9_-]{43}$/;
+
 export interface ParsedKey {
   readonly kid: string;
   readonly alg: string;

@@ -5,6 +5,7 @@ import rateLimit, { normalizeIP } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, KeyNotFoundError, type AgentKeys } from "../registry/agent-keys.js";
+import { KID_FORM } from "../registry/keys.js";
 import type { ConsentJournal } from "../consent/journal.js";
 import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
@@ -299,13 +300,16 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   app.post<{ Params: { kid: string } }>("/pao/v1/agent/keys/:kid/revoke", async (req, reply) => {
     const kid = req.params.kid;
     return mutating(req, reply, emptyBody, (agent) => {
+      // Признак — в журнал процесса (РП60 доп. 3): чужой и неизвестный kid по форме — как есть, не по форме — только длина.
+      const notFound = (fields: Record<string, unknown>) => {
+        req.log.info({ agent_code: agent.agent_code, ...fields }, "ПАО: отзыв — у агента нет такого ключа (РП60 п. 2)");
+        return reply4xx(paoError("KEY_INVALID", "A2 п. 5.4"));
+      };
+      if (!KID_FORM.test(kid)) return notFound({ reason: "MALFORMED", kid_length: kid.length });
       try {
         deps.keys.revoke(agent.agent_code, kid);
       } catch (err) {
-        if (err instanceof KeyNotFoundError) {
-          req.log.info({ agent_code: agent.agent_code }, "ПАО: отзыв — у агента нет такого ключа (РП60 п. 2)");
-          return reply4xx(paoError("KEY_INVALID", "A2 п. 5.4"));
-        }
+        if (err instanceof KeyNotFoundError) return notFound({ reason: err.reason, kid });
         throw err;
       }
       const key = deps.keys.list(agent.agent_code).find((k) => k.kid === kid);
