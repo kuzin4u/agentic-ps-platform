@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.26.0** (PS-05б ч. 1: отзыв ключа агентом `POST /pao/v1/agent/keys/{kid}/revoke` и обнаружение `GET /.well-known/pao-configuration` на стенде и в рабочем сервере; ПАО — по-прежнему 1.4.0; РП60). Подробности — `CHANGELOG.md`.
+Текущая версия — **v0.27.0** (PS-05б ч. 3: ответы транспорта шлюза ПАО по §6 и запись отказов без пути, повтор заголовков, тело у GET, `%` в пути, `HEAD`, хэш `x-nonce`; ПАО — по-прежнему 1.4.0; РП62). Подробности —
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.26.1"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.27.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.
