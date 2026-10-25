@@ -1,4 +1,5 @@
 // POST /pao/v1/agent/keys по HTTP (PS-05 К2.4): РП23 п. 2–4, РП30 п. 3 и дополнение (хэш ключа), РП31; Ш16.
+// Отзыв своего ключа …/{kid}/revoke — PS-05б ч. 1, РП60 п. 1–4.
 // Хранилище идемпотентности — память ядра (стенд); тот же договор на PostgreSQL — pao-idempotency-pg.test.ts.
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -314,6 +315,154 @@ describe("POST /pao/v1/agent/keys", () => {
     });
     expect(res.statusCode).toBe(401);
     expect(keysOf(A)).toHaveLength(1);
+  });
+});
+
+// POST /pao/v1/agent/keys/{kid}/revoke (PS-05б ч. 1): РП60 п. 1–4, РП23 п. 5, доп. 3; A2 п. 5.4.
+describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
+  let s: Stand;
+  let a: AgentSide;
+  let b: AgentSide;
+  let n: AgentSide;
+
+  beforeEach(async () => {
+    s = stand();
+    a = newAgentSide();
+    b = newAgentSide();
+    n = newAgentSide();
+    expect(s.admit(buyerApplication(A, a), "op").admitted).toBe(true);
+    expect(s.admit(buyerApplication(B, b), "op").admitted).toBe(true);
+    // Второй действующий ключ агента A — по ПАО.
+    const reg = await signedInject(s.app, a, A, {
+      method: "POST",
+      path: PATH,
+      body: JSON.stringify({ alg: "ed25519", public_key: n.publicKey }),
+      headers: { "idempotency-key": randomUUID() },
+    });
+    expect(reg.statusCode).toBe(201);
+  });
+  afterEach(async () => {
+    await s.app.close();
+  });
+
+  const revoke = (side: AgentSide, kid: string, opts: { key?: string | null; body?: string; code?: string } = {}) =>
+    signedInject(s.app, side, opts.code ?? A, {
+      method: "POST",
+      path: `${PATH}/${kid}/revoke`,
+      body: opts.body ?? "",
+      headers: opts.key === null ? {} : { "idempotency-key": opts.key ?? randomUUID() },
+    });
+  const statusOf = (kid: string) => s.keys.list(A).find((k) => k.kid === kid)?.status;
+
+  it("свой другой ключ → 200 Key REVOKED; им — 401 AGENT_KEY_REVOKED, ключом подписи — 200 (РП60 п. 1)", async () => {
+    const res = await revoke(a, n.kid);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      kid: n.kid,
+      alg: "ed25519",
+      public_key: n.publicKey,
+      valid_from: expect.any(String),
+      valid_to: expect.any(String),
+      status: "REVOKED",
+    });
+    expect((await signedInject(s.app, n, A)).json().code).toBe("AGENT_KEY_REVOKED");
+    const self = await signedInject(s.app, a, A);
+    expect(self.statusCode).toBe(200);
+    expect(self.json().keys.map((k: { kid: string }) => k.kid)).toEqual([a.kid]);
+  });
+
+  it("ключ, которым подписан запрос → 200; повтор тем же Idempotency-Key им же — 401, не сохранённый 200 (РП60 п. 4)", async () => {
+    const key = randomUUID();
+    const res = await revoke(a, a.kid, { key });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ kid: a.kid, status: "REVOKED" });
+    const again = await revoke(a, a.kid, { key });
+    expect(again.statusCode).toBe(401);
+    expect(again.json()).toMatchObject({ code: "AGENT_KEY_REVOKED", retry: "new_key" });
+    // Исход — другим действующим ключом.
+    expect((await signedInject(s.app, n, A)).json().keys.map((k: { kid: string }) => k.kid)).toEqual([n.kid]);
+  });
+
+  it("последний действующий ключ → 200; дальше агент не подписывает ничего (РП23 п. 5)", async () => {
+    expect((await revoke(a, n.kid)).statusCode).toBe(200);
+    expect((await revoke(a, a.kid)).statusCode).toBe(200);
+    expect(s.keys.list(A).every((k) => k.status === "REVOKED")).toBe(true);
+    expect((await signedInject(s.app, a, A)).statusCode).toBe(401);
+  });
+
+  it("повторный отзыв другим Idempotency-Key → 200 тот же Key (РП23 доп. 3); тот же ключ — сохранённый ответ", async () => {
+    const key = randomUUID();
+    const first = await revoke(a, n.kid, { key });
+    const replay = await revoke(a, n.kid, { key });
+    const again = await revoke(a, n.kid);
+    expect([first.statusCode, replay.statusCode, again.statusCode]).toEqual([200, 200, 200]);
+    expect(replay.body).toBe(first.body);
+    expect(again.json()).toEqual(first.json());
+  });
+
+  it("чужой, неизвестный, не по форме kid → один ответ 422 KEY_INVALID; чужой ключ действует (РП60 п. 2)", async () => {
+    const unknown = newAgentSide().kid;
+    const replies = await Promise.all([b.kid, unknown, "not-a-kid", "x".repeat(256)].map((kid) => revoke(a, kid)));
+    for (const r of replies) {
+      expect(r.statusCode).toBe(422);
+      expect(r.json()).toEqual({ code: "KEY_INVALID", message: expect.any(String), norm: "A2 п. 5.4", retry: "after_fix" });
+    }
+    expect(new Set(replies.map((r) => r.body)).size).toBe(1);
+    expect((await signedInject(s.app, b, B)).statusCode).toBe(200);
+    expect(statusOf(a.kid)).toBe("ACTIVE");
+  });
+
+  it("без Idempotency-Key → 400 IDEMPOTENCY_REQUIRED; непустое тело → 400 REQUEST_INVALID; ключ не отозван", async () => {
+    const noKey = await revoke(a, n.kid, { key: null });
+    expect(noKey.statusCode).toBe(400);
+    expect(noKey.json().code).toBe("IDEMPOTENCY_REQUIRED");
+    const withBody = await revoke(a, n.kid, { body: "{}" });
+    expect(withBody.statusCode).toBe(400);
+    expect(withBody.json().code).toBe("REQUEST_INVALID");
+    expect(statusOf(n.kid)).toBe("ACTIVE");
+  });
+
+  it("приостановленный агент → 200, ключ отозван; исключённый → 403 AGENT_SUSPENDED, ключ действует (РП60 п. 3)", async () => {
+    s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    expect((await revoke(a, n.kid)).statusCode).toBe(200);
+    expect(statusOf(n.kid)).toBe("REVOKED");
+    // Регистрация ключа приостановленным — по-прежнему 403 (РП23 доп. 8).
+    const reg = await signedInject(s.app, a, A, {
+      method: "POST",
+      path: PATH,
+      body: JSON.stringify({ alg: "ed25519", public_key: newAgentSide().publicKey }),
+      headers: { "idempotency-key": randomUUID() },
+    });
+    expect(reg.statusCode).toBe(403);
+
+    s.registry.changeStatus(A, { to: "EXCLUDED", ground: "WITHDRAWN" });
+    const res = await revoke(a, a.kid);
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ code: "AGENT_SUSPENDED" });
+    expect(statusOf(a.kid)).toBe("ACTIVE");
+  });
+
+  it("сбой реестра → 503 с Retry-After, не сохраняется: повтор тем же ключом отзывает", async () => {
+    const key = randomUUID();
+    vi.spyOn(s.keys, "revoke").mockImplementationOnce(() => {
+      throw new ConcurrentChangeError(A);
+    });
+    const failed = await revoke(a, n.kid, { key });
+    expect(failed.statusCode).toBe(503);
+    expect(failed.headers["retry-after"]).toBeDefined();
+    expect(statusOf(n.kid)).toBe("ACTIVE");
+    expect((await revoke(a, n.kid, { key })).statusCode).toBe(200);
+    expect(statusOf(n.kid)).toBe("REVOKED");
+  });
+
+  it("без подписи → 401, ключ не отозван", async () => {
+    const res = await s.app.inject({
+      method: "POST",
+      url: `${PATH}/${n.kid}/revoke`,
+      headers: { "x-agent-code": A, "idempotency-key": randomUUID() },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(statusOf(n.kid)).toBe("ACTIVE");
   });
 });
 

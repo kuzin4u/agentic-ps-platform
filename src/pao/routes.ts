@@ -1,10 +1,10 @@
 // П9 Маршруты ПАО (AGENT-PROTOCOL.md §3). Каждое обращение проверяется до обработчика: агент → подпись → статус (РП23 п. 6).
 // Изменяющий метод затем: Idempotency-Key → тело по схеме (REQUEST_INVALID) → захват ключа → обработчик (РП30 п. 3, РП31).
-// /revoke — в PS-05б; POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
+// /revoke — PS-05б ч. 1 (РП60); POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
 import rateLimit, { normalizeIP } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, type AgentKeys } from "../registry/agent-keys.js";
+import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, KeyNotFoundError, type AgentKeys } from "../registry/agent-keys.js";
 import type { ConsentJournal } from "../consent/journal.js";
 import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
@@ -292,6 +292,28 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       }
     }),
   );
+
+  // Отзыв своего ключа (ПАО §3, A2 п. 5.4; РП23 п. 5, доп. 3; РП60 п. 1–4): любой свой, в том числе последний и тот, которым
+  // подписан сам запрос; повторный — тот же Key. Чужой, неизвестный и не по форме kid — один ответ 422 KEY_INVALID (РП60 п. 2).
+  // Приостановленному — можно, исключённому — 403 на проверке обращения (РП60 п. 3). Действует на следующую проверку подписи.
+  app.post<{ Params: { kid: string } }>("/pao/v1/agent/keys/:kid/revoke", async (req, reply) => {
+    const kid = req.params.kid;
+    return mutating(req, reply, emptyBody, (agent) => {
+      try {
+        deps.keys.revoke(agent.agent_code, kid);
+      } catch (err) {
+        if (err instanceof KeyNotFoundError) {
+          req.log.info({ agent_code: agent.agent_code }, "ПАО: отзыв — у агента нет такого ключа (РП60 п. 2)");
+          return reply4xx(paoError("KEY_INVALID", "A2 п. 5.4"));
+        }
+        throw err;
+      }
+      const key = deps.keys.list(agent.agent_code).find((k) => k.kid === kid);
+      if (!key) throw new Error("ПАО: ключ после отзыва не найден");
+      req.log.info({ agent_code: agent.agent_code, kid, self: kid === req.paoKid }, "ПАО: агент отозвал свой ключ");
+      return { status: 200, body: key };
+    });
+  });
 
   // Запрос мандата (ПАО §3, A7 п. 1–3; РП33): PENDING_SIGNATURE, подпись — у принципала в банке. agent_code — из
   // проверенного обращения (инвариант 5). id — от (агент, ключ): повтор находит записанный мандат (РП33 доп.). Отказ журнала — код ПАО по РП33 п. 1; причина (поле) — только в журнал процесса.
