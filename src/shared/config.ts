@@ -50,6 +50,12 @@ export interface Params {
   /** Срок хранения результата идемпотентности ПАО, с; ≥ 60 — не меньше аренды захвата ядра (РП30 п. 3). */
   readonly idempotency_ttl_sec: number;
   readonly pao_rate_limit_per_30s: number;
+  /** Второй слой лимита ПАО по агенту, обращений в минуту для уровня 1 (РП63 п. 4); в окне 30 с — половина. */
+  readonly pao_agent_rate_limit_per_min_l1: number;
+  /** То же для уровня 2 (РП63 п. 4). */
+  readonly pao_agent_rate_limit_per_min_l2: number;
+  /** То же для уровня 3 (РП63 п. 4). */
+  readonly pao_agent_rate_limit_per_min_l3: number;
   readonly key_ttl_days: number;
   readonly key_overlap_days: number;
   readonly qualified_signature_above_kop: number;
@@ -89,6 +95,14 @@ const int =
     if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) {
       throw new Error(`ожидается целое ${min}…${max}`);
     }
+    return v;
+  };
+
+/** Чётное целое ≥ min (РП63 п. 4): предел в минуту делится на два окна по 30 с без остатка. */
+const evenInt =
+  (min: number): Rule =>
+  (v) => {
+    if (typeof v !== "number" || !Number.isSafeInteger(v) || v < min || v % 2 !== 0) throw new Error(`ожидается чётное целое ≥ ${min}`);
     return v;
   };
 
@@ -168,6 +182,9 @@ const RULES: Record<keyof Params, Rule> = {
   merchant_readiness_max_age_sec: int(1),
   idempotency_ttl_sec: int(60),
   pao_rate_limit_per_30s: int(1),
+  pao_agent_rate_limit_per_min_l1: evenInt(2),
+  pao_agent_rate_limit_per_min_l2: evenInt(2),
+  pao_agent_rate_limit_per_min_l3: evenInt(2),
   key_ttl_days: int(1),
   key_overlap_days: int(0),
   qualified_signature_above_kop: int(1),
@@ -188,6 +205,29 @@ const RULES: Record<keyof Params, Rule> = {
   upk_page_base_url: httpsOrigin,
   upk_sbp_enabled: bool,
 };
+
+/**
+ * Второй слой лимита ПАО (РП63 п. 4, доп. 1): чётные целые ≥ 2, L1 ≤ L2 ≤ L3 — «уровень вне таблицы — L1» строжайший; L3 / 2
+ * ≤ pao_rate_limit_per_30s — не выше первого слоя. Общая проверка загрузчика и сборки шлюза (параметры в обход файла).
+ */
+export function agentRateLimitProblems(
+  p: Pick<Params, "pao_rate_limit_per_30s" | "pao_agent_rate_limit_per_min_l1" | "pao_agent_rate_limit_per_min_l2" | "pao_agent_rate_limit_per_min_l3">,
+): string[] {
+  const names = ["pao_agent_rate_limit_per_min_l1", "pao_agent_rate_limit_per_min_l2", "pao_agent_rate_limit_per_min_l3"] as const;
+  const bad = names.filter((n) => !Number.isSafeInteger(p[n]) || p[n] < 2 || p[n] % 2 !== 0);
+  if (bad.length > 0) return bad.map((n) => `${n}: ожидается чётное целое ≥ 2`);
+  const problems: string[] = [];
+  if (p.pao_agent_rate_limit_per_min_l1 > p.pao_agent_rate_limit_per_min_l2) {
+    problems.push("pao_agent_rate_limit_per_min_l1 больше pao_agent_rate_limit_per_min_l2");
+  }
+  if (p.pao_agent_rate_limit_per_min_l2 > p.pao_agent_rate_limit_per_min_l3) {
+    problems.push("pao_agent_rate_limit_per_min_l2 больше pao_agent_rate_limit_per_min_l3");
+  }
+  if (p.pao_agent_rate_limit_per_min_l3 / 2 > p.pao_rate_limit_per_30s) {
+    problems.push("pao_agent_rate_limit_per_min_l3 / 2 больше pao_rate_limit_per_30s");
+  }
+  return problems;
+}
 
 /** Служебные ключи файла, не параметры. */
 const SERVICE_KEYS = new Set(["_comment"]);
@@ -240,6 +280,8 @@ export function parseParams(raw: unknown): Params {
     }
     // Восстановление бюджета при возврате не реализовано до PS-23: true — молчаливое расхождение (РП55 п. 4).
     if (p.restore_budget_on_refund) problems.push("restore_budget_on_refund: true не поддерживается до PS-23");
+    // Второй слой лимита ПАО: порядок по уровням и не выше первого слоя (РП63 доп. 1).
+    problems.push(...agentRateLimitProblems(p));
   }
   if (problems.length) throw new ParamsError(problems);
   return Object.freeze(out) as unknown as Params;

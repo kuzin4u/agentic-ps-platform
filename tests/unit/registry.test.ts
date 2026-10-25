@@ -1,5 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { AGENT_CODE_MAX_LENGTH } from "../../src/registry/code.js";
+import { MAX_PATH_PARAM_LENGTH } from "../../src/server.js";
 import {
   ADMISSION_REFUSALS,
   AgentCodeError,
@@ -265,6 +267,16 @@ describe("основания отказа — закрытый перечень 
     expect(refused(reg.admit(buyerApplication({ agent_code: "nspk:agent:buyref-01:3" }), ctx()))).toEqual([
       "CODE_INVALID",
     ]);
+  });
+
+  it("длина кода (РП63 п. 11, № 43): 256 знаков — допуск, 257 — CODE_INVALID; предел = MAX_PATH_PARAM_LENGTH", () => {
+    expect(AGENT_CODE_MAX_LENGTH).toBe(MAX_PATH_PARAM_LENGTH);
+    const of = (n: number) => `nspk:agent:${"a".repeat(n - "nspk:agent::v1".length)}:v1`;
+    expect([of(256).length, of(257).length]).toEqual([256, 257]);
+    const reg = fresh();
+    expect(admitted(reg.admit(buyerApplication({ agent_code: of(256) }), ctx())).agent_code).toBe(of(256));
+    expect(refused(reg.admit(buyerApplication({ agent_code: of(257) }), ctx()))).toEqual(["CODE_INVALID"]);
+    expect(() => parseAgentCode(of(257))).toThrow(AgentCodeError);
   });
 
   it("все применимые основания сразу", () => {

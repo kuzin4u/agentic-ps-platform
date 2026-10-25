@@ -137,6 +137,45 @@ describe("стендовые параметры", () => {
     expect(doc.slice(doc.indexOf("## Границы"), doc.indexOf("## Журнал"))).toContain("| `idempotency_ttl_sec` — целое ≥ 60 |");
   });
 
+  it.each(["pao_agent_rate_limit_per_min_l1", "pao_agent_rate_limit_per_min_l2", "pao_agent_rate_limit_per_min_l3"] as const)(
+    "%s: чётное целое ≥ 2 — 2 и 6000 принимаются, 0, 1, 3, 2.5, \"2\" — отказ (РП63 п. 4)",
+    (k) => {
+      // Порядок L1 ≤ L2 ≤ L3 и предел первого слоя (доп. 1) — отдельным тестом: здесь все три уровня одним значением.
+      const all = (v: unknown) => ({
+        ...stand(),
+        pao_agent_rate_limit_per_min_l1: k === "pao_agent_rate_limit_per_min_l1" ? v : 2,
+        pao_agent_rate_limit_per_min_l2: k === "pao_agent_rate_limit_per_min_l3" ? 2 : k === "pao_agent_rate_limit_per_min_l2" ? v : 6000,
+        pao_agent_rate_limit_per_min_l3: k === "pao_agent_rate_limit_per_min_l3" ? v : 6000,
+      });
+      for (const v of [2, 6000]) expect(parseParams(all(v))[k]).toBe(v);
+      for (const v of [0, 1, 3, 2.5, -2, "2"]) {
+        expect(() => parseParams({ ...stand(), [k]: v }), String(v)).toThrow(new RegExp(`${k}: ожидается чётное целое ≥ 2`));
+      }
+      const doc = readFileSync("docs/core/PARAMS.md", "utf8");
+      expect(doc.slice(doc.indexOf("## Границы"), doc.indexOf("## Журнал"))).toContain(
+        "| Чётные целые ≥ 2: `pao_agent_rate_limit_per_min_l1`, `pao_agent_rate_limit_per_min_l2`, `pao_agent_rate_limit_per_min_l3` |",
+      );
+    },
+  );
+
+  it.each([
+    [{ pao_agent_rate_limit_per_min_l1: 4502 }, /pao_agent_rate_limit_per_min_l1 больше pao_agent_rate_limit_per_min_l2/],
+    [{ pao_agent_rate_limit_per_min_l2: 6002, pao_agent_rate_limit_per_min_l3: 6000 }, /pao_agent_rate_limit_per_min_l2 больше pao_agent_rate_limit_per_min_l3/],
+    [{ pao_agent_rate_limit_per_min_l3: 6002 }, /pao_agent_rate_limit_per_min_l3 \/ 2 больше pao_rate_limit_per_30s/],
+    [{ pao_rate_limit_per_30s: 2999 }, /pao_agent_rate_limit_per_min_l3 \/ 2 больше pao_rate_limit_per_30s/],
+  ])("второй слой: %o — отказ запуска (РП63 доп. 1: L1 ≤ L2 ≤ L3, L3 / 2 ≤ pao_rate_limit_per_30s)", (patch, msg) => {
+    expect(() => parseParams({ ...stand(), ...patch })).toThrow(msg);
+    const doc = readFileSync("docs/core/PARAMS.md", "utf8");
+    expect(doc.slice(doc.indexOf("## Границы"), doc.indexOf("## Журнал"))).toContain(
+      "| `pao_agent_rate_limit_per_min_l1` ≤ `pao_agent_rate_limit_per_min_l2` ≤ `pao_agent_rate_limit_per_min_l3`; `pao_agent_rate_limit_per_min_l3` / 2 ≤ `pao_rate_limit_per_30s` |",
+    );
+  });
+
+  it("второй слой: равные значения и L3 / 2 = pao_rate_limit_per_30s — допустимы (границы включительно)", () => {
+    const p = parseParams({ ...stand(), pao_agent_rate_limit_per_min_l1: 6000, pao_agent_rate_limit_per_min_l2: 6000 });
+    expect([p.pao_agent_rate_limit_per_min_l1, p.pao_agent_rate_limit_per_min_l3 / 2]).toEqual([6000, p.pao_rate_limit_per_30s]);
+  });
+
   it("границы PARAMS.md совпадают с загрузчиком (РП20)", () => {
     const doc = readFileSync("docs/core/PARAMS.md", "utf8");
     const from = doc.indexOf("## Границы");
@@ -152,7 +191,15 @@ describe("стендовые параметры", () => {
     const min1 = keysOf("Целые ≥ 1:");
     const min0 = keysOf("Целые ≥ 0:");
     // Каждое целое без особой границы — ровно в одной из строк.
-    const special = new Set(["split_min_ops", "aoi_rollout_phase", "unavailable_retry_after_sec", "idempotency_ttl_sec"]);
+    const special = new Set([
+      "split_min_ops",
+      "aoi_rollout_phase",
+      "unavailable_retry_after_sec",
+      "idempotency_ttl_sec",
+      "pao_agent_rate_limit_per_min_l1",
+      "pao_agent_rate_limit_per_min_l2",
+      "pao_agent_rate_limit_per_min_l3",
+    ]);
     const ints = Object.entries(stand())
       .filter(([k, v]) => Number.isInteger(v) && !special.has(k))
       .map(([k]) => k);

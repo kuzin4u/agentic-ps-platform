@@ -1,7 +1,7 @@
 // П9 Маршруты ПАО (AGENT-PROTOCOL.md §3). Каждое обращение проверяется до обработчика: агент → подпись → статус (РП23 п. 6).
 // Изменяющий метод затем: Idempotency-Key → тело по схеме (REQUEST_INVALID) → захват ключа → обработчик (РП30 п. 3, РП31).
 // /revoke — PS-05б ч. 1 (РП60); POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
-import rateLimit, { normalizeIP } from "@fastify/rate-limit";
+import rateLimit, { normalizeIP, type CreateRateLimitOptions } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, KeyNotFoundError, type AgentKeys } from "../registry/agent-keys.js";
@@ -9,7 +9,7 @@ import { KID_FORM } from "../registry/keys.js";
 import type { ConsentJournal } from "../consent/journal.js";
 import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
-import type { Params } from "../shared/config.js";
+import { agentRateLimitProblems, type Params } from "../shared/config.js";
 import type { AgentSelf, Credential } from "../shared/pao.js";
 import { CONFIRMATION_ID, type ConfirmationRecord } from "../confirm/model.js";
 import type { ConfirmationStore } from "../confirm/store.js";
@@ -35,7 +35,7 @@ import {
 import { PAO_DB_TIMEOUT_MS } from "./stores.js";
 import { errFields, logTransportReject, PAO_BODY_LIMIT_BYTES, paoTransportError } from "./transport.js";
 import { checkSubscriptionUrl, resolveGlobal, STAND_PORT, systemResolver, withTimeout, type HostResolver } from "./subscription.js";
-import { SIGNED_HEADERS, type PaoRequestVerifier } from "./verify.js";
+import { SIGNED_HEADERS, type PaoAuthResult, type PaoRequestVerifier } from "./verify.js";
 
 export interface PaoDeps {
   readonly verifier: PaoRequestVerifier;
@@ -45,7 +45,11 @@ export interface PaoDeps {
   readonly consent: ConsentJournal;
   readonly params: Pick<
     Params,
-    "unavailable_retry_after_sec" | "pao_rate_limit_per_30s" | "event_page_max" | "event_subscription_allow_hosts"
+    | "unavailable_retry_after_sec"
+    | "pao_rate_limit_per_30s"
+    | AgentRateParam
+    | "event_page_max"
+    | "event_subscription_allow_hosts"
   >;
   /** Подписка в записи агента (РП40 п. 1, С6); без неё PUT /pao/v1/subscription не регистрируется. */
   readonly subscriptions?: {
@@ -115,6 +119,30 @@ export const rateLimitKey = (ip: string): string => normalizeIP(ip, PAO_RATE_IPV
 /** Метка превышения лимита: errorResponseBuilder выбрасывает её, обработчик ошибок области отвечает телом ПАО §6. */
 const RATE_LIMITED = Object.freeze({ statusCode: 429, code: "RATE_LIMITED" });
 
+/** Остаток окна в секундах для Retry-After: не больше границы РП24 и при переводе часов назад (РП32, дополнение п. 3). */
+const retryAfterSec = (computed: number): number =>
+  Number.isFinite(computed) ? Math.min(Math.max(computed, 0), MAX_RETRY_AFTER_SEC) : MAX_RETRY_AFTER_SEC;
+
+/** Параметры второго слоя по уровням агента (РП63 п. 4). */
+const AGENT_RATE_PARAMS = Object.freeze({
+  1: "pao_agent_rate_limit_per_min_l1",
+  2: "pao_agent_rate_limit_per_min_l2",
+  3: "pao_agent_rate_limit_per_min_l3",
+} as const);
+type AgentRateParam = (typeof AGENT_RATE_PARAMS)[keyof typeof AGENT_RATE_PARAMS];
+
+/** Счётчиков второго слоя в памяти (РП63 п. 7): при вытеснении счётчик агента обнуляется; агентов на порядки меньше. */
+const AGENT_RATE_CACHE = 10_000;
+
+/**
+ * Предел второго слоя в минуту для уровня агента (РП63 п. 4–5). Уровень вне таблицы — L1, строжайший (инвариант 3);
+ * inTable — для записи в журнал. Его же отдаёт AgentSelf.rate_limit_per_min (п. 6).
+ */
+export function agentRateLimitPerMin(params: Pick<Params, AgentRateParam>, level: number): { perMin: number; inTable: boolean } {
+  const key = Object.hasOwn(AGENT_RATE_PARAMS, level) ? AGENT_RATE_PARAMS[level as keyof typeof AGENT_RATE_PARAMS] : undefined;
+  return key ? { perMin: params[key], inTable: true } : { perMin: params.pao_agent_rate_limit_per_min_l1, inTable: false };
+}
+
 declare module "fastify" {
   interface FastifyRequest {
     /** Агент из реестра после проверки обращения; класс и уровень — только отсюда (инвариант 5). */
@@ -137,6 +165,22 @@ function headerValues(req: FastifyRequest, name: string): string[] {
 
 /** Методы с телом; у прочих тело — признак подмены (РП62 п. 7). */
 const BODY_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH"]);
+
+/** Заголовки для проверки обращения: повтор подписываемого — массивом, Node склеил бы его через «, » (РП62 п. 6). */
+function verifyHeaders(req: FastifyRequest): Record<string, string | readonly string[] | undefined> {
+  const headers: Record<string, string | readonly string[] | undefined> = { ...req.headers };
+  for (const name of SIGNED_HEADERS) {
+    const all = headerValues(req, name);
+    if (all.length > 1) headers[name] = all;
+  }
+  return headers;
+}
+
+/** У метода без тела пришло тело — Content-Length не 0 или Transfer-Encoding (РП62 п. 7). */
+function unexpectedBody(req: FastifyRequest): boolean {
+  const cl = req.headers["content-length"];
+  return !BODY_METHODS.has(req.method) && ((cl !== undefined && cl !== "0") || req.headers["transfer-encoding"] !== undefined);
+}
 
 /** Путь и запрос — как пришли, без декодирования: их подписал агент (ПАО §2). */
 function target(req: FastifyRequest): { path: string; query: string } {
@@ -167,9 +211,7 @@ export async function paoCoarseLimit(
   app.setErrorHandler((err: FastifyError, req, reply) => {
     if (err === RATE_LIMITED) {
       // Остаток окна плагин считает по Date.now(): при переводе часов назад он больше окна — обрезаем до границы РП24.
-      const computed = Number(reply.getHeader("retry-after"));
-      const retryAfter = Number.isFinite(computed) ? Math.min(Math.max(computed, 0), MAX_RETRY_AFTER_SEC) : MAX_RETRY_AFTER_SEC;
-      void reply.header("retry-after", String(retryAfter));
+      void reply.header("retry-after", String(retryAfterSec(Number(reply.getHeader("retry-after")))));
       return reply.code(429).send(paoError("RATE_LIMITED").body);
     }
     return otherError ? otherError(err, req, reply) : reply.send(err);
@@ -219,6 +261,26 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS);
   const clock = deps.clock ?? (() => performance.now());
   await paoCoarseLimit(app, deps.params.pao_rate_limit_per_30s, paoTransportFailure(deps.params.unavailable_retry_after_sec));
+  // Порядок значений держит «вне таблицы — L1, строжайший» (РП63 доп. 1): параметры в обход загрузчика — тот же отказ.
+  const problems = agentRateLimitProblems(deps.params);
+  if (problems.length > 0) throw new Error(problems.join("; "));
+  // Второй слой (РП63 п. 1–7): по коду агента после верной подписи, окно 30 с, предел — половина минутного. Через
+  // createRateLimit, а не app.rateLimit(): хук плагина отмечает запрос после первого слоя и второй пропустил бы; ответ —
+  // свой, своих заголовков x-ratelimit-* второй слой не ставит (п. 2). Хранилище — своё, не общее с первым слоем.
+  // cache в типах CreateRateLimitOptions 11.2.0 не объявлен, но дочернее хранилище его читает (LocalStore.child).
+  // skipOnError, allowList и ban — явно (РП63 доп. 3): иначе наследуются от настроек первого слоя (mergeParams плагина),
+  // и fail-open первого слоя молча стал бы fail-open второго. groupId берётся из config.rateLimit маршрута — у маршрутов
+  // ПАО его нет.
+  const agentLimitOpts: CreateRateLimitOptions & { readonly cache: number; readonly ban: number } = {
+    keyGenerator: (req) => (req.paoAgent as AgentRecord).agent_code,
+    max: (req) => agentRateLimitPerMin(deps.params, (req.paoAgent as AgentRecord).level).perMin / 2,
+    timeWindow: PAO_RATE_WINDOW_MS,
+    cache: AGENT_RATE_CACHE,
+    skipOnError: false,
+    allowList: [],
+    ban: -1,
+  };
+  const agentLimit = app.createRateLimit(agentLimitOpts);
   // Тело — строкой, как подписано: content-digest считается от байтов, а не от разобранного JSON. Любой тип содержимого —
   // строкой (UTF-8): тело с чужим типом доходит до проверки обращения и схемы и получает ответ ПАО §6, а не 415 Fastify.
   // Тело больше PAO_BODY_LIMIT_BYTES (413) и неразборный Content-Type — тоже §6, обработчиком ошибок области (РП62 п. 1, 4).
@@ -234,7 +296,18 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     return reply.code(e.http).send(e.body);
   };
 
-  app.addHook("preHandler", async (req, reply) => {
+  /** Отказ проверки обращения агенту; сбой источника — в журнал процесса, не в ответ (повторный аудит PS-04 №4). */
+  const authFail = (req: FastifyRequest, reply: FastifyReply, r: Extract<PaoAuthResult, { ok: false }>): FastifyReply => {
+    // Исключение — только имя, код, стек (РП62 доп. 2): detail и where PostgreSQL могут нести значения запроса.
+    if (r.cause !== undefined) req.log.error({ err: errFields(r.cause) }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
+    return send(reply, paoError(r.code, r.norm));
+  };
+
+  // Предпроверка до чтения тела (РП63 п. 9–10; задел № 12): HEAD, %, повтор заголовков, агент в реестре, тело у метода
+  // без тела. Хуком onRequest маршрута, а не области: хук области шёл бы раньше хука лимита плагина (тот ставится на
+  // маршрут через onRoute), и неподписанный поток читал бы реестр без лимита (РП32 п. 1). Этот onRoute — после плагина,
+  // поэтому на маршруте порядок «лимит → предпроверка».
+  const precheck = async (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> => {
     // HEAD — 404 по §6, как нет маршрута (РП62 п. 8). Проверкой метода, а не exposeHeadRoute из onRoute: Fastify 5.12
     // решает о HEAD-маршруте до хуков onRoute (lib/route.js). Лимит к этому моменту посчитан хуком маршрута.
     if (req.method === "HEAD") {
@@ -246,27 +319,43 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     // Кодирование в пути ПАО не нужно ни одному идентификатору, а маршрутизатор путь декодирует: /pao/v1/%61gent вёл бы в
     // /pao/v1/agent по подписи над другим путём (РП62 п. 8).
     if (path.includes("%")) return send(reply, paoError("REQUEST_INVALID"));
-    // Повтор подписываемого заголовка — массивом (Node склеил бы его через «, »): verify отвечает SIGNATURE_INVALID (п. 6).
-    const headers: Record<string, string | readonly string[] | undefined> = { ...req.headers };
-    for (const name of SIGNED_HEADERS) {
-      const all = headerValues(req, name);
-      if (all.length > 1) headers[name] = all;
-    }
-    const cl = req.headers["content-length"];
-    const unexpectedBody = !BODY_METHODS.has(req.method) && ((cl !== undefined && cl !== "0") || req.headers["transfer-encoding"] !== undefined);
-    const body = typeof req.body === "string" ? req.body : "";
-    const r = await deps.verifier.verify({ method: req.method, path, query, headers, body, unexpectedBody });
-    if (!r.ok) {
-      // Сбой источника — в журнал процесса, не в ответ агенту (повторный аудит PS-04 №4).
-      // Исключение — только имя, код, стек (РП62 доп. 2): detail и where PostgreSQL могут нести значения запроса.
-      if (r.cause !== undefined) req.log.error({ err: errFields(r.cause) }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
-      return send(reply, paoError(r.code, r.norm));
-    }
-    req.paoAgent = r.agent;
-    req.paoKid = r.kid;
+    const r = deps.verifier.precheck({ method: req.method, path, query, headers: verifyHeaders(req), unexpectedBody: unexpectedBody(req) });
+    return r ? authFail(req, reply, r) : undefined;
+  };
+  app.addHook("onRoute", (route) => {
+    const own = route.onRequest === undefined ? [] : Array.isArray(route.onRequest) ? route.onRequest : [route.onRequest];
+    route.onRequest = [...own, precheck];
   });
 
-  // Свой статус, класс, уровень, действующие ключи — из реестра (ПАО §3, A2, ПС01). rate_limit_per_min — в PS-05.
+  app.addHook("preHandler", async (req, reply) => {
+    const { path, query } = target(req);
+    const body = typeof req.body === "string" ? req.body : "";
+    const r = await deps.verifier.verify({
+      method: req.method,
+      path,
+      query,
+      headers: verifyHeaders(req),
+      body,
+      unexpectedBody: unexpectedBody(req),
+    });
+    if (!r.ok) return authFail(req, reply, r);
+    req.paoAgent = r.agent;
+    req.paoKid = r.kid;
+    // Второй слой — только после верной подписи: чужой x-agent-code квоту агента не тратит (РП63 п. 1, инвариант 5).
+    const level = agentRateLimitPerMin(deps.params, r.agent.level);
+    if (!level.inTable) {
+      // agent_level, а не level: level — уровень самой записи pino, поле затёрло бы его.
+      req.log.warn({ agent_code: r.agent.agent_code, agent_level: r.agent.level }, "ПАО: уровень агента вне таблицы лимита — предел L1");
+    }
+    const limit = await agentLimit(req);
+    if (!limit.isAllowed && limit.isExceeded) {
+      void reply.header("retry-after", String(retryAfterSec(limit.ttlInSeconds)));
+      return reply.code(429).send(paoError("RATE_LIMITED").body);
+    }
+  });
+
+  // Свой статус, класс, уровень, действующие ключи — из реестра (ПАО §3, A2, ПС01); rate_limit_per_min — предел второго
+  // слоя для уровня агента, тот, что применяется (РП63 п. 6).
   app.get("/pao/v1/agent", async (req): Promise<AgentSelf> => {
     const agent = req.paoAgent as AgentRecord;
     return {
@@ -276,6 +365,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       level: agent.level,
       status: agent.status,
       keys: deps.keys.list(agent.agent_code).filter((k) => k.status === "ACTIVE"),
+      rate_limit_per_min: agentRateLimitPerMin(deps.params, agent.level).perMin,
     };
   });
 

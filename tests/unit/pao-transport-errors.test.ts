@@ -12,9 +12,9 @@ import { PAO_BODY_LIMIT_BYTES } from "../../src/pao/transport.js";
 import { PaoRequestVerifier } from "../../src/pao/verify.js";
 import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "../../src/registry/index.js";
 import { buildServer, type ServerOptions } from "../../src/server.js";
-import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
 import { memoryConsent } from "../support/consent.js";
+import { coarseLimit } from "../support/rate-limit.js";
 import { signedInject } from "../support/signed-inject.js";
 import { stand, type Stand } from "../support/stand.js";
 
@@ -65,7 +65,8 @@ describe("ответы транспорта по ПАО §6 и запись от
         req: {
           method: "POST" as const,
           url: `/pao/v1/mandates?q=${mark}`,
-          headers: { "content-type": "application/json" },
+          // Агент допущен: предпроверка до тела пройдена, отвечает разбор тела (РП63 п. 10).
+          headers: { "content-type": "application/json", "x-agent-code": A },
           payload: `{"x":"${mark}${"y".repeat(PAO_BODY_LIMIT_BYTES)}"}`,
         },
       },
@@ -92,9 +93,10 @@ describe("ответы транспорта по ПАО §6 и запись от
   });
 
   it("4xx разбора (Content-Length не по телу, испорченный Content-Type) — 400 REQUEST_INVALID по §6, запись с кодом Fastify", async () => {
+    // Агент допущен: предпроверка до тела пройдена, отвечает разбор тела (РП63 п. 10).
     for (const headers of [
-      { "content-type": "application/json", "content-length": "999" },
-      { "content-type": `\u0000${mark}` },
+      { "content-type": "application/json", "content-length": "999", "x-agent-code": A },
+      { "content-type": `\u0000${mark}`, "x-agent-code": A },
     ]) {
       const res = await s.app.inject({ method: "POST", url: `/pao/v1/mandates?q=${mark}`, headers, payload: "{}" });
       expect(res.statusCode).toBe(400);
@@ -108,6 +110,31 @@ describe("ответы транспорта по ПАО §6 и запись от
     for (const e of got) expect(String(e.reject)).toMatch(/^FST_ERR_CTP_/);
     expect(got[0]?.content_length).toBe(999);
     for (const e of entries()) expect(JSON.stringify(e)).not.toContain(mark);
+  });
+
+  it("предпроверка до тела (РП63 п. 9–10): неизвестный агент или без x-agent-code с телом больше 64 КиБ — 401 AGENT_UNKNOWN, тело не читается", async () => {
+    for (const headers of [{ "content-type": "application/json", "x-agent-code": "nspk:agent:nobody:v1" }, { "content-type": "application/json" }]) {
+      const res = await s.app.inject({
+        method: "POST",
+        url: "/pao/v1/mandates",
+        headers,
+        payload: `{"x":"${"y".repeat(PAO_BODY_LIMIT_BYTES + 10)}"}`,
+      });
+      expect([res.statusCode, res.json().code]).toEqual([401, "AGENT_UNKNOWN"]);
+    }
+    // Ответ — до разбора: записи «отказ транспорта» 413 нет.
+    expect(rejects()).toEqual([]);
+  });
+
+  // Повтор заголовка через inject не воспроизводится (РП62 доп. 8) — тест повтора через node:http ниже.
+  it("предпроверка до тела: неизвестный агент с телом у GET — AGENT_UNKNOWN, порядок прежний (агент → тело)", async () => {
+    const unknownWithBody = await s.app.inject({
+      method: "GET",
+      url: "/pao/v1/agent",
+      headers: { "x-agent-code": "nspk:agent:nobody:v1", "content-length": "5" },
+      payload: "abcde",
+    });
+    expect([unknownWithBody.statusCode, unknownWithBody.json().code]).toEqual([401, "AGENT_UNKNOWN"]);
   });
 
   it("тело на пределе 64 КиБ доходит до проверки обращения (401 по §6, не 413)", async () => {
@@ -258,7 +285,7 @@ describe("404 в /pao — под грубым лимитом по адресу (
 
   /** Собранный сервер с шлюзом ПАО при пределе 2 — как в рабочей сборке, регистрация 404 с префиксом /pao (server.ts). */
   function server(): FastifyInstance {
-    const params = { ...loadParams(), pao_rate_limit_per_30s: 2 };
+    const params = coarseLimit(2);
     const store = new InMemoryAgentRegistryStore();
     const registry = new AgentRegistry(store, { keys: params });
     const keys = new AgentKeys(store, { keys: params });

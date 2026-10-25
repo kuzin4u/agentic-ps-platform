@@ -46,7 +46,8 @@ export type PaoAuthResult =
     };
 
 /** Сбой реестра или ключей — не ошибка агента: 503 UPSTREAM_UNAVAILABLE, same_key (ПАО §6; РП23 п. 6; аудит PS-04 №2). */
-const upstream = (cause: unknown): PaoAuthResult => ({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause });
+const upstreamFail = (cause: unknown): Extract<PaoAuthResult, { ok: false }> => ({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause });
+const upstream = (cause: unknown): PaoAuthResult => upstreamFail(cause);
 
 /** Реестр и ключи в той мере, в какой они нужны проверке (П1). */
 export interface PaoAuthSources {
@@ -109,7 +110,18 @@ export class PaoRequestVerifier {
    * сбой источника (реестр, ключи, хранилище nonce — РП30 п. 1) — UPSTREAM_UNAVAILABLE, прочие исключения проверки —
    * SIGNATURE_INVALID.
    */
-  async verify(req: PaoRequest): Promise<PaoAuthResult> {
+  /**
+   * Проверки до тела (РП63 п. 9): повтор заголовка, агент в реестре, тело у метода без тела — в onRequest, тело обращения
+   * неизвестного агента не читается. Тот же порядок и коды, что в начале verify; verify повторяет их сам.
+   */
+  precheck(req: Omit<PaoRequest, "body">): Extract<PaoAuthResult, { ok: false }> | undefined {
+    const r = this.head(req);
+    return "agent" in r ? undefined : r;
+  }
+
+  private head(
+    req: Omit<PaoRequest, "body">,
+  ): Extract<PaoAuthResult, { ok: false }> | { readonly agent: AgentRecord; readonly headers: Record<string, string> } {
     // Повтор заголовка — неоднозначность, не догадка (инвариант 3).
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(req.headers)) {
@@ -123,10 +135,17 @@ export class PaoRequestVerifier {
     try {
       agent = agentCode ? this.sources.getAgent(agentCode) : undefined;
     } catch (e) {
-      return upstream(e);
+      return upstreamFail(e);
     }
     if (!agentCode || !agent) return { ok: false, code: "AGENT_UNKNOWN", norm: "A2 п. 5.1" };
     if (req.unexpectedBody) return fail("SIGNATURE_INVALID");
+    return { agent, headers };
+  }
+
+  async verify(req: PaoRequest): Promise<PaoAuthResult> {
+    const h = this.head(req);
+    if (!("agent" in h)) return h;
+    const { agent, headers } = h;
 
     const now = this.now().getTime();
     // Алгоритм подписи — атрибут ключа (РП5): alg из Signature-Input должен совпасть с alg ключа.
@@ -185,7 +204,7 @@ export class PaoRequestVerifier {
   }
 }
 
-const fail = (code: "SIGNATURE_INVALID" | "AGENT_KEY_REVOKED"): PaoAuthResult => ({
+const fail = (code: "SIGNATURE_INVALID" | "AGENT_KEY_REVOKED"): Extract<PaoAuthResult, { ok: false }> => ({
   ok: false,
   code,
   norm: code === "AGENT_KEY_REVOKED" ? "A2 п. 5.4" : "A2 п. 5.1",

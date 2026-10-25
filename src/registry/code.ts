@@ -18,11 +18,19 @@ export class AgentCodeError extends Error {
 /** Единственная выдавшая сторона кода — оператор реестра Платформы (РП23 п. 1); другая — CODE_INVALID при допуске. */
 export const REGISTRY_ISSUER = "nspk:agent";
 
+/**
+ * Наибольшая длина кода (РП63 п. 11; № 43): не длиннее транспортного предела параметра пути MAX_PATH_PARAM_LENGTH
+ * (src/server.ts), иначе продавец не прочитает статус по GET /merchants/v1/agents/{code} (414). Равенство — тестом:
+ * импорт из server.ts дал бы цикл.
+ */
+export const AGENT_CODE_MAX_LENGTH = 256;
+
 const PART = /^[a-z0-9-]+$/;
 const VERSION = /^v([1-9][0-9]{0,8})$/;
 
 export function parseAgentCode(raw: unknown): AgentCode {
-  if (typeof raw !== "string") throw new AgentCodeError(raw);
+  // Длиннее предела — не код: при допуске CODE_INVALID, при чтении — как неизвестный (404 / AGENT_UNKNOWN).
+  if (typeof raw !== "string" || raw.length > AGENT_CODE_MAX_LENGTH) throw new AgentCodeError(raw);
   const parts = raw.split(":");
   if (parts.length < 3 || !parts.every((p) => PART.test(p))) throw new AgentCodeError(raw);
   const m = VERSION.exec(parts[parts.length - 1] as string);
