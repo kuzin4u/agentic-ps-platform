@@ -35,7 +35,7 @@ import {
 import { PAO_DB_TIMEOUT_MS } from "./stores.js";
 import { errFields, logTransportReject, PAO_BODY_LIMIT_BYTES, paoTransportError } from "./transport.js";
 import { checkSubscriptionUrl, resolveGlobal, STAND_PORT, systemResolver, withTimeout, type HostResolver } from "./subscription.js";
-import { SIGNED_HEADERS, type PaoRequestVerifier } from "./verify.js";
+import { SIGNED_HEADERS, type PaoAuthResult, type PaoRequestVerifier } from "./verify.js";
 
 export interface PaoDeps {
   readonly verifier: PaoRequestVerifier;
@@ -166,6 +166,22 @@ function headerValues(req: FastifyRequest, name: string): string[] {
 /** Методы с телом; у прочих тело — признак подмены (РП62 п. 7). */
 const BODY_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH"]);
 
+/** Заголовки для проверки обращения: повтор подписываемого — массивом, Node склеил бы его через «, » (РП62 п. 6). */
+function verifyHeaders(req: FastifyRequest): Record<string, string | readonly string[] | undefined> {
+  const headers: Record<string, string | readonly string[] | undefined> = { ...req.headers };
+  for (const name of SIGNED_HEADERS) {
+    const all = headerValues(req, name);
+    if (all.length > 1) headers[name] = all;
+  }
+  return headers;
+}
+
+/** У метода без тела пришло тело — Content-Length не 0 или Transfer-Encoding (РП62 п. 7). */
+function unexpectedBody(req: FastifyRequest): boolean {
+  const cl = req.headers["content-length"];
+  return !BODY_METHODS.has(req.method) && ((cl !== undefined && cl !== "0") || req.headers["transfer-encoding"] !== undefined);
+}
+
 /** Путь и запрос — как пришли, без декодирования: их подписал агент (ПАО §2). */
 function target(req: FastifyRequest): { path: string; query: string } {
   const url = req.raw.url ?? "";
@@ -280,7 +296,18 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     return reply.code(e.http).send(e.body);
   };
 
-  app.addHook("preHandler", async (req, reply) => {
+  /** Отказ проверки обращения агенту; сбой источника — в журнал процесса, не в ответ (повторный аудит PS-04 №4). */
+  const authFail = (req: FastifyRequest, reply: FastifyReply, r: Extract<PaoAuthResult, { ok: false }>): FastifyReply => {
+    // Исключение — только имя, код, стек (РП62 доп. 2): detail и where PostgreSQL могут нести значения запроса.
+    if (r.cause !== undefined) req.log.error({ err: errFields(r.cause) }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
+    return send(reply, paoError(r.code, r.norm));
+  };
+
+  // Предпроверка до чтения тела (РП63 п. 9–10; задел № 12): HEAD, %, повтор заголовков, агент в реестре, тело у метода
+  // без тела. Хуком onRequest маршрута, а не области: хук области шёл бы раньше хука лимита плагина (тот ставится на
+  // маршрут через onRoute), и неподписанный поток читал бы реестр без лимита (РП32 п. 1). Этот onRoute — после плагина,
+  // поэтому на маршруте порядок «лимит → предпроверка».
+  const precheck = async (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> => {
     // HEAD — 404 по §6, как нет маршрута (РП62 п. 8). Проверкой метода, а не exposeHeadRoute из onRoute: Fastify 5.12
     // решает о HEAD-маршруте до хуков onRoute (lib/route.js). Лимит к этому моменту посчитан хуком маршрута.
     if (req.method === "HEAD") {
@@ -292,22 +319,26 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     // Кодирование в пути ПАО не нужно ни одному идентификатору, а маршрутизатор путь декодирует: /pao/v1/%61gent вёл бы в
     // /pao/v1/agent по подписи над другим путём (РП62 п. 8).
     if (path.includes("%")) return send(reply, paoError("REQUEST_INVALID"));
-    // Повтор подписываемого заголовка — массивом (Node склеил бы его через «, »): verify отвечает SIGNATURE_INVALID (п. 6).
-    const headers: Record<string, string | readonly string[] | undefined> = { ...req.headers };
-    for (const name of SIGNED_HEADERS) {
-      const all = headerValues(req, name);
-      if (all.length > 1) headers[name] = all;
-    }
-    const cl = req.headers["content-length"];
-    const unexpectedBody = !BODY_METHODS.has(req.method) && ((cl !== undefined && cl !== "0") || req.headers["transfer-encoding"] !== undefined);
+    const r = deps.verifier.precheck({ method: req.method, path, query, headers: verifyHeaders(req), unexpectedBody: unexpectedBody(req) });
+    return r ? authFail(req, reply, r) : undefined;
+  };
+  app.addHook("onRoute", (route) => {
+    const own = route.onRequest === undefined ? [] : Array.isArray(route.onRequest) ? route.onRequest : [route.onRequest];
+    route.onRequest = [...own, precheck];
+  });
+
+  app.addHook("preHandler", async (req, reply) => {
+    const { path, query } = target(req);
     const body = typeof req.body === "string" ? req.body : "";
-    const r = await deps.verifier.verify({ method: req.method, path, query, headers, body, unexpectedBody });
-    if (!r.ok) {
-      // Сбой источника — в журнал процесса, не в ответ агенту (повторный аудит PS-04 №4).
-      // Исключение — только имя, код, стек (РП62 доп. 2): detail и where PostgreSQL могут нести значения запроса.
-      if (r.cause !== undefined) req.log.error({ err: errFields(r.cause) }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
-      return send(reply, paoError(r.code, r.norm));
-    }
+    const r = await deps.verifier.verify({
+      method: req.method,
+      path,
+      query,
+      headers: verifyHeaders(req),
+      body,
+      unexpectedBody: unexpectedBody(req),
+    });
+    if (!r.ok) return authFail(req, reply, r);
     req.paoAgent = r.agent;
     req.paoKid = r.kid;
     // Второй слой — только после верной подписи: чужой x-agent-code квоту агента не тратит (РП63 п. 1, инвариант 5).

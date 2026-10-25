@@ -60,6 +60,13 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
     expect429(await unsigned(app));
   });
 
+  it("предпроверка в onRequest — после лимита (РП63 п. 9): поток с неизвестным кодом агента тоже получает 429, а не 401 без конца", async () => {
+    const { app } = platform();
+    const nobody = () => app.inject({ method: "GET", url: "/pao/v1/agent", headers: { "x-agent-code": "nspk:agent:nobody:v1" } });
+    for (let i = 0; i < LIMIT; i++) expect((await nobody()).json().code).toBe("AGENT_UNKNOWN");
+    expect429(await nobody());
+  });
+
   it("подписанные GET /pao/v1/agent и POST /pao/v1/agent/keys — тот же счётчик; 429 до идемпотентности, ключ не добавлен", async () => {
     const { app, side, keys } = platform();
     for (let i = 0; i < LIMIT; i++) expect((await signedInject(app, side, A)).statusCode).toBe(200);
