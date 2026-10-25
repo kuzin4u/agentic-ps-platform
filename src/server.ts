@@ -12,7 +12,7 @@ import {
 import { participantRoutes, type ParticipantDeps } from "./participants/routes.js";
 import { paoConfigurationRoutes, paoConfigurationUnavailable, type PaoConfigurationDeps } from "./pao/configuration.js";
 import { paoNotFound, paoRoutes, type PaoDeps } from "./pao/routes.js";
-import { frameworkErrors } from "./pao/transport.js";
+import { frameworkErrors, paoUnavailable } from "./pao/transport.js";
 
 // Среды — SPEC §8, ARCHITECTURE «Среды». dev работает в памяти, без PostgreSQL.
 export const ENVIRONMENTS = ["dev", "sandbox"] as const;
@@ -108,7 +108,8 @@ export function parseTrustedProxies(value: string | undefined): string[] {
  * Маршрут не найден или шаблона нет — без route. Не бросает: исключение сериализатора сорвало бы запись и сам запрос.
  */
 export function requestLogFields(req: FastifyRequest): Record<string, unknown> {
-  // У запроса frameworkErrors (РП62 п. 1) контекста маршрута нет — is404 и routeOptions бросают; адрес при этом нужен.
+  // Защитно: шаблон — в своём try, чтобы сбой его чтения не терял адрес (у запроса frameworkErrors, РП62 п. 1, — контекст
+  // события маршрутизатора без url).
   let route: unknown;
   try {
     route = req.is404 ? undefined : req.routeOptions?.url;
@@ -152,7 +153,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     trustProxy: proxies.length > 0 ? [...proxies] : false,
     routerOptions: { maxParamLength: MAX_PATH_PARAM_LENGTH },
     // 414 и 400 bad url — до маршрутизации, одним обработчиком на сервер: тело без пути и запись отказа (РП62 п. 1, 3, 5).
-    frameworkErrors,
+    frameworkErrors: frameworkErrors(opts.pao?.params.unavailable_retry_after_sec ?? BYPASS_RETRY_AFTER_SEC),
   });
 
   const bypass = opts.bypassOnly;
@@ -165,6 +166,8 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     void app.register(merchantApiUnavailable);
     // Обнаружение ПАО — 503 по ПАО §6 (РП60 п. 12): шлюза нет, агент отличает недоступность от отсутствия метода.
     void app.register(async (scope) => paoConfigurationUnavailable(scope, BYPASS_RETRY_AFTER_SEC));
+    // Шлюз ПАО — 503 по §6 на любой путь /pao, а не 404 Fastify с путём в теле (РП62, дополнение к п. 1; КТ1 № 2).
+    void app.register(async (scope) => paoUnavailable(scope, BYPASS_RETRY_AFTER_SEC), { prefix: "/pao" });
     const alarm = bypass.alarm ?? ((fields, msg) => app.log.fatal(fields, msg));
     alarm({ alarm: true, mode: "bypass_only", failures }, "Платформа: самопроверка не прошла — режим «только BYPASS», агентские операции не принимаются");
     return app;

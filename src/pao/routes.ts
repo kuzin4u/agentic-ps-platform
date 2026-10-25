@@ -183,15 +183,21 @@ function paoTransportFailure(retryAfterSec: number) {
 /**
  * Нет маршрута в области /pao (РП62 п. 1): 404 с телом §6 (REQUEST_INVALID до ПАО 1.5.0) под грубым лимитом по адресу —
  * свой счётчик, тот же предел (как обнаружение, РП60 п. 11); несуществующие пути лимит не обходят (аудит К4.3 № 6).
- * Регистрируется с префиксом /pao: обработчик «не найдено» Fastify действует по префиксу контекста.
+ * Регистрируется с префиксом /pao: обработчик «не найдено» Fastify действует по префиксу контекста. Лимит и ответ — в
+ * onRequest, до разбора тела (КТ1 № 1): тело несуществующего пути не читается — иначе ошибка разбора отвечала бы мимо
+ * счётчика, а предел тела у контекста 404 — серверный 1 МиБ (Fastify 5.12, context.js), не предел области.
  */
 export async function paoNotFound(app: FastifyInstance, deps: Pick<PaoDeps, "params">): Promise<void> {
   await paoCoarseLimit(app, deps.params.pao_rate_limit_per_30s, paoTransportFailure(deps.params.unavailable_retry_after_sec));
-  app.setNotFoundHandler({ preHandler: app.rateLimit() }, (req, reply) => {
+  const notFound = (req: FastifyRequest, reply: FastifyReply): FastifyReply => {
     const e = paoTransportError(404);
     logTransportReject(req, { reject: "NOT_FOUND", status: e.http, pao_code: e.body.code });
     return reply.code(e.http).send(e.body);
-  });
+  };
+  // Хуки контекста без маршрутов действуют только на его 404; порядок — лимит, затем ответ.
+  app.addHook("onRequest", app.rateLimit());
+  app.addHook("onRequest", async (req, reply) => notFound(req, reply));
+  app.setNotFoundHandler(notFound);
 }
 
 export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<void> {

@@ -67,11 +67,28 @@ describe("режим «только BYPASS» (РП43 п. 8)", () => {
 
   it("маршрутов ПАО и П10 нет — в том числе знака готовности для агента и эквайрера (РП57 п. 3)", async () => {
     const { app } = bypassOnly();
-    expect((await app.inject({ method: "GET", url: "/pao/v1/agent" })).statusCode).toBe(404);
     expect((await app.inject({ method: "POST", url: "/participants/v1/mandates/mnd_x/sign", payload: {} })).statusCode).toBe(404);
-    expect((await app.inject({ method: "GET", url: "/pao/v1/merchants/MER-1042/readiness" })).statusCode).toBe(404);
     expect((await app.inject({ method: "GET", url: "/participants/v1/merchants/MER-1042/readiness" })).statusCode).toBe(404);
     expect((await app.inject({ method: "POST", url: "/participants/v1/merchants/MER-1042/readiness", payload: {} })).statusCode).toBe(404);
+  });
+
+  it("шлюза ПАО нет — любой путь /pao, в том числе с телом, 503 UPSTREAM_UNAVAILABLE по §6 с Retry-After, без пути (РП62 доп. к п. 1)", async () => {
+    const { app } = bypassOnly();
+    const mark = "markbypass7f3";
+    const calls = [
+      { method: "GET" as const, url: `/pao/v1/agent?q=${mark}` },
+      { method: "GET" as const, url: `/pao/v1/merchants/${mark}/readiness` },
+      { method: "GET" as const, url: "/pao" },
+      { method: "POST" as const, url: `/pao/v1/mandates?q=${mark}`, headers: { "content-type": "application/json" }, payload: "{" },
+      { method: "POST" as const, url: `/pao/v1/mandates`, headers: { "content-type": "application/json" }, payload: "x".repeat(70_000) },
+    ];
+    for (const c of calls) {
+      const res = await app.inject(c);
+      expect(res.statusCode).toBe(503);
+      expect(res.headers["retry-after"]).toBe(String(BYPASS_RETRY_AFTER_SEC));
+      expect(res.json()).toStrictEqual({ code: "UPSTREAM_UNAVAILABLE", message: expect.any(String), retry: "same_key" });
+      expect(res.body).not.toContain(mark);
+    }
   });
 
   it("API для продавцов — 503 UPSTREAM_UNAVAILABLE с Retry-After и без Cache-Control, а не 404 (уточнение РП56, № 42; знак — РП57 п. 3)", async () => {

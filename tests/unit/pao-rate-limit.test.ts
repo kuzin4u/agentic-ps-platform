@@ -80,7 +80,7 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
     expect429(await unsigned(app));
   });
 
-  it("обработчик ошибок области отвечает на 404 и 413 по ПАО §6 (РП62 п. 1–2; прежде — ответы Fastify)", async () => {
+  it("обработчик ошибок области отвечает на 404 и 413 по ПАО §6 (РП62 п. 1–2); тело 1,1 МБ — больше любого предела, сам предел 64 КиБ — в pao-transport-errors", async () => {
     const { app } = platform(100);
     const nope = await app.inject({ method: "GET", url: "/pao/v1/nope" });
     expect([nope.statusCode, nope.json().code]).toEqual([404, "REQUEST_INVALID"]);

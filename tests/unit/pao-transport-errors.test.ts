@@ -2,12 +2,16 @@
 // {code}; каждый отказ — запись «отказ транспорта» без пути, строки запроса и err.message. Стенд собирается целиком,
 // журнал — в массив (как server-request-log).
 import { randomUUID } from "node:crypto";
-import Fastify, { type FastifyInstance } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ServerOptions } from "../../src/server.js";
-import { paoNotFound, type PaoDeps } from "../../src/pao/routes.js";
+import { paoIdempotency } from "../../src/pao/idempotency.js";
 import { PAO_BODY_LIMIT_BYTES } from "../../src/pao/transport.js";
+import { PaoRequestVerifier } from "../../src/pao/verify.js";
+import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "../../src/registry/index.js";
+import { buildServer, type ServerOptions } from "../../src/server.js";
+import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
+import { memoryConsent } from "../support/consent.js";
 import { signedInject } from "../support/signed-inject.js";
 import { stand, type Stand } from "../support/stand.js";
 
@@ -114,9 +118,10 @@ describe("ответы транспорта по ПАО §6 и запись от
     expect(res.json()).toMatchObject({ code: "AGENT_UNKNOWN" });
   });
 
-  it("исключение обработчика — 503 UPSTREAM_UNAVAILABLE с Retry-After, запись с err, без пути", async () => {
+  it("исключение обработчика — 503 UPSTREAM_UNAVAILABLE с Retry-After, в записи err — только name, code, стек", async () => {
     vi.spyOn(s.keys, "list").mockImplementation(() => {
-      throw new Error("сбой ключей");
+      // Как у ошибок PostgreSQL: перечислимые detail и where со значениями запроса в запись не идут (КТ1 № 8).
+      throw Object.assign(new Error("сбой ключей"), { code: "XX000", detail: mark, where: mark });
     });
     const res = await signedInject(s.app, a, A, { query: `q=${mark}` });
     expect(res.statusCode).toBe(503);
@@ -124,8 +129,25 @@ describe("ответы транспорта по ПАО §6 и запись от
     expect(res.headers["retry-after"]).toBe(String(s.params.unavailable_retry_after_sec));
     const [e] = rejects();
     expect(e).toMatchObject({ reject: "UNHANDLED", status: 503, pao_code: "UPSTREAM_UNAVAILABLE", area: "pao" });
-    expect(e?.err).toMatchObject({ message: "сбой ключей" });
+    expect(Object.keys(e?.err as object).sort()).toEqual(["code", "name", "stack"]);
+    expect(e?.err).toMatchObject({ name: "Error", code: "XX000" });
     for (const x of entries()) expect(JSON.stringify(x)).not.toContain(mark);
+  });
+
+  it("/pao и /pao?x, метод без маршрута на существующем пути, POST с телом на несуществующий путь — 404 по §6 с записью", async () => {
+    const calls = [
+      { url: "/pao" },
+      { url: `/pao?q=${mark}` },
+      { method: "DELETE" as const, url: `/pao/v1/agent?q=${mark}` },
+      { method: "POST" as const, url: `/pao/v1/${mark}`, headers: { "content-type": "application/json" }, payload: `{"x":"${mark}"}` },
+    ];
+    for (const c of calls) {
+      const res = await s.app.inject(c);
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toStrictEqual(PAO_REQUEST_INVALID);
+    }
+    expect(rejects().map((e) => [e.reject, e.status, e.area])).toEqual(calls.map(() => ["NOT_FOUND", 404, "pao"]));
+    for (const e of entries()) expect(JSON.stringify(e)).not.toContain(mark);
   });
 
   it("вне /pao: 414 и 400 bad url — тем же HTTP, тело {code: REQUEST_INVALID}, без пути; запись area other", async () => {
@@ -147,14 +169,53 @@ describe("404 в /pao — под грубым лимитом по адресу (
     await app?.close();
   });
 
+  /** Собранный сервер с шлюзом ПАО при пределе 2 — как в рабочей сборке, регистрация 404 с префиксом /pao (server.ts). */
+  function server(): FastifyInstance {
+    const params = { ...loadParams(), pao_rate_limit_per_30s: 2 };
+    const store = new InMemoryAgentRegistryStore();
+    const registry = new AgentRegistry(store, { keys: params });
+    const keys = new AgentKeys(store, { keys: params });
+    const verifier = new PaoRequestVerifier(
+      { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
+      { skewSec: params.signature_skew_sec },
+    );
+    return buildServer({
+      env: "dev",
+      pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() },
+    });
+  }
+  const nope = async (i: number) => (await app!.inject({ url: `/pao/v1/nope${i}` })).statusCode;
+  const gate = async () => (await app!.inject({ url: "/pao/v1/agent" })).statusCode;
+
   it("предел 2: третий несуществующий путь — 429 RATE_LIMITED по §6, а не 404", async () => {
-    const params = { pao_rate_limit_per_30s: 2, unavailable_retry_after_sec: 1 } as PaoDeps["params"];
-    app = Fastify();
-    await app.register(async (scope) => paoNotFound(scope, { params }), { prefix: "/pao" });
-    const codes: number[] = [];
-    for (let i = 0; i < 3; i++) codes.push((await app.inject({ url: `/pao/v1/nope${i}` })).statusCode);
-    expect(codes).toEqual([404, 404, 429]);
+    app = server();
+    expect([await nope(0), await nope(1), await nope(2)]).toEqual([404, 404, 429]);
     const last = await app.inject({ url: "/pao/v1/nope" });
     expect(last.json()).toStrictEqual({ code: "RATE_LIMITED", message: expect.any(String), retry: "same_key" });
+  });
+
+  it("POST с испорченным Content-Type на несуществующий путь — 404 до разбора тела, под лимитом (КТ1 № 1): третий — 429", async () => {
+    app = server();
+    const post = async () =>
+      (await app!.inject({ method: "POST", url: "/pao/v1/nope", headers: { "content-type": "\u0000bad" }, payload: "{" })).statusCode;
+    expect([await post(), await post(), await post()]).toEqual([404, 404, 429]);
+  });
+
+  it("тело несуществующего пути не читается: больше серверного предела 1 МиБ — всё равно 404 по §6, не 413", async () => {
+    app = server();
+    const res = await app.inject({
+      method: "POST",
+      url: "/pao/v1/nope",
+      headers: { "content-type": "application/json" },
+      payload: "x".repeat(1_100_000),
+    });
+    expect([res.statusCode, res.json().code]).toEqual([404, "REQUEST_INVALID"]);
+  });
+
+  it("счётчики 404 и шлюза раздельны в собранном сервере: исчерпание одного не даёт 429 другому", async () => {
+    app = server();
+    expect([await nope(0), await nope(1), await nope(2)]).toEqual([404, 404, 429]);
+    expect([await gate(), await gate(), await gate()]).toEqual([401, 401, 429]);
+    expect(await nope(3)).toBe(429);
   });
 });
