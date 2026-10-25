@@ -528,8 +528,7 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke: признак kid в журна
       bodies.push(res.body);
     }
     expect(new Set(bodies).size).toBe(1);
-    // Только собственная запись маршрута: запись Fastify о входящем запросе пишет полный req.url — до PS-05б ч. 2
-    // (РП60 доп. 4, STATUS «Открыто»).
+    // Собственная запись маршрута; записи Fastify о запросе — без значений пути (РП61, tests/unit/server-request-log.test.ts).
     const own = lines
       .map((l) => JSON.parse(l) as Record<string, unknown>)
       .filter((e) => e.msg === "ПАО: отзыв — у агента нет такого ключа (РП60 п. 2)");
