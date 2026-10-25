@@ -163,6 +163,128 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
   });
 });
 
+describe("второй слой лимита — по агенту и уровню после подписи (РП63 п. 1–8)", () => {
+  const B = "nspk:agent:buyref-02:v1";
+  let app: FastifyInstance | undefined;
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+
+  // Малые значения (решение владельца 25.10): L1 = 4 в минуту — 2 за окно 30 с; первый слой щедрый.
+  const SMALL = { pao_agent_rate_limit_per_min_l1: 4, pao_agent_rate_limit_per_min_l2: 6, pao_agent_rate_limit_per_min_l3: 8 };
+
+  const platform = (opts: { level?: number; log?: (line: string) => void } = {}) => {
+    const params = { ...loadParams(), pao_rate_limit_per_30s: 1000, ...SMALL };
+    const store = new InMemoryAgentRegistryStore();
+    const registry = new AgentRegistry(store, { keys: params });
+    const keys = new AgentKeys(store, { keys: params });
+    const a = newAgentSide();
+    const b = newAgentSide();
+    expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect(registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    // Уровень меняет П8 (РП21 п. 3) — в тесте подставляется в запись реестра, как её отдал бы реестр.
+    const getAgent = (c: string) => {
+      const r = registry.get(c);
+      return r && opts.level !== undefined ? { ...r, level: opts.level } : r;
+    };
+    const verifier = new PaoRequestVerifier(
+      { getAgent, lookupKey: (c, kid) => keys.lookup(c, kid) },
+      { skewSec: params.signature_skew_sec },
+    );
+    app = buildServer({
+      env: "sandbox",
+      ...(opts.log ? { logger: { level: "info", stream: { write: opts.log } } } : {}),
+      pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() },
+    });
+    return { app, a, b, keys };
+  };
+
+  const expect429 = (res: { statusCode: number; headers: Record<string, unknown>; json: () => unknown }) => {
+    expect(res.statusCode).toBe(429);
+    expect(res.json()).toEqual({ code: "RATE_LIMITED", message: expect.any(String), retry: "same_key" });
+    const ra = Number(res.headers["retry-after"]);
+    expect(Number.isInteger(ra) && ra >= 0 && ra <= 30).toBe(true);
+    // Заголовков плагина у второго слоя нет (п. 2): x-ratelimit-* ставит только первый слой.
+    expect(res.headers["x-ratelimit-limit"]).toBe("1000");
+  };
+
+  it("предел в окне 30 с — половина минутного: третье подписанное обращение — 429 RATE_LIMITED, Retry-After ≤ 30", async () => {
+    const { app, a } = platform();
+    for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
+    expect429(await signedInject(app, a, A));
+  });
+
+  it("счётчик — по agent_code: два агента с одного адреса — раздельно", async () => {
+    const { app, a, b } = platform();
+    for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
+    expect429(await signedInject(app, a, A));
+    for (let i = 0; i < 2; i++) expect((await signedInject(app, b, B)).statusCode).toBe(200);
+    expect429(await signedInject(app, b, B));
+  });
+
+  it("до проверки подписи слой не считает: чужой x-agent-code без верной подписи квоту агента не тратит", async () => {
+    const { app, a, b } = platform();
+    // Без подписи и с подписью ключом другого агента под кодом A — 401, счётчик A не растёт.
+    for (let i = 0; i < 5; i++) {
+      expect((await app.inject({ method: "GET", url: "/pao/v1/agent", headers: { "x-agent-code": A } })).statusCode).toBe(401);
+      expect((await signedInject(app, b, A)).statusCode).toBe(401);
+    }
+    for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
+    expect429(await signedInject(app, a, A));
+  });
+
+  it("429 второго слоя — до обработчика: POST /pao/v1/agent/keys ключ не добавляет", async () => {
+    const { app, a, keys } = platform();
+    for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
+    const res = await signedInject(app, a, A, {
+      method: "POST",
+      path: "/pao/v1/agent/keys",
+      body: JSON.stringify({ alg: "ed25519", public_key: newAgentSide().publicKey }),
+      headers: { "idempotency-key": randomUUID() },
+    });
+    expect429(res);
+    expect(keys.list(A)).toHaveLength(1);
+  });
+
+  it.each([
+    [1, 4],
+    [2, 6],
+    [3, 8],
+  ])("GET /pao/v1/agent: уровень %i — rate_limit_per_min = %i, и он же применяется", async (level, perMin) => {
+    const { app, a } = platform({ level });
+    const self = await signedInject(app, a, A);
+    expect(self.statusCode).toBe(200);
+    expect(self.json().rate_limit_per_min).toBe(perMin);
+    for (let i = 1; i < perMin / 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
+    expect429(await signedInject(app, a, A));
+  });
+
+  it("уровень вне таблицы — L1 (строжайший) с записью warn (п. 5, инвариант 3)", async () => {
+    const lines: string[] = [];
+    const { app, a } = platform({ level: 4, log: (l) => lines.push(l) });
+    const self = await signedInject(app, a, A);
+    expect(self.json().rate_limit_per_min).toBe(SMALL.pao_agent_rate_limit_per_min_l1);
+    expect((await signedInject(app, a, A)).statusCode).toBe(200);
+    expect429(await signedInject(app, a, A));
+    const warn = lines.map((l) => JSON.parse(l)).find((r) => r.msg === "ПАО: уровень агента вне таблицы лимита — предел L1");
+    expect(warn).toMatchObject({ level: 40, agent_code: A, agent_level: 4 });
+  });
+
+  it("стенд: 3 000 / 4 500 / 6 000 в минуту (РП63 п. 4) — те же параметры у стенда для агента", () => {
+    const p = loadParams();
+    expect([p.pao_agent_rate_limit_per_min_l1, p.pao_agent_rate_limit_per_min_l2, p.pao_agent_rate_limit_per_min_l3]).toEqual([3000, 4500, 6000]);
+  });
+
+  it.each([0, 1, 3, 2.5, -2])("значение %s — отказ сборки шлюза (чётное целое ≥ 2)", async (v) => {
+    const params = { ...loadParams(), pao_agent_rate_limit_per_min_l2: v };
+    const keys = new AgentKeys(new InMemoryAgentRegistryStore(), { keys: params });
+    const verifier = new PaoRequestVerifier({ getAgent: () => undefined, lookupKey: () => undefined }, { skewSec: 1 });
+    app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: 60 }), params, consent: memoryConsent() } });
+    await expect(app.ready()).rejects.toThrow(/pao_agent_rate_limit_per_min_l2/);
+  });
+});
+
 describe("PAO_TRUSTED_PROXIES (РП32 п. 5)", () => {
   it("пусто или нет — прокси не доверяем; адреса и CIDR — список", () => {
     expect(parseTrustedProxies(undefined)).toEqual([]);

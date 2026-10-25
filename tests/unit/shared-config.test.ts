@@ -137,6 +137,20 @@ describe("стендовые параметры", () => {
     expect(doc.slice(doc.indexOf("## Границы"), doc.indexOf("## Журнал"))).toContain("| `idempotency_ttl_sec` — целое ≥ 60 |");
   });
 
+  it.each(["pao_agent_rate_limit_per_min_l1", "pao_agent_rate_limit_per_min_l2", "pao_agent_rate_limit_per_min_l3"] as const)(
+    "%s: чётное целое ≥ 2 — 2 и 6000 принимаются, 0, 1, 3, 2.5, \"2\" — отказ (РП63 п. 4)",
+    (k) => {
+      for (const v of [2, 6000]) expect(parseParams({ ...stand(), [k]: v })[k]).toBe(v);
+      for (const v of [0, 1, 3, 2.5, -2, "2"]) {
+        expect(() => parseParams({ ...stand(), [k]: v }), String(v)).toThrow(new RegExp(`${k}: ожидается чётное целое ≥ 2`));
+      }
+      const doc = readFileSync("docs/core/PARAMS.md", "utf8");
+      expect(doc.slice(doc.indexOf("## Границы"), doc.indexOf("## Журнал"))).toContain(
+        "| Чётные целые ≥ 2: `pao_agent_rate_limit_per_min_l1`, `pao_agent_rate_limit_per_min_l2`, `pao_agent_rate_limit_per_min_l3` |",
+      );
+    },
+  );
+
   it("границы PARAMS.md совпадают с загрузчиком (РП20)", () => {
     const doc = readFileSync("docs/core/PARAMS.md", "utf8");
     const from = doc.indexOf("## Границы");
@@ -152,7 +166,15 @@ describe("стендовые параметры", () => {
     const min1 = keysOf("Целые ≥ 1:");
     const min0 = keysOf("Целые ≥ 0:");
     // Каждое целое без особой границы — ровно в одной из строк.
-    const special = new Set(["split_min_ops", "aoi_rollout_phase", "unavailable_retry_after_sec", "idempotency_ttl_sec"]);
+    const special = new Set([
+      "split_min_ops",
+      "aoi_rollout_phase",
+      "unavailable_retry_after_sec",
+      "idempotency_ttl_sec",
+      "pao_agent_rate_limit_per_min_l1",
+      "pao_agent_rate_limit_per_min_l2",
+      "pao_agent_rate_limit_per_min_l3",
+    ]);
     const ints = Object.entries(stand())
       .filter(([k, v]) => Number.isInteger(v) && !special.has(k))
       .map(([k]) => k);

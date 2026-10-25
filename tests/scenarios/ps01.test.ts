@@ -31,7 +31,7 @@ describe("ПС01: допуск оператора агента и выдача �
     });
   });
 
-  it("GET /pao/v1/agent возвращает статус, класс, уровень и ключи из реестра", async () => {
+  it("GET /pao/v1/agent возвращает статус, класс, уровень, ключи из реестра и предел частоты по уровню", async () => {
     admit();
     const res = await signedInject(s.app, side, CODE);
     expect(res.statusCode).toBe(200);
@@ -52,6 +52,8 @@ describe("ПС01: допуск оператора агента и выдача �
           status: "ACTIVE",
         },
       ],
+      // Предел второго слоя для уровня 1 — из параметров стенда (РП63 п. 6).
+      rate_limit_per_min: s.params.pao_agent_rate_limit_per_min_l1,
     });
     const days = (Date.parse(self.keys[0].valid_to) - Date.parse(self.keys[0].valid_from)) / 86_400_000;
     expect(days).toBe(s.params.key_ttl_days);

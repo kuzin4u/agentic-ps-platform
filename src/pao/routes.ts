@@ -1,7 +1,7 @@
 // П9 Маршруты ПАО (AGENT-PROTOCOL.md §3). Каждое обращение проверяется до обработчика: агент → подпись → статус (РП23 п. 6).
 // Изменяющий метод затем: Idempotency-Key → тело по схеме (REQUEST_INVALID) → захват ключа → обработчик (РП30 п. 3, РП31).
 // /revoke — PS-05б ч. 1 (РП60); POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
-import rateLimit, { normalizeIP } from "@fastify/rate-limit";
+import rateLimit, { normalizeIP, type CreateRateLimitOptions } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, KeyNotFoundError, type AgentKeys } from "../registry/agent-keys.js";
@@ -45,7 +45,11 @@ export interface PaoDeps {
   readonly consent: ConsentJournal;
   readonly params: Pick<
     Params,
-    "unavailable_retry_after_sec" | "pao_rate_limit_per_30s" | "event_page_max" | "event_subscription_allow_hosts"
+    | "unavailable_retry_after_sec"
+    | "pao_rate_limit_per_30s"
+    | AgentRateParam
+    | "event_page_max"
+    | "event_subscription_allow_hosts"
   >;
   /** Подписка в записи агента (РП40 п. 1, С6); без неё PUT /pao/v1/subscription не регистрируется. */
   readonly subscriptions?: {
@@ -115,6 +119,30 @@ export const rateLimitKey = (ip: string): string => normalizeIP(ip, PAO_RATE_IPV
 /** Метка превышения лимита: errorResponseBuilder выбрасывает её, обработчик ошибок области отвечает телом ПАО §6. */
 const RATE_LIMITED = Object.freeze({ statusCode: 429, code: "RATE_LIMITED" });
 
+/** Остаток окна в секундах для Retry-After: не больше границы РП24 и при переводе часов назад (РП32, дополнение п. 3). */
+const retryAfterSec = (computed: number): number =>
+  Number.isFinite(computed) ? Math.min(Math.max(computed, 0), MAX_RETRY_AFTER_SEC) : MAX_RETRY_AFTER_SEC;
+
+/** Параметры второго слоя по уровням агента (РП63 п. 4). */
+const AGENT_RATE_PARAMS = Object.freeze({
+  1: "pao_agent_rate_limit_per_min_l1",
+  2: "pao_agent_rate_limit_per_min_l2",
+  3: "pao_agent_rate_limit_per_min_l3",
+} as const);
+type AgentRateParam = (typeof AGENT_RATE_PARAMS)[keyof typeof AGENT_RATE_PARAMS];
+
+/** Счётчиков второго слоя в памяти (РП63 п. 7): при вытеснении счётчик агента обнуляется; агентов на порядки меньше. */
+const AGENT_RATE_CACHE = 10_000;
+
+/**
+ * Предел второго слоя в минуту для уровня агента (РП63 п. 4–5). Уровень вне таблицы — L1, строжайший (инвариант 3);
+ * inTable — для записи в журнал. Его же отдаёт AgentSelf.rate_limit_per_min (п. 6).
+ */
+export function agentRateLimitPerMin(params: Pick<Params, AgentRateParam>, level: number): { perMin: number; inTable: boolean } {
+  const key = Object.hasOwn(AGENT_RATE_PARAMS, level) ? AGENT_RATE_PARAMS[level as keyof typeof AGENT_RATE_PARAMS] : undefined;
+  return key ? { perMin: params[key], inTable: true } : { perMin: params.pao_agent_rate_limit_per_min_l1, inTable: false };
+}
+
 declare module "fastify" {
   interface FastifyRequest {
     /** Агент из реестра после проверки обращения; класс и уровень — только отсюда (инвариант 5). */
@@ -167,9 +195,7 @@ export async function paoCoarseLimit(
   app.setErrorHandler((err: FastifyError, req, reply) => {
     if (err === RATE_LIMITED) {
       // Остаток окна плагин считает по Date.now(): при переводе часов назад он больше окна — обрезаем до границы РП24.
-      const computed = Number(reply.getHeader("retry-after"));
-      const retryAfter = Number.isFinite(computed) ? Math.min(Math.max(computed, 0), MAX_RETRY_AFTER_SEC) : MAX_RETRY_AFTER_SEC;
-      void reply.header("retry-after", String(retryAfter));
+      void reply.header("retry-after", String(retryAfterSec(Number(reply.getHeader("retry-after")))));
       return reply.code(429).send(paoError("RATE_LIMITED").body);
     }
     return otherError ? otherError(err, req, reply) : reply.send(err);
@@ -219,6 +245,21 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   assertHandlerBudget(PAO_HANDLER_BUDGET_MS, PAO_DB_TIMEOUT_MS, PAO_IDEMPOTENCY_LEASE_MS);
   const clock = deps.clock ?? (() => performance.now());
   await paoCoarseLimit(app, deps.params.pao_rate_limit_per_30s, paoTransportFailure(deps.params.unavailable_retry_after_sec));
+  for (const name of Object.values(AGENT_RATE_PARAMS)) {
+    const v = deps.params[name];
+    if (!Number.isSafeInteger(v) || v < 2 || v % 2 !== 0) throw new Error(`${name} — чётное целое ≥ 2`);
+  }
+  // Второй слой (РП63 п. 1–7): по коду агента после верной подписи, окно 30 с, предел — половина минутного. Через
+  // createRateLimit, а не app.rateLimit(): хук плагина отмечает запрос после первого слоя и второй пропустил бы; ответ —
+  // свой, без заголовков x-ratelimit-* (п. 2). Хранилище — своё, не общее с первым слоем.
+  // cache в типах CreateRateLimitOptions 11.2.0 не объявлен, но дочернее хранилище его читает (LocalStore.child).
+  const agentLimitOpts: CreateRateLimitOptions & { readonly cache: number } = {
+    keyGenerator: (req) => (req.paoAgent as AgentRecord).agent_code,
+    max: (req) => agentRateLimitPerMin(deps.params, (req.paoAgent as AgentRecord).level).perMin / 2,
+    timeWindow: PAO_RATE_WINDOW_MS,
+    cache: AGENT_RATE_CACHE,
+  };
+  const agentLimit = app.createRateLimit(agentLimitOpts);
   // Тело — строкой, как подписано: content-digest считается от байтов, а не от разобранного JSON. Любой тип содержимого —
   // строкой (UTF-8): тело с чужим типом доходит до проверки обращения и схемы и получает ответ ПАО §6, а не 415 Fastify.
   // Тело больше PAO_BODY_LIMIT_BYTES (413) и неразборный Content-Type — тоже §6, обработчиком ошибок области (РП62 п. 1, 4).
@@ -264,9 +305,21 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     }
     req.paoAgent = r.agent;
     req.paoKid = r.kid;
+    // Второй слой — только после верной подписи: чужой x-agent-code квоту агента не тратит (РП63 п. 1, инвариант 5).
+    const level = agentRateLimitPerMin(deps.params, r.agent.level);
+    if (!level.inTable) {
+      // agent_level, а не level: level — уровень самой записи pino, поле затёрло бы его.
+      req.log.warn({ agent_code: r.agent.agent_code, agent_level: r.agent.level }, "ПАО: уровень агента вне таблицы лимита — предел L1");
+    }
+    const limit = await agentLimit(req);
+    if (!limit.isAllowed && limit.isExceeded) {
+      void reply.header("retry-after", String(retryAfterSec(limit.ttlInSeconds)));
+      return reply.code(429).send(paoError("RATE_LIMITED").body);
+    }
   });
 
-  // Свой статус, класс, уровень, действующие ключи — из реестра (ПАО §3, A2, ПС01). rate_limit_per_min — в PS-05.
+  // Свой статус, класс, уровень, действующие ключи — из реестра (ПАО §3, A2, ПС01); rate_limit_per_min — предел второго
+  // слоя для уровня агента, тот, что применяется (РП63 п. 6).
   app.get("/pao/v1/agent", async (req): Promise<AgentSelf> => {
     const agent = req.paoAgent as AgentRecord;
     return {
@@ -276,6 +329,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       level: agent.level,
       status: agent.status,
       keys: deps.keys.list(agent.agent_code).filter((k) => k.status === "ACTIVE"),
+      rate_limit_per_min: agentRateLimitPerMin(deps.params, agent.level).perMin,
     };
   });
 

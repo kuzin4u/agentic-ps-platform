@@ -50,6 +50,12 @@ export interface Params {
   /** Срок хранения результата идемпотентности ПАО, с; ≥ 60 — не меньше аренды захвата ядра (РП30 п. 3). */
   readonly idempotency_ttl_sec: number;
   readonly pao_rate_limit_per_30s: number;
+  /** Второй слой лимита ПАО по агенту, обращений в минуту для уровня 1 (РП63 п. 4); в окне 30 с — половина. */
+  readonly pao_agent_rate_limit_per_min_l1: number;
+  /** То же для уровня 2 (РП63 п. 4). */
+  readonly pao_agent_rate_limit_per_min_l2: number;
+  /** То же для уровня 3 (РП63 п. 4). */
+  readonly pao_agent_rate_limit_per_min_l3: number;
   readonly key_ttl_days: number;
   readonly key_overlap_days: number;
   readonly qualified_signature_above_kop: number;
@@ -89,6 +95,14 @@ const int =
     if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) {
       throw new Error(`ожидается целое ${min}…${max}`);
     }
+    return v;
+  };
+
+/** Чётное целое ≥ min (РП63 п. 4): предел в минуту делится на два окна по 30 с без остатка. */
+const evenInt =
+  (min: number): Rule =>
+  (v) => {
+    if (typeof v !== "number" || !Number.isSafeInteger(v) || v < min || v % 2 !== 0) throw new Error(`ожидается чётное целое ≥ ${min}`);
     return v;
   };
 
@@ -168,6 +182,9 @@ const RULES: Record<keyof Params, Rule> = {
   merchant_readiness_max_age_sec: int(1),
   idempotency_ttl_sec: int(60),
   pao_rate_limit_per_30s: int(1),
+  pao_agent_rate_limit_per_min_l1: evenInt(2),
+  pao_agent_rate_limit_per_min_l2: evenInt(2),
+  pao_agent_rate_limit_per_min_l3: evenInt(2),
   key_ttl_days: int(1),
   key_overlap_days: int(0),
   qualified_signature_above_kop: int(1),
