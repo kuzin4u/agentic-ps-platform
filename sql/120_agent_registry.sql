@@ -35,11 +35,12 @@ CREATE TABLE agents (
   row_version         bigint NOT NULL CHECK (row_version >= 1),
   FOREIGN KEY (issuer, id) REFERENCES agent_ids (issuer, id),
   -- Основание — по статусу (РП21 п. 4): у ACTIVE нет, у SUSPENDED — A2 п. 7.1, у EXCLUDED — те же и WITHDRAWN.
+  -- IS NOT NULL явно: NULL IN (…) — NULL, а CHECK с NULL не нарушен — SUSPENDED без основания прошёл бы.
   CONSTRAINT agents_status_ground CHECK (
     (status = 'ACTIVE' AND status_ground IS NULL)
-    OR (status = 'SUSPENDED'
+    OR (status = 'SUSPENDED' AND status_ground IS NOT NULL
       AND status_ground IN ('KEY_COMPROMISE', 'OUT_OF_MANDATE', 'FALSE_INFORMATION', 'INCIDENT_EVASION'))
-    OR (status = 'EXCLUDED'
+    OR (status = 'EXCLUDED' AND status_ground IS NOT NULL
       AND status_ground IN ('KEY_COMPROMISE', 'OUT_OF_MANDATE', 'FALSE_INFORMATION', 'INCIDENT_EVASION', 'WITHDRAWN'))
   )
 );
