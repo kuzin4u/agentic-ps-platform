@@ -1,9 +1,11 @@
 // Грубый лимит частоты шлюза ПАО по адресу (РП32; CodeQL № 81, Ш12): до проверки подписи, 429 по ПАО §6, Retry-After ≤ 30.
 import { randomUUID } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import { signRequest } from "@kuzin4u/agentic-core";
+import rateLimit, { type CreateRateLimitOptions } from "@fastify/rate-limit";
+import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PAO_RATE_WINDOW_MS, PaoRequestVerifier, paoIdempotency } from "../../src/pao/index.js";
-import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "../../src/registry/index.js";
+import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore, type AgentRecord } from "../../src/registry/index.js";
 import { buildServer, parseTrustedProxies } from "../../src/server.js";
 import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
@@ -182,7 +184,7 @@ describe("второй слой лимита — по агенту и уровн
   // Малые значения (решение владельца 25.10): L1 = 4 в минуту — 2 за окно 30 с; первый слой щедрый.
   const SMALL = { pao_agent_rate_limit_per_min_l1: 4, pao_agent_rate_limit_per_min_l2: 6, pao_agent_rate_limit_per_min_l3: 8 };
 
-  const platform = (opts: { level?: number; log?: (line: string) => void } = {}) => {
+  const platform = (opts: { level?: number; status?: () => AgentRecord["status"]; log?: (line: string) => void } = {}) => {
     const params = { ...loadParams(), pao_rate_limit_per_30s: 1000, ...SMALL };
     const store = new InMemoryAgentRegistryStore();
     const registry = new AgentRegistry(store, { keys: params });
@@ -191,10 +193,12 @@ describe("второй слой лимита — по агенту и уровн
     const b = newAgentSide();
     expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
     expect(registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
-    // Уровень меняет П8 (РП21 п. 3) — в тесте подставляется в запись реестра, как её отдал бы реестр.
+    // Уровень меняет П8 (РП21 п. 3), статус — служба статуса (РП54) — в тесте подставляются в запись реестра, как её отдал
+    // бы реестр.
     const getAgent = (c: string) => {
       const r = registry.get(c);
-      return r && opts.level !== undefined ? { ...r, level: opts.level } : r;
+      if (!r) return r;
+      return { ...r, ...(opts.level !== undefined ? { level: opts.level } : {}), ...(opts.status ? { status: opts.status() } : {}) };
     };
     const verifier = new PaoRequestVerifier(
       { getAgent, lookupKey: (c, kid) => keys.lookup(c, kid) },
@@ -289,6 +293,70 @@ describe("второй слой лимита — по агенту и уровн
     expect(keys.list(A)).toHaveLength(1);
   });
 
+  it("после 429 второго слоя повтор тем же Idempotency-Key после окна исполняется: 429 не сохранён (РП63 п. 2, доп. 4 (а), 6 п. 9)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const t = Date.now();
+      const { app, a, keys } = platform();
+      for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
+      const key = randomUUID();
+      const call = {
+        method: "POST" as const,
+        path: "/pao/v1/agent/keys",
+        body: JSON.stringify({ alg: "ed25519", public_key: newAgentSide().publicKey }),
+        headers: { "idempotency-key": key },
+      };
+      expect429(await signedInject(app, a, A, call));
+      vi.setSystemTime(t + 30_000);
+      // Новый x-nonce (подпись заново) с тем же ключом — исполняется; повтор — сохранённый ответ, ключ один.
+      const done = await signedInject(app, a, A, call);
+      expect(done.statusCode).toBeLessThan(300);
+      expect(keys.list(A)).toHaveLength(2);
+      const again = await signedInject(app, a, A, call);
+      expect([again.statusCode, again.body]).toEqual([done.statusCode, done.body]);
+      expect(keys.list(A)).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("повтор nonce (401), отозванный ключ (401 AGENT_KEY_REVOKED) и SUSPENDED (403) квоту второго слоя не тратят (РП63 п. 1, доп. 6 п. 9)", async () => {
+    let status: AgentRecord["status"] = "ACTIVE";
+    const { app, a, keys } = platform({ status: () => status });
+    // Повтор nonce: те же подписанные заголовки второй раз.
+    const signed = signRequest(
+      {
+        method: "GET",
+        path: "/pao/v1/agent",
+        query: "",
+        headers: { "x-agent-code": A, "x-timestamp": new Date().toISOString().slice(0, 19) + "Z", "x-nonce": randomUUID() },
+        body: "",
+      },
+      a.signer,
+    );
+    const once = () => app.inject({ method: "GET", url: "/pao/v1/agent", headers: signed.headers });
+    expect((await once()).statusCode).toBe(200);
+    for (let i = 0; i < 5; i++) expect((await once()).statusCode).toBe(401);
+    // Отозванный ключ: второй ключ агента остаётся действующим.
+    const a2 = newAgentSide();
+    keys.register(A, { alg: "ed25519", public_key: a2.publicKey });
+    keys.revoke(A, a.kid);
+    for (let i = 0; i < 5; i++) {
+      const res = await signedInject(app, a, A);
+      expect([res.statusCode, res.json().code]).toEqual([401, "AGENT_KEY_REVOKED"]);
+    }
+    // SUSPENDED: лента — не исключение РП23 п. 6.3, 403 на проверке обращения.
+    status = "SUSPENDED";
+    for (let i = 0; i < 5; i++) {
+      const res = await signedInject(app, a2, A, { path: "/pao/v1/events" });
+      expect([res.statusCode, res.json().code]).toEqual([403, "AGENT_SUSPENDED"]);
+    }
+    status = "ACTIVE";
+    // Из квоты 2 за окно потрачено одно (первое обращение): ещё одно проходит, следующее — 429.
+    expect((await signedInject(app, a2, A)).statusCode).toBe(200);
+    expect429(await signedInject(app, a2, A));
+  });
+
   it.each([
     [1, 4],
     [2, 6],
@@ -312,6 +380,76 @@ describe("второй слой лимита — по агенту и уровн
     const warn = lines.map((l) => JSON.parse(l)).find((r) => r.msg === "ПАО: уровень агента вне таблицы лимита — предел L1");
     // NaN в JSON — null.
     expect(warn).toMatchObject({ level: 40, agent_code: A, agent_level: Number.isFinite(level) ? level : null });
+  });
+
+  it("запись «уровень вне таблицы» — один раз на пару (агент, уровень), не на каждое обращение (РП63 доп. 6 п. 8)", async () => {
+    const lines: string[] = [];
+    let level = 4;
+    const params = { ...loadParams(), pao_rate_limit_per_30s: 1000, ...SMALL };
+    const store = new InMemoryAgentRegistryStore();
+    const registry = new AgentRegistry(store, { keys: params });
+    const keys = new AgentKeys(store, { keys: params });
+    const a = newAgentSide();
+    const b = newAgentSide();
+    expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect(registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    const getAgent = (c: string) => {
+      const r = registry.get(c);
+      return r && { ...r, level };
+    };
+    const verifier = new PaoRequestVerifier({ getAgent, lookupKey: (c, kid) => keys.lookup(c, kid) }, { skewSec: params.signature_skew_sec });
+    app = buildServer({
+      env: "sandbox",
+      logger: { level: "info", stream: { write: (l: string) => void lines.push(l) } },
+      pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() },
+    });
+    const warns = () =>
+      lines
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+        .filter((r) => r.msg === "ПАО: уровень агента вне таблицы лимита — предел L1")
+        .map((r) => [r.agent_code, r.agent_level]);
+    // Три обращения A (третье — 429) и два B — по одной записи на агента.
+    for (let i = 0; i < 3; i++) await signedInject(app, a, A);
+    for (let i = 0; i < 2; i++) await signedInject(app, b, B);
+    expect(warns()).toEqual([
+      [A, 4],
+      [B, 4],
+    ]);
+    // Новый уровень у того же агента — новая запись, одна.
+    level = 5;
+    for (let i = 0; i < 2; i++) await signedInject(app, b, B);
+    expect(warns()).toEqual([
+      [A, 4],
+      [B, 4],
+      [B, 5],
+    ]);
+  });
+
+  it("страж опции cache плагина (РП63 п. 7, доп. 6 п. 10): дочернее хранилище createRateLimit читает cache — LRU вытесняет", async () => {
+    // cache не объявлен в типах CreateRateLimitOptions 11.2.0; при обновлении плагина LRU тихо вернулся бы к 5 000.
+    const f = Fastify();
+    try {
+      await f.register(rateLimit, { global: false });
+      const limit = f.createRateLimit({
+        keyGenerator: (req) => String(req.headers["x-k"]),
+        max: 1,
+        timeWindow: PAO_RATE_WINDOW_MS,
+        cache: 2,
+      } as CreateRateLimitOptions & { cache: number });
+      f.get("/k", async (req) => {
+        const r = await limit(req);
+        return { allowed: r.isAllowed || !r.isExceeded };
+      });
+      const hit = async (k: string) => (await f.inject({ url: "/k", headers: { "x-k": k } })).json().allowed as boolean;
+      expect(await hit("a")).toBe(true);
+      expect(await hit("a")).toBe(false);
+      // b и c вытесняют a из LRU на 2 записи: счётчик a обнулён.
+      expect(await hit("b")).toBe(true);
+      expect(await hit("c")).toBe(true);
+      expect(await hit("a")).toBe(true);
+    } finally {
+      await f.close();
+    }
   });
 
   it("стенд: 3 000 / 4 500 / 6 000 в минуту (РП63 п. 4) — те же параметры у стенда для агента", () => {
