@@ -216,6 +216,8 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: реестр агентов с дв�
     expect(await one.keysOf(a.agent_code)).toHaveLength(2);
   });
 
+  // Вероятностный: гонка может не сложиться (поломка через CI К1а — на Node 20.19 зелёный при поломке второго чтения).
+  // Доказательство — барьерный тест «пустое сокращение, барьером» ниже.
   it("одновременный новый ключ при пустом сокращении (единственный ключ отозван) — проходит один (КТ1 № 1)", async () => {
     const [one, other] = two();
     const a = record(uid());
@@ -274,15 +276,19 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: гонки addKey с точками 
     return { hooks, holding, open };
   };
 
-  /** Сколько обращений к этой базе ждут блокировку в запросе, начинающемся с prefix; ждёт первого до 3 с. */
-  const lockWaits = async (prefix: string): Promise<number> => {
+  /**
+   * Сколько обращений к этой базе ждут блокировку в запросе по образцу LIKE (таблица и вид блокировки, не начало текста:
+   * поломка К1а с другим текстом запроса не должна ронять тест мимо его утверждения); ждёт первого до 3 с.
+   * Результат проверяется после главного утверждения теста — красный своей причиной.
+   */
+  const lockWaits = async (pattern: string): Promise<number> => {
     const d = db as TestDb;
     let n = 0;
     for (let i = 0; i < 150 && n === 0; i++) {
       if (i > 0) await new Promise((res) => setTimeout(res, 20));
       const r = await d.pool.query<{ n: string }>(
         "SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database() AND query LIKE $1",
-        [`${prefix}%`],
+        [pattern],
       );
       n = Number(r.rows[0]!.n);
     }
@@ -291,29 +297,38 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: гонки addKey с точками 
 
   const SUSPEND = { status: "SUSPENDED", status_ground: "OUT_OF_MANDATE", status_changed_at: LATER, suspended_at: LATER } as const;
 
-  it("addKey держит строку агента (FOR SHARE): смена статуса ждёт его фиксации; статус раньше — addKey видит новую версию, false", async () => {
+  it("addKey держит строку агента (FOR SHARE): смена статуса ждёт его фиксации", async () => {
     const d = db as TestDb;
     const plain = new PgAgentRegistryStore(d.pool);
     const a = record(uid());
     const k1 = key(`k1-${a.id}`, a.agent_code);
     await plain.insert(a, k1);
     const b = barrier("agent");
-    const pa = new PgAgentRegistryStore(d.pool, b.hooks).addKey(
-      key(`k2-${a.id}`, a.agent_code),
-      new Map([[k1.kid, 1]]),
-      new Map([[k1.kid, LATER]]),
-      1,
-    );
-    await b.holding;
-    let settled = false;
-    const pb = new PgAgentRegistryStore(d.reopen()).updateStatus(a.agent_code, 1, SUSPEND).finally(() => (settled = true));
-    expect(await lockWaits("UPDATE agents SET status")).toBeGreaterThan(0);
-    expect(settled).toBe(false);
-    b.open();
-    expect(await pa).toBe(true);
-    expect((await pb)?.row_version).toBe(2);
+    try {
+      const pa = new PgAgentRegistryStore(d.pool, b.hooks).addKey(
+        key(`k2-${a.id}`, a.agent_code),
+        new Map([[k1.kid, 1]]),
+        new Map([[k1.kid, LATER]]),
+        1,
+      );
+      await b.holding;
+      let settled = false;
+      const pb = new PgAgentRegistryStore(d.reopen()).updateStatus(a.agent_code, 1, SUSPEND).finally(() => (settled = true));
+      const waited = await lockWaits("%UPDATE agents%");
+      expect(settled).toBe(false);
+      expect(waited).toBeGreaterThan(0);
+      b.open();
+      expect(await pa).toBe(true);
+      expect((await pb)?.row_version).toBe(2);
+    } finally {
+      // Провал за барьером не должен держать транзакцию до таймаута afterAll.
+      b.open();
+    }
+  });
 
-    // Обратный порядок: смена статуса держит строку, addKey по старой версии ждёт и читает зафиксированную — false.
+  it("смена статуса держит строку агента: addKey по старой версии ждёт и читает зафиксированную — false", async () => {
+    const d = db as TestDb;
+    const plain = new PgAgentRegistryStore(d.pool);
     const c = record(uid());
     const c1 = key(`k1-${c.id}`, c.agent_code);
     await plain.insert(c, c1);
@@ -324,9 +339,10 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: гонки addKey с точками 
         c.agent_code,
       ]);
       const pc = plain.addKey(key(`k2-${c.id}`, c.agent_code), new Map([[c1.kid, 1]]), new Map([[c1.kid, LATER]]), 1);
-      expect(await lockWaits("SELECT row_version FROM agents")).toBeGreaterThan(0);
+      const waited = await lockWaits("%FROM agents%FOR SHARE%");
       await tx.query("COMMIT");
       expect(await pc).toBe(false);
+      expect(waited).toBeGreaterThan(0);
     } finally {
       // Соединение закрывается: при провале до COMMIT незавершённая транзакция не вернётся в пул.
       tx.release(true);
@@ -342,14 +358,19 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: гонки addKey с точками 
     await plain.insert(a, k1);
     expect(await plain.revokeKey(k1.kid, 1, LATER)).toBeDefined();
     const b = barrier("keys");
-    const pa = new PgAgentRegistryStore(d.pool, b.hooks).addKey(key(`n1-${a.id}`, a.agent_code), new Map([[k1.kid, 2]]), new Map(), 1);
-    await b.holding;
-    const pb = new PgAgentRegistryStore(d.reopen()).addKey(key(`n2-${a.id}`, a.agent_code), new Map([[k1.kid, 2]]), new Map(), 1);
-    expect(await lockWaits("SELECT 1 FROM agent_keys WHERE agent_code")).toBeGreaterThan(0);
-    b.open();
-    expect(await pa).toBe(true);
-    expect(await pb).toBe(false);
-    expect((await plain.keysOf(a.agent_code)).map((k) => k.kid)).toEqual([k1.kid, `n1-${a.id}`]);
+    try {
+      const pa = new PgAgentRegistryStore(d.pool, b.hooks).addKey(key(`n1-${a.id}`, a.agent_code), new Map([[k1.kid, 2]]), new Map(), 1);
+      await b.holding;
+      const pb = new PgAgentRegistryStore(d.reopen()).addKey(key(`n2-${a.id}`, a.agent_code), new Map([[k1.kid, 2]]), new Map(), 1);
+      const waited = await lockWaits("%FROM agent_keys%FOR UPDATE%");
+      b.open();
+      expect(await pa).toBe(true);
+      expect(await pb).toBe(false);
+      expect(waited).toBeGreaterThan(0);
+      expect((await plain.keysOf(a.agent_code)).map((k) => k.kid)).toEqual([k1.kid, `n1-${a.id}`]);
+    } finally {
+      b.open();
+    }
   });
 
   it("kid занят другим агентом после проверки — agent_keys_pkey распознаётся как KeyTakenError, сокращение откатывается", async () => {
@@ -363,13 +384,17 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: гонки addKey с точками 
     await plain.insert(c, c1);
     const kid = `shared-${a.id}`;
     const b = barrier("kid");
-    const pa = new PgAgentRegistryStore(d.pool, b.hooks).addKey(key(kid, a.agent_code), new Map([[k1.kid, 1]]), new Map([[k1.kid, LATER]]), 1);
-    await b.holding;
-    expect(await new PgAgentRegistryStore(d.reopen()).addKey(key(kid, c.agent_code), new Map([[c1.kid, 1]]), new Map(), 1)).toBe(true);
-    b.open();
-    await expect(pa).rejects.toBeInstanceOf(KeyTakenError);
-    expect(await plain.keysOf(a.agent_code)).toEqual([k1]);
-    expect((await plain.getKey(kid))?.agent_code).toBe(c.agent_code);
+    try {
+      const pa = new PgAgentRegistryStore(d.pool, b.hooks).addKey(key(kid, a.agent_code), new Map([[k1.kid, 1]]), new Map([[k1.kid, LATER]]), 1);
+      await b.holding;
+      expect(await new PgAgentRegistryStore(d.reopen()).addKey(key(kid, c.agent_code), new Map([[c1.kid, 1]]), new Map(), 1)).toBe(true);
+      b.open();
+      await expect(pa).rejects.toBeInstanceOf(KeyTakenError);
+      expect(await plain.keysOf(a.agent_code)).toEqual([k1]);
+      expect((await plain.getKey(kid))?.agent_code).toBe(c.agent_code);
+    } finally {
+      b.open();
+    }
   });
 
   it("ограничения схемы: ACTIVE с основанием, неизвестный статус, нулевые level / version / row_version, агент без владельца идентификатора; EXCLUDED с WITHDRAWN", async () => {
