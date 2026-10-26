@@ -175,6 +175,9 @@ export class PgAgentRegistryStore implements AgentRegistryStoreAsync {
   /**
    * Новый ключ и сокращение valid_to — одной транзакцией (РП23 п. 4 и дополнения): строка агента FOR SHARE (версия, по
    * которой проверен статус), ключи агента FOR UPDATE (их версии); изменилось что-то — false. kid уже есть — KeyTakenError.
+   * Ключи сверяются вторым чтением после блокировки (КТ1 № 1): в READ COMMITTED FOR UPDATE после ожидания перепроверяет
+   * только строки своего снимка, ключ, вставленный транзакцией, которую ждали, в него не попал бы — при пустом shorten
+   * оба одновременных вызова вставили бы ключ. Блокировать есть что: первый ключ — при допуске, ключи не удаляются.
    */
   async addKey(
     key: AgentKey,
@@ -189,10 +192,10 @@ export class PgAgentRegistryStore implements AgentRegistryStoreAsync {
       if (!agent.rows[0]) throw new Error(`Агента нет в реестре: ${key.agent_code}`);
       if ((await tx.query("SELECT 1 FROM agent_keys WHERE kid = $1", [key.kid])).rows.length > 0) throw new KeyTakenError(key.kid);
       if (Number(agent.rows[0].row_version) !== agentRowVersion) return false;
-      const cur = await tx.query<{ kid: string; row_version: string }>(
-        "SELECT kid, row_version FROM agent_keys WHERE agent_code = $1 ORDER BY kid FOR UPDATE",
-        [key.agent_code],
-      );
+      await tx.query("SELECT 1 FROM agent_keys WHERE agent_code = $1 ORDER BY kid FOR UPDATE", [key.agent_code]);
+      const cur = await tx.query<{ kid: string; row_version: string }>("SELECT kid, row_version FROM agent_keys WHERE agent_code = $1", [
+        key.agent_code,
+      ]);
       const same = cur.rows.length === expected.size && cur.rows.every((k) => Number(k.row_version) === expected.get(k.kid));
       if (!same || [...shorten.keys()].some((kid) => !expected.has(kid))) return false;
       for (const [kid, valid_to] of shorten) {

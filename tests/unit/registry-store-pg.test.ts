@@ -215,15 +215,34 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: реестр агентов с дв�
     expect(await one.keysOf(a.agent_code)).toHaveLength(2);
   });
 
-  it("ограничения схемы: основание по статусу, класс и контур из перечня, ключ без агента", async () => {
+  it("одновременный новый ключ при пустом сокращении (единственный ключ отозван) — проходит один (КТ1 № 1)", async () => {
+    const [one, other] = two();
+    const a = record(uid());
+    const k1 = key(`k1-${a.id}`, a.agent_code);
+    await one.insert(a, k1);
+    expect(await one.revokeKey(k1.kid, 1, LATER)).toBeDefined();
+    const added = await Promise.all(
+      Array.from({ length: 6 }, (_, i) => (i % 2 ? other : one).addKey(key(`n${i}-${a.id}`, a.agent_code), new Map([[k1.kid, 2]]), new Map(), 1)),
+    );
+    expect(added.filter(Boolean)).toHaveLength(1);
+    expect(await one.keysOf(a.agent_code)).toHaveLength(2);
+  });
+
+  it("ограничения схемы: основание по статусу, suspended_at у SUSPENDED, класс и контур из перечня, ключ без агента", async () => {
     const d = db as TestDb;
     const s = new PgAgentRegistryStore(d.pool);
     const a = record(uid());
     await s.insert(a, key(`k-${a.id}`, a.agent_code));
-    await expect(d.pool.query("UPDATE agents SET status = 'SUSPENDED' WHERE agent_code = $1", [a.agent_code])).rejects.toThrow(/agents_status_ground/);
+    const susp = "UPDATE agents SET status = 'SUSPENDED', suspended_at = now()";
+    await expect(d.pool.query(`${susp} WHERE agent_code = $1`, [a.agent_code])).rejects.toThrow(/agents_status_ground/);
+    await expect(d.pool.query(`${susp}, status_ground = 'WITHDRAWN' WHERE agent_code = $1`, [a.agent_code])).rejects.toThrow(
+      /agents_status_ground/,
+    );
+    // Основание есть, времени приостановления нет — отсечка РП54 п. 5–6 выключилась бы (КТ1 № 2).
     await expect(
-      d.pool.query("UPDATE agents SET status_ground = 'WITHDRAWN', status = 'SUSPENDED' WHERE agent_code = $1", [a.agent_code]),
-    ).rejects.toThrow(/agents_status_ground/);
+      d.pool.query("UPDATE agents SET status = 'SUSPENDED', status_ground = 'KEY_COMPROMISE' WHERE agent_code = $1", [a.agent_code]),
+    ).rejects.toThrow(/agents_suspended_at/);
+    expect((await d.pool.query(`${susp}, status_ground = 'KEY_COMPROMISE' WHERE agent_code = $1`, [a.agent_code])).rowCount).toBe(1);
     await expect(d.pool.query("UPDATE agents SET class = 'ROBOT' WHERE agent_code = $1", [a.agent_code])).rejects.toThrow(/check/);
     await expect(d.pool.query("UPDATE agents SET contour = 'prod' WHERE agent_code = $1", [a.agent_code])).rejects.toThrow(/check/);
     await expect(s.insert(record(uid(), { status: "EXCLUDED", status_ground: "WITHDRAWN" }), key(`kx-${uid()}`, "x"))).rejects.toThrow(

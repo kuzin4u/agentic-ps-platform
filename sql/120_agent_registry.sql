@@ -42,7 +42,9 @@ CREATE TABLE agents (
       AND status_ground IN ('KEY_COMPROMISE', 'OUT_OF_MANDATE', 'FALSE_INFORMATION', 'INCIDENT_EVASION'))
     OR (status = 'EXCLUDED' AND status_ground IS NOT NULL
       AND status_ground IN ('KEY_COMPROMISE', 'OUT_OF_MANDATE', 'FALSE_INFORMATION', 'INCIDENT_EVASION', 'WITHDRAWN'))
-  )
+  ),
+  -- У SUSPENDED время приостановления есть (КТ1 № 2): без него отсечка РП54 п. 5–6 молча выключилась бы.
+  CONSTRAINT agents_suspended_at CHECK (status <> 'SUSPENDED' OR suspended_at IS NOT NULL)
 );
 
 -- kid занят глобально (KeyTakenError, РП23 п. 2–3); ключ ищется только среди ключей своего агента.
