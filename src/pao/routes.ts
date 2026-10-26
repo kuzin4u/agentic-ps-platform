@@ -281,6 +281,10 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     ban: -1,
   };
   const agentLimit = app.createRateLimit(agentLimitOpts);
+  // Запись «уровень вне таблицы» — один раз на пару (agent_code, уровень) в процессе, а не на каждое обращение (РП63 доп. 6
+  // п. 8; КТ1 PS-05б ч. 4 № 12). Пар не больше записей реестра: второй слой — после предпроверки, неизвестный агент получает
+  // 401 до него. При переполнении множество очищается, и запись появится снова — допустимо.
+  const warnedLevels = new Set<string>();
   // Тело — строкой, как подписано: content-digest считается от байтов, а не от разобранного JSON. Любой тип содержимого —
   // строкой (UTF-8): тело с чужим типом доходит до проверки обращения и схемы и получает ответ ПАО §6, а не 415 Fastify.
   // Тело больше PAO_BODY_LIMIT_BYTES (413) и неразборный Content-Type — тоже §6, обработчиком ошибок области (РП62 п. 1, 4).
@@ -343,7 +347,10 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     req.paoKid = r.kid;
     // Второй слой — только после верной подписи: чужой x-agent-code квоту агента не тратит (РП63 п. 1, инвариант 5).
     const level = agentRateLimitPerMin(deps.params, r.agent.level);
-    if (!level.inTable) {
+    const warnKey = `${r.agent.agent_code}\u0000${String(r.agent.level)}`;
+    if (!level.inTable && !warnedLevels.has(warnKey)) {
+      if (warnedLevels.size >= AGENT_RATE_CACHE) warnedLevels.clear();
+      warnedLevels.add(warnKey);
       // agent_level, а не level: level — уровень самой записи pino, поле затёрло бы его.
       req.log.warn({ agent_code: r.agent.agent_code, agent_level: r.agent.level }, "ПАО: уровень агента вне таблицы лимита — предел L1");
     }
@@ -504,7 +511,9 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         const e = consentErrorReply(err);
         if (!e) throw err;
         if (e.http >= 500) req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
-        else req.log.info({ agent_code: agent.agent_code, reason: (err as Error).message }, "ПАО: мандат не записан");
+        // Причина — кодом, не текстом исключения: в message ConsentKeyReused — mandate_id без маски (КТ1 PS-05в ч. 1 № 3,
+        // РП61 нюанс 3).
+        else req.log.info({ agent_code: agent.agent_code, reason: (err as { reason?: unknown }).reason ?? (err as Error).name }, "ПАО: мандат не записан");
         return reply4xx(e);
       }
     }),

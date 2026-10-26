@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.28.0** (PS-05б ч. 4: второй слой лимита по агенту и уровню, `rate_limit_per_min` в `GET /pao/v1/agent`, проверка до чтения тела, длина кода агента; ПАО — по-прежнему 1.4.0; РП63). Подробности —
+Текущая версия — **v0.28.1** (PS-05в ч. 1: журнал процесса без текста исключения и сырого адреса, уровень журнала не ниже `info` при старте, остаток КТ1 PS-05б ч. 4; ответы агенту не меняются; ПАО — по-прежнему 1.4.0; РП63 доп. 6). Подробности —
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.28.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.28.1"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.

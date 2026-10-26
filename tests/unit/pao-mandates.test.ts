@@ -63,6 +63,8 @@ describe("POST /pao/v1/mandates", () => {
   let failDone = false;
   /** Часы предела обработчика (РП33 доп.). */
   let clockMs = 0;
+  /** Журнал процесса — в массив: причина отказа без текста исключения (КТ1 PS-05в ч. 1 № 3). */
+  const logLines: string[] = [];
 
   beforeEach(() => {
     const params = loadParams();
@@ -88,7 +90,12 @@ describe("POST /pao/v1/mandates", () => {
         throw new Error("отметка DONE не записана");
       },
     });
-    app = buildServer({ env: "dev", pao: { verifier, keys, idempotency, params, consent, clock: () => clockMs } });
+    logLines.length = 0;
+    app = buildServer({
+      env: "dev",
+      logger: { level: "info", stream: { write: (l: string) => void logLines.push(l) } },
+      pao: { verifier, keys, idempotency, params, consent, clock: () => clockMs },
+    });
     a = newAgentSide();
     b = newAgentSide();
     expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
@@ -292,6 +299,11 @@ describe("POST /pao/v1/mandates", () => {
     expect([other.statusCode, other.json().code]).toEqual([409, "IDEMPOTENCY_CONFLICT"]);
     expect(other.body).not.toContain(m.id);
     expect(await heads(m.id)).toHaveLength(1);
+    // Причина в журнале — кодом, не текстом ConsentKeyReused («CONSENT_KEY_REUSED: <mandate_id>»): mandate_id без маски
+    // в журнал не идёт (КТ1 PS-05в ч. 1 № 3, РП61 нюанс 3).
+    const rejected = logLines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((e) => e.msg === "ПАО: мандат не записан");
+    expect(rejected.map((e) => e.reason)).toEqual(["Error"]);
+    expect(logLines.join("\n")).not.toContain(m.id);
   });
 
   it("предел обработчика исчерпан до записи — 503, после предела не пишется; повтор — 201, одна запись", async () => {
