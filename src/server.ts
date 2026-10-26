@@ -12,7 +12,7 @@ import {
 import { participantRoutes, type ParticipantDeps } from "./participants/routes.js";
 import { paoConfigurationRoutes, paoConfigurationUnavailable, type PaoConfigurationDeps } from "./pao/configuration.js";
 import { paoNotFound, paoRoutes, type PaoDeps } from "./pao/routes.js";
-import { frameworkErrors, paoUnavailable } from "./pao/transport.js";
+import { errFields, frameworkErrors, paoUnavailable } from "./pao/transport.js";
 
 // Среды — SPEC §8, ARCHITECTURE «Среды». dev работает в памяти, без PostgreSQL.
 export const ENVIRONMENTS = ["dev", "sandbox"] as const;
@@ -137,11 +137,73 @@ class PathlessLogController extends LogController {
   }
 }
 
-/** Опции журнала с сериализатором req (РП61 п. 3): true — журнал Fastify по умолчанию, false — журнала нет. */
+/**
+ * Аргументы записи журнала без текста исключения и сырого адреса (РП63 п. 12): исключение — только имя, код и кадры стека
+ * (errFields, РП62 доп. 2), в том числе первым аргументом (log.error(err)); сообщение, равное err.message (defaultErrorLog,
+ * writeHeadError), — «исключение»; строки Fastify с адресом — без него. Остальное — как есть.
+ */
+export function pathlessLogArgs(args: readonly unknown[]): unknown[] {
+  const [first, msg, ...rest] = args;
+  if (typeof first === "string") {
+    // reply.js: «Reply was already sent, did you forget to "return reply" in the "<url>" (<method>) route?»
+    if (first.startsWith("Reply was already sent")) return [{ code: "FST_ERR_REP_ALREADY_SENT" }, "ответ уже отправлен"];
+    // LogController.routeNotFound по умолчанию: «Route <method>:<url> not found» (у сервера — PathlessLogController).
+    if (first.startsWith("Route ") && first.endsWith(" not found")) return ["маршрут не найден"];
+    return [...args];
+  }
+  if (first === null || typeof first !== "object") return [...args];
+  const err = first instanceof Error ? first : (first as { err?: unknown }).err;
+  if (!(err instanceof Error)) return [...args];
+  // Без сообщения pino взял бы err.message; поле err — уже не исключение, поэтому сообщение задаётся явно.
+  const fields = first instanceof Error ? { err: errFields(err) } : { ...first, err: errFields(err) };
+  return typeof msg === "string" && msg !== err.message ? [fields, msg, ...rest] : [fields, "исключение"];
+}
+
+/** Стандартные уровни pino не ниже info (РП63 п. 13): у trace и debug — rawPacket и reply.log.debug(err) с сырым путём. */
+const LOG_LEVELS_ALLOWED = ["info", "warn", "error", "fatal", "silent"] as const;
+
+/**
+ * Уровень журнала (РП63 п. 13; решение владельца 26.10, PR #74): ниже info, не из стандартных pino или свои уровни
+ * (customLevels) — отказ запуска во всех средах, а не молчаливый info. Не задан — info Fastify.
+ */
+function assertLogLevel(base: Exclude<FastifyServerOptions["logger"], boolean | undefined>): void {
+  const opts = base as { level?: unknown; customLevels?: unknown; useOnlyCustomLevels?: unknown };
+  const level = opts.level ?? "info";
+  if (!(LOG_LEVELS_ALLOWED as readonly unknown[]).includes(level) || opts.customLevels !== undefined || opts.useOnlyCustomLevels !== undefined) {
+    throw new Error(
+      `Журнал: уровень «${String(level)}» ниже info, не из стандартных pino или заданы customLevels — запуск запрещён (РП63 п. 13)`,
+    );
+  }
+}
+
+/**
+ * Опции журнала (РП61 п. 3, РП63 п. 12–13): сериализатор req, перехват записей logMethod, уровень не ниже info.
+ * true — журнал Fastify по умолчанию, false — журнала нет. Перехват наследуют дочерние журналы (req.log, reply.log).
+ */
 function withRequestSerializer(logger: ServerOptions["logger"]): FastifyServerOptions["logger"] {
   if (!logger) return false;
   const base = logger === true ? {} : logger;
-  return { ...base, serializers: { ...base.serializers, req: requestLogFields } };
+  assertLogLevel(base);
+  const own = base.hooks?.logMethod;
+  return {
+    ...base,
+    serializers: { ...base.serializers, req: requestLogFields },
+    hooks: {
+      ...base.hooks,
+      logMethod(args, method, level) {
+        let safe: unknown[];
+        // Перехват не бросает (как сериализатор): сбой — запись без аргументов.
+        try {
+          safe = pathlessLogArgs(args);
+        } catch {
+          safe = ["запись журнала отклонена"];
+        }
+        const call = safe as Parameters<typeof method>;
+        if (own) own.call(this, call, method, level);
+        else method.apply(this, call);
+      },
+    },
+  };
 }
 
 export function buildServer(opts: ServerOptions): FastifyInstance {

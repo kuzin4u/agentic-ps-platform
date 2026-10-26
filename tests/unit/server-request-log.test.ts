@@ -100,8 +100,9 @@ describe("журнал запросов без значений параметр
     // Весь журнал, а не только записи Fastify: собственные записи обработчиков пишут значения из пути только после маски.
     expectPathless();
     const lines = standard();
-    // 5xx необработанного исключения — запись defaultErrorLog с req: шаблон есть, значения нет.
-    const boom = lines.find((e) => e.msg === "сбой обработчика");
+    // 5xx необработанного исключения — запись defaultErrorLog с req: шаблон есть, значения нет; сообщение — не err.message
+    // (РП63 п. 12).
+    const boom = lines.find((e) => e.msg === "исключение" && e.req?.route === "/test/boom/:secret");
     expect(boom?.req).toMatchObject({ method: "GET", route: "/test/boom/:secret" });
   });
 
