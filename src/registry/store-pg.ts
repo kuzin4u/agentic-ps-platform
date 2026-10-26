@@ -198,7 +198,7 @@ export class PgAgentRegistryStore implements AgentRegistryStoreAsync {
     agentRowVersion: number,
   ): Promise<boolean> {
     return this.tx(async (tx) => {
-      const agent = await tx.query<{ row_version: string }>("SELECT row_version FROM agents WHERE agent_code = $1 FOR SHARE", [
+      const agent = await tx.query<{ row_version: string }>("SELECT row_version FROM agents WHERE agent_code = $1", [
         key.agent_code,
       ]);
       if (!agent.rows[0]) throw new Error(`Агента нет в реестре: ${key.agent_code}`);
@@ -206,10 +206,10 @@ export class PgAgentRegistryStore implements AgentRegistryStoreAsync {
       if ((await tx.query("SELECT 1 FROM agent_keys WHERE kid = $1", [key.kid])).rows.length > 0) throw new KeyTakenError(key.kid);
       if (Number(agent.rows[0].row_version) !== agentRowVersion) return false;
       await this.hooks.inTx?.("kid", key);
-      await tx.query("SELECT 1 FROM agent_keys WHERE agent_code = $1 ORDER BY kid FOR UPDATE", [key.agent_code]);
-      const cur = await tx.query<{ kid: string; row_version: string }>("SELECT kid, row_version FROM agent_keys WHERE agent_code = $1", [
-        key.agent_code,
-      ]);
+      const cur = await tx.query<{ kid: string; row_version: string }>(
+        "SELECT kid, row_version FROM agent_keys WHERE agent_code = $1 ORDER BY kid FOR UPDATE",
+        [key.agent_code],
+      );
       const same = cur.rows.length === expected.size && cur.rows.every((k) => Number(k.row_version) === expected.get(k.kid));
       if (!same || [...shorten.keys()].some((kid) => !expected.has(kid))) return false;
       await this.hooks.inTx?.("keys", key);
