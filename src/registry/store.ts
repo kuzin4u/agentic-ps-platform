@@ -58,6 +58,16 @@ export interface AgentRegistryStore {
   setSubscription(agent_code: string, subscription: AgentSubscription): boolean;
 }
 
+/**
+ * Асинхронный порт реестра (РП64 п. 3): тот же договор, что у AgentRegistryStore, методы — Promise. Реализация на
+ * PostgreSQL — PgAgentRegistryStore; в PS-05в ч. 2б заменяет синхронный порт целиком.
+ */
+export type AgentRegistryStoreAsync = {
+  readonly [K in keyof AgentRegistryStore]: (
+    ...args: Parameters<AgentRegistryStore[K]>
+  ) => Promise<ReturnType<AgentRegistryStore[K]>>;
+};
+
 export class InMemoryAgentRegistryStore implements AgentRegistryStore {
   readonly #byCode = new Map<string, AgentRecord>();
   readonly #owners = new Map<string, string>();

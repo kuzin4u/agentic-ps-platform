@@ -5,6 +5,7 @@ export * from "./code.js";
 export * from "./model.js";
 export * from "./status.js";
 export * from "./store.js";
+export * from "./store-pg.js";
 export * from "./registry.js";
 export * from "./keys.js";
 export * from "./agent-keys.js";
