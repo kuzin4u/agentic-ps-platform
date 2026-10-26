@@ -868,6 +868,13 @@ cd ~/repos/agentic-ps-platform && git checkout main && git pull && claude
 
 ## Передача агенту (AG-03 Подписант)
 
+**PS-05в ч. 2б (РП64 п. 3; 2б-1 — PR #76 без выпуска; передача — одна, при 2б-2 с выпуском v0.29.0; решение владельца 26.10):** `stand.registry` и `stand.keys` становятся асинхронными — методы возвращают `Promise`. У агента нужен `await` в местах:
+- `tests/contract/events-stand.test.ts:58` — `stand.registry.changeStatus(…)`;
+- `tests/contract/events-core.test.ts:89` и `:235` — `s.registry.subscription(AGENT)`;
+- `tests/scenarios/p08.test.ts:96` — `r.stand.keys.revoke(…)`.
+
+Агент закреплён на v0.28.0: до своей смены тега не ломается. Ответы ПАО, ПИ-8, API продавцов и ADP не меняются.
+
 **PS-05в ч. 1 (РП63 доп. 6; PR #74, выпуск v0.28.1):** передачи нет — ответы ПАО, ПИ-8, API продавцов и ADP, `createStand` и экспорты не менялись; меняются только записи журнала процесса (журнал стенда по умолчанию выключен) и отказ `buildServer` при уровне журнала ниже `info` (`createStand` опций журнала не принимает).
 
 **PS-05б ч. 4 (РП63; PR #73, выпуск v0.28.0; к AG-08, AG-02, AG-03; передано задачей [`agentic-buyer-ref` #78](https://github.com/kuzin4u/agentic-buyer-ref/issues/78), 25.10.2026):** `GET /pao/v1/agent` отдаёт `rate_limit_per_min` (стенд: L1 3 000, L2 4 500, L3 6 000) — AG-08 держит частоту не выше; второй слой — 429 `RATE_LIMITED` с `Retry-After` 1…30, окна по 30 с, за 60 с — до 1,5 ×; после 429 — новый `x-nonce` с тем же `Idempotency-Key`; неизвестный агент с телом > 64 КиБ или неразборным `Content-Type` — 401 `AGENT_UNKNOWN` вместо 413 / 400; свой файл параметров стенда — три новых ключа.

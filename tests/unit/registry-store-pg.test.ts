@@ -6,6 +6,7 @@ import {
   InMemoryAgentRegistryStore,
   KeyTakenError,
   PgAgentRegistryStore,
+  type PgAgentRegistryStoreHooks,
   type AgentKey,
   type AgentRecord,
   type AgentRegistryStore,
@@ -253,5 +254,149 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: реестр агентов с дв�
         "INSERT INTO agent_keys (kid, agent_code, alg, public_key, valid_from, valid_to, row_version) VALUES ('kz', 'нет', 'ed25519', 'p', now(), now(), 1)",
       ),
     ).rejects.toThrow(/agent_keys_agent_code_fkey/);
+  });
+});
+
+describe.skipIf(!DATABASE_URL)("PostgreSQL: гонки addKey с точками в транзакции и остальные ограничения схемы (КТ1 ч. 2а № 3)", () => {
+  /** Барьер в точке step: held — транзакция дошла до точки, open — отпустить. */
+  const barrier = (step: "agent" | "kid" | "keys") => {
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    let held!: () => void;
+    const holding = new Promise<void>((r) => (held = r));
+    const hooks: PgAgentRegistryStoreHooks = {
+      inTx: async (s) => {
+        if (s !== step) return;
+        held();
+        await gate;
+      },
+    };
+    return { hooks, holding, open };
+  };
+
+  /** Сколько обращений к этой базе ждут блокировку в запросе, начинающемся с prefix; ждёт первого до 3 с. */
+  const lockWaits = async (prefix: string): Promise<number> => {
+    const d = db as TestDb;
+    let n = 0;
+    for (let i = 0; i < 150 && n === 0; i++) {
+      if (i > 0) await new Promise((res) => setTimeout(res, 20));
+      const r = await d.pool.query<{ n: string }>(
+        "SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database() AND query LIKE $1",
+        [`${prefix}%`],
+      );
+      n = Number(r.rows[0]!.n);
+    }
+    return n;
+  };
+
+  const SUSPEND = { status: "SUSPENDED", status_ground: "OUT_OF_MANDATE", status_changed_at: LATER, suspended_at: LATER } as const;
+
+  it("addKey держит строку агента (FOR SHARE): смена статуса ждёт его фиксации; статус раньше — addKey видит новую версию, false", async () => {
+    const d = db as TestDb;
+    const plain = new PgAgentRegistryStore(d.pool);
+    const a = record(uid());
+    const k1 = key(`k1-${a.id}`, a.agent_code);
+    await plain.insert(a, k1);
+    const b = barrier("agent");
+    const pa = new PgAgentRegistryStore(d.pool, b.hooks).addKey(
+      key(`k2-${a.id}`, a.agent_code),
+      new Map([[k1.kid, 1]]),
+      new Map([[k1.kid, LATER]]),
+      1,
+    );
+    await b.holding;
+    let settled = false;
+    const pb = new PgAgentRegistryStore(d.reopen()).updateStatus(a.agent_code, 1, SUSPEND).finally(() => (settled = true));
+    expect(await lockWaits("UPDATE agents SET status")).toBeGreaterThan(0);
+    expect(settled).toBe(false);
+    b.open();
+    expect(await pa).toBe(true);
+    expect((await pb)?.row_version).toBe(2);
+
+    // Обратный порядок: смена статуса держит строку, addKey по старой версии ждёт и читает зафиксированную — false.
+    const c = record(uid());
+    const c1 = key(`k1-${c.id}`, c.agent_code);
+    await plain.insert(c, c1);
+    const tx = await d.reopen().connect();
+    try {
+      await tx.query("BEGIN");
+      await tx.query("UPDATE agents SET status = 'SUSPENDED', status_ground = 'OUT_OF_MANDATE', suspended_at = now(), row_version = 2 WHERE agent_code = $1", [
+        c.agent_code,
+      ]);
+      const pc = plain.addKey(key(`k2-${c.id}`, c.agent_code), new Map([[c1.kid, 1]]), new Map([[c1.kid, LATER]]), 1);
+      expect(await lockWaits("SELECT row_version FROM agents")).toBeGreaterThan(0);
+      await tx.query("COMMIT");
+      expect(await pc).toBe(false);
+    } finally {
+      // Соединение закрывается: при провале до COMMIT незавершённая транзакция не вернётся в пул.
+      tx.release(true);
+    }
+    expect(await plain.keysOf(c.agent_code)).toEqual([c1]);
+  });
+
+  it("пустое сокращение, барьером: второй addKey ждёт ключи первого и читает их заново — false (КТ1 № 1)", async () => {
+    const d = db as TestDb;
+    const plain = new PgAgentRegistryStore(d.pool);
+    const a = record(uid());
+    const k1 = key(`k1-${a.id}`, a.agent_code);
+    await plain.insert(a, k1);
+    expect(await plain.revokeKey(k1.kid, 1, LATER)).toBeDefined();
+    const b = barrier("keys");
+    const pa = new PgAgentRegistryStore(d.pool, b.hooks).addKey(key(`n1-${a.id}`, a.agent_code), new Map([[k1.kid, 2]]), new Map(), 1);
+    await b.holding;
+    const pb = new PgAgentRegistryStore(d.reopen()).addKey(key(`n2-${a.id}`, a.agent_code), new Map([[k1.kid, 2]]), new Map(), 1);
+    expect(await lockWaits("SELECT 1 FROM agent_keys WHERE agent_code")).toBeGreaterThan(0);
+    b.open();
+    expect(await pa).toBe(true);
+    expect(await pb).toBe(false);
+    expect((await plain.keysOf(a.agent_code)).map((k) => k.kid)).toEqual([k1.kid, `n1-${a.id}`]);
+  });
+
+  it("kid занят другим агентом после проверки — agent_keys_pkey распознаётся как KeyTakenError, сокращение откатывается", async () => {
+    const d = db as TestDb;
+    const plain = new PgAgentRegistryStore(d.pool);
+    const a = record(uid());
+    const k1 = key(`k1-${a.id}`, a.agent_code);
+    await plain.insert(a, k1);
+    const c = record(uid());
+    const c1 = key(`k1-${c.id}`, c.agent_code);
+    await plain.insert(c, c1);
+    const kid = `shared-${a.id}`;
+    const b = barrier("kid");
+    const pa = new PgAgentRegistryStore(d.pool, b.hooks).addKey(key(kid, a.agent_code), new Map([[k1.kid, 1]]), new Map([[k1.kid, LATER]]), 1);
+    await b.holding;
+    expect(await new PgAgentRegistryStore(d.reopen()).addKey(key(kid, c.agent_code), new Map([[c1.kid, 1]]), new Map(), 1)).toBe(true);
+    b.open();
+    await expect(pa).rejects.toBeInstanceOf(KeyTakenError);
+    expect(await plain.keysOf(a.agent_code)).toEqual([k1]);
+    expect((await plain.getKey(kid))?.agent_code).toBe(c.agent_code);
+  });
+
+  it("ограничения схемы: ACTIVE с основанием, неизвестный статус, нулевые level / version / row_version, агент без владельца идентификатора; EXCLUDED с WITHDRAWN", async () => {
+    const d = db as TestDb;
+    const s = new PgAgentRegistryStore(d.pool);
+    const a = record(uid());
+    await s.insert(a, key(`k-${a.id}`, a.agent_code));
+    const upd = (set: string) => d.pool.query(`UPDATE agents SET ${set} WHERE agent_code = $1`, [a.agent_code]);
+    await expect(upd("status_ground = 'KEY_COMPROMISE'")).rejects.toThrow(/agents_status_ground/);
+    // Отдельного CHECK статуса нет: неизвестный статус не проходит ни одну ветвь agents_status_ground.
+    await expect(upd("status = 'PAUSED'")).rejects.toThrow(/agents_status_ground/);
+    await expect(upd("status = 'PAUSED', status_ground = 'KEY_COMPROMISE', suspended_at = now()")).rejects.toThrow(/agents_status_ground/);
+    await expect(upd("level = 0")).rejects.toThrow(/agents_level_check/);
+    await expect(upd("version = 0")).rejects.toThrow(/agents_version_check/);
+    await expect(upd("row_version = 0")).rejects.toThrow(/agents_row_version_check/);
+    await expect(d.pool.query("UPDATE agent_keys SET row_version = 0 WHERE kid = $1", [`k-${a.id}`])).rejects.toThrow(
+      /agent_keys_row_version_check/,
+    );
+    const orphan = uid();
+    await expect(
+      d.pool.query(
+        `INSERT INTO agents (agent_code, issuer, id, version, operator, class, level, status, model, runtime, contour, admitted_at,
+           status_changed_at, row_version)
+         VALUES ($1, 'nspk:agent', $2, 1, 'op-a', 'BUYER', 1, 'ACTIVE', 'm', 'r', 'sandbox', now(), now(), 1)`,
+        [`nspk:agent:${orphan}:v1`, orphan],
+      ),
+    ).rejects.toThrow(/agents_issuer_id_fkey/);
+    expect((await upd("status = 'EXCLUDED', status_ground = 'WITHDRAWN'")).rowCount).toBe(1);
   });
 });
