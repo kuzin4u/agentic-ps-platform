@@ -140,10 +140,11 @@ class PathlessLogController extends LogController {
 /**
  * Аргументы записи журнала без текста исключения и сырого адреса (РП63 п. 12): исключение — только имя, код и кадры стека
  * (errFields, РП62 доп. 2), в том числе первым аргументом (log.error(err)); поле err любого типа (КТ1 № 1: throw { message }
- * и throw "строка" Fastify пишет как err, pino — с message); сообщение, равное тексту исключения (defaultErrorLog,
- * writeHeadError), или без сообщения — «исключение»; строки Fastify с адресом — без него. Остальное — те же аргументы, без
- * копии: перехват — на каждой записи (КТ1, горячий путь). Другие имена полей и вложенные исключения не обрабатываются
- * (РП63 доп. 6 п. 5, STATUS «Открыто» — PS-05в ч. 2).
+ * и throw "строка" Fastify пишет как err, pino — с message) и исключение в любом другом поле первого уровня ({ error: e },
+ * РП64 п. 9); сообщение, равное тексту исключения или содержащее его (defaultErrorLog, writeHeadError, `не удалось:
+ * ${err.message}`), или без сообщения — «исключение»; аргументы подстановки при исключении отбрасываются; строки Fastify с
+ * адресом — без него. Остальное — те же аргументы, без копии: перехват — на каждой записи (КТ1, горячий путь). Исключение
+ * глубже первого уровня не обрабатывается — граница РП64 п. 9, держат стражи.
  */
 export function pathlessLogArgs(args: readonly unknown[]): readonly unknown[] {
   const first = args[0];
@@ -156,14 +157,22 @@ export function pathlessLogArgs(args: readonly unknown[]): readonly unknown[] {
   }
   if (first === null || typeof first !== "object") return args;
   if (first instanceof Error) return [{ err: errFields(first) }, "исключение"];
-  if (!("err" in first)) return args;
-  const err: unknown = first.err;
-  // Уже очищенное (errFields в коде маршрута) — как есть: errFields от объекта дал бы { name: "object" }.
-  const fields = { ...first, err: isErrFields(err) ? err : errFields(err) };
-  const text = err !== null && typeof err === "object" ? (err as { message?: unknown }).message : err;
+  let fields: Record<string, unknown> | undefined;
+  const texts: string[] = [];
+  for (const key of Object.keys(first)) {
+    const v: unknown = (first as Record<string, unknown>)[key];
+    // Уже очищенное err (errFields в коде маршрута) — как есть: errFields от объекта дал бы { name: "object" }.
+    if (key === "err" ? isErrFields(v) : !(v instanceof Error)) continue;
+    fields ??= { ...first };
+    fields[key] = errFields(v);
+    const text = v !== null && typeof v === "object" ? (v as { message?: unknown }).message : v;
+    if (typeof text === "string" && text !== "") texts.push(text);
+  }
+  if (!fields && !("err" in first)) return args;
   // Без сообщения pino взял бы err.message; поле err — уже не исключение, поэтому сообщение задаётся явно.
   const msg = args[1];
-  return typeof msg === "string" && msg !== text ? [fields, ...args.slice(1)] : [fields, "исключение"];
+  const out = fields ?? first;
+  return typeof msg === "string" && !texts.some((t) => msg.includes(t)) ? [out, msg] : [out, "исключение"];
 }
 
 const ERR_FIELDS = new Set(["name", "code", "stack"]);

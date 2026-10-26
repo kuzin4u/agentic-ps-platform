@@ -443,7 +443,10 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       if (err instanceof UnstoredReply) return send(reply, err.reply);
       // Тот же ключ ещё выполняется — 503 same_key (РП30 п. 3); предел обработчика исчерпан (РП33 доп. п. 8) — 503,
       // предупреждение; сбой хранилища или обработчика — 503 и ошибка в журнале процесса.
-      if (err instanceof PaoHandlerDeadline) req.log.warn({ agent_code: agent.agent_code }, err.message);
+      // Текст исключения в журнал не идёт (РП64 п. 9): предел — полем.
+      if (err instanceof PaoHandlerDeadline) {
+        req.log.warn({ agent_code: agent.agent_code, budget_ms: err.budgetMs }, "ПАО: обработчик дольше предела — запись не начата");
+      }
       else if (!(err instanceof IdempotencyInProgress)) req.log.error({ err }, "ПАО: сбой хранилища идемпотентности или обработчика");
       return send(reply, paoError("UPSTREAM_UNAVAILABLE"));
     }
