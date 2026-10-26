@@ -504,7 +504,9 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         const e = consentErrorReply(err);
         if (!e) throw err;
         if (e.http >= 500) req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");
-        else req.log.info({ agent_code: agent.agent_code, reason: (err as Error).message }, "ПАО: мандат не записан");
+        // Причина — кодом, не текстом исключения: в message ConsentKeyReused — mandate_id без маски (КТ1 PS-05в ч. 1 № 3,
+        // РП61 нюанс 3).
+        else req.log.info({ agent_code: agent.agent_code, reason: (err as { reason?: unknown }).reason ?? (err as Error).name }, "ПАО: мандат не записан");
         return reply4xx(e);
       }
     }),
