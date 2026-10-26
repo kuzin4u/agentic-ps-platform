@@ -19,13 +19,13 @@ afterEach(async () => {
   m = undefined;
 });
 
-function setup(opts: Parameters<typeof createMerchants>[1] = {}) {
+async function setup(opts: Parameters<typeof createMerchants>[1] = {}) {
   const s = createStand();
   s.setClock(T0);
   const a = newAgentSide();
   const b = newAgentSide();
-  expect(s.admit(buyerApplication(A, a), "op-a").admitted).toBe(true);
-  expect(s.admit(buyerApplication(B, b), "op-b").admitted).toBe(true);
+  expect((await s.admit(buyerApplication(A, a), "op-a")).admitted).toBe(true);
+  expect((await s.admit(buyerApplication(B, b), "op-b")).admitted).toBe(true);
   m = createMerchants(s, opts);
   const as = (side: AgentSide, code: string) => ({ side, agentCode: code, now: s.now() });
   return { s, a, b, m, app: m.app, asA: () => as(a, A) };
@@ -47,7 +47,7 @@ async function order(app: Stand["app"], who: object, shop: string, sku: string, 
 describe("К6: список витрин и зоны", () => {
   it("каждое поведение представлено витриной; ID — по сценариям агента и SHOP-5501", async () => {
     expect(new Set(SHOPS.map((s) => s.behaviour))).toEqual(new Set(SHOP_BEHAVIOURS));
-    const { app } = setup();
+    const { app } = await setup();
     const r = await merchantCall(app, { path: "/v1/shops" });
     expect(r.statusCode).toBe(200);
     const ids = r.json().shops.map((s: { id: string }) => s.id);
@@ -55,7 +55,7 @@ describe("К6: список витрин и зоны", () => {
   });
 
   it("SHOP-1042 — в контуре со знаком готовности; MKT-77 — вне контура (A5 п. 5, П07)", async () => {
-    const { app } = setup();
+    const { app } = await setup();
     const shops = (await merchantCall(app, { path: "/v1/shops" })).json().shops;
     expect(shops.find((s: { id: string }) => s.id === "SHOP-1042")).toMatchObject({ zone: "CONTOUR", readiness_mark: true });
     expect(shops.find((s: { id: string }) => s.id === "MKT-77")).toMatchObject({ zone: "OUTSIDE", readiness_mark: false });
@@ -80,7 +80,7 @@ describe("К6: список витрин и зоны", () => {
   });
 
   it("MKT-77 — только чтение: каталог отдаёт, заказ — ORDERS_NOT_ACCEPTED", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     expect((await merchantCall(app, { path: "/v1/shops/MKT-77/catalog" })).statusCode).toBe(200);
     const r = await order(app, asA(), "MKT-77", "BRD-77-01");
     expect(r.statusCode).toBe(409);
@@ -88,7 +88,7 @@ describe("К6: список витрин и зоны", () => {
   });
 
   it("поиск по query и limit", async () => {
-    const { app } = setup();
+    const { app } = await setup();
     const r = await merchantCall(app, { path: "/v1/shops/SHOP-1042/catalog", query: "query=%D0%BD%D0%B0%D0%B1%D0%BE%D1%80&limit=5" });
     expect(r.json().items.map((i: { sku: string }) => i.sku)).toEqual(["BRD-1042-02"]);
     const one = await merchantCall(app, { path: "/v1/shops/SHOP-1042/catalog", query: "limit=1" });
@@ -96,7 +96,7 @@ describe("К6: список витрин и зоны", () => {
   });
 
   it("неизвестная витрина — 404", async () => {
-    const { app } = setup();
+    const { app } = await setup();
     expect((await merchantCall(app, { path: "/v1/shops/SHOP-0000/catalog" })).statusCode).toBe(404);
   });
 });
@@ -105,13 +105,13 @@ describe("#49 (РП56 п. 6): GET /v1/shops опознаёт агента, ка�
   const path = "/v1/shops";
 
   it("подписанный агент из реестра и человек без подписи — 200", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     expect((await merchantCall(app, { ...asA(), path })).statusCode).toBe(200);
     expect((await merchantCall(app, { path })).statusCode).toBe(200);
   });
 
   it("агент не в реестре — 401 KEY_UNKNOWN; ключ B за агента A — 401 AGENT_MISMATCH", async () => {
-    const { app, s, b } = setup();
+    const { app, s, b } = await setup();
     const stranger = newAgentSide();
     const r1 = await merchantCall(app, { side: stranger, agentCode: "nspk:agent:stranger:v1", now: s.now(), path });
     expect([r1.statusCode, r1.json()]).toEqual([401, { code: "KEY_UNKNOWN" }]);
@@ -120,7 +120,7 @@ describe("#49 (РП56 п. 6): GET /v1/shops опознаёт агента, ка�
   });
 
   it("каталог ключей недоступен — 503 UPSTREAM_UNAVAILABLE (инвариант 3)", async () => {
-    const { s, a } = setup();
+    const { s, a } = await setup();
     const verifier = new MerchantAgentVerifier(() => { throw new Error("каталог недоступен"); }, { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
     const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub(), now: s.now }), rateLimitPerMin: LIMIT });
     const r = await merchantCall(app, { side: a, agentCode: A, now: s.now(), path });
@@ -129,7 +129,7 @@ describe("#49 (РП56 п. 6): GET /v1/shops опознаёт агента, ка�
   });
 
   it("failShopList: 503 и 429 с Retry-After на ответе эмулятора; null — список снова отдаётся", async () => {
-    const { app, m, asA } = setup();
+    const { app, m, asA } = await setup();
     m.failShopList({ code: "UPSTREAM_UNAVAILABLE", retryAfterSec: 2 });
     const r1 = await merchantCall(app, { ...asA(), path });
     expect([r1.statusCode, r1.headers["retry-after"], r1.json()]).toEqual([503, "2", { code: "UPSTREAM_UNAVAILABLE" }]);
@@ -145,19 +145,19 @@ describe("SHOP-4401: отказ неопознанным, опознанный �
   const path = "/v1/shops/SHOP-4401/catalog";
 
   it("без подписи — 403 AGENT_UNIDENTIFIED", async () => {
-    const { app } = setup();
+    const { app } = await setup();
     const r = await merchantCall(app, { path });
     expect(r.statusCode).toBe(403);
     expect(r.json().code).toBe("AGENT_UNIDENTIFIED");
   });
 
   it("подписанное обращение агента из реестра — 200", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     expect((await merchantCall(app, { ...asA(), path })).statusCode).toBe(200);
   });
 
   it("агент не в реестре — KEY_UNKNOWN", async () => {
-    const { app, s } = setup();
+    const { app, s } = await setup();
     const stranger = newAgentSide();
     const r = await merchantCall(app, { side: stranger, agentCode: "nspk:agent:stranger:v1", now: s.now(), path });
     expect(r.statusCode).toBe(401);
@@ -165,26 +165,26 @@ describe("SHOP-4401: отказ неопознанным, опознанный �
   });
 
   it("ключ агента B, x-agent-code агента A — AGENT_MISMATCH (инвариант 5)", async () => {
-    const { app, s, b } = setup();
+    const { app, s, b } = await setup();
     const r = await merchantCall(app, { side: b, agentCode: A, now: s.now(), path });
     expect(r.statusCode).toBe(401);
     expect(r.json().code).toBe("AGENT_MISMATCH");
   });
 
   it("отозванный ключ — из каталога удалён: KEY_UNKNOWN", async () => {
-    const { app, s, a, asA } = setup();
-    s.keys.revoke(A, a.kid);
+    const { app, s, a, asA } = await setup();
+    await s.keys.revoke(A, a.kid);
     expect((await merchantCall(app, { ...asA(), path })).json().code).toBe("KEY_UNKNOWN");
   });
 
   it("приостановленный агент — KEY_UNKNOWN", async () => {
-    const { app, s, asA } = setup();
-    s.registry.changeStatus(A, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" });
+    const { app, s, asA } = await setup();
+    await s.registry.changeStatus(A, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" });
     expect((await merchantCall(app, { ...asA(), path })).json().code).toBe("KEY_UNKNOWN");
   });
 
   it("истёкший exp в кэше каталога — KEY_EXPIRED", async () => {
-    const { app, s, asA } = setup({ jwksMaxAgeMs: 400 * 86_400_000, jwksRefetchMinMs: 400 * 86_400_000 });
+    const { app, s, asA } = await setup({ jwksMaxAgeMs: 400 * 86_400_000, jwksRefetchMinMs: 400 * 86_400_000 });
     expect((await merchantCall(app, { ...asA(), path })).statusCode).toBe(200);
     s.setClock(new Date(T0.getTime() + (s.params.key_ttl_days + 1) * 86_400_000));
     const r = await merchantCall(app, { ...asA(), path });
@@ -192,7 +192,7 @@ describe("SHOP-4401: отказ неопознанным, опознанный �
   });
 
   it("повтор nonce — SIGNATURE_INVALID", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     const nonce = "nonce-fixed-1";
     expect((await merchantCall(app, { ...asA(), path, nonce })).statusCode).toBe(200);
     expect((await merchantCall(app, { ...asA(), path, nonce })).json().code).toBe("SIGNATURE_INVALID");
@@ -236,13 +236,13 @@ describe("РП22 п. 3: перечитывание каталога по неи�
 
   it("второй неизвестный kid в окне — отказ без перечитывания; новый ключ виден после окна", async () => {
     const minute = 60_000;
-    const { app, s, m: ms } = setup({ jwksMaxAgeMs: 60 * minute, jwksRefetchMinMs: minute });
+    const { app, s, m: ms } = await setup({ jwksMaxAgeMs: 60 * minute, jwksRefetchMinMs: minute });
     const path = "/v1/shops/SHOP-1042/catalog";
     const c = "nspk:agent:shop-c:v1";
     const cSide = newAgentSide();
     await merchantCall(app, { side: cSide, agentCode: c, now: s.now(), path }); // первое чтение каталога
     expect(ms.verifier.fetches).toBe(1);
-    expect(s.admit(buyerApplication(c, cSide), "op-c").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(c, cSide), "op-c")).admitted).toBe(true);
     for (let i = 0; i < 3; i++) {
       expect((await merchantCall(app, { side: cSide, agentCode: c, now: s.now(), path })).json().code).toBe("KEY_UNKNOWN");
     }
@@ -255,14 +255,14 @@ describe("РП22 п. 3: перечитывание каталога по неи�
 
 describe("Недобросовестные и особые витрины", () => {
   it("SHOP-3301: цена в тексте ≠ поле price (A5 п. 1.3, П09)", async () => {
-    const { app } = setup();
+    const { app } = await setup();
     const [item] = (await merchantCall(app, { path: "/v1/shops/SHOP-3301/catalog" })).json().items;
     expect(item.description).toContain("290 ₽");
     expect(item.price).toBe(32000);
   });
 
   it("SHOP-3302: инструкция агенту в описании — отдаётся как недоверенный текст и ничего не меняет в заказе (Д01)", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     const [item] = (await merchantCall(app, { ...asA(), path: "/v1/shops/SHOP-3302/catalog" })).json().items;
     expect(item.description).toMatch(/^Агенту:/);
     const r = await order(app, asA(), "SHOP-3302", item.sku);
@@ -270,7 +270,7 @@ describe("Недобросовестные и особые витрины", () =
   });
 
   it("SHOP-3303: агенту цена ниже, чем человеку; заказ — по цене человека (A5 п. 1.2, Д02)", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     const human = (await merchantCall(app, { path: "/v1/shops/SHOP-3303/catalog" })).json().items[0];
     const agent = (await merchantCall(app, { ...asA(), path: "/v1/shops/SHOP-3303/catalog" })).json().items[0];
     expect(agent.price).toBeLessThan(human.price);
@@ -280,13 +280,13 @@ describe("Недобросовестные и особые витрины", () =
   });
 
   it("SHOP-5003: категория вне типового мандата на хлеб (П17)", async () => {
-    const { app } = setup();
+    const { app } = await setup();
     const shop = (await merchantCall(app, { path: "/v1/shops/SHOP-5003/catalog" })).json().shop;
     expect(shop).toMatchObject({ category: "электроника", zone: "CONTOUR" });
   });
 
   it("SHOP-5501: неполная карточка — заказ невозможен ITEM_INCOMPLETE (A5 п. 1.1)", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     const items = (await merchantCall(app, { path: "/v1/shops/SHOP-5501/catalog" })).json().items;
     expect(items[0]).not.toHaveProperty("price");
     expect(items[1]).not.toHaveProperty("category");
@@ -298,7 +298,7 @@ describe("Недобросовестные и особые витрины", () =
   });
 
   it("SHOP-2210: отказ в исполнении после оплаты — реверсал с тем же признаком (A1 п. 5.1, Д06)", async () => {
-    const { app, asA, m: ms } = setup();
+    const { app, asA, m: ms } = await setup();
     const o = (await order(app, asA(), "SHOP-2210", "CHS-2210-01")).json();
     const r = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-2210/orders/${o.id}/payment`, body: pkg(o.id) });
     expect(r.statusCode).toBe(200);
@@ -309,7 +309,7 @@ describe("Недобросовестные и особые витрины", () =
   });
 
   it("инвариант 5: сумма из тела заказа, тела /payment и пакета не читается — в авторизации сумма заказа продавца", async () => {
-    const { app, asA, m: ms } = setup();
+    const { app, asA, m: ms } = await setup();
     const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-02", 1, { total: 1 })).json();
     expect(o.total).toBe(189000);
     const r = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: { ...pkg(o.id), amount: 1, amount_max: 1, payload: { ...pkg(o.id).payload, amount: 1 } } });
@@ -364,7 +364,7 @@ describe("#45 (РП58 п. 5–9): факты модели каталога в о
   const catalog = async (app: Stand["app"], who: object, shop: string) => (await merchantCall(app, { ...who, path: `/v1/shops/${shop}/catalog` })).json();
 
   it("полные витрины проходят валидатор ядра К8 без замечаний; SHOP-5501 неполна и по новым фактам", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     for (const s of SHOPS) {
       const body = await catalog(app, asA(), s.id);
       const shop = toCoreShop(body.shop);
@@ -391,7 +391,7 @@ describe("#45 (РП58 п. 5–9): факты модели каталога в о
   });
 
   it("возврат: продовольствие — 0 дней, текст по закону; строка товара — тот же текст; срок и текст согласованы (проверка A5 ядра)", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     for (const s of SHOPS.filter((x) => x.returns)) {
       const body = await catalog(app, asA(), s.id);
       expect(body.shop.returns, s.id).toEqual(s.returns);
@@ -405,7 +405,7 @@ describe("#45 (РП58 п. 5–9): факты модели каталога в о
   });
 
   it("responded_at — часы стенда; updated_at — часы стенда − 2 ч; стоимость доставки — парой с валютой", async () => {
-    const { app, s, asA } = setup();
+    const { app, s, asA } = await setup();
     const body = await catalog(app, asA(), "SHOP-5003");
     expect(body.responded_at).toBe(s.now().toISOString());
     expect(body.items[0].updated_at).toBe(new Date(s.now().getTime() - 7_200_000).toISOString());
@@ -418,7 +418,7 @@ describe("#45 (РП58 п. 5–9): факты модели каталога в о
   });
 
   it("тот же объём человеку и агенту (A5 п. 1.2): факты одни, разница — только цена у DUAL_PRICE", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     for (const s of SHOPS.filter((x) => x.behaviour !== "REJECTS_UNIDENTIFIED")) {
       const [human, agent] = [await catalog(app, {}, s.id), await catalog(app, asA(), s.id)];
       expect(agent.shop, s.id).toEqual(human.shop);
@@ -437,7 +437,7 @@ describe("#62 (РП58 п. 1–4): чтение заказа агентом и у
     merchantCall(app, { ...who, path: `/v1/shops/${shop}/orders`, query: mandate === null ? "" : `cart_mandate_id=${mandate}` });
 
   it("по мандату корзины — только свои заказы этой витрины в порядке создания, та же запись, что у POST; пусто — 200", async () => {
-    const { app, s, b, asA } = setup();
+    const { app, s, b, asA } = await setup();
     const asB = { side: b, agentCode: B, now: s.now() };
     const o1 = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
     const o2 = (await order(app, asA(), "SHOP-1042", "BRD-1042-02", 2)).json();
@@ -455,7 +455,7 @@ describe("#62 (РП58 п. 1–4): чтение заказа агентом и у
   });
 
   it("по номеру — свой заказ; чужой агент, другая витрина, неизвестный номер — 404 ORDER_NOT_FOUND", async () => {
-    const { app, s, b, asA } = setup();
+    const { app, s, b, asA } = await setup();
     const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
     const one = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}` });
     expect([one.statusCode, one.json()]).toEqual([200, o]);
@@ -470,7 +470,7 @@ describe("#62 (РП58 п. 1–4): чтение заказа агентом и у
   });
 
   it("опознание и отказы — как у POST: без подписи 403, подпись чужим ключом 401, строка запроса под подписью, витрины нет 404", async () => {
-    const { app, s, a, asA } = setup();
+    const { app, s, a, asA } = await setup();
     for (const path of ["/v1/shops/SHOP-1042/orders", "/v1/shops/SHOP-1042/orders/ORD-x"]) {
       const r = await merchantCall(app, { path, query: "cart_mandate_id=MND-cart-1" });
       expect([r.statusCode, r.json()], path).toEqual([403, { code: "AGENT_UNIDENTIFIED" }]);
@@ -486,7 +486,7 @@ describe("#62 (РП58 п. 1–4): чтение заказа агентом и у
   });
 
   it("каталог ключей недоступен — 503 UPSTREAM_UNAVAILABLE на обоих адресах чтения (инвариант 3)", async () => {
-    const { s, a } = setup();
+    const { s, a } = await setup();
     const verifier = new MerchantAgentVerifier(() => { throw new Error("каталог недоступен"); }, { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
     const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub(), now: s.now }), rateLimitPerMin: LIMIT });
     for (const [path, query] of [["/v1/shops/SHOP-1042/orders", "cart_mandate_id=MND-cart-1"], ["/v1/shops/SHOP-1042/orders/ORD-x", ""]] as const) {
@@ -497,7 +497,7 @@ describe("#62 (РП58 п. 1–4): чтение заказа агентом и у
   });
 
   it("cart_mandate_id нет, пустой или повторён — 422 QUERY_INVALID; у READ_ONLY чтение разрешено, список пуст", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     for (const query of ["", "cart_mandate_id=", "cart_mandate_id=MND-cart-1&cart_mandate_id=MND-cart-2", "mandate_id=MND-cart-1"]) {
       const r = await merchantCall(app, { ...asA(), path: "/v1/shops/SHOP-1042/orders", query });
       expect([r.statusCode, r.json()], query).toEqual([422, { code: "QUERY_INVALID" }]);
@@ -506,7 +506,7 @@ describe("#62 (РП58 п. 1–4): чтение заказа агентом и у
   });
 
   it("RESET: соединение закрыто без ответа, заказ записан — сверка по мандату находит его, оплата проходит; null — ответ снова", async () => {
-    const { s, m, asA } = setup();
+    const { s, m, asA } = await setup();
     const base = await m.listen();
     m.failOrderReply("RESET");
     const call = { ...asA(), path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], cart_mandate_id: "MND-cart-1" } };
@@ -526,7 +526,7 @@ describe("#62 (РП58 п. 1–4): чтение заказа агентом и у
   });
 
   it("GARBLED: 201 с телом не по форме заказа, заказ записан — читается по номеру из сверки; чтение и оплата обрывом не затронуты", async () => {
-    const { app, m, asA } = setup();
+    const { app, m, asA } = await setup();
     m.failOrderReply("GARBLED");
     const r = await order(app, asA(), "SHOP-1042", "BRD-1042-01");
     expect(r.statusCode).toBe(201);
@@ -545,7 +545,7 @@ describe("#62 (РП58 п. 1–4): чтение заказа агентом и у
 
 describe("Заказ и пакет: привязка к агенту", () => {
   it("в заказе — мандат корзины cart_mandate_id; без него (в том числе со старым mandate_id) — ITEM_INVALID", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     const ok = await order(app, asA(), "SHOP-1042", "BRD-1042-01");
     expect(ok.json()).toMatchObject({ cart_mandate_id: "MND-cart-1" });
     expect(ok.json()).not.toHaveProperty("mandate_id");
@@ -555,13 +555,13 @@ describe("Заказ и пакет: привязка к агенту", () => {
   });
 
   it("заказ без подписи — 403 AGENT_UNIDENTIFIED", async () => {
-    const { app } = setup();
+    const { app } = await setup();
     const r = await order(app, {}, "SHOP-1042", "BRD-1042-01");
     expect(r.statusCode).toBe(403);
   });
 
   it("чужой заказ — ORDER_NOT_FOUND; пакет на другой заказ или другого агента — PACKAGE_MISMATCH; неполный — PACKAGE_INVALID", async () => {
-    const { app, s, b, asA } = setup();
+    const { app, s, b, asA } = await setup();
     const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
     const path = `/v1/shops/SHOP-1042/orders/${o.id}/payment`;
     expect((await merchantCall(app, { side: b, agentCode: B, now: s.now(), path, body: pkg(o.id, "MND-cart-1", B) })).json().code).toBe("ORDER_NOT_FOUND");
@@ -572,7 +572,7 @@ describe("Заказ и пакет: привязка к агенту", () => {
   });
 
   it("повторная оплата заказа — ORDER_NOT_PAYABLE", async () => {
-    const { app, asA } = setup();
+    const { app, asA } = await setup();
     const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
     const path = `/v1/shops/SHOP-1042/orders/${o.id}/payment`;
     expect((await merchantCall(app, { ...asA(), path, body: pkg(o.id) })).statusCode).toBe(200);
@@ -580,7 +580,7 @@ describe("Заказ и пакет: привязка к агенту", () => {
   });
 
   it("отказ ОПКЦ — заказ DECLINED; op_ref и код решения продавец не раскрывает (РП22 п. 6, РП2)", async () => {
-    const { app, asA } = setup({ decide: () => ({ approved: false, reason: "LIMIT_EXCEEDED" }) });
+    const { app, asA } = await setup({ decide: () => ({ approved: false, reason: "LIMIT_EXCEEDED" }) });
     const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
     const r = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: pkg(o.id) });
     expect(r.json()).toMatchObject({ status: "DECLINED", payment: { approved: false } });
@@ -589,7 +589,7 @@ describe("Заказ и пакет: привязка к агенту", () => {
   });
 
   it("две одновременные оплаты заказа — одна авторизация, вторая ORDER_NOT_PAYABLE", async () => {
-    const { s, a } = setup();
+    const { s, a } = await setup();
     // ОПКЦ отвечает только по сигналу теста: первая оплата висит в авторизации, пока приходит вторая.
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
@@ -620,7 +620,7 @@ describe("Заказ и пакет: привязка к агенту", () => {
 
   it("сбой эквайрера — 503, заказ снова можно оплатить", async () => {
     let down = true;
-    const { app, asA } = setup({
+    const { app, asA } = await setup({
       decide: () => {
         if (down) throw new Error("ОПКЦ недоступен");
         return { approved: true, reason: null };

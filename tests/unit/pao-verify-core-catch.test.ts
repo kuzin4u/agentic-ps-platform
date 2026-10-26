@@ -37,8 +37,8 @@ describe("core перехватывает исключение поиска кл
     const seen: string[] = [];
     const v = new PaoRequestVerifier(
       {
-        getAgent: () => ({ agent_code: code, status: "ACTIVE" }) as never,
-        lookupKey: () => {
+        getAgent: async () => ({ agent_code: code, status: "ACTIVE" }) as never,
+        lookupKey: async () => {
           throw new Error("db down");
         },
       },
@@ -66,8 +66,8 @@ describe("core перехватывает исключение поиска кл
     );
     const v = new PaoRequestVerifier(
       {
-        getAgent: () => ({ agent_code: code, status: "ACTIVE" }) as never,
-        lookupKey: () => ({ alg: "ed25519", publicKey, status: "ACTIVE" }),
+        getAgent: async () => ({ agent_code: code, status: "ACTIVE" }) as never,
+        lookupKey: async () => ({ alg: "ed25519", publicKey, status: "ACTIVE" }),
       },
       {
         skewSec: 300,

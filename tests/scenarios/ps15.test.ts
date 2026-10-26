@@ -18,11 +18,11 @@ describe("ПС15 на стенде: возврат продавцом (РП55)",
   let stand: Stand;
   let side: AgentSide;
   const principal = opaquePrincipalRef("prn_ps15_");
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     stand.setClock(new Date("2026-10-23T15:20:00Z"));
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
   });
   afterAll(async () => stand.close());
 

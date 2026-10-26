@@ -69,7 +69,7 @@ class Agents implements AdpAgents {
   calls = 0;
   failing = false;
   readonly map = new Map<string, AgentStatus>([[AGENT, "ACTIVE"]]);
-  get(code: string) {
+  async get(code: string) {
     this.calls++;
     if (this.failing) throw new Error("реестр недоступен");
     const status = this.map.get(code);

@@ -38,7 +38,7 @@ const decision = (r: ConfirmationRecord, d: "APPROVE" | "REJECT") => ({
   signature: "s".repeat(86),
 });
 
-function setup(pushFor?: (code: string, type: string) => boolean) {
+function setup(pushFor?: (code: string, type: string) => Promise<boolean>) {
   const events = new MemoryConsentStore();
   const store = new MemoryConfirmationStore({ events, ...(pushFor ? { pushFor } : {}) });
   const feed = async (code = AGENT) => events.listEvents(code, undefined, 100);
@@ -112,7 +112,7 @@ describe("события confirmation.* в памяти (РП51 п. 1–5)", () 
   });
 
   it("push — строка попытки, если агент подписан на тип на момент записи (РП40 п. 5)", async () => {
-    const { events, store, feed } = setup((_code, type) => type === "confirmation.required");
+    const { events, store, feed } = setup(async (_code, type) => type ==="confirmation.required");
     const r = await store.create(pending("ORD-push"));
     await store.decide(r.confirmation_id, decision(r, "REJECT"), null, AT);
     const [req, rej] = await feed();

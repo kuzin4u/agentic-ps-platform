@@ -94,9 +94,10 @@ export interface ConsentJournalOptions {
   readonly revocationOrder: () => string | undefined;
   /**
    * Нужна ли push-доставка события (РП40 п. 5–7): агент ACTIVE и подписан на тип — решается при записи, строка попытки
-   * пишется в той же транзакции. Не задано — push нет (только лента).
+   * пишется в той же транзакции. Не задано — push нет (только лента). Чтение реестра (РП64 п. 3): сбой — отклонённое
+   * обещание, запись с событием не делается.
    */
-  readonly pushFor?: (agent_code: string, type: PaoEventType) => boolean;
+  readonly pushFor?: (agent_code: string, type: PaoEventType) => Promise<boolean>;
   /**
    * Остаток бюджета мандата из П3 для verify (РП41 п. 10): число ≥ 0 или undefined — бюджет не подтверждён (STATE_UNKNOWN).
    * Без него (тесты П2 без П3) — предел мандата.
@@ -117,7 +118,7 @@ interface LoadedMandate {
 export class ConsentJournal {
   private readonly now: () => Date;
   private readonly revocationOrder: () => string | undefined;
-  private readonly pushFor: (agent_code: string, type: PaoEventType) => boolean;
+  private readonly pushFor: (agent_code: string, type: PaoEventType) => Promise<boolean>;
   private readonly amountLeft: (mandate_id: string, amount_limit: number) => Promise<number | undefined>;
   /**
    * Лок записи по мандату: решение банка, отзыв клиентом и отказ агента по одному мандату — по очереди внутри процесса
@@ -131,7 +132,7 @@ export class ConsentJournal {
   ) {
     this.now = opts.now ?? (() => new Date());
     this.revocationOrder = opts.revocationOrder;
-    this.pushFor = opts.pushFor ?? (() => false);
+    this.pushFor = opts.pushFor ?? (async () => false);
     this.amountLeft = opts.amountLeft ?? (async (_id, limit) => limit);
   }
 
@@ -140,15 +141,15 @@ export class ConsentJournal {
    * event — запись пишется вместе с событием агенту, атомарно (РП39 п. 1). sign — подпись мандата: строка SIGN в
    * порядке пары под локом пары в той же транзакции (РП46 (а) п. 2).
    */
-  private chainJournal(
+  private async chainJournal(
     chain: string,
     beforeWrite?: () => void,
     event?: EventDraft,
     sign?: PairSign,
     notice?: ParticipantNotice,
-  ): AsyncHashChainJournal {
+  ): Promise<AsyncHashChainJournal> {
     const inner = event
-      ? this.store.journalWithEvent(chain, { ...event, push: this.pushFor(event.agent_code, event.type) }, sign, notice)
+      ? this.store.journalWithEvent(chain, { ...event, push: await this.pushFor(event.agent_code, event.type) }, sign, notice)
       : this.store.journal(chain);
     const store: AsyncJournalStore = beforeWrite
       ? {
@@ -282,7 +283,7 @@ export class ConsentJournal {
       await this.store.insertSubject({ mandate_id: id, salt, subject_json: canonicalJson(subj) });
     }
     const payload: MandateRequestedPayload = { ...terms, subject_commitment: subjectCommitment(salt, subj) };
-    const entry = await this.chainJournal(chain, beforeWrite).append("MANDATE_REQUESTED", id, payload, terms.parent_id ?? null);
+    const entry = await (await this.chainJournal(chain, beforeWrite)).append("MANDATE_REQUESTED", id, payload, terms.parent_id ?? null);
     // Статус — свёрткой и в ответе на запрос, как при чтении. CART — вместе с родителем (РП35): отзыв, записанный между
     // проверкой родителя и записью CART, даёт 201 со статусом REVOKED, а не действующий CART.
     if (!terms.parent_id) return this.toMandate(id, entry, subj, deriveStatus(id, [entry], this.now()));
@@ -359,7 +360,7 @@ export class ConsentJournal {
         ? { pair: { participant_code: d.participant_code, principal_ref: principalOf(m.entries, root_id) }, mandate_id: id, root_id, at: this.now().toISOString() }
         : undefined;
     try {
-      await this.chainJournal(row.chain, undefined, mandateEvent(row.agent_code, kind, id), sign).append(kind, id, d, id);
+      await (await this.chainJournal(row.chain, undefined, mandateEvent(row.agent_code, kind, id), sign)).append(kind, id, d, id);
     } catch (err) {
       // Метка revoke-all зафиксирована между чтением статуса и локом пары: корень отозван — CART не подписывается.
       if (err instanceof PairRevoked) throw new ConsentSignRejected("MANDATE_NOT_PENDING", id, "REVOKED");
@@ -385,7 +386,7 @@ export class ConsentJournal {
       if (!row || !m) throw new ConsentSignRejected("MANDATE_NOT_FOUND", id);
       if (d.mandate_hash !== m.head.hash) throw new ConsentSignRejected("MANDATE_HASH_MISMATCH", id);
       if (!revocable(m.status)) return { id, status: m.status, replayed: true };
-      await this.chainJournal(row.chain, undefined, mandateEvent(row.agent_code, "MANDATE_REVOKED", id)).append("MANDATE_REVOKED", id, d, id);
+      await (await this.chainJournal(row.chain, undefined, mandateEvent(row.agent_code, "MANDATE_REVOKED", id))).append("MANDATE_REVOKED", id, d, id);
       return { id, status: await this.statusAfterWrite(id, row.agent_code), replayed: false };
     });
   }
@@ -425,7 +426,7 @@ export class ConsentJournal {
         const cur = await this.loadFrom(m.row, await this.snapshot(id, m.row.chain), m.row.agent_code, false);
         if (!cur || cur.status !== "ACTIVE") return false;
         const payload: MandateRevokedAllPayload = { mandate_id: id, revoke_all };
-        await this.chainJournal(m.row.chain, undefined, mandateEvent(m.row.agent_code, "MANDATE_REVOKED", id)).append("MANDATE_REVOKED", id, payload, id);
+        await (await this.chainJournal(m.row.chain, undefined, mandateEvent(m.row.agent_code, "MANDATE_REVOKED", id))).append("MANDATE_REVOKED", id, payload, id);
         return true;
       });
       if (wrote) revoked++;
@@ -453,7 +454,7 @@ export class ConsentJournal {
       if (!revocable(m.status)) return this.toMandate(id, m.head, m.subj, m.status);
       const payload: MandateRelinquishPayload = { agent_code, kid };
       const event = mandateEvent(agent_code, "MANDATE_RELINQUISHED", id);
-      await this.chainJournal(m.row.chain, undefined, event).append("MANDATE_RELINQUISHED", id, payload, id);
+      await (await this.chainJournal(m.row.chain, undefined, event)).append("MANDATE_RELINQUISHED", id, payload, id);
       const after = await this.load(id, agent_code);
       if (!after) throw new ConsentStateUnknown(id, "мандат после отказа агента не читается");
       return this.toMandate(id, after.head, after.subj, after.status);
@@ -481,7 +482,7 @@ export class ConsentJournal {
             drafts: [{ type: "client.mandate_exhausted", key: id, data: { principal_ref, mandate_id: id, agent_code: row.agent_code } }],
           }
         : undefined;
-      await this.chainJournal(row.chain, undefined, event, undefined, notice).append("MANDATE_EXHAUSTED", id, payload, id);
+      await (await this.chainJournal(row.chain, undefined, event, undefined, notice)).append("MANDATE_EXHAUSTED", id, payload, id);
       return true;
     });
   }

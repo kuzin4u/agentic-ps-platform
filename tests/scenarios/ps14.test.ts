@@ -19,11 +19,11 @@ describe("ПС14 на стенде: клиринг закрепляет и фо�
   let stand: Stand;
   let side: AgentSide;
   const principal = opaquePrincipalRef("prn_ps14s_");
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     stand.setClock(new Date("2026-10-23T15:10:00Z"));
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
   });
   afterAll(async () => stand.close());
 

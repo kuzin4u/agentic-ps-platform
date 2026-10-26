@@ -46,7 +46,7 @@ describe("ответы транспорта по ПАО §6 и запись от
     sink.lines.length = 0;
     s = stand();
     a = newAgentSide();
-    expect(s.admit(buyerApplication(A, a), "op").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(A, a), "op")).admitted).toBe(true);
     await s.app.ready();
   });
   afterEach(async () => {
@@ -254,7 +254,7 @@ describe("ответы транспорта по ПАО §6 и запись от
   });
 
   it("сбой источника при проверке обращения — 503, в записи err только name, code и кадры стека", async () => {
-    vi.spyOn(s.registry, "get").mockImplementation(() => {
+    vi.spyOn(s.registry, "get").mockImplementation(async () => {
       throw Object.assign(new Error(`сбой реестра ${mark}`), { code: "XX000", detail: mark, where: mark });
     });
     const res = await signedInject(s.app, a, A);

@@ -26,7 +26,7 @@ describe("ПС11 на стенде: подтверждение выше поро
     stand = createStand();
     stand.setClock(new Date("2026-10-22T09:00:00Z"));
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
     const intentId = await mandate({ type: "INTENT", amount_limit: 5_000_000, subject: "техника" });
     cartId = await mandate({
       type: "CART",

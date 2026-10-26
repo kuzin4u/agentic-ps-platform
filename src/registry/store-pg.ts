@@ -1,11 +1,11 @@
 // П1 Реестр агентов на PostgreSQL (РП64 п. 1–3, PS-05в ч. 2а): тот же договор, что InMemoryAgentRegistryStore, за
-// асинхронным портом. Чтение — из базы на каждом обращении, кэша нет (инвариант 8 между экземплярами). Подключение к
-// серверу, статус и событие одной транзакцией и отсечка по часам базы — PS-05в ч. 2б (РП64 п. 4–7).
+// портом AgentRegistryStore. Чтение — из базы на каждом обращении, кэша нет (инвариант 8 между экземплярами). Подключение
+// к серверу, статус и событие одной транзакцией и отсечка по часам базы — PS-05в ч. 2б-2 (РП64 п. 4–7).
 import type { SqlClient } from "@kuzin4u/agentic-core";
 import type { TxSqlPool } from "../consent/store.js";
 import type { AgentKey } from "./keys.js";
 import type { AgentRecord, AgentSubscription } from "./model.js";
-import { AgentCodeTakenError, KeyTakenError, type AgentRegistryStoreAsync, type StatusFields } from "./store.js";
+import { AgentCodeTakenError, KeyTakenError, type AgentRegistryStore, type StatusFields } from "./store.js";
 
 interface AgentRow extends Record<string, unknown> {
   agent_code: string;
@@ -93,7 +93,7 @@ export interface PgAgentRegistryStoreHooks {
   readonly inTx?: (step: "agent" | "kid" | "keys", key: AgentKey) => Promise<void>;
 }
 
-export class PgAgentRegistryStore implements AgentRegistryStoreAsync {
+export class PgAgentRegistryStore implements AgentRegistryStore {
   constructor(
     private readonly client: TxSqlPool,
     private readonly hooks: PgAgentRegistryStoreHooks = {},

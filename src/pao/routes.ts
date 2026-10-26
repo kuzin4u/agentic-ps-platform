@@ -53,7 +53,7 @@ export interface PaoDeps {
   >;
   /** Подписка в записи агента (РП40 п. 1, С6); без неё PUT /pao/v1/subscription не регистрируется. */
   readonly subscriptions?: {
-    readonly set: (agent_code: string, subscription: AgentSubscription) => AgentSubscription;
+    readonly set: (agent_code: string, subscription: AgentSubscription) => Promise<AgentSubscription>;
   };
   /** Разрешение имени адреса подписки (РП40 п. 2–4); по умолчанию — системное, на стенде — стендовое (п. 8). */
   readonly resolveHost?: HostResolver;
@@ -323,7 +323,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     // Кодирование в пути ПАО не нужно ни одному идентификатору, а маршрутизатор путь декодирует: /pao/v1/%61gent вёл бы в
     // /pao/v1/agent по подписи над другим путём (РП62 п. 8).
     if (path.includes("%")) return send(reply, paoError("REQUEST_INVALID"));
-    const r = deps.verifier.precheck({ method: req.method, path, query, headers: verifyHeaders(req), unexpectedBody: unexpectedBody(req) });
+    const r = await deps.verifier.precheck({ method: req.method, path, query, headers: verifyHeaders(req), unexpectedBody: unexpectedBody(req) });
     return r ? authFail(req, reply, r) : undefined;
   };
   app.addHook("onRoute", (route) => {
@@ -371,7 +371,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       class: agent.class,
       level: agent.level,
       status: agent.status,
-      keys: deps.keys.list(agent.agent_code).filter((k) => k.status === "ACTIVE"),
+      keys: (await deps.keys.list(agent.agent_code)).filter((k) => k.status === "ACTIVE"),
       rate_limit_per_min: agentRateLimitPerMin(deps.params, agent.level).perMin,
     };
   });
@@ -458,11 +458,11 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   // Регистрация своего ключа (ПАО §3, A2 п. 5.3, РП23 п. 2–4): срок и перекрытие — в реестре; причина отказа агенту
   // не раскрывается (РП31 п. 2) — она в журнале процесса. Только ACTIVE: смена ключа приостановленным — через оператора (PS-31).
   app.post("/pao/v1/agent/keys", async (req, reply) =>
-    mutating(req, reply, keyRegistrationBody, (agent, input) => {
+    mutating(req, reply, keyRegistrationBody, async (agent, input) => {
       try {
         // Свой действующий ключ повторно — тот же Key, 201 (РП23 доп. 7): повтор после потерянного ответа.
-        const added = deps.keys.register(agent.agent_code, input, { requireActive: true });
-        const key = deps.keys.list(agent.agent_code).find((k) => k.kid === added.kid);
+        const added = await deps.keys.register(agent.agent_code, input, { requireActive: true });
+        const key = (await deps.keys.list(agent.agent_code)).find((k) => k.kid === added.kid);
         if (!key) throw new Error("ПАО: ключ после регистрации не найден");
         return { status: 201, body: key };
       } catch (err) {
@@ -484,7 +484,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   // Приостановленному — можно, исключённому — 403 на проверке обращения (РП60 п. 3). Действует на следующую проверку подписи.
   app.post<{ Params: { kid: string } }>("/pao/v1/agent/keys/:kid/revoke", async (req, reply) => {
     const kid = req.params.kid;
-    return mutating(req, reply, emptyBody, (agent) => {
+    return mutating(req, reply, emptyBody, async (agent) => {
       // Признак — в журнал процесса (РП60 доп. 3): чужой и неизвестный kid по форме — как есть, не по форме — только длина.
       const notFound = (fields: Record<string, unknown>) => {
         req.log.info({ agent_code: agent.agent_code, ...fields }, "ПАО: отзыв — у агента нет такого ключа (РП60 п. 2)");
@@ -492,12 +492,12 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       };
       if (!KID_FORM.test(kid)) return notFound({ reason: "MALFORMED", kid_length: kid.length });
       try {
-        deps.keys.revoke(agent.agent_code, kid);
+        await deps.keys.revoke(agent.agent_code, kid);
       } catch (err) {
         if (err instanceof KeyNotFoundError) return notFound({ reason: err.reason, kid });
         throw err;
       }
-      const key = deps.keys.list(agent.agent_code).find((k) => k.kid === kid);
+      const key = (await deps.keys.list(agent.agent_code)).find((k) => k.kid === kid);
       if (!key) throw new Error("ПАО: ключ после отзыва не найден");
       req.log.info({ agent_code: agent.agent_code, kid, self: kid === req.paoKid }, "ПАО: агент отозвал свой ключ");
       return { status: 200, body: key };
@@ -655,7 +655,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
         }
         if (!addrs.ok) return refuse(addrs.reason, form.host);
         ctx.beforeWrite();
-        return { status: 200, body: subscriptions.set(agent.agent_code, { url: form.url, events: input.events }) };
+        return { status: 200, body: await subscriptions.set(agent.agent_code, { url: form.url, events: input.events }) };
       }),
     );
   }

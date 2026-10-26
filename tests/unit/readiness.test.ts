@@ -366,7 +366,7 @@ describe("Стенд: знаки витрин и три представлени
     const s = createStand();
     const side = newAgentSide();
     const code = `nspk:agent:rdy-${letters()}:v1`;
-    expect(s.admit(buyerApplication(code, side), "op-rdy").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(code, side), "op-rdy")).admitted).toBe(true);
     return { s, side, code };
   }
 
@@ -452,7 +452,7 @@ describe("Длина параметра пути: транспортный пр�
       const st = createStand();
       const sd = newAgentSide();
       const c = `nspk:agent:len-${letters()}:v1`;
-      expect(st.admit(buyerApplication(c, sd), "op-len").admitted).toBe(true);
+      expect((await st.admit(buyerApplication(c, sd), "op-len")).admitted).toBe(true);
       return { s: st, side: sd, code: c };
     })();
     try {
@@ -512,10 +512,10 @@ describe("Длина параметра пути: транспортный пр�
     const s = createStand();
     try {
       const at = (n: number) => `nspk:agent:${"a".repeat(n - "nspk:agent::v1".length)}:v1`;
-      expect(s.admit(buyerApplication(at(256), newAgentSide()), "op").admitted).toBe(true);
+      expect((await s.admit(buyerApplication(at(256), newAgentSide()), "op")).admitted).toBe(true);
       const r = await s.app.inject({ method: "GET", url: `/merchants/v1/agents/${at(256)}` });
       expect([r.statusCode, r.json()]).toEqual([200, { agent_code: at(256), status: "ACTIVE", class: "BUYER" }]);
-      const long = s.admit(buyerApplication(at(257), newAgentSide()), "op");
+      const long = await s.admit(buyerApplication(at(257), newAgentSide()), "op");
       expect(long.admitted ? [] : long.reasons).toEqual(["CODE_INVALID"]);
     } finally {
       await s.close();

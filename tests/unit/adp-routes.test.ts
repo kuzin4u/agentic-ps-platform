@@ -33,7 +33,7 @@ const plain = (): CanonicalMessage => {
 function server() {
   const c = setup();
   const adp = new Adp({
-    agents: { get: (code) => (code === A ? { status: "ACTIVE", level: 1 } : undefined) },
+    agents: { get: async (code) =>(code === A ? { status: "ACTIVE", level: 1 } : undefined) },
     mandates: { get: (id, a) => c.consent.adpMandate(id, a) },
     clientLimits: { get: async () => [] },
     state: c.state,

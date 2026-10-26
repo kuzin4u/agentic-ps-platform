@@ -24,13 +24,13 @@ describe("GET /pao/v1/operations/{op_ref} на стенде (РП52 п. 10, РП
   let stand: Stand;
   let side: AgentSide;
   let other: AgentSide;
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     stand.setClock(T0);
     side = newAgentSide();
     other = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
-    expect(stand.admit(buyerApplication(OTHER, other), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(OTHER, other), "op")).admitted).toBe(true);
   });
   afterAll(async () => stand.close());
 
@@ -150,13 +150,13 @@ describe("GET /pao/v1/operations/{op_ref} на стенде (РП52 п. 10, РП
   it("SUSPENDED — 403 AGENT_SUSPENDED; после снятия — итог", async () => {
     const op = `OPKC-GET-${randomUUID()}`;
     await limitDecline(op);
-    stand.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    await stand.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
     try {
       const r = await get(op);
       expect(r.statusCode).toBe(403);
       expect(r.json()).toMatchObject({ code: "AGENT_SUSPENDED" });
     } finally {
-      stand.registry.changeStatus(CODE, { to: "ACTIVE" });
+      await stand.registry.changeStatus(CODE, { to: "ACTIVE" });
     }
     expect((await get(op)).statusCode).toBe(200);
   });

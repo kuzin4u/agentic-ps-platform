@@ -57,7 +57,7 @@ describe("Фикстуры витрин", () => {
     const s = createStand();
     const side = newAgentSide();
     const agent = AGENT_FIXTURES.find((a) => a.registered)!;
-    expect(s.admit(agentApplication(agent, { alg: "ed25519", public_key: side.publicKey }), agent.operator).admitted).toBe(true);
+    expect((await s.admit(agentApplication(agent, { alg: "ed25519", public_key: side.publicKey }), agent.operator)).admitted).toBe(true);
     const m = createMerchants(s);
     try {
       const shops = (await merchantCall(m.app, { path: "/v1/shops" })).json().shops;
@@ -87,14 +87,14 @@ describe("Фикстуры витрин", () => {
 });
 
 describe("Фикстуры агентов", () => {
-  it("закрытых ключей нет; зарегистрированные допускаются в стенде с ключом потребителя", () => {
+  it("закрытых ключей нет; зарегистрированные допускаются в стенде с ключом потребителя", async () => {
     const text = JSON.stringify(AGENT_FIXTURES);
     expect(text).not.toMatch(/PRIVATE|public_key|"d"/);
     expectNoCardData(AGENT_FIXTURES);
     const s = createStand();
     for (const f of AGENT_FIXTURES.filter((a) => a.registered)) {
       const side = newAgentSide();
-      expect(s.admit(agentApplication(f, { alg: "ed25519", public_key: side.publicKey }), f.operator).admitted).toBe(true);
+      expect((await s.admit(agentApplication(f, { alg: "ed25519", public_key: side.publicKey }), f.operator)).admitted).toBe(true);
     }
     expect(AGENT_FIXTURES.some((a) => !a.registered)).toBe(true);
   });
@@ -105,7 +105,7 @@ describe("Ответы эмуляторов и сообщения в ОПКЦ �
     const s = createStand();
     const side = newAgentSide();
     const agent = AGENT_FIXTURES[0]!;
-    s.admit(agentApplication(agent, { alg: "ed25519", public_key: side.publicKey }), agent.operator);
+    await s.admit(agentApplication(agent, { alg: "ed25519", public_key: side.publicKey }), agent.operator);
     const m = createMerchants(s);
     const seen: unknown[] = [];
     const who = { side, agentCode: agent.agent_code };

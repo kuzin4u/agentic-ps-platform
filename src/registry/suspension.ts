@@ -14,7 +14,7 @@ export interface AgentStatusEvents {
 export interface AgentStatusServiceDeps {
   readonly events: AgentStatusEvents;
   /** Строка попытки push в той же записи: agent.suspended — и при SUSPENDED (РП54 п. 9, pushAllowed). */
-  readonly pushFor: (agent_code: string, type: AgentStatusEventDraft["type"]) => boolean;
+  readonly pushFor: (agent_code: string, type: AgentStatusEventDraft["type"]) => Promise<boolean>;
   readonly log?: (level: "info" | "warn" | "error", fields: Record<string, unknown>, msg: string) => void;
 }
 
@@ -41,9 +41,9 @@ export class AgentStatusService {
    * меняется, недостающее событие дописывается; с другим основанием — StatusTransitionError (как неизвестное).
    */
   async suspend(agent_code: string, ground: unknown): Promise<AgentRecord> {
-    const cur = this.current(agent_code);
+    const cur = await this.current(agent_code);
     const repeat = cur.status === "SUSPENDED" && cur.status_ground === ground;
-    const rec = repeat ? cur : this.registry.changeStatus(agent_code, { to: "SUSPENDED", ground });
+    const rec = repeat ? cur : await this.registry.changeStatus(agent_code, { to: "SUSPENDED", ground });
     await this.emit(rec, "agent.suspended");
     return rec;
   }
@@ -54,30 +54,31 @@ export class AgentStatusService {
    * версии записи: версия может начать расти и от других полей (КТ1 № 3).
    */
   async reinstate(agent_code: string): Promise<AgentRecord> {
-    const cur = this.current(agent_code);
+    const cur = await this.current(agent_code);
     const repeat = cur.status === "ACTIVE" && cur.suspended_at !== null;
-    const rec = repeat ? cur : this.registry.changeStatus(agent_code, { to: "ACTIVE" });
+    const rec = repeat ? cur : await this.registry.changeStatus(agent_code, { to: "ACTIVE" });
     await this.emit(rec, "agent.reinstated");
     return rec;
   }
 
-  private current(agent_code: string): AgentRecord {
-    const cur = this.registry.get(agent_code);
+  private async current(agent_code: string): Promise<AgentRecord> {
+    const cur = await this.registry.get(agent_code);
     if (!cur) throw new AgentNotFoundError(agent_code);
     return cur;
   }
 
   /** Событие смены: event_id и время — от записи реестра, поэтому повтор пишет то же событие или ничего (РП54 п. 2). */
   private async emit(rec: AgentRecord, type: AgentStatusEventDraft["type"]): Promise<void> {
-    const draft: AgentStatusEventDraft = {
-      agent_code: rec.agent_code,
-      type,
-      data: { agent_code: rec.agent_code },
-      version: rec.row_version,
-      push: this.deps.pushFor(rec.agent_code, type),
-    };
     let written: boolean;
     try {
+      // Строка push — чтением реестра: его сбой — как сбой записи события (статус остаётся, повтор дописывает).
+      const draft: AgentStatusEventDraft = {
+        agent_code: rec.agent_code,
+        type,
+        data: { agent_code: rec.agent_code },
+        version: rec.row_version,
+        push: await this.deps.pushFor(rec.agent_code, type),
+      };
       written = await this.deps.events.appendAgentStatusEvent(draft, rec.status_changed_at);
     } catch (err) {
       // Статус остаётся (fail-closed): агент остановлен 403 и отказом ADP, без события — только задержка сигнала.

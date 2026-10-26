@@ -66,7 +66,7 @@ describe("POST /pao/v1/mandates", () => {
   /** Журнал процесса — в массив: причина отказа без текста исключения (КТ1 PS-05в ч. 1 № 3). */
   const logLines: string[] = [];
 
-  beforeEach(() => {
+  beforeEach(async () => {
     const params = loadParams();
     const reg = new InMemoryAgentRegistryStore();
     const registry = new AgentRegistry(reg, { keys: params });
@@ -98,8 +98,8 @@ describe("POST /pao/v1/mandates", () => {
     });
     a = newAgentSide();
     b = newAgentSide();
-    expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
-    expect(registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
   });
   afterEach(async () => {
     await app.close();

@@ -23,7 +23,7 @@ const auth = (mandate_id: string, amount: number): CanonicalMessage => agentToke
 function adpFor(c: Ctx, logs: string[] = []): Adp {
   return new Adp({
     log: (_l, _f, msg) => logs.push(msg),
-    agents: { get: (code) => (code === A ? { status: "ACTIVE", level: 2 } : undefined) },
+    agents: { get: async (code) =>(code === A ? { status: "ACTIVE", level: 2 } : undefined) },
     mandates: { get: (id, a) => c.consent.adpMandate(id, a) },
     clientLimits: { get: async () => [] },
     state: c.state,

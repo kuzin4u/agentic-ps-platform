@@ -38,12 +38,12 @@ describe("POST /pao/v1/agent/keys", () => {
   let a: AgentSide;
   let b: AgentSide;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     s = stand();
     a = newAgentSide();
     b = newAgentSide();
-    expect(s.admit(buyerApplication(A, a), "op").admitted).toBe(true);
-    expect(s.admit(buyerApplication(B, b), "op").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(A, a), "op")).admitted).toBe(true);
+    expect((await s.admit(buyerApplication(B, b), "op")).admitted).toBe(true);
   });
   afterEach(async () => {
     await s.app.close();
@@ -74,7 +74,7 @@ describe("POST /pao/v1/agent/keys", () => {
       valid_to: expect.any(String),
       status: "ACTIVE",
     });
-    const old = keysOf(A).find((k) => k.kid === a.kid)!;
+    const old = (await keysOf(A)).find((k) => k.kid === a.kid)!;
     const overlapEnd = Date.parse(key.valid_from) + s.params.key_overlap_days * 86_400_000;
     expect(Date.parse(old.valid_to ?? "")).toBe(overlapEnd);
     // Новым ключом агент подписывает следующее обращение.
@@ -88,7 +88,7 @@ describe("POST /pao/v1/agent/keys", () => {
       expect(res.json()).toMatchObject({ code: "IDEMPOTENCY_REQUIRED", retry: "same_key" });
     }
     expect(await post(a, A, keyBody(newAgentSide().publicKey), "")).toMatchObject({ statusCode: 400 });
-    expect(keysOf(A)).toHaveLength(1);
+    expect(await keysOf(A)).toHaveLength(1);
   });
 
   it("тело не по схеме → 400 REQUEST_INVALID без фрагментов тела; ключ идемпотентности не занят (РП31 п. 1)", async () => {
@@ -140,32 +140,32 @@ describe("POST /pao/v1/agent/keys", () => {
       bodies.push(res.json());
     }
     for (const x of bodies) expect(x).toEqual({ code: "KEY_INVALID", message: bodies[0].message, norm: "A2 п. 5.1", retry: "after_fix" });
-    expect(keysOf(A)).toHaveLength(1);
+    expect(await keysOf(A)).toHaveLength(1);
   });
 
-  it("причина отказа — в журнале процесса, закрытым перечнем (РП31 п. 2)", () => {
-    const reason = (input: unknown): string | undefined => {
+  it("причина отказа — в журнале процесса, закрытым перечнем (РП31 п. 2)", async () => {
+    const reason = async (input: unknown): Promise<string | undefined> => {
       try {
-        s.keys.register(A, input, { requireActive: true });
+        await s.keys.register(A, input, { requireActive: true });
       } catch (e) {
         return e instanceof KeyInvalidError ? e.reason : "другое";
       }
       return undefined;
     };
-    expect(reason({ alg: "gost", public_key: newAgentSide().publicKey })).toBe("ALG");
-    expect(reason({ alg: "ed25519", public_key: IDENTITY })).toBe("KEY");
-    expect(reason({ alg: "ed25519", public_key: "не-base64" })).toBe("KEY");
-    expect(reason({ alg: "ed25519", public_key: b.publicKey })).toBe("TAKEN");
+    expect(await reason({ alg: "gost", public_key: newAgentSide().publicKey })).toBe("ALG");
+    expect(await reason({ alg: "ed25519", public_key: IDENTITY })).toBe("KEY");
+    expect(await reason({ alg: "ed25519", public_key: "не-base64" })).toBe("KEY");
+    expect(await reason({ alg: "ed25519", public_key: b.publicKey })).toBe("TAKEN");
   });
 
   it("свой действующий public_key повторно, другой Idempotency-Key → 201 тот же Key (РП23 доп. 7)", async () => {
     const n = newAgentSide();
     const first = await post(a, A, keyBody(n.publicKey));
-    const before = keysOf(A);
+    const before = await keysOf(A);
     const again = await post(a, A, keyBody(n.publicKey));
     expect([first.statusCode, again.statusCode]).toEqual([201, 201]);
     expect(again.json()).toEqual(first.json());
-    expect(keysOf(A)).toEqual(before);
+    expect(await keysOf(A)).toEqual(before);
     // Первый ключ из допуска — тоже свой действующий.
     const own = await post(a, A, keyBody(a.publicKey));
     expect(own.statusCode).toBe(201);
@@ -178,21 +178,21 @@ describe("POST /pao/v1/agent/keys", () => {
     const body = keyBody(n.publicKey);
     const register = s.keys.register.bind(s.keys);
     // Ключ в реестре появляется, затем сбой до записи результата: захват снимается, ответ — 503.
-    vi.spyOn(s.keys, "register").mockImplementationOnce((code, input, o) => {
-      register(code, input, o);
+    vi.spyOn(s.keys, "register").mockImplementationOnce(async (code, input, o) => {
+      await register(code, input, o);
       throw new Error("сбой после записи ключа");
     });
     expect((await post(a, A, body, key)).statusCode).toBe(503);
     const again = await post(a, A, body, key);
     expect(again.statusCode).toBe(201);
     expect(again.json().kid).toBe(n.kid);
-    expect(keysOf(A)).toHaveLength(2);
+    expect(await keysOf(A)).toHaveLength(2);
   });
 
   it("свой отозванный ключ повторно → 422 KEY_INVALID (РП23 п. 3, 5)", async () => {
     const n = newAgentSide();
     expect((await post(a, A, keyBody(n.publicKey))).statusCode).toBe(201);
-    s.keys.revoke(A, n.kid);
+    await s.keys.revoke(A, n.kid);
     const res = await post(a, A, keyBody(n.publicKey));
     expect(res.statusCode).toBe(422);
     expect(res.json()).toMatchObject({ code: "KEY_INVALID" });
@@ -208,7 +208,7 @@ describe("POST /pao/v1/agent/keys", () => {
     expect(again.json()).toEqual(first.json());
     // Побайтно: первый ответ — тот же канонический JSON ядра, что и повтор (ревью КТ1 PS-14 ч. 2 № 2).
     expect(again.body).toBe(first.body);
-    expect(keysOf(A)).toHaveLength(2);
+    expect(await keysOf(A)).toHaveLength(2);
   });
 
   it("повтор отказа 422 — тот же отказ из хранилища (4xx сохраняется)", async () => {
@@ -229,7 +229,7 @@ describe("POST /pao/v1/agent/keys", () => {
     expect(other.json()).toMatchObject({ code: "IDEMPOTENCY_CONFLICT", retry: "after_fix" });
     const q = await post(a, A, keyBody(newAgentSide().publicKey), key, "x=1");
     expect(q.statusCode).toBe(409);
-    expect(keysOf(A)).toHaveLength(2);
+    expect(await keysOf(A)).toHaveLength(2);
   });
 
   it("тот же Idempotency-Key у другого агента — не повтор: свой ответ, свой ключ (Ш16)", async () => {
@@ -240,8 +240,8 @@ describe("POST /pao/v1/agent/keys", () => {
     const rb = await post(b, B, keyBody(nb.publicKey), key);
     expect([ra.statusCode, rb.statusCode]).toEqual([201, 201]);
     expect(rb.json().kid).toBe(nb.kid);
-    expect(keysOf(B).map((k) => k.kid)).toContain(nb.kid);
-    expect(keysOf(A).map((k) => k.kid)).not.toContain(nb.kid);
+    expect((await keysOf(B)).map((k) => k.kid)).toContain(nb.kid);
+    expect((await keysOf(A)).map((k) => k.kid)).not.toContain(nb.kid);
     expect(idempotencyScope(A)).not.toBe(idempotencyScope(B));
   });
 
@@ -258,7 +258,7 @@ describe("POST /pao/v1/agent/keys", () => {
   it("сбой обработчика → 503 с Retry-After, не сохраняется: повтор с тем же ключом исполняется заново", async () => {
     const key = randomUUID();
     const body = keyBody(newAgentSide().publicKey);
-    vi.spyOn(s.keys, "register").mockImplementationOnce(() => {
+    vi.spyOn(s.keys, "register").mockImplementationOnce(async () => {
       throw new Error("сбой реестра");
     });
     const failed = await post(a, A, body, key);
@@ -271,27 +271,27 @@ describe("POST /pao/v1/agent/keys", () => {
 
   it("приостановлен после проверки обращения, до вставки ключа → 403 AGENT_SUSPENDED, ключ не добавлен (гонка)", async () => {
     const register = s.keys.register.bind(s.keys);
-    vi.spyOn(s.keys, "register").mockImplementationOnce((code, input, o) => {
-      s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    vi.spyOn(s.keys, "register").mockImplementationOnce(async (code, input, o) => {
+      await s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
       return register(code, input, o);
     });
     const res = await post(a, A, keyBody(newAgentSide().publicKey));
     expect(res.statusCode).toBe(403);
     expect(res.json()).toMatchObject({ code: "AGENT_SUSPENDED" });
-    expect(keysOf(A)).toHaveLength(1);
+    expect(await keysOf(A)).toHaveLength(1);
   });
 
   it("исключён до вставки → 403, ответ сохраняется; конкурентное изменение → 503, не сохраняется", async () => {
     const key = randomUUID();
     const body = keyBody(newAgentSide().publicKey);
-    vi.spyOn(s.keys, "register").mockImplementationOnce(() => {
+    vi.spyOn(s.keys, "register").mockImplementationOnce(async () => {
       throw new AgentExcludedError(A);
     });
     expect((await post(a, A, body, key)).statusCode).toBe(403);
     expect((await post(a, A, body, key)).statusCode).toBe(403);
 
     const key2 = randomUUID();
-    vi.spyOn(s.keys, "register").mockImplementationOnce(() => {
+    vi.spyOn(s.keys, "register").mockImplementationOnce(async () => {
       throw new ConcurrentChangeError(A);
     });
     expect((await post(a, A, body, key2)).statusCode).toBe(503);
@@ -299,11 +299,11 @@ describe("POST /pao/v1/agent/keys", () => {
   });
 
   it("приостановленный агент → 403 AGENT_SUSPENDED: смена ключа — через оператора, не через ПАО (РП23 п. 6.3)", async () => {
-    s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    await s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
     const res = await post(a, A, keyBody(newAgentSide().publicKey));
     expect(res.statusCode).toBe(403);
     expect(res.json()).toMatchObject({ code: "AGENT_SUSPENDED" });
-    expect(keysOf(A)).toHaveLength(1);
+    expect(await keysOf(A)).toHaveLength(1);
   });
 
   it("без подписи → 401 до идемпотентности и тела", async () => {
@@ -314,7 +314,7 @@ describe("POST /pao/v1/agent/keys", () => {
       payload: keyBody(newAgentSide().publicKey),
     });
     expect(res.statusCode).toBe(401);
-    expect(keysOf(A)).toHaveLength(1);
+    expect(await keysOf(A)).toHaveLength(1);
   });
 });
 
@@ -330,8 +330,8 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
     a = newAgentSide();
     b = newAgentSide();
     n = newAgentSide();
-    expect(s.admit(buyerApplication(A, a), "op").admitted).toBe(true);
-    expect(s.admit(buyerApplication(B, b), "op").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(A, a), "op")).admitted).toBe(true);
+    expect((await s.admit(buyerApplication(B, b), "op")).admitted).toBe(true);
     // Второй действующий ключ агента A — по ПАО.
     const reg = await signedInject(s.app, a, A, {
       method: "POST",
@@ -352,7 +352,7 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
       body: opts.body ?? "",
       headers: opts.key === null ? {} : { "idempotency-key": opts.key ?? randomUUID() },
     });
-  const statusOf = (kid: string) => s.keys.list(A).find((k) => k.kid === kid)?.status;
+  const statusOf = async (kid: string) => (await s.keys.list(A)).find((k) => k.kid === kid)?.status;
 
   it("свой другой ключ → 200 Key REVOKED; им — 401 AGENT_KEY_REVOKED, ключом подписи — 200 (РП60 п. 1)", async () => {
     const res = await revoke(a, n.kid);
@@ -386,7 +386,7 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
   it("последний действующий ключ → 200; дальше агент не подписывает ничего (РП23 п. 5)", async () => {
     expect((await revoke(a, n.kid)).statusCode).toBe(200);
     expect((await revoke(a, a.kid)).statusCode).toBe(200);
-    expect(s.keys.list(A).every((k) => k.status === "REVOKED")).toBe(true);
+    expect((await s.keys.list(A)).every((k) => k.status === "REVOKED")).toBe(true);
     expect((await signedInject(s.app, a, A)).statusCode).toBe(401);
   });
 
@@ -409,7 +409,7 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
     }
     expect(new Set(replies.map((r) => r.body)).size).toBe(1);
     expect((await signedInject(s.app, b, B)).statusCode).toBe(200);
-    expect(statusOf(a.kid)).toBe("ACTIVE");
+    expect(await statusOf(a.kid)).toBe("ACTIVE");
   });
 
   // До PS-05б ч. 2 (заделы № 8–9, № 43): транспортный предел и разбор пути — ответы Fastify, не ПАО §6; тест покраснеет с правкой.
@@ -418,7 +418,7 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
     expect([long.statusCode, long.json().code]).toEqual([414, "REQUEST_INVALID"]);
     const bad = await revoke(a, "%zz");
     expect([bad.statusCode, bad.json().code]).toEqual([400, "REQUEST_INVALID"]);
-    expect(statusOf(a.kid)).toBe("ACTIVE");
+    expect(await statusOf(a.kid)).toBe("ACTIVE");
   });
 
   it("без Idempotency-Key → 400 IDEMPOTENCY_REQUIRED; непустое тело → 400 REQUEST_INVALID; ключ не отозван", async () => {
@@ -428,13 +428,13 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
     const withBody = await revoke(a, n.kid, { body: "{}" });
     expect(withBody.statusCode).toBe(400);
     expect(withBody.json().code).toBe("REQUEST_INVALID");
-    expect(statusOf(n.kid)).toBe("ACTIVE");
+    expect(await statusOf(n.kid)).toBe("ACTIVE");
   });
 
   it("приостановленный агент → 200, ключ отозван; исключённый → 403 AGENT_SUSPENDED, ключ действует (РП60 п. 3)", async () => {
-    s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    await s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
     expect((await revoke(a, n.kid)).statusCode).toBe(200);
-    expect(statusOf(n.kid)).toBe("REVOKED");
+    expect(await statusOf(n.kid)).toBe("REVOKED");
     // Регистрация ключа приостановленным — по-прежнему 403 (РП23 доп. 8).
     const reg = await signedInject(s.app, a, A, {
       method: "POST",
@@ -444,36 +444,36 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
     });
     expect(reg.statusCode).toBe(403);
 
-    s.registry.changeStatus(A, { to: "EXCLUDED", ground: "WITHDRAWN" });
+    await s.registry.changeStatus(A, { to: "EXCLUDED", ground: "WITHDRAWN" });
     const res = await revoke(a, a.kid);
     expect(res.statusCode).toBe(403);
     expect(res.json()).toMatchObject({ code: "AGENT_SUSPENDED" });
-    expect(statusOf(a.kid)).toBe("ACTIVE");
+    expect(await statusOf(a.kid)).toBe("ACTIVE");
   });
 
   it("сбой реестра → 503 с Retry-After, не сохраняется: повтор тем же ключом отзывает", async () => {
     const key = randomUUID();
-    vi.spyOn(s.keys, "revoke").mockImplementationOnce(() => {
+    vi.spyOn(s.keys, "revoke").mockImplementationOnce(async () => {
       throw new ConcurrentChangeError(A);
     });
     const failed = await revoke(a, n.kid, { key });
     expect(failed.statusCode).toBe(503);
     expect(failed.headers["retry-after"]).toBeDefined();
     expect(failed.json()).toMatchObject({ code: "UPSTREAM_UNAVAILABLE", retry: "same_key" });
-    expect(statusOf(n.kid)).toBe("ACTIVE");
+    expect(await statusOf(n.kid)).toBe("ACTIVE");
     expect((await revoke(a, n.kid, { key })).statusCode).toBe(200);
-    expect(statusOf(n.kid)).toBe("REVOKED");
+    expect(await statusOf(n.kid)).toBe("REVOKED");
   });
 
   it("сбой после отзыва, до ответа → 503 UPSTREAM_UNAVAILABLE; повтор тем же ключом — 200 тот же Key (РП23 доп. 3)", async () => {
     const key = randomUUID();
-    vi.spyOn(s.keys, "list").mockImplementationOnce(() => {
+    vi.spyOn(s.keys, "list").mockImplementationOnce(async () => {
       throw new Error("сбой чтения после отзыва");
     });
     const failed = await revoke(a, n.kid, { key });
     expect(failed.statusCode).toBe(503);
     expect(failed.json()).toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
-    expect(statusOf(n.kid)).toBe("REVOKED");
+    expect(await statusOf(n.kid)).toBe("REVOKED");
     const again = await revoke(a, n.kid, { key });
     expect(again.statusCode).toBe(200);
     expect(again.json()).toMatchObject({ kid: n.kid, status: "REVOKED" });
@@ -486,7 +486,7 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke", () => {
       headers: { "x-agent-code": A, "idempotency-key": randomUUID() },
     });
     expect(res.statusCode).toBe(401);
-    expect(statusOf(n.kid)).toBe("ACTIVE");
+    expect(await statusOf(n.kid)).toBe("ACTIVE");
   });
 });
 
@@ -503,8 +503,8 @@ describe("POST /pao/v1/agent/keys/{kid}/revoke: признак kid в журна
     const keys = new AgentKeys(store, { keys: params });
     const a = newAgentSide();
     const b = newAgentSide();
-    expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
-    expect(registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
     const verifier = new PaoRequestVerifier(
       { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
       { skewSec: params.signature_skew_sec },
@@ -561,7 +561,7 @@ describe("POST /pao/v1/agent/keys: тот же ключ, пока первое �
     const registry = new AgentRegistry(store, { keys: params });
     const keys = new AgentKeys(store, { keys: params });
     const a = newAgentSide();
-    expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
     let release: () => void = () => undefined;
     const gate = new Promise<void>((r) => (release = r));
     let entered: () => void = () => undefined;
@@ -599,6 +599,6 @@ describe("POST /pao/v1/agent/keys: тот же ключ, пока первое �
     expect(done.statusCode).toBe(201);
     const again = await call();
     expect(again.json()).toEqual(done.json());
-    expect(keys.list(A)).toHaveLength(2);
+    expect(await keys.list(A)).toHaveLength(2);
   });
 });

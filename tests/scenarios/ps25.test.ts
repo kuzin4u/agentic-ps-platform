@@ -36,7 +36,7 @@ describe("ПС25 на стенде: приостановление агента 
     stand = createStand();
     stand.setClock(T0);
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
     const put = await call("PUT", "/pao/v1/subscription", { url: URL_OK, events: ["agent.suspended", "agent.reinstated", "operation.declined", "operation.settled"] });
     expect(put.statusCode).toBe(200);
     pay = standPay(stand, side, CODE, "prn_ps25");
@@ -44,7 +44,7 @@ describe("ПС25 на стенде: приостановление агента 
     carts = [await pay.cart(await pay.mandate({ amount_limit: 200_000 }), 100_000), await pay.cart(await pay.mandate({ amount_limit: 200_000 }), 100_000)];
     // Другой агент того же оператора — приостановление его не касается.
     const otherSide = newAgentSide();
-    expect(stand.admit(buyerApplication(OTHER, otherSide), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(OTHER, otherSide), "op")).admitted).toBe(true);
     other = standPay(stand, otherSide, OTHER, "prn_ps25_other");
     otherCart = await other.cart(await other.mandate({ amount_limit: 200_000 }), 100_000);
   });
@@ -144,7 +144,7 @@ describe("ПС25 на стенде: приостановление агента 
   it("исключённому — тот же отказ ADP и шлюза ПАО, что приостановленному (условие переноса в PS-32, РП54 п. 12): ADP — AGENT_UNKNOWN, 403 на реквизит и relinquish, push нет", async () => {
     const code = "nspk:agent:ps-25-excl:v1";
     const s = newAgentSide();
-    expect(stand.admit(buyerApplication(code, s), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(code, s), "op")).admitted).toBe(true);
     const p = standPay(stand, s, code, "prn_ps25_excl");
     const cart = await p.cart(await p.mandate({ amount_limit: 200_000 }), 100_000);
     const msg = await p.auth(cart, 10_000);
@@ -172,7 +172,7 @@ describe("ПС25 на стенде: приостановление агента 
     const pendingId = (unsigned.json() as { id: string }).id;
     await stand.deliverEvents();
     // Исключение — служба PS-32; здесь — переход реестра по РП21 п. 4.
-    stand.registry.changeStatus(code, { to: "EXCLUDED", ground: "OUT_OF_MANDATE" });
+    await stand.registry.changeStatus(code, { to: "EXCLUDED", ground: "OUT_OF_MANDATE" });
 
     expect(await decide({ ...msg, op_ref: "OPKC-PS25-X1" })).toEqual({ decision: "DECLINE", reason: "AGENT_UNKNOWN" });
     const issue = await signed("POST", "/pao/v1/credentials", { mandate_id: cart, order_ref: "ORD-ps25-x", merchant_id: "MER-1042", amount_max: 10_000, currency: "RUB", kind: "CARD" });

@@ -135,9 +135,9 @@ describe.skipIf(!DATABASE_URL)("итог операции и operation.* на Po
   it("второй иной итог — прежний возвращается, события нет; итог и событие не меняются и не удаляются (триггеры)", async () => {
     const store = new PgOutcomeStore(db.pool);
     const first: OperationOutcome = { op_ref: "OP-pg-once", agent_code: AGENT, status: "DECLINED", reason: "LIMIT_EXCEEDED", source: "ADP", at: AT };
-    expect(await store.record(first, eventFor(first))).toBeUndefined();
+    expect(await store.record(first, await eventFor(first))).toBeUndefined();
     const second: OperationOutcome = { ...first, status: "AUTHORIZED", reason: null, source: "ISSUER" };
-    expect(await store.record(second, eventFor(second))).toEqual(first);
+    expect(await store.record(second, await eventFor(second))).toEqual(first);
     expect((await events("OP-pg-once")).map((e) => e.type)).toEqual(["operation.declined"]);
     // restrict_violation триггера consent_append_only (sql/100), а не любая ошибка.
     expect(await code(db.pool.query("UPDATE operation_outcomes SET reason = 'X' WHERE op_ref = 'OP-pg-once'"))).toBe("23001");

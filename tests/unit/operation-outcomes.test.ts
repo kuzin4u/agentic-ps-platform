@@ -36,13 +36,13 @@ describe("итог операции и operation.* на стенде (РП52)", 
   let stand: Stand;
   let side: AgentSide;
   let other: AgentSide;
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     stand.setClock(T0);
     side = newAgentSide();
     other = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
-    expect(stand.admit(buyerApplication(OTHER, other), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(OTHER, other), "op")).admitted).toBe(true);
   });
   afterAll(async () => stand.close());
 
@@ -121,13 +121,13 @@ describe("итог операции и operation.* на стенде (РП52)", 
     const m = await cart(50_000);
     const op = `OPKC-PS16-${randomUUID()}`;
     const msg = await pay().auth(m, 10_000, op);
-    stand.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    await stand.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
     try {
       expect(await decide(msg)).toMatchObject({ decision: "DECLINE", reason: "AGENT_SUSPENDED" });
       await stand.collectOperationOutcomes();
       expect((await feedOf(side, CODE)).statusCode).toBe(403);
     } finally {
-      stand.registry.changeStatus(CODE, { to: "ACTIVE" });
+      await stand.registry.changeStatus(CODE, { to: "ACTIVE" });
     }
     expect((await opEvents(op)).map((e) => e.type)).toEqual(["operation.declined"]);
   });
@@ -210,18 +210,18 @@ describe("правила итога и события (РП52 п. 3, 5–7)", ()
   const op = (decision: Decision, agent_code: string | null = CODE) => ({ op_ref: "OPKC-1", decision, agent_code, at: AT });
   const declined = (reason: string, agent_code: string | null = CODE): OperationOutcome => ({ op_ref: "OPKC-1", agent_code, status: "DECLINED", reason, source: "ADP", at: AT });
 
-  it("перечень причин — только из кодов ADP и ISSUER_DECLINED; AOI_MISSING, AGENT_UNKNOWN, ADP_UNAVAILABLE, CONFIRMATION_REQUIRED — вне", () => {
+  it("перечень причин — только из кодов ADP и ISSUER_DECLINED; AOI_MISSING, AGENT_UNKNOWN, ADP_UNAVAILABLE, CONFIRMATION_REQUIRED — вне", async () => {
     for (const r of DECLINE_EVENT_REASONS) expect(r === ISSUER_DECLINED || (DECISION_REASONS as readonly string[]).includes(r), r).toBe(true);
     for (const r of ["AOI_MISSING", "AGENT_UNKNOWN", "ADP_UNAVAILABLE", "CONFIRMATION_REQUIRED"]) {
       expect(DECLINE_EVENT_REASONS as readonly string[], r).not.toContain(r);
-      expect(eventFor(declined(r)), r).toBeUndefined();
+      expect(await eventFor(declined(r)), r).toBeUndefined();
     }
   });
 
-  it("событие — только установленному агенту, data — ровно {op_ref}; AUTHORIZED — operation.authorized", () => {
-    expect(eventFor(declined("LIMIT_EXCEEDED"))).toEqual({ agent_code: CODE, type: "operation.declined", data: { op_ref: "OPKC-1" }, push: false });
-    expect(eventFor(declined("LIMIT_EXCEEDED", null))).toBeUndefined();
-    expect(eventFor({ ...declined("x"), status: "AUTHORIZED", reason: null }, () => true)).toEqual({
+  it("событие — только установленному агенту, data — ровно {op_ref}; AUTHORIZED — operation.authorized", async () => {
+    expect(await eventFor(declined("LIMIT_EXCEEDED"))).toEqual({ agent_code: CODE, type: "operation.declined", data: { op_ref: "OPKC-1" }, push: false });
+    expect(await eventFor(declined("LIMIT_EXCEEDED", null))).toBeUndefined();
+    expect(await eventFor({ ...declined("x"), status: "AUTHORIZED", reason: null }, async () => true)).toEqual({
       agent_code: CODE,
       type: "operation.authorized",
       data: { op_ref: "OPKC-1" },
@@ -229,11 +229,11 @@ describe("правила итога и события (РП52 п. 3, 5–7)", ()
     });
   });
 
-  it("итог по решению: DECLINE → DECLINED с кодом, CONFIRMATION_REQUIRED — без события, APPROVE — нет итога", () => {
+  it("итог по решению: DECLINE → DECLINED с кодом, CONFIRMATION_REQUIRED — без события, APPROVE — нет итога", async () => {
     expect(outcomeFromDecision(op({ decision: "DECLINE", reason: "MANDATE_REVOKED", decided_in_ms: 1 }), AT)).toMatchObject({ status: "DECLINED", reason: "MANDATE_REVOKED", source: "ADP" });
     const cr = outcomeFromDecision(op({ decision: "CONFIRMATION_REQUIRED", reason: "CONFIRMATION_REQUIRED", decided_in_ms: 1 }), AT)!;
     expect(cr).toMatchObject({ status: "CONFIRMATION_REQUIRED" });
-    expect(eventFor(cr)).toBeUndefined();
+    expect(await eventFor(cr)).toBeUndefined();
     expect(outcomeFromDecision(op({ decision: "APPROVE", reason: null, decided_in_ms: 1 }), AT)).toBeUndefined();
   });
 
@@ -246,9 +246,9 @@ describe("правила итога и события (РП52 п. 3, 5–7)", ()
     const events = new MemoryConsentStore();
     const store = new MemoryOutcomeStore(new MemoryOperationStore(), events);
     const first = declined("LIMIT_EXCEEDED");
-    expect(await store.record(first, eventFor(first))).toBeUndefined();
+    expect(await store.record(first, await eventFor(first))).toBeUndefined();
     const second: OperationOutcome = { ...first, status: "AUTHORIZED", reason: null, source: "ISSUER" };
-    expect(await store.record(second, eventFor(second))).toEqual(first);
+    expect(await store.record(second, await eventFor(second))).toEqual(first);
     expect((await events.listEvents(CODE, undefined, 10)).map((e) => e.type)).toEqual(["operation.declined"]);
   });
 

@@ -23,8 +23,8 @@ describe("С0: агент подписал — Платформа приняла
     await s.app.close();
   });
 
-  const admit = (side: AgentSide): void => {
-    const d = s.registry.admit(buyerApplication(CODE, side), { contour: "sandbox", operator: "buyref-operator" });
+  const admit = async (side: AgentSide): Promise<void> => {
+    const d = await s.registry.admit(buyerApplication(CODE, side), { contour: "sandbox", operator: "buyref-operator" });
     expect(d.admitted).toBe(true);
   };
   const client = (side: AgentSide, agentCode = CODE): PaoClient =>
@@ -40,7 +40,7 @@ describe("С0: агент подписал — Платформа приняла
 
   it("GET /pao/v1/agent клиентом core с kid, вычисленным агентом, — 200; kid совпал с выданным реестром", async () => {
     const side = newAgentSide();
-    admit(side);
+    await admit(side);
     const self = await client(side).call("GET /pao/v1/agent", {});
     expect(self).toMatchObject({ agent_code: CODE, class: "BUYER", level: 1, status: "ACTIVE" });
     // Сверка после вызова: kid агента и kid реестра вычислены независимо и совпали.
@@ -48,7 +48,7 @@ describe("С0: агент подписал — Платформа приняла
   });
 
   it("чужой ключ под своим кодом — 401 SIGNATURE_INVALID, retry after_fix", async () => {
-    admit(newAgentSide());
+    await admit(newAgentSide());
     const err = await client(newAgentSide())
       .call("GET /pao/v1/agent", {})
       .catch((e: unknown) => e);
@@ -58,7 +58,7 @@ describe("С0: агент подписал — Платформа приняла
 
   it("не тот kid у своего ключа — 401 SIGNATURE_INVALID: kid выдумывать нельзя", async () => {
     const side = newAgentSide();
-    admit(side);
+    await admit(side);
     const wrong: AgentSide = { ...side, signer: { ...side.signer, kid: "k-2026-10" } };
     await expect(client(wrong).call("GET /pao/v1/agent", {})).rejects.toMatchObject({
       status: 401,

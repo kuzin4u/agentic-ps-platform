@@ -36,7 +36,7 @@ describe("GET /.well-known/pao-configuration на стенде (РП60 п. 9, 11
   it("подписанное обращение агента — тот же ответ: проверка обращения ПАО к методу не относится", async () => {
     s = stand();
     const a = newAgentSide();
-    expect(s.admit(buyerApplication("nspk:agent:buyref-01:v3", a), "op").admitted).toBe(true);
+    expect((await s.admit(buyerApplication("nspk:agent:buyref-01:v3", a), "op")).admitted).toBe(true);
     const res = await signedInject(s.app, a, "nspk:agent:buyref-01:v3", { path: PAO_CONFIGURATION_PATH });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual(EXPECTED);

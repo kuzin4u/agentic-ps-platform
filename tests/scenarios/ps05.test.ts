@@ -25,7 +25,7 @@ describe("ПС05 на стенде: агентский токен и крипт�
     stand = createStand();
     stand.setClock(new Date("2026-10-20T09:00:00Z"));
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
     intentId = await mandate({ type: "INTENT", amount_limit: 300_000, subject: "продукты" });
     cartId = await mandate({
       type: "CART",

@@ -221,7 +221,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
     hooks?: PgOperationHooks,
   ): Adp =>
     new Adp({
-      agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
+      agents: { get: async (c) =>(c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
       mandates,
       clientLimits: { get: async () => [] },
       state: new StateService(new PgHoldLedger(pool), mandates, { reservationTtlSec: 600 }),
@@ -355,7 +355,7 @@ describe.skipIf(!DATABASE_URL)("ПС10 через ADP на PostgreSQL: два э
     const M = mandates.add(1_000_000);
     let ms = Date.parse("2026-10-19T10:00:00Z");
     const a = new Adp({
-      agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
+      agents: { get: async (c) =>(c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
       mandates,
       clientLimits: { get: async () => [] },
       state: new StateService(new PgHoldLedger(db.pool), mandates, { reservationTtlSec: 600 }),

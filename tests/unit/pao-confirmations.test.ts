@@ -27,8 +27,8 @@ describe("GET /pao/v1/confirmations/{id} и события confirmation.* на �
     stand.setClock(new Date("2026-10-22T09:00:00Z"));
     side = newAgentSide();
     other = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
-    expect(stand.admit(buyerApplication(OTHER, other), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(OTHER, other), "op")).admitted).toBe(true);
     const intentId = await mandate({ type: "INTENT", amount_limit: 5_000_000, subject: "техника" });
     cartId = await mandate({
       type: "CART",
@@ -214,7 +214,7 @@ describe("GET /pao/v1/confirmations/{id} и события confirmation.* на �
 
   it("SUSPENDED — 403 AGENT_SUSPENDED у GET запроса подтверждения", async () => {
     const { id } = await order("ORD-get-susp");
-    stand.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    await stand.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
     const r = await get(id);
     expect(r.statusCode).toBe(403);
     expect((r.json() as { code: string }).code).toBe("AGENT_SUSPENDED");

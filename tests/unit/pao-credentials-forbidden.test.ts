@@ -46,7 +46,7 @@ async function gateway() {
   const registry = new AgentRegistry(store, { keys: params });
   const keys = new AgentKeys(store, { keys: params });
   const side = newAgentSide();
-  expect(registry.admit(buyerApplication(CODE, side), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+  expect((await registry.admit(buyerApplication(CODE, side), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
   const lines: string[] = [];
   const calls: CredentialRequest[] = [];
   const app = Fastify({ logger: { level: "info", stream: { write: (l: string) => void lines.push(l) } } });

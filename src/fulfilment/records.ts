@@ -43,9 +43,9 @@ export function fulfilmentRefFor(op_ref: string): string {
 }
 
 /** operation.settled — только агенту из домена токена; data — только {op_ref} (РП53 п. 9, A7 п. 8.3). */
-export function settledEventFor(f: FulfilmentRecord, pushFor?: PushFor): OperationEventDraft | undefined {
+export async function settledEventFor(f: FulfilmentRecord, pushFor?: PushFor): Promise<OperationEventDraft | undefined> {
   if (f.agent_code === null) return undefined;
-  return { agent_code: f.agent_code, type: "operation.settled", data: { op_ref: f.op_ref }, push: pushFor?.(f.agent_code, "operation.settled") ?? false };
+  return { agent_code: f.agent_code, type: "operation.settled", data: { op_ref: f.op_ref }, push: (await pushFor?.(f.agent_code, "operation.settled")) ?? false };
 }
 
 /** Сбой любого метода — исключение. */
@@ -333,7 +333,7 @@ export async function acceptPresentment(deps: PresentmentDeps, msg: Readonly<Rec
     spent_position: spent,
     at: (deps.now ?? (() => new Date()))().toISOString(),
   };
-  const raced = await deps.fulfilments.record(f, settledEventFor(f, deps.pushFor));
+  const raced = await deps.fulfilments.record(f, await settledEventFor(f, deps.pushFor));
   if (raced && raced.final_amount !== amount) log("warn", { op_ref, prior: raced.final_amount, amount, incident: true }, "П8: одновременное представление с другой суммой — запись прежняя");
   return 202;
 }

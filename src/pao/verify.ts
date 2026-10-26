@@ -49,10 +49,10 @@ export type PaoAuthResult =
 const upstreamFail = (cause: unknown): Extract<PaoAuthResult, { ok: false }> => ({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause });
 const upstream = (cause: unknown): PaoAuthResult => upstreamFail(cause);
 
-/** Реестр и ключи в той мере, в какой они нужны проверке (П1). */
+/** Реестр и ключи в той мере, в какой они нужны проверке (П1); чтение — из хранилища на каждом обращении (РП64 п. 3). */
 export interface PaoAuthSources {
-  getAgent(agent_code: string): AgentRecord | undefined;
-  lookupKey(agent_code: string, kid: string): KeyForVerify | undefined;
+  getAgent(agent_code: string): Promise<AgentRecord | undefined>;
+  lookupKey(agent_code: string, kid: string): Promise<KeyForVerify | undefined>;
 }
 
 /**
@@ -114,14 +114,14 @@ export class PaoRequestVerifier {
    * Проверки до тела (РП63 п. 9): повтор заголовка, агент в реестре, тело у метода без тела — в onRequest, тело обращения
    * неизвестного агента не читается. Тот же порядок и коды, что в начале verify; verify повторяет их сам.
    */
-  precheck(req: Omit<PaoRequest, "body">): Extract<PaoAuthResult, { ok: false }> | undefined {
-    const r = this.head(req);
+  async precheck(req: Omit<PaoRequest, "body">): Promise<Extract<PaoAuthResult, { ok: false }> | undefined> {
+    const r = await this.head(req);
     return "agent" in r ? undefined : r;
   }
 
-  private head(
+  private async head(
     req: Omit<PaoRequest, "body">,
-  ): Extract<PaoAuthResult, { ok: false }> | { readonly agent: AgentRecord; readonly headers: Record<string, string> } {
+  ): Promise<Extract<PaoAuthResult, { ok: false }> | { readonly agent: AgentRecord; readonly headers: Record<string, string> }> {
     // Повтор заголовка — неоднозначность, не догадка (инвариант 3).
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(req.headers)) {
@@ -133,7 +133,7 @@ export class PaoRequestVerifier {
     const agentCode = headers["x-agent-code"];
     let agent: AgentRecord | undefined;
     try {
-      agent = agentCode ? this.sources.getAgent(agentCode) : undefined;
+      agent = agentCode ? await this.sources.getAgent(agentCode) : undefined;
     } catch (e) {
       return upstreamFail(e);
     }
@@ -143,7 +143,7 @@ export class PaoRequestVerifier {
   }
 
   async verify(req: PaoRequest): Promise<PaoAuthResult> {
-    const h = this.head(req);
+    const h = await this.head(req);
     if (!("agent" in h)) return h;
     const { agent, headers } = h;
 
@@ -151,10 +151,10 @@ export class PaoRequestVerifier {
     // Алгоритм подписи — атрибут ключа (РП5): alg из Signature-Input должен совпасть с alg ключа.
     let keyAlg: string | undefined;
     let sourceFailure: { readonly cause: unknown } | undefined;
-    const lookupKey = (kid: string): KeyForVerify | undefined => {
+    const lookupKey = async (kid: string): Promise<KeyForVerify | undefined> => {
       let key: KeyForVerify | undefined;
       try {
-        key = this.sources.lookupKey(agent.agent_code, kid);
+        key = await this.sources.lookupKey(agent.agent_code, kid);
       } catch (e) {
         sourceFailure = { cause: e };
         throw e;

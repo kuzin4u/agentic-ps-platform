@@ -114,7 +114,7 @@ export class AgentRegistry {
    * Решение по заявлению оператора агента. Отказ — только по закрытому перечню РП21 п. 2, все применимые основания сразу;
    * заявление без оснований отказа допускается на одинаковых условиях для всех операторов (A6 п. 2.1).
    */
-  admit(application: unknown, ctx: AdmissionContext): AdmissionDecision {
+  async admit(application: unknown, ctx: AdmissionContext): Promise<AdmissionDecision> {
     const { contour } = ctx;
     if (contour !== "sandbox" && contour !== "operator") throw new Error(`Неизвестный контур: ${String(contour)}`);
     // Оператор — из контекста вызова, не из заявления (РП21 п. 2; до аутентификации — расхождение №9).
@@ -151,7 +151,7 @@ export class AgentRegistry {
 
     // Первый ключ (РП23 п. 2–3): alg из перечня контура, разбираемый ключ, kid ещё не зарегистрирован.
     const parsedKey = parseKey(this.algorithms[contour], alg, publicKey);
-    if (alg !== undefined && publicKey !== undefined && (!parsedKey || this.store.getKey(parsedKey.kid))) {
+    if (alg !== undefined && publicKey !== undefined && (!parsedKey || (await this.store.getKey(parsedKey.kid)))) {
       reasons.add("KEY_INVALID");
     }
 
@@ -173,8 +173,8 @@ export class AgentRegistry {
     if (contour === "operator" && !conformance) reasons.add("CONFORMANCE_MISSING");
 
     // Код занят: выдан ровно этот код, или «сторона : идентификатор» принадлежит другому оператору (A2 п. 4.1).
-    const owner = code ? this.store.ownerOf(code.issuer, code.id) : undefined;
-    if (code && (this.store.get(code.code) || (owner !== undefined && owner !== operator))) reasons.add("CODE_TAKEN");
+    const owner = code ? await this.store.ownerOf(code.issuer, code.id) : undefined;
+    if (code && ((await this.store.get(code.code)) || (owner !== undefined && owner !== operator))) reasons.add("CODE_TAKEN");
 
     const [first, ...rest] = [...reasons];
     if (first) return { admitted: false, reasons: [first, ...rest] };
@@ -204,7 +204,7 @@ export class AgentRegistry {
       row_version: 1,
     };
     try {
-      this.store.insert(record, newAgentKey(record.agent_code, parsedKey, now, this.policy));
+      await this.store.insert(record, newAgentKey(record.agent_code, parsedKey, now, this.policy));
     } catch (e) {
       if (e instanceof AgentCodeTakenError) return { admitted: false, reasons: ["CODE_TAKEN"] };
       if (e instanceof KeyTakenError) return { admitted: false, reasons: ["KEY_INVALID"] };
@@ -212,33 +212,34 @@ export class AgentRegistry {
     }
     return {
       admitted: true,
-      record: this.store.get(record.agent_code) as AgentRecord,
-      key: this.store.getKey(parsedKey.kid) as AgentKey,
+      record: (await this.store.get(record.agent_code)) as AgentRecord,
+      key: (await this.store.getKey(parsedKey.kid)) as AgentKey,
     };
   }
 
-  get(agent_code: string): AgentRecord | undefined {
+  /** Запись агента — из хранилища на каждом вызове (РП64 п. 3); сбой чтения — отклонённое обещание. */
+  get(agent_code: string): Promise<AgentRecord | undefined> {
     return this.store.get(agent_code);
   }
 
   /** Подписка агента на события (РП40 п. 1). */
-  subscription(agent_code: string): AgentSubscription | undefined {
+  subscription(agent_code: string): Promise<AgentSubscription | undefined> {
     return this.store.subscriptionOf(agent_code);
   }
 
   /** Замена подписки: адрес уже проверен шлюзом (РП40 п. 2). Нет агента — исключение. */
-  subscribe(agent_code: string, subscription: AgentSubscription): AgentSubscription {
-    if (!this.store.setSubscription(agent_code, subscription)) throw new AgentNotFoundError(agent_code);
-    return this.store.subscriptionOf(agent_code) as AgentSubscription;
+  async subscribe(agent_code: string, subscription: AgentSubscription): Promise<AgentSubscription> {
+    if (!(await this.store.setSubscription(agent_code, subscription))) throw new AgentNotFoundError(agent_code);
+    return (await this.store.subscriptionOf(agent_code)) as AgentSubscription;
   }
 
   /** Переход статуса по РП21 п. 4. Нет агента, недопустимый переход или конкурентное изменение — исключение. */
-  changeStatus(agent_code: string, change: unknown): AgentRecord {
-    const cur = this.store.get(agent_code);
+  async changeStatus(agent_code: string, change: unknown): Promise<AgentRecord> {
+    const cur = await this.store.get(agent_code);
     if (!cur) throw new AgentNotFoundError(agent_code);
     const c = checkTransition(cur.status, change);
     const at = this.now().toISOString();
-    const next = this.store.updateStatus(agent_code, cur.row_version, {
+    const next = await this.store.updateStatus(agent_code, cur.row_version, {
       status: c.to,
       status_ground: c.to === "ACTIVE" ? null : c.ground,
       status_changed_at: at,

@@ -82,7 +82,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
   it("продавец передаёт метаданные пакета для сверки по credential_ref", async () => {
     const s = createStand();
     const side = newAgentSide();
-    expect(s.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
     const m = createMerchants(s, { aoiSupport: false });
     try {
       const who = { side, agentCode: CODE };
@@ -102,7 +102,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
   it("сбой порта сверки авторизацию не останавливает: метаданные решение ADP не определяют", async () => {
     const s = createStand();
     const side = newAgentSide();
-    expect(s.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
     const opkc = new OpkcStub();
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: false, opkc });
     const verifier = new MerchantAgentVerifier(() => s.keys.jwks("sandbox"), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
@@ -128,7 +128,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
   it("с поддержкой aoi локального списка нет, метаданные с aoi эквайрер присылает Платформе (РП57 п. 7)", async () => {
     const s = createStand();
     const side = newAgentSide();
-    expect(s.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
     const m = createMerchants(s);
     try {
       const who = { side, agentCode: CODE };

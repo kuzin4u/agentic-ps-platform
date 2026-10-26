@@ -24,13 +24,13 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
     app = undefined;
   });
 
-  const platform = (limit = LIMIT, trustedProxies?: string[]) => {
+  const platform = async (limit = LIMIT, trustedProxies?: string[]) => {
     const params = coarseLimit(limit);
     const store = new InMemoryAgentRegistryStore();
     const registry = new AgentRegistry(store, { keys: params });
     const keys = new AgentKeys(store, { keys: params });
     const side = newAgentSide();
-    expect(registry.admit(buyerApplication(A, side), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(A, side), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
     const verifier = new PaoRequestVerifier(
       { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
       { skewSec: params.signature_skew_sec },
@@ -57,20 +57,20 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
   };
 
   it("неподписанный поток ограничен до проверки подписи: сверх лимита — 429 RATE_LIMITED по ПАО §6, Retry-After ≤ 30", async () => {
-    const { app } = platform();
+    const { app } = await platform();
     for (let i = 0; i < LIMIT; i++) expect((await unsigned(app)).statusCode).toBe(401);
     expect429(await unsigned(app));
   });
 
   it("предпроверка в onRequest — после лимита (РП63 п. 9): поток с неизвестным кодом агента тоже получает 429, а не 401 без конца", async () => {
-    const { app } = platform();
+    const { app } = await platform();
     const nobody = () => app.inject({ method: "GET", url: "/pao/v1/agent", headers: { "x-agent-code": "nspk:agent:nobody:v1" } });
     for (let i = 0; i < LIMIT; i++) expect((await nobody()).json().code).toBe("AGENT_UNKNOWN");
     expect429(await nobody());
   });
 
   it("подписанные GET /pao/v1/agent и POST /pao/v1/agent/keys — тот же счётчик; 429 до идемпотентности, ключ не добавлен", async () => {
-    const { app, side, keys } = platform();
+    const { app, side, keys } = await platform();
     for (let i = 0; i < LIMIT; i++) expect((await signedInject(app, side, A)).statusCode).toBe(200);
     const body = JSON.stringify({ alg: "ed25519", public_key: newAgentSide().publicKey });
     const res = await signedInject(app, side, A, {
@@ -80,18 +80,18 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
       headers: { "idempotency-key": randomUUID() },
     });
     expect429(res);
-    expect(keys.list(A)).toHaveLength(1);
+    expect(await keys.list(A)).toHaveLength(1);
   });
 
   it("окно — 30 с: Retry-After по стендовому лимиту тоже ≤ 30 (РП32 п. 2, РП24)", async () => {
     expect(PAO_RATE_WINDOW_MS).toBe(30_000);
-    const { app } = platform(1);
+    const { app } = await platform(1);
     await unsigned(app);
     expect429(await unsigned(app));
   });
 
   it("обработчик ошибок области отвечает на 404 и 413 по ПАО §6 (РП62 п. 1–2); тело 1,1 МБ — больше любого предела, сам предел 64 КиБ — в pao-transport-errors", async () => {
-    const { app } = platform(100);
+    const { app } = await platform(100);
     const nope = await app.inject({ method: "GET", url: "/pao/v1/nope" });
     expect([nope.statusCode, nope.json().code]).toEqual([404, "REQUEST_INVALID"]);
     const big = await app.inject({
@@ -119,12 +119,12 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
     a.inject({ method: "GET", url: "/pao/v1/agent", headers: { "x-agent-code": A }, remoteAddress });
 
   it("IPv6 — по подсети /64: адреса одной /64 — один счётчик, другой /64 — свой (РП32, дополнение п. 1)", async () => {
-    const { app } = platform();
+    const { app } = await platform();
     for (let i = 1; i <= LIMIT; i++) expect((await from(app, `2001:db8:1:2::${i}`)).statusCode).toBe(401);
     expect429(await from(app, "2001:db8:1:2:ffff:ffff:ffff:ffff"));
     expect((await from(app, "2001:db8:1:3::1")).statusCode).toBe(401);
     // IPv4 и IPv4 в IPv6 — один адрес, один счётчик.
-    const { app: b } = platform(1);
+    const { app: b } = await platform(1);
     expect((await from(b, "192.0.2.7")).statusCode).toBe(401);
     expect429(await from(b, "::ffff:192.0.2.7"));
     expect((await from(b, "192.0.2.8")).statusCode).toBe(401);
@@ -135,7 +135,7 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
     try {
       const t = new Date("2026-10-16T12:00:00Z");
       vi.setSystemTime(t);
-      const { app } = platform(1);
+      const { app } = await platform(1);
       expect((await unsigned(app)).statusCode).toBe(401);
       vi.setSystemTime(new Date(t.getTime() - 60_000));
       const res = await unsigned(app);
@@ -147,18 +147,18 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
   });
 
   it("/health вне лимита", async () => {
-    const { app } = platform(1);
+    const { app } = await platform(1);
     for (let i = 0; i < 5; i++) expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
   });
 
   it("без доверенного прокси X-Forwarded-For ключ не меняет: подстановка заголовка лимит не обходит", async () => {
-    const { app } = platform();
+    const { app } = await platform();
     for (let i = 0; i < LIMIT; i++) await unsigned(app, { "x-forwarded-for": `10.0.0.${i + 1}` });
     expect429(await unsigned(app, { "x-forwarded-for": "10.0.0.99" }));
   });
 
   it("с доверенным прокси — адрес клиента из X-Forwarded-For: у разных клиентов свои счётчики", async () => {
-    const { app } = platform(LIMIT, ["127.0.0.1"]);
+    const { app } = await platform(LIMIT, ["127.0.0.1"]);
     for (let i = 0; i < LIMIT; i++) await unsigned(app, { "x-forwarded-for": "10.0.0.1" });
     expect429(await unsigned(app, { "x-forwarded-for": "10.0.0.1" }));
     expect((await unsigned(app, { "x-forwarded-for": "10.0.0.2" })).statusCode).toBe(401);
@@ -167,7 +167,7 @@ describe("лимит частоты ПАО по адресу (РП32)", () => {
   it("лимит < 1 — отказ сборки шлюза", async () => {
     const params = { ...loadParams(), pao_rate_limit_per_30s: 0 };
     const keys = new AgentKeys(new InMemoryAgentRegistryStore(), { keys: params });
-    const verifier = new PaoRequestVerifier({ getAgent: () => undefined, lookupKey: () => undefined }, { skewSec: 1 });
+    const verifier = new PaoRequestVerifier({ getAgent: async () => undefined, lookupKey: async () => undefined }, { skewSec: 1 });
     app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: 60 }), params, consent: memoryConsent() } });
     await expect(app.ready()).rejects.toThrow(/pao_rate_limit_per_30s/);
   });
@@ -184,19 +184,19 @@ describe("второй слой лимита — по агенту и уровн
   // Малые значения (решение владельца 25.10): L1 = 4 в минуту — 2 за окно 30 с; первый слой щедрый.
   const SMALL = { pao_agent_rate_limit_per_min_l1: 4, pao_agent_rate_limit_per_min_l2: 6, pao_agent_rate_limit_per_min_l3: 8 };
 
-  const platform = (opts: { level?: number; status?: () => AgentRecord["status"]; log?: (line: string) => void } = {}) => {
+  const platform = async (opts: { level?: number; status?: () => AgentRecord["status"]; log?: (line: string) => void } = {}) => {
     const params = { ...loadParams(), pao_rate_limit_per_30s: 1000, ...SMALL };
     const store = new InMemoryAgentRegistryStore();
     const registry = new AgentRegistry(store, { keys: params });
     const keys = new AgentKeys(store, { keys: params });
     const a = newAgentSide();
     const b = newAgentSide();
-    expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
-    expect(registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
     // Уровень меняет П8 (РП21 п. 3), статус — служба статуса (РП54) — в тесте подставляются в запись реестра, как её отдал
     // бы реестр.
-    const getAgent = (c: string) => {
-      const r = registry.get(c);
+    const getAgent = async (c: string) => {
+      const r = await registry.get(c);
       if (!r) return r;
       return { ...r, ...(opts.level !== undefined ? { level: opts.level } : {}), ...(opts.status ? { status: opts.status() } : {}) };
     };
@@ -224,7 +224,7 @@ describe("второй слой лимита — по агенту и уровн
   };
 
   it("предел в окне 30 с — половина минутного: третье подписанное обращение — 429 RATE_LIMITED, Retry-After ≤ 30", async () => {
-    const { app, a } = platform();
+    const { app, a } = await platform();
     for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
     expect429(await signedInject(app, a, A), 3);
   });
@@ -233,7 +233,7 @@ describe("второй слой лимита — по агенту и уровн
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       const t = Date.now();
-      const { app, a } = platform();
+      const { app, a } = await platform();
       for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
       vi.setSystemTime(t + 29_000);
       const res = await signedInject(app, a, A);
@@ -250,7 +250,7 @@ describe("второй слой лимита — по агенту и уровн
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       const t = Date.now();
-      const { app, a } = platform();
+      const { app, a } = await platform();
       for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
       vi.setSystemTime(t - 60_000);
       const res = await signedInject(app, a, A);
@@ -262,7 +262,7 @@ describe("второй слой лимита — по агенту и уровн
   });
 
   it("счётчик — по agent_code: два агента с одного адреса — раздельно", async () => {
-    const { app, a, b } = platform();
+    const { app, a, b } = await platform();
     for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
     expect429(await signedInject(app, a, A));
     for (let i = 0; i < 2; i++) expect((await signedInject(app, b, B)).statusCode).toBe(200);
@@ -270,7 +270,7 @@ describe("второй слой лимита — по агенту и уровн
   });
 
   it("до проверки подписи слой не считает: чужой x-agent-code без верной подписи квоту агента не тратит", async () => {
-    const { app, a, b } = platform();
+    const { app, a, b } = await platform();
     // Без подписи и с подписью ключом другого агента под кодом A — 401, счётчик A не растёт.
     for (let i = 0; i < 5; i++) {
       expect((await app.inject({ method: "GET", url: "/pao/v1/agent", headers: { "x-agent-code": A } })).statusCode).toBe(401);
@@ -281,7 +281,7 @@ describe("второй слой лимита — по агенту и уровн
   });
 
   it("429 второго слоя — до обработчика: POST /pao/v1/agent/keys ключ не добавляет", async () => {
-    const { app, a, keys } = platform();
+    const { app, a, keys } = await platform();
     for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
     const res = await signedInject(app, a, A, {
       method: "POST",
@@ -290,14 +290,14 @@ describe("второй слой лимита — по агенту и уровн
       headers: { "idempotency-key": randomUUID() },
     });
     expect429(res);
-    expect(keys.list(A)).toHaveLength(1);
+    expect(await keys.list(A)).toHaveLength(1);
   });
 
   it("после 429 второго слоя повтор тем же Idempotency-Key после окна исполняется: 429 не сохранён (РП63 п. 2, доп. 4 (а), 6 п. 9)", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       const t = Date.now();
-      const { app, a, keys } = platform();
+      const { app, a, keys } = await platform();
       for (let i = 0; i < 2; i++) expect((await signedInject(app, a, A)).statusCode).toBe(200);
       const key = randomUUID();
       const call = {
@@ -311,10 +311,10 @@ describe("второй слой лимита — по агенту и уровн
       // Новый x-nonce (подпись заново) с тем же ключом — исполняется; повтор — сохранённый ответ, ключ один.
       const done = await signedInject(app, a, A, call);
       expect(done.statusCode).toBeLessThan(300);
-      expect(keys.list(A)).toHaveLength(2);
+      expect(await keys.list(A)).toHaveLength(2);
       const again = await signedInject(app, a, A, call);
       expect([again.statusCode, again.body]).toEqual([done.statusCode, done.body]);
-      expect(keys.list(A)).toHaveLength(2);
+      expect(await keys.list(A)).toHaveLength(2);
     } finally {
       vi.useRealTimers();
     }
@@ -322,7 +322,7 @@ describe("второй слой лимита — по агенту и уровн
 
   it("повтор nonce (401), отозванный ключ (401 AGENT_KEY_REVOKED) и SUSPENDED (403) квоту второго слоя не тратят (РП63 п. 1, доп. 6 п. 9)", async () => {
     let status: AgentRecord["status"] = "ACTIVE";
-    const { app, a, keys } = platform({ status: () => status });
+    const { app, a, keys } = await platform({ status: () => status });
     // Повтор nonce: те же подписанные заголовки второй раз.
     const signed = signRequest(
       {
@@ -339,8 +339,8 @@ describe("второй слой лимита — по агенту и уровн
     for (let i = 0; i < 5; i++) expect((await once()).statusCode).toBe(401);
     // Отозванный ключ: второй ключ агента остаётся действующим.
     const a2 = newAgentSide();
-    keys.register(A, { alg: "ed25519", public_key: a2.publicKey });
-    keys.revoke(A, a.kid);
+    await keys.register(A, { alg: "ed25519", public_key: a2.publicKey });
+    await keys.revoke(A, a.kid);
     for (let i = 0; i < 5; i++) {
       const res = await signedInject(app, a, A);
       expect([res.statusCode, res.json().code]).toEqual([401, "AGENT_KEY_REVOKED"]);
@@ -362,7 +362,7 @@ describe("второй слой лимита — по агенту и уровн
     [2, 6],
     [3, 8],
   ])("GET /pao/v1/agent: уровень %i — rate_limit_per_min = %i, и он же применяется", async (level, perMin) => {
-    const { app, a } = platform({ level });
+    const { app, a } = await platform({ level });
     const self = await signedInject(app, a, A);
     expect(self.statusCode).toBe(200);
     expect(self.json().rate_limit_per_min).toBe(perMin);
@@ -372,7 +372,7 @@ describe("второй слой лимита — по агенту и уровн
 
   it.each([4, 0, 1.5, Number.NaN])("уровень вне таблицы (%s) — L1 (строжайший) с записью warn (п. 5, инвариант 3)", async (level) => {
     const lines: string[] = [];
-    const { app, a } = platform({ level, log: (l) => lines.push(l) });
+    const { app, a } = await platform({ level, log: (l) => lines.push(l) });
     const self = await signedInject(app, a, A);
     expect(self.json().rate_limit_per_min).toBe(SMALL.pao_agent_rate_limit_per_min_l1);
     expect((await signedInject(app, a, A)).statusCode).toBe(200);
@@ -391,10 +391,10 @@ describe("второй слой лимита — по агенту и уровн
     const keys = new AgentKeys(store, { keys: params });
     const a = newAgentSide();
     const b = newAgentSide();
-    expect(registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
-    expect(registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
-    const getAgent = (c: string) => {
-      const r = registry.get(c);
+    expect((await registry.admit(buyerApplication(A, a), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(B, b), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
+    const getAgent = async (c: string) => {
+      const r = await registry.get(c);
       return r && { ...r, level };
     };
     const verifier = new PaoRequestVerifier({ getAgent, lookupKey: (c, kid) => keys.lookup(c, kid) }, { skewSec: params.signature_skew_sec });
@@ -460,7 +460,7 @@ describe("второй слой лимита — по агенту и уровн
   it.each([0, 1, 3, 2.5, -2])("значение %s — отказ сборки шлюза (чётное целое ≥ 2)", async (v) => {
     const params = { ...loadParams(), pao_agent_rate_limit_per_min_l2: v };
     const keys = new AgentKeys(new InMemoryAgentRegistryStore(), { keys: params });
-    const verifier = new PaoRequestVerifier({ getAgent: () => undefined, lookupKey: () => undefined }, { skewSec: 1 });
+    const verifier = new PaoRequestVerifier({ getAgent: async () => undefined, lookupKey: async () => undefined }, { skewSec: 1 });
     app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: 60 }), params, consent: memoryConsent() } });
     await expect(app.ready()).rejects.toThrow(/pao_agent_rate_limit_per_min_l2/);
   });
@@ -472,7 +472,7 @@ describe("второй слой лимита — по агенту и уровн
   ])("параметры в обход загрузчика: %o — отказ сборки шлюза (РП63 доп. 1)", async (patch, msg) => {
     const params = { ...loadParams(), pao_rate_limit_per_30s: 1000, ...patch };
     const keys = new AgentKeys(new InMemoryAgentRegistryStore(), { keys: params });
-    const verifier = new PaoRequestVerifier({ getAgent: () => undefined, lookupKey: () => undefined }, { skewSec: 1 });
+    const verifier = new PaoRequestVerifier({ getAgent: async () => undefined, lookupKey: async () => undefined }, { skewSec: 1 });
     app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: 60 }), params, consent: memoryConsent() } });
     await expect(app.ready()).rejects.toThrow(msg);
   });

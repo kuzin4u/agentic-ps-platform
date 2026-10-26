@@ -9,7 +9,7 @@ import { WebhookDeliverer } from "./participants/webhook.js";
 import { loadTrustedParticipants, type TrustedParticipants } from "./participants/trusted.js";
 import { ParticipantRequestVerifier } from "./participants/verify.js";
 import { EventDeliverer, httpsTransport, startEventDelivery } from "./pao/delivery.js";
-import { pushAllowed } from "./pao/events.js";
+import { pushForRegistry } from "./pao/events.js";
 import { paoIdempotency } from "./pao/idempotency.js";
 import { paoNonceStore, paoPoolConfig, requireDatabaseUrl, startNoncePurge } from "./pao/stores.js";
 import { systemResolver } from "./pao/subscription.js";
@@ -143,7 +143,8 @@ async function serve(): Promise<void> {
   const nonces = paoNonceStore({ client: pool, skewSec: params.signature_skew_sec });
   const idempotency = paoIdempotency({ client: pool, ttlSec: params.idempotency_ttl_sec });
 
-  // Реестр в памяти до PostgreSQL (PS-06); допуск операторов по HTTP — после их аутентификации (SEC-1, расхождение №9).
+  // Реестр в памяти до подключения PostgreSQL (PS-05в ч. 2б-2, РП64 п. 7); порт асинхронный (п. 3). Допуск операторов
+  // по HTTP — после их аутентификации (SEC-1, расхождение №9).
   const store = new InMemoryAgentRegistryStore();
   const registry = new AgentRegistry(store, { keys: params });
   const keys = new AgentKeys(store, { keys: params });
@@ -158,7 +159,7 @@ async function serve(): Promise<void> {
   const consentStore = pool ? new PgConsentStore(pool) : new MemoryConsentStore();
   const consent: ConsentJournal = new ConsentJournal(consentStore, {
     revocationOrder: () => trusted.revocationOrder(),
-    pushFor: (code, type) => pushAllowed(registry.get(code)?.status, type) && (registry.subscription(code)?.events.includes(type) ?? false),
+    pushFor: pushForRegistry(registry),
     // Остаток для verify — из П3 (РП41 п. 10); state объявлен ниже, вызов — только при обращении.
     amountLeft: (id, limit) => state.amountLeft(id, limit),
   });
@@ -201,7 +202,7 @@ async function serve(): Promise<void> {
     ? new OperationOutcomeCollector(new PgOutcomeStore(pool), {
         horizonSec: params.operation_outcome_horizon_sec,
         maxDelaySec: params.operation_outcome_max_delay_sec,
-        pushFor: (code, type) => pushAllowed(registry.get(code)?.status, type) && (registry.subscription(code)?.events.includes(type) ?? false),
+        pushFor: pushForRegistry(registry),
         log: (level, fields, msg) => app.log[level](fields, msg),
       })
     : undefined;

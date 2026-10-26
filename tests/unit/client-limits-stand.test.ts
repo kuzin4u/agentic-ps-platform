@@ -14,11 +14,11 @@ const T_MIDNIGHT = new Date("2026-10-19T21:00:00Z"); // 00:00 МСК 20.10
 describe("лимит клиента на стенде по часам стенда (РП45 п. 1)", () => {
   let stand: Stand;
   let side: AgentSide;
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     stand.setClock(new Date("2026-10-19T20:00:00Z"));
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
   });
   afterAll(async () => stand.close());
 

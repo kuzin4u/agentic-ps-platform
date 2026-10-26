@@ -94,9 +94,9 @@ describe.skipIf(!DATABASE_URL)("возврат и operation.refunded на Postgr
   it("запись и событие — одной транзакцией; повтор — прежняя запись без второго события; сумма — число; только вставка (23001)", async () => {
     const store = new PgRefundStore(db.pool);
     const r = record("OP-ref-once");
-    expect(await store.record(r, refundedEventFor(r))).toBeUndefined();
+    expect(await store.record(r, await refundedEventFor(r))).toBeUndefined();
     expect(await store.get("OP-ref-once")).toEqual(r);
-    expect(await store.record(record("OP-ref-once", { amount: 1_000 }), refundedEventFor(r))).toEqual(r);
+    expect(await store.record(record("OP-ref-once", { amount: 1_000 }), await refundedEventFor(r))).toEqual(r);
     expect(await events("OP-ref-once")).toEqual([
       { type: "operation.refunded", data: JSON.stringify({ op_ref: "OP-ref-once" }), event_id: operationEventIdFor("OP-ref-once", "operation.refunded") },
     ]);

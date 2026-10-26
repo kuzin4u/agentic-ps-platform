@@ -31,11 +31,11 @@ describe("реверсал и истечение авторизации → ос
   let stand: Stand;
   let side: AgentSide;
   const principal = opaquePrincipalRef("prn_rev_");
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     stand.setClock(T0);
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
   });
   afterAll(async () => stand.close());
 

@@ -107,7 +107,7 @@ function setup(
   const store = wrap(inner, broken, calls, opts.over);
   const logs: { fields: Record<string, unknown>; msg: string }[] = [];
   const adp = new Adp({
-    agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1, suspended_at: opts.suspendedAt?.() ?? null } : undefined) },
+    agents: { get: async (c) =>(c === AGENT ? { status: "ACTIVE", level: 1, suspended_at: opts.suspendedAt?.() ?? null } : undefined) },
     mandates: journal,
     state,
     operations: new MemoryOperationStore(),

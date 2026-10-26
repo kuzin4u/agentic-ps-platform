@@ -1,5 +1,5 @@
-// Реестр агентов на PostgreSQL (РП64 п. 1–3, PS-05в ч. 2а): один набор договора порта — на памяти (через асинхронную
-// обёртку, локально) и на PG (CI, РП30 п. 7); одновременные изменения с двух пулов и ограничения схемы — только на PG.
+// Реестр агентов на PostgreSQL (РП64 п. 1–3, PS-05в ч. 2а): один набор договора порта — на памяти (напрямую, за тем же
+// асинхронным портом, локально) и на PG (CI, РП30 п. 7); одновременные изменения с двух пулов и ограничения схемы — только на PG.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   AgentCodeTakenError,
@@ -10,7 +10,6 @@ import {
   type AgentKey,
   type AgentRecord,
   type AgentRegistryStore,
-  type AgentRegistryStoreAsync,
 } from "../../src/registry/index.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
@@ -50,23 +49,6 @@ const key = (kid: string, agent_code: string, over: Partial<AgentKey> = {}): Age
   ...over,
 });
 
-/** Синхронное хранилище в памяти за асинхронным портом — эталон договора. */
-function asAsync(s: AgentRegistryStore): AgentRegistryStoreAsync {
-  return {
-    get: async (...a) => s.get(...a),
-    agentCodes: async () => s.agentCodes(),
-    ownerOf: async (...a) => s.ownerOf(...a),
-    insert: async (...a) => s.insert(...a),
-    updateStatus: async (...a) => s.updateStatus(...a),
-    getKey: async (...a) => s.getKey(...a),
-    keysOf: async (...a) => s.keysOf(...a),
-    addKey: async (...a) => s.addKey(...a),
-    revokeKey: async (...a) => s.revokeKey(...a),
-    subscriptionOf: async (...a) => s.subscriptionOf(...a),
-    setSubscription: async (...a) => s.setSubscription(...a),
-  };
-}
-
 let db: TestDb | undefined;
 beforeAll(async () => {
   if (DATABASE_URL) db = await openTestDb("registry");
@@ -79,7 +61,7 @@ afterAll(async () => {
 let n = 0;
 const uid = (): string => `t${++n}x${Date.now().toString(36)}`;
 
-const variants: [string, () => AgentRegistryStoreAsync][] = [["память", () => asAsync(new InMemoryAgentRegistryStore())]];
+const variants: [string, () => AgentRegistryStore][] = [["память", () => new InMemoryAgentRegistryStore()]];
 if (DATABASE_URL) variants.push(["PostgreSQL", () => new PgAgentRegistryStore((db as TestDb).pool)]);
 
 describe.each(variants)("порт реестра агентов: %s (РП64 п. 1–3)", (_name, make) => {

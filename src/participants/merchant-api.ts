@@ -11,8 +11,8 @@ import { publicReadiness, type ReadinessStore } from "./readiness.js";
 import { isMerchantId } from "./trusted.js";
 
 export interface MerchantApiDeps {
-  readonly registry: { get(agent_code: string): AgentRecord | undefined };
-  readonly keys: { jwks(contour: Contour): AgentJwks };
+  readonly registry: { get(agent_code: string): Promise<AgentRecord | undefined> };
+  readonly keys: { jwks(contour: Contour): Promise<AgentJwks> };
   /** Контур ключей сервера: среды dev и sandbox — sandbox (РП56 п. 2). */
   readonly contour: Contour;
   readonly params: Pick<Params, "merchant_jwks_max_age_sec" | "merchant_readiness_max_age_sec" | "unavailable_retry_after_sec">;
@@ -47,14 +47,14 @@ export async function merchantApiUnavailable(app: FastifyInstance): Promise<void
 
 /**
  * Статус агента для продавца и эквайрера (РП56 п. 4, РП57 п. 6): только код, статус и класс из реестра. Неизвестный, не по
- * форме и чужого контура — undefined (один ответ 404); сбой реестра — исключение (503).
+ * форме и чужого контура — undefined (один ответ 404); сбой реестра — отклонённое обещание (503).
  */
-export function agentStatusView(
+export async function agentStatusView(
   deps: Pick<MerchantApiDeps, "registry" | "contour">,
   code: string,
-): { agent_code: string; status: AgentRecord["status"]; class: AgentRecord["class"] } | undefined {
+): Promise<{ agent_code: string; status: AgentRecord["status"]; class: AgentRecord["class"] } | undefined> {
   if (!isAgentCode(code)) return undefined;
-  const rec = deps.registry.get(code);
+  const rec = await deps.registry.get(code);
   if (!rec || rec.contour !== deps.contour) return undefined;
   return { agent_code: rec.agent_code, status: rec.status, class: rec.class };
 }
@@ -72,7 +72,7 @@ export async function merchantApiRoutes(app: FastifyInstance, deps: MerchantApiD
   app.get(AGENT_KEYS_PATH, async (req, reply) => {
     let jwks: AgentJwks;
     try {
-      jwks = deps.keys.jwks(deps.contour);
+      jwks = await deps.keys.jwks(deps.contour);
     } catch (e) {
       req.log.error({ err: e }, "API продавцов: каталог ключей агентов недоступен");
       return unavailable(reply);
@@ -87,9 +87,9 @@ export async function merchantApiRoutes(app: FastifyInstance, deps: MerchantApiD
   // Статус агента (РП56 п. 4): только код, статус и класс из реестра; сведений об операторе и принципалах нет (A2 п. 1.2).
   // Неизвестный, не по форме и чужого контура — один ответ 404: продавец не отличает «нет» от «не в этом контуре».
   app.get<{ Params: { code: string } }>(AGENT_STATUS_PATH, async (req, reply) => {
-    let view: ReturnType<typeof agentStatusView>;
+    let view: Awaited<ReturnType<typeof agentStatusView>>;
     try {
-      view = agentStatusView(deps, req.params.code);
+      view = await agentStatusView(deps, req.params.code);
     } catch (e) {
       req.log.error({ err: e }, "API продавцов: реестр агентов недоступен");
       return unavailable(reply);

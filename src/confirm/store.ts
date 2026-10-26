@@ -30,16 +30,22 @@ export interface ConfirmationStore {
   consume(confirmation_ref: string, op_ref: string, now: string): Promise<boolean>;
 }
 
-/** Строка попытки push в транзакции события (РП40 п. 5): агент ACTIVE и подписан на тип — на момент записи. */
-export type PushFor = (agent_code: string, type: PaoEventType) => boolean;
+/**
+ * Строка попытки push в транзакции события (РП40 п. 5): агент ACTIVE и подписан на тип — на момент записи. Чтение реестра
+ * (РП64 п. 3): сбой — отклонённое обещание, переход и событие не записываются.
+ */
+export type PushFor = (agent_code: string, type: PaoEventType) => Promise<boolean>;
 
 type ConfirmationEventType = ConfirmationEventDraft["type"];
 
-const draftOf = (r: ConfirmationRecord, type: ConfirmationEventType, pushFor: PushFor | undefined): ConfirmationEventDraft => ({
+const pushOf = async (pushFor: PushFor | undefined, agent_code: string, type: ConfirmationEventType): Promise<boolean> =>
+  (await pushFor?.(agent_code, type)) ?? false;
+
+const draftOf = (r: ConfirmationRecord, type: ConfirmationEventType, push: boolean): ConfirmationEventDraft => ({
   agent_code: r.agent_code,
   type,
   data: { confirmation_id: r.confirmation_id },
-  push: pushFor?.(r.agent_code, type) ?? false,
+  push,
 });
 
 const keyOf = (k: ConfirmationKey): string => JSON.stringify([k.mandate_id, k.merchant_id, k.order_ref, k.amount, k.currency]);
@@ -55,9 +61,12 @@ export class MemoryConfirmationStore implements ConfirmationStore {
 
   constructor(private readonly opts: MemoryConfirmationStoreOptions = {}) {}
 
-  /** Событие до записи строки, без await между ними: сбой события оставляет запрос без перехода (РП51 п. 2). */
-  #transit(next: ConfirmationRecord, type: ConfirmationEventType, at: string): void {
-    this.opts.events?.appendConfirmationEventNow(draftOf(next, type, this.opts.pushFor), at);
+  /**
+   * Событие до записи строки, без await между ними: сбой события оставляет запрос без перехода (РП51 п. 2). Строка push
+   * читается до проверки состояния (РП64 п. 3): между проверкой и записью await нет.
+   */
+  #transit(next: ConfirmationRecord, type: ConfirmationEventType, at: string, push: boolean): void {
+    this.opts.events?.appendConfirmationEventNow(draftOf(next, type, push), at);
     this.#rows.set(next.confirmation_id, structuredClone(next));
   }
 
@@ -69,11 +78,12 @@ export class MemoryConfirmationStore implements ConfirmationStore {
   /** Проверка и запись без await между ними: один процесс — одна очередь. */
   async create(rec: ConfirmationRecord): Promise<ConfirmationRecord> {
     if (rec.status !== "PENDING") throw new Error("confirmations: вставка — только PENDING");
+    const push = await pushOf(this.opts.pushFor, rec.agent_code, "confirmation.required");
     const k = keyOf(rec);
     const prior = [...this.#rows.values()].find((r) => keyOf(r) === k);
     if (prior) return structuredClone(prior);
     if (this.#rows.has(rec.confirmation_id)) throw new Error("confirmations: confirmation_id уже записан");
-    this.#transit(rec, "confirmation.required", rec.created_at);
+    this.#transit(rec, "confirmation.required", rec.created_at, push);
     return structuredClone(rec);
   }
 
@@ -88,20 +98,28 @@ export class MemoryConfirmationStore implements ConfirmationStore {
   }
 
   async expire(confirmation_id: string, now: string): Promise<boolean> {
+    // agent_code запроса не меняется: строка push — по нему, до проверки состояния.
+    const agent_code = this.#rows.get(confirmation_id)?.agent_code;
+    if (agent_code === undefined) return false;
+    const push = await pushOf(this.opts.pushFor, agent_code, "confirmation.expired");
     const r = this.#rows.get(confirmation_id);
     if (!r || r.status !== "PENDING" || r.expires_at > now) return false;
-    this.#transit({ ...r, status: "EXPIRED" }, "confirmation.expired", now);
+    this.#transit({ ...r, status: "EXPIRED" }, "confirmation.expired", now, push);
     return true;
   }
 
   async decide(confirmation_id: string, d: ConfirmationDecision, confirmation_ref: string | null, now: string): Promise<ConfirmationRecord | undefined> {
+    const agent_code = this.#rows.get(confirmation_id)?.agent_code;
+    if (agent_code === undefined) return undefined;
+    const type = d.decision === "APPROVE" ? "confirmation.approved" : "confirmation.rejected";
+    const push = await pushOf(this.opts.pushFor, agent_code, type);
     const r = this.#rows.get(confirmation_id);
     if (!r || r.status !== "PENDING" || !(r.expires_at > now)) return undefined;
     // Одобрение без ссылки — ошибка вызывающего, как CHECK на PG (Дополнения РП50 п. 6).
     if (d.decision === "APPROVE" && confirmation_ref === null) throw new Error("confirmations: APPROVE без confirmation_ref");
     const status: ConfirmationStatus = d.decision === "APPROVE" ? "APPROVED" : "REJECTED";
     const next: ConfirmationRecord = { ...r, status, decision: { ...d }, confirmation_ref: status === "APPROVED" ? confirmation_ref : null };
-    this.#transit(next, status === "APPROVED" ? "confirmation.approved" : "confirmation.rejected", now);
+    this.#transit(next, type, now, push);
     return structuredClone(next);
   }
 
@@ -236,7 +254,10 @@ export class PgConfirmationStore implements ConfirmationStore {
         [rec.confirmation_id, rec.agent_code, rec.mandate_id, rec.merchant_id, rec.amount, rec.currency, rec.order_ref, rec.split_detected,
           rec.created_at, rec.expires_at],
       );
-      if (ins.rows.length === 1) await insertConfirmationEventTx(tx, draftOf(rec, "confirmation.required", this.opts.pushFor), rec.created_at);
+      if (ins.rows.length === 1) {
+        const push = await pushOf(this.opts.pushFor, rec.agent_code, "confirmation.required");
+        await insertConfirmationEventTx(tx, draftOf(rec, "confirmation.required", push), rec.created_at);
+      }
     });
     const [row] = await this.byKey(rec);
     if (!row) throw new Error("confirmations: запрос не найден после вставки");
@@ -260,7 +281,8 @@ export class PgConfirmationStore implements ConfirmationStore {
         [confirmation_id, now],
       );
       if (!r.rows[0]) return false;
-      await insertConfirmationEventTx(tx, draftOf(recordOf(r.rows[0]), "confirmation.expired", this.opts.pushFor), now);
+      const rec = recordOf(r.rows[0]);
+      await insertConfirmationEventTx(tx, draftOf(rec, "confirmation.expired", await pushOf(this.opts.pushFor, rec.agent_code, "confirmation.expired")), now);
       return true;
     });
   }
@@ -277,7 +299,8 @@ export class PgConfirmationStore implements ConfirmationStore {
       );
       if (!r.rows[0]) return undefined;
       const next = recordOf(r.rows[0]);
-      await insertConfirmationEventTx(tx, draftOf(next, approve ? "confirmation.approved" : "confirmation.rejected", this.opts.pushFor), now);
+      const type = approve ? "confirmation.approved" : "confirmation.rejected";
+      await insertConfirmationEventTx(tx, draftOf(next, type, await pushOf(this.opts.pushFor, next.agent_code, type)), now);
       return next;
     });
   }

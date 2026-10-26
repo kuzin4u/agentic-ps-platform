@@ -868,10 +868,16 @@ cd ~/repos/agentic-ps-platform && git checkout main && git pull && claude
 
 ## Передача агенту (AG-03 Подписант)
 
-**PS-05в ч. 2б (РП64 п. 3; 2б-1 — PR #76 без выпуска; передача — одна, при 2б-2 с выпуском v0.29.0; решение владельца 26.10):** `stand.registry` и `stand.keys` становятся асинхронными — методы возвращают `Promise`. У агента нужен `await` в местах:
+**PS-05в ч. 2б (РП64 п. 3; 2б-1 — PR #76 без выпуска; передача — одна, при 2б-2 с выпуском v0.29.0; решение владельца 26.10):** `stand.admit`, `stand.registry` и `stand.keys` становятся асинхронными — методы возвращают `Promise`. У агента нужен `await` в 15 местах:
+- `stand.admit(…)` — 11 мест (найдено в К2, сверх четырёх мест по `/task`):
+  - `tests/contract/c0-platform.test.ts:101`, `:121`, `:138`, `:150`, `:164`, `:185`;
+  - `tests/contract/transport-stand.test.ts:48`, `revoke-stand.test.ts:43`, `no-response-stand.test.ts:43`, `events-core.test.ts:56`;
+  - `tests/support/contour.ts:315`;
 - `tests/contract/events-stand.test.ts:58` — `stand.registry.changeStatus(…)`;
 - `tests/contract/events-core.test.ts:89` и `:235` — `s.registry.subscription(AGENT)`;
 - `tests/scenarios/p08.test.ts:96` — `r.stand.keys.revoke(…)`.
+
+`expect(s.admit(…)).toMatchObject(…)` — в `await expect(…).resolves` или `expect(await s.admit(…))`.
 
 Агент закреплён на v0.28.0: до своей смены тега не ломается. Ответы ПАО, ПИ-8, API продавцов и ADP не меняются.
 

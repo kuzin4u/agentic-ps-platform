@@ -50,12 +50,12 @@ interface Calls {
  * Реестр в памяти с A; «экземпляр шлюза» — сервер на своём пуле той же базы; токен-сервис и банк — общие. Счётчики
  * различают повтор под ключом (replay) и повтор по заказу (issue → тот же реквизит): ответ у них одинаковый побайтно.
  */
-function platform() {
+async function platform() {
   const store = new InMemoryAgentRegistryStore();
   const reg = new AgentRegistry(store, { keys: params });
   const keys = new AgentKeys(store, { keys: params });
   const side = newAgentSide();
-  expect(reg.admit(buyerApplication(A, side), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+  expect((await reg.admit(buyerApplication(A, side), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
   const emulator = createTokenServiceEmulator();
   const tspCalls = { issueToken: 0 };
   const tsp = {
@@ -122,7 +122,7 @@ const order = () => {
 
 describe.skipIf(!DATABASE_URL)("реквизит под одним Idempotency-Key на двух экземплярах PostgreSQL (РП48 (в))", () => {
   let db: TestDb;
-  let p: ReturnType<typeof platform> | undefined;
+  let p: Awaited<ReturnType<typeof platform>> | undefined;
   beforeAll(async () => {
     db = await openTestDb("credidem");
   });
@@ -140,7 +140,7 @@ describe.skipIf(!DATABASE_URL)("реквизит под одним Idempotency-K
     (await db.pool.query<Record<string, unknown>>("SELECT * FROM agent_credentials WHERE mandate_id = $1", [cart])).rows;
 
   it("выдача на одном экземпляре, повтор под ключом на другом — та же криптограмма; в core_idempotency.result её нет", async () => {
-    p = platform();
+    p = await platform();
     const one = p.instance(db.pool);
     const two = p.instance(db.reopen());
     const { cart, body } = order();
@@ -196,7 +196,7 @@ describe.skipIf(!DATABASE_URL)("реквизит под одним Idempotency-K
   });
 
   it("одновременно 10 одинаковых обращений под одним ключом на двух экземплярах — одна запись; все 201 — одна криптограмма, остальные 503 same_key", async () => {
-    p = platform();
+    p = await platform();
     const apps = [p.instance(db.pool), p.instance(db.reopen())];
     const { cart, body } = order();
     const key = randomUUID();
@@ -223,7 +223,7 @@ describe.skipIf(!DATABASE_URL)("реквизит под одним Idempotency-K
   });
 
   it("РП49 (д): после выдачи в agent_tokens.merchant_mcc — набор MCC продавца из справочника; токен до sql/110 читается с null", async () => {
-    p = platform();
+    p = await platform();
     const app = p.instance(db.pool);
     const { cart, body } = order();
     const r = await p.post(app, body, randomUUID());
