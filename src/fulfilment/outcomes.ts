@@ -63,18 +63,21 @@ export function outcomeFromDecision(op: DecidedOp, at: string): OperationOutcome
   return undefined;
 }
 
-/** Строка попытки push в транзакции события (РП40 п. 5): агент ACTIVE и подписан на тип — на момент записи. */
-export type PushFor = (agent_code: string, type: PaoEventType) => boolean;
+/**
+ * Строка попытки push в транзакции события (РП40 п. 5): агент ACTIVE и подписан на тип — на момент записи. Чтение реестра
+ * (РП64 п. 3): сбой — отклонённое обещание, событие с итогом не записывается (повтор — следующим проходом или вызовом).
+ */
+export type PushFor = (agent_code: string, type: PaoEventType) => Promise<boolean>;
 
 /**
  * Событие итога (п. 2–7): только агенту, установленному по домену токена; AUTHORIZED — operation.authorized, DECLINED с
  * причиной из перечня — operation.declined; CONFIRMATION_REQUIRED и прочее — без события. data — только {op_ref}.
  */
-export function eventFor(o: OperationOutcome, pushFor?: PushFor): OperationEventDraft | undefined {
+export async function eventFor(o: OperationOutcome, pushFor?: PushFor): Promise<OperationEventDraft | undefined> {
   if (o.agent_code === null) return undefined;
   const type = o.status === "AUTHORIZED" ? "operation.authorized" : o.status === "DECLINED" && eventReason(o.reason) ? "operation.declined" : undefined;
   if (type === undefined) return undefined;
-  return { agent_code: o.agent_code, type, data: { op_ref: o.op_ref }, push: pushFor?.(o.agent_code, type) ?? false };
+  return { agent_code: o.agent_code, type, data: { op_ref: o.op_ref }, push: (await pushFor?.(o.agent_code, type)) ?? false };
 }
 
 /** Сбой любого метода — исключение. */
@@ -281,7 +284,7 @@ export async function acceptIssuerResponse(deps: IssuerResponseDeps, raw: unknow
     source: "ISSUER",
     at: (deps.now ?? (() => new Date()))().toISOString(),
   };
-  const prior = await deps.store.record(o, eventFor(o, deps.pushFor));
+  const prior = await deps.store.record(o, await eventFor(o, deps.pushFor));
   if (prior && (prior.status !== o.status || prior.reason !== o.reason)) {
     log("warn", { op_ref, prior: prior.status, issuer_approved: approved, incident: true }, "П8: второй ответ эмитента с иным исходом — итог прежний");
     return 202;
@@ -385,9 +388,9 @@ export class OperationOutcomeCollector {
     for (const op of await this.store.pending(since, OUTCOME_BATCH)) {
       const o = outcomeFromDecision(op, at);
       if (!o) continue;
-      const event = eventFor(o, this.opts.pushFor);
       try {
-        await this.store.record(o, event);
+        // Сбой чтения реестра для строки push — как сбой записи: итог не записан, следующий проход повторит.
+        await this.store.record(o, await eventFor(o, this.opts.pushFor));
         recorded++;
         if (o.agent_code === null) this.log("info", { op_ref: o.op_ref, reason: o.reason }, "П8: итог операции без события — агент не установлен");
       } catch {

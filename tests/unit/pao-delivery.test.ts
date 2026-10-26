@@ -55,7 +55,7 @@ describe("push-доставка на стенде (ПС23 без подписи;
   async function agent(events: Event["type"][] | null = ["mandate.signed", "mandate.revoked"]) {
     const code = `nspk:agent:push-${randomUUID().slice(0, 8)}:v1`;
     const side: AgentSide = newAgentSide();
-    expect(stand.admit(buyerApplication(code, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(code, side), "op")).admitted).toBe(true);
     const call = (c: Parameters<typeof signedInject>[3]) => signedInject(stand.app, side, code, { now: clock, ...c });
     if (events) {
       const r = await call({
@@ -182,7 +182,7 @@ describe("push-доставка на стенде (ПС23 без подписи;
       const id = await a.mandate();
       expect((await stand.issuer.sign(id)).statusCode).toBe(200);
       // Строка попытки создана при ACTIVE, статус сменился до отправки — SKIPPED без попытки.
-      stand.registry.changeStatus(a.code, { to, ground: "KEY_COMPROMISE" });
+      await stand.registry.changeStatus(a.code, { to, ground: "KEY_COMPROMISE" });
       expect(await stand.deliverEvents()).toBe(1);
       // Событие во время приостановки — без строки попытки.
       expect((await stand.issuer.revoke(id)).statusCode).toBe(200);
@@ -193,7 +193,7 @@ describe("push-доставка на стенде (ПС23 без подписи;
       expect(denied.statusCode).toBe(403);
       expect(denied.json()).toMatchObject({ code: "AGENT_SUSPENDED" });
       if (to === "SUSPENDED") {
-        stand.registry.changeStatus(a.code, { to: "ACTIVE" });
+        await stand.registry.changeStatus(a.code, { to: "ACTIVE" });
         const feed = (await a.feed()).json() as Event[];
         expect(feed.map((e) => e.type)).toEqual(["mandate.signed", "mandate.revoked"]);
         expect(await stand.deliverEvents()).toBe(0);
@@ -209,7 +209,7 @@ describe("обработчик доставки: попытки, статус, �
   const sub = { url: URL_OK, events: ["mandate.signed"] as const };
 
   async function signed(store: ConsentStore, now: Date): Promise<string> {
-    const j = new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => now, pushFor: () => true });
+    const j = new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => now, pushFor: async () => true });
     const m = await j.request(A, keyHash(), intent("2026-10-24T10:00:00Z"));
     const d: MandateDecisionPayload = {
       participant_code: "BANK-TEST",
@@ -236,10 +236,10 @@ describe("обработчик доставки: попытки, статус, �
     const logged: unknown[] = [];
     const d = new EventDeliverer({
       store,
-      agent: () => {
+      agent: async () => {
         throw new Error("реестр недоступен");
       },
-      subscription: () => sub,
+      subscription: async () => sub,
       resolveHost: createStandDns().resolve,
       transport: receiver.transport,
       params,
@@ -280,8 +280,8 @@ describe("обработчик доставки: попытки, статус, �
     const logged: unknown[] = [];
     const d = new EventDeliverer({
       store,
-      agent: () => active,
-      subscription: () => sub,
+      agent: async () => active,
+      subscription: async () => sub,
       resolveHost: createStandDns().resolve,
       transport: receiver.transport,
       params,
@@ -317,7 +317,7 @@ describe("обработчик доставки: попытки, статус, �
   });
 
   it("стендовый транспорт или разрешение имени без stand: true — отказ запуска (РП40 п. 8)", () => {
-    const base = { store: new MemoryConsentStore(), agent: () => active, subscription: () => sub, params };
+    const base = { store: new MemoryConsentStore(), agent: async () => active, subscription: async () => sub, params };
     expect(() => new EventDeliverer({ ...base, resolveHost: createStandDns().resolve, transport: httpsTransport })).toThrow(
       /стендовый порт доставки/,
     );
@@ -363,7 +363,7 @@ describe.skipIf(!DATABASE_URL)("попытки доставки — PostgreSQL (
 
   const A = "nspk:agent:deliveries-pg:v1";
   const journal = (store: ConsentStore, push: boolean) =>
-    new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => T0, pushFor: () => push });
+    new ConsentJournal(store, { revocationOrder: () => "bank:test:revocation:v1", now: () => T0, pushFor: async () => push });
   const decide = async (j: ConsentJournal): Promise<void> => {
     const m = await j.request(A, keyHash(), intent("2026-10-24T10:00:00Z"));
     await j.sign({

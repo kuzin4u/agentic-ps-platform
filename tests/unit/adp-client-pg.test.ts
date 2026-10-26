@@ -74,7 +74,7 @@ describe.skipIf(!DATABASE_URL)("лимит клиента на PostgreSQL: дв�
 
   const instance = (pool: pg.Pool): Adp =>
     new Adp({
-      agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
+      agents: { get: async (c) =>(c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
       mandates,
       state: new StateService(new PgHoldLedger(pool), mandates, { reservationTtlSec: 600 }),
       credentials: agentTokenCredentials,

@@ -63,9 +63,9 @@ function stand(nonces?: AsyncNonceStore) {
   const store = new InMemoryAgentRegistryStore();
   const registry = new AgentRegistry(store, { keys: POLICY, now });
   const keys = new AgentKeys(store, { keys: POLICY, now });
-  const admit = (agent_code: string): Signer => {
+  const admit = async (agent_code: string): Promise<Signer> => {
     const { signer, publicKey } = agentSigner();
-    const d = registry.admit(
+    const d = await registry.admit(
       { agent_code, class: "BUYER", model: "m", runtime: "r", alg: "ed25519", public_key: publicKey },
       { contour: "sandbox", operator: "op" },
     );
@@ -111,21 +111,21 @@ const code = (r: PaoAuthResult): string => (r.ok ? "OK" : r.code);
 describe("проверка обращения ПАО: принято (ПАО §2)", () => {
   it("GET без тела: content-digest от пустого тела; агент — из реестра, kid — его ключ", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const r = await s.verifier.verify(signed(signer, A));
     expect(r).toMatchObject({ ok: true, kid: signer.kid, agent: { agent_code: A, class: "BUYER", level: 1 } });
   });
 
   it("POST с телом и запросом", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signed(signer, A, { method: "POST", path: "/pao/v1/mandates", query: "a=1", body: '{"x":1}' });
     expect(code(await s.verifier.verify(req))).toBe("OK");
   });
 
   it("регистр имён заголовков не важен", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signed(signer, A);
     const upper = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k.toUpperCase(), v]));
     expect(code(await s.verifier.verify({ ...req, headers: upper }))).toBe("OK");
@@ -135,15 +135,15 @@ describe("проверка обращения ПАО: принято (ПАО §2
 describe("ключ — только среди ключей агента из x-agent-code (РП23 п. 3, инвариант 5)", () => {
   it("агент A подписывает своим ключом от имени B — SIGNATURE_INVALID", async () => {
     const s = stand();
-    const a = s.admit(A);
-    s.admit(B);
+    const a = await s.admit(A);
+    await s.admit(B);
     expect(code(await s.verifier.verify(signed(a, B)))).toBe("SIGNATURE_INVALID");
   });
 
   it("ключ B под кодом A с подменой keyid — SIGNATURE_INVALID", async () => {
     const s = stand();
-    const a = s.admit(A);
-    const b = s.admit(B);
+    const a = await s.admit(A);
+    const b = await s.admit(B);
     const req = signed(a, A);
     const input = (req.headers["signature-input"] as string).replace(a.kid, b.kid);
     expect(code(await s.verifier.verify({ ...req, headers: { ...req.headers, "signature-input": input } }))).toBe(
@@ -153,7 +153,7 @@ describe("ключ — только среди ключей агента из x-
 
   it("неизвестный у агента kid — SIGNATURE_INVALID (РП23 п. 6.2)", async () => {
     const s = stand();
-    s.admit(A);
+    await s.admit(A);
     const { signer } = agentSigner();
     expect(code(await s.verifier.verify(signed(signer, A)))).toBe("SIGNATURE_INVALID");
   });
@@ -162,7 +162,7 @@ describe("ключ — только среди ключей агента из x-
 describe("порядок проверки и коды (РП23 п. 6)", () => {
   it("нет x-agent-code или агента нет в реестре — AGENT_UNKNOWN, раньше подписи", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signed(signer, A);
     expect(await s.verifier.verify(without(req, "x-agent-code"))).toEqual({
       ok: false,
@@ -175,15 +175,15 @@ describe("порядок проверки и коды (РП23 п. 6)", () => {
 
   it("отозванный ключ — AGENT_KEY_REVOKED на следующей же проверке", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     expect(code(await s.verifier.verify(signed(signer, A)))).toBe("OK");
-    s.keys.revoke(A, signer.kid);
+    await s.keys.revoke(A, signer.kid);
     expect(await s.verifier.verify(signed(signer, A))).toEqual({ ok: false, code: "AGENT_KEY_REVOKED", norm: "A2 п. 5.4" });
   });
 
   it("истёкший ключ — AGENT_KEY_REVOKED (отдельного кода в ПАО нет)", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const later = new Date(NOW.getTime() + 90 * 86_400_000);
     s.setClock(later);
     expect(code(await s.verifier.verify(signed(signer, A, { ts: later })))).toBe("AGENT_KEY_REVOKED");
@@ -191,18 +191,18 @@ describe("порядок проверки и коды (РП23 п. 6)", () => {
 
   it("после отзыва новый ключ работает, старый — нет", async () => {
     const s = stand();
-    const old = s.admit(A);
+    const old = await s.admit(A);
     const next = agentSigner();
-    s.keys.register(A, { alg: "ed25519", public_key: next.publicKey });
-    s.keys.revoke(A, old.kid);
+    await s.keys.register(A, { alg: "ed25519", public_key: next.publicKey });
+    await s.keys.revoke(A, old.kid);
     expect(code(await s.verifier.verify(signed(next.signer, A)))).toBe("OK");
     expect(code(await s.verifier.verify(signed(old, A)))).toBe("AGENT_KEY_REVOKED");
   });
 
   it.each(["SUSPENDED", "EXCLUDED"] as const)("%s: изменяющий и прочие методы — AGENT_SUSPENDED", async (to) => {
     const s = stand();
-    const signer = s.admit(A);
-    s.registry.changeStatus(A, { to, ground: "KEY_COMPROMISE" });
+    const signer = await s.admit(A);
+    await s.registry.changeStatus(A, { to, ground: "KEY_COMPROMISE" });
     const post = signed(signer, A, { method: "POST", path: "/pao/v1/mandates", body: "{}" });
     expect(await s.verifier.verify(post)).toEqual({ ok: false, code: "AGENT_SUSPENDED", norm: "A2 п. 7.1" });
     expect(code(await s.verifier.verify(signed(signer, A, { path: "/pao/v1/mandates/m-1" })))).toBe("AGENT_SUSPENDED");
@@ -214,8 +214,8 @@ describe("порядок проверки и коды (РП23 п. 6)", () => {
     const path = "/pao/v1/mandates/mnd_00000000-0000-4000-8000-000000000000/relinquish";
     for (const to of ["SUSPENDED", "EXCLUDED"] as const) {
       const s = stand();
-      const signer = s.admit(A);
-      s.registry.changeStatus(A, { to, ground: "KEY_COMPROMISE" });
+      const signer = await s.admit(A);
+      await s.registry.changeStatus(A, { to, ground: "KEY_COMPROMISE" });
       const res = await s.verifier.verify(signed(signer, A, { method: "POST", path, body: "" }));
       expect([to, code(res)]).toEqual([to, to === "SUSPENDED" ? "OK" : "AGENT_SUSPENDED"]);
       if (to === "SUSPENDED") {
@@ -229,8 +229,8 @@ describe("порядок проверки и коды (РП23 п. 6)", () => {
   it("SUSPENDED: POST отзыв своего ключа доступен (РП60 п. 3), EXCLUDED — AGENT_SUSPENDED; похожие пути и методы — AGENT_SUSPENDED", async () => {
     for (const to of ["SUSPENDED", "EXCLUDED"] as const) {
       const s = stand();
-      const signer = s.admit(A);
-      s.registry.changeStatus(A, { to, ground: "KEY_COMPROMISE" });
+      const signer = await s.admit(A);
+      await s.registry.changeStatus(A, { to, ground: "KEY_COMPROMISE" });
       const path = `/pao/v1/agent/keys/${signer.kid}/revoke`;
       const res = await s.verifier.verify(signed(signer, A, { method: "POST", path, body: "" }));
       expect([to, code(res)]).toEqual([to, to === "SUSPENDED" ? "OK" : "AGENT_SUSPENDED"]);
@@ -251,15 +251,15 @@ describe("порядок проверки и коды (РП23 п. 6)", () => {
 
   it.each(["SUSPENDED", "EXCLUDED"] as const)("%s: GET /pao/v1/agent доступен — агент узнаёт свой статус", async (to) => {
     const s = stand();
-    const signer = s.admit(A);
-    s.registry.changeStatus(A, { to, ground: "KEY_COMPROMISE" });
+    const signer = await s.admit(A);
+    await s.registry.changeStatus(A, { to, ground: "KEY_COMPROMISE" });
     expect(await s.verifier.verify(signed(signer, A))).toMatchObject({ ok: true, agent: { status: to } });
   });
 
   it("приостановленный с неверной подписью — SIGNATURE_INVALID: подпись раньше статуса", async () => {
     const s = stand();
-    const signer = s.admit(A);
-    s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    const signer = await s.admit(A);
+    await s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
     const req = signed(signer, A, { method: "POST", path: "/pao/v1/mandates", body: "{}" });
     expect(code(await s.verifier.verify({ ...req, body: "{ }" }))).toBe("SIGNATURE_INVALID");
   });
@@ -273,15 +273,15 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
     ["метод", { method: "DELETE" }],
   ])("подмена после подписи — SIGNATURE_INVALID: %s", async (_n, change) => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signed(signer, A, { method: "POST", path: "/pao/v1/mandates", query: "a=1", body: '{"x":1}' });
     expect(code(await s.verifier.verify({ ...req, ...change }))).toBe("SIGNATURE_INVALID");
   });
 
   it("подмена x-agent-code, x-timestamp, x-nonce — подписанные заголовки", async () => {
     const s = stand();
-    const signer = s.admit(A);
-    s.admit(B);
+    const signer = await s.admit(A);
+    await s.admit(B);
     for (const [h, v] of [
       ["x-agent-code", B],
       ["x-timestamp", new Date(NOW.getTime() + 1000).toISOString()],
@@ -296,7 +296,7 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("GET, подписанный без content-digest, — SIGNATURE_INVALID (РП16)", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signRequest(
       {
         method: "GET",
@@ -313,7 +313,7 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("alg в Signature-Input не совпадает с alg ключа — SIGNATURE_INVALID (РП5)", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signed(signer, A);
     const input = (req.headers["signature-input"] as string).replace('alg="ed25519"', 'alg="gost3410"');
     expect(code(await s.verifier.verify({ ...req, headers: { ...req.headers, "signature-input": input } }))).toBe(
@@ -323,7 +323,7 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("окно signature_skew_sec: на границе — принято, за границей в обе стороны — SIGNATURE_INVALID", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const shift = (sec: number): Date => new Date(NOW.getTime() + sec * 1000);
     expect(code(await s.verifier.verify(signed(signer, A, { ts: shift(-SKEW) })))).toBe("OK");
     expect(code(await s.verifier.verify(signed(signer, A, { ts: shift(SKEW) })))).toBe("OK");
@@ -333,8 +333,8 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("повтор nonce — SIGNATURE_INVALID; тот же nonce у другого агента — принят", async () => {
     const s = stand();
-    const a = s.admit(A);
-    const b = s.admit(B);
+    const a = await s.admit(A);
+    const b = await s.admit(B);
     expect(code(await s.verifier.verify(signed(a, A, { nonce: "same" })))).toBe("OK");
     expect(code(await s.verifier.verify(signed(a, A, { nonce: "same" })))).toBe("SIGNATURE_INVALID");
     expect(code(await s.verifier.verify(signed(b, B, { nonce: "same" })))).toBe("OK");
@@ -342,7 +342,7 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("повтор того же обращения целиком — SIGNATURE_INVALID", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signed(signer, A);
     expect(code(await s.verifier.verify(req))).toBe("OK");
     expect(code(await s.verifier.verify(req))).toBe("SIGNATURE_INVALID");
@@ -350,7 +350,7 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("неподписанный запрос не занимает nonce: nonce запоминается только после успешной проверки", async () => {
     const s = stand(counting());
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signed(signer, A, { nonce: "victim" });
     expect(code(await s.verifier.verify({ ...req, headers: { ...req.headers, signature: "sig1=:AAAA:" } }))).toBe(
       "SIGNATURE_INVALID",
@@ -361,8 +361,8 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("отклонённый по статусу запрос nonce занимает: подпись была верной", async () => {
     const s = stand();
-    const signer = s.admit(A);
-    s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    const signer = await s.admit(A);
+    await s.registry.changeStatus(A, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
     const req = signed(signer, A, { method: "POST", path: "/pao/v1/mandates", body: "{}", nonce: "n-s" });
     expect(code(await s.verifier.verify(req))).toBe("AGENT_SUSPENDED");
     expect(code(await s.verifier.verify(req))).toBe("SIGNATURE_INVALID");
@@ -370,7 +370,7 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("пустой или отсутствующий nonce — SIGNATURE_INVALID", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     expect(code(await s.verifier.verify(signed(signer, A, { nonce: "" })))).toBe("SIGNATURE_INVALID");
     const req = signed(signer, A);
     expect(code(await s.verifier.verify(without(req, "x-nonce")))).toBe("SIGNATURE_INVALID");
@@ -378,7 +378,7 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("повторённый заголовок (массив значений) — SIGNATURE_INVALID, не догадка", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signed(signer, A);
     expect(code(await s.verifier.verify({ ...req, headers: { ...req.headers, "x-nonce": ["a", "b"] } }))).toBe(
       "SIGNATURE_INVALID",
@@ -387,7 +387,7 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("тело у метода без тела (unexpectedBody) — SIGNATURE_INVALID после AGENT_UNKNOWN; nonce не занимается (РП62 п. 7)", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signed(signer, A);
     expect(code(await s.verifier.verify({ ...req, unexpectedBody: true }))).toBe("SIGNATURE_INVALID");
     // Порядок РП23 п. 6: неизвестный агент — AGENT_UNKNOWN и с телом.
@@ -398,8 +398,8 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("сбой реестра или ключей — 503 UPSTREAM_UNAVAILABLE, не ошибка агента и не исключение (аудит PS-04 №2)", async () => {
     const s = stand();
-    const signer = s.admit(A);
-    const down = (): never => {
+    const signer = await s.admit(A);
+    const down = async (): Promise<never> => {
       throw new Error("db down");
     };
     const verifierWith = (sources: Partial<PaoAuthSources>) =>
@@ -423,7 +423,7 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("исключение не из источника (проверка подписи) — SIGNATURE_INVALID, не UPSTREAM (повторный аудит №2)", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const v = new PaoRequestVerifier(
       { getAgent: (c) => s.registry.get(c), lookupKey: (c, kid) => s.keys.lookup(c, kid) },
       {
@@ -442,12 +442,12 @@ describe("подпись: состав, digest, окно, nonce (ПАО §2)", (
 
   it("сбой источника не занимает nonce: повтор после восстановления принимается", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     let up = false;
     const v = new PaoRequestVerifier(
       {
         getAgent: (c) => s.registry.get(c),
-        lookupKey: (c, kid) => {
+        lookupKey: async (c, kid) => {
           if (!up) throw new Error("db down");
           return s.keys.lookup(c, kid);
         },
@@ -488,7 +488,7 @@ describe("хранилище nonce", () => {
       purge: () => inner.purge(),
     };
     const s = stand(slow);
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     s.setClock(NOW);
     const v = new PaoRequestVerifier(
       { getAgent: (c) => s.registry.get(c), lookupKey: (c, kid) => s.keys.lookup(c, kid) },
@@ -537,7 +537,7 @@ describe("хранилище nonce", () => {
 
   it("длинный x-nonce (8 000 знаков) принимается, повтор — SIGNATURE_INVALID (РП62 п. 11)", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     const req = signed(signer, A, { nonce: "n".repeat(7_990) + String(++nonceSeq) });
     expect(code(await s.verifier.verify(req))).toBe("OK");
     expect(code(await s.verifier.verify(req))).toBe("SIGNATURE_INVALID");
@@ -545,7 +545,7 @@ describe("хранилище nonce", () => {
 
   it("по умолчанию ttl = 2 × signature_skew_sec: повтор в пределах окна времени ловится всегда", async () => {
     const s = stand();
-    const signer = s.admit(A);
+    const signer = await s.admit(A);
     // Метка на верхней границе окна: обращение годно до NOW + 2 × SKEW по часам Платформы.
     const ts = new Date(NOW.getTime() + SKEW * 1000);
     const req = signed(signer, A, { ts });

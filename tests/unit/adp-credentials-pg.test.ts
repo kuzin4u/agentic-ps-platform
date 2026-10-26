@@ -103,7 +103,7 @@ describe.skipIf(!DATABASE_URL)("одноразовость криптограм�
   const mandates = new Mandates();
   const instance = (pool: pg.Pool, credentials: CredentialStore): Adp =>
     new Adp({
-      agents: { get: (c) => (c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
+      agents: { get: async (c) =>(c === AGENT ? { status: "ACTIVE", level: 1 } : undefined) },
       mandates,
       clientLimits: { get: async () => [] },
       state: new StateService(new PgHoldLedger(pool), mandates, { reservationTtlSec: 600 }),

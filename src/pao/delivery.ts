@@ -100,9 +100,9 @@ export const httpsTransport: EventTransport = (target, body, headers, timeoutMs)
 
 export interface EventDelivererDeps {
   readonly store: EventDeliveryStore;
-  /** Запись агента из реестра: статус — перед каждой отправкой (РП40 п. 6). Исключение — статус не прочитан. */
-  readonly agent: (agent_code: string) => AgentRecord | undefined;
-  readonly subscription: (agent_code: string) => AgentSubscription | undefined;
+  /** Запись агента из реестра: статус — перед каждой отправкой (РП40 п. 6). Отклонённое обещание — статус не прочитан. */
+  readonly agent: (agent_code: string) => Promise<AgentRecord | undefined>;
+  readonly subscription: (agent_code: string) => Promise<AgentSubscription | undefined>;
   readonly resolveHost: HostResolver;
   readonly transport: EventTransport;
   readonly params: Pick<Params, "event_retry_max" | "event_delivery_timeout_ms" | "event_subscription_allow_hosts">;
@@ -159,8 +159,8 @@ export class EventDeliverer {
     let agent: AgentRecord | undefined;
     let sub: AgentSubscription | undefined;
     try {
-      agent = this.deps.agent(code);
-      sub = this.deps.subscription(code);
+      agent = await this.deps.agent(code);
+      sub = await this.deps.subscription(code);
     } catch {
       // Статус не прочитан — не отправлять и не тратить попытку (инвариант 3); срок — от номера взятия: при долгом сбое
       // реестра строка берётся всё реже (дополнение РП40 п. 16).

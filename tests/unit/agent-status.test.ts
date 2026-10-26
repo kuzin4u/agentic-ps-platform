@@ -37,7 +37,7 @@ describe("приостановление и снятие агента на ст�
   async function agent(events: Event["type"][] = ["agent.suspended", "agent.reinstated", "mandate.signed"]) {
     const code = `nspk:agent:susp-${randomUUID().slice(0, 8)}:v1`;
     const side = newAgentSide();
-    expect(stand.admit(buyerApplication(code, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(code, side), "op")).admitted).toBe(true);
     const call = (c: Parameters<typeof signedInject>[3]) => signedInject(stand.app, side, code, { now: stand.now(), ...c });
     const put = await call({
       method: "PUT",
@@ -143,7 +143,7 @@ describe("приостановление и снятие агента на ст�
 
   it("исключённого агента служба не приостанавливает и не восстанавливает (РП21 п. 4)", async () => {
     const a = await agent([]);
-    stand.registry.changeStatus(a.code, { to: "EXCLUDED", ground: "WITHDRAWN" });
+    await stand.registry.changeStatus(a.code, { to: "EXCLUDED", ground: "WITHDRAWN" });
     await expect(stand.suspendAgent(a.code, "KEY_COMPROMISE")).rejects.toThrow(StatusTransitionError);
     await expect(stand.reinstateAgent(a.code)).rejects.toThrow(StatusTransitionError);
   });
@@ -154,7 +154,7 @@ describe("сбой записи события статуса (РП54 п. 2)", (
   it("статус остаётся SUSPENDED, ошибка вызывающему с инцидентом; повтор того же действия дописывает событие один раз", async () => {
     const registry = new AgentRegistry(new InMemoryAgentRegistryStore(), { keys: params, now: () => T0 });
     const code = "nspk:agent:susp-fail:v1";
-    expect(registry.admit(buyerApplication(code, newAgentSide()), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(code, newAgentSide()), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
     const store = new MemoryConsentStore();
     let broken = true;
     const logs: Record<string, unknown>[] = [];
@@ -162,12 +162,12 @@ describe("сбой записи события статуса (РП54 п. 2)", (
       events: {
         appendAgentStatusEvent: (d, at) => (broken ? Promise.reject(new Error("лента недоступна")) : store.appendAgentStatusEvent(d, at)),
       },
-      pushFor: () => false,
+      pushFor: async () => false,
       log: (_l, f) => logs.push(f),
     });
 
     await expect(service.suspend(code, "KEY_COMPROMISE")).rejects.toThrow(AgentStatusEventMissingError);
-    expect(registry.get(code)?.status).toBe("SUSPENDED");
+    expect((await registry.get(code))?.status).toBe("SUSPENDED");
     expect(logs).toContainEqual(expect.objectContaining({ code: "AGENT_STATUS_EVENT_MISSING", incident: true }));
     expect(await store.listEvents(code, undefined, 10)).toEqual([]);
 

@@ -28,7 +28,7 @@ describe("GET /pao/v1/operations?mandate_id на стенде (РП55 п. 6)", (
   let dir: string;
   const prevPath = process.env.PARAMS_PATH;
   const principal = opaquePrincipalRef("prn_list_");
-  beforeAll(() => {
+  beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "ops-list-"));
     const params = JSON.parse(readFileSync(new URL("../../config/params.stand.json", import.meta.url), "utf8")) as Record<string, unknown>;
     writeFileSync(join(dir, "params.json"), JSON.stringify({ ...params, event_page_max: PAGE_MAX }));
@@ -37,8 +37,8 @@ describe("GET /pao/v1/operations?mandate_id на стенде (РП55 п. 6)", (
     stand.setClock(T0);
     side = newAgentSide();
     other = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
-    expect(stand.admit(buyerApplication(OTHER, other), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(OTHER, other), "op")).admitted).toBe(true);
   });
   afterAll(async () => {
     if (prevPath === undefined) delete process.env.PARAMS_PATH;

@@ -19,7 +19,7 @@ describe("ПС13 на стенде: реверсал освобождает ре
     stand = createStand();
     stand.setClock(new Date("2026-10-23T15:00:00Z"));
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
     const limits = await stand.issuer.setLimits(principal, { per_period: 100_000, period: "DAY", currency: "RUB" }, 1);
     expect(limits.statusCode, JSON.stringify(limits.body)).toBe(200);
   });

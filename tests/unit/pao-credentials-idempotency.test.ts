@@ -45,7 +45,7 @@ async function gateway() {
   const registry = new AgentRegistry(regStore, { keys: params });
   const keys = new AgentKeys(regStore, { keys: params });
   const side = newAgentSide();
-  expect(registry.admit(buyerApplication(CODE, side), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+  expect((await registry.admit(buyerApplication(CODE, side), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
   const issuer = createIssuerEmulator();
   const tsp = createTokenServiceEmulator();
   const store = new MemoryCredentialStore();
@@ -376,7 +376,7 @@ describe("GET /pao/v1/credentials/{ref} — реквизит по ссылке (
     const bare = await g.app.inject({ method: "GET", url: `/pao/v1/credentials/${c.credential_ref}` });
     expect(bare.statusCode).toBe(401);
     expect(bare.body).not.toContain(c.payload.cryptogram as string);
-    g.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    await g.registry.changeStatus(CODE,{ to: "SUSPENDED", ground: "KEY_COMPROMISE" });
     const denied = await get(g, c.credential_ref);
     expect(denied.statusCode).toBe(403);
     expect(denied.json()).toMatchObject({ code: "AGENT_SUSPENDED" });

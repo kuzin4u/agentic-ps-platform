@@ -97,8 +97,8 @@ export class AgentKeys {
    * до now + key_overlap_days (РП23 п. 4). Исключённому агенту — отказ; приостановленному — можно (смена ключа при компрометации);
    * проверка статуса неделима с добавлением ключа (РП23, дополнения).
    */
-  register(agent_code: string, input: unknown, opts: { readonly requireActive?: boolean } = {}): AgentKey {
-    const rec = this.store.get(agent_code);
+  async register(agent_code: string, input: unknown, opts: { readonly requireActive?: boolean } = {}): Promise<AgentKey> {
+    const rec = await this.store.get(agent_code);
     if (!rec) throw new AgentNotFoundError(agent_code);
     if (rec.status === "EXCLUDED") throw new AgentExcludedError(agent_code);
     // По ПАО — только ACTIVE; статус проверен по той же версии записи, что и вставка ниже (гонка — ConcurrentChangeError).
@@ -109,13 +109,13 @@ export class AgentKeys {
     const parsed = parseKey(algorithms, alg, Object.hasOwn(i, "public_key") ? i.public_key : undefined);
     if (!parsed) throw new KeyInvalidError(agent_code, algorithms.some((a) => a.alg === alg) ? "KEY" : "ALG");
     // Идемпотентность ресурса (РП23 доп. 7): свой действующий ключ — тот же ключ без изменений.
-    const existing = this.ownActive(agent_code, parsed.kid);
+    const existing = await this.ownActive(agent_code, parsed.kid);
     if (existing) return existing;
-    if (this.store.getKey(parsed.kid)) throw new KeyInvalidError(agent_code, "TAKEN");
+    if (await this.store.getKey(parsed.kid)) throw new KeyInvalidError(agent_code, "TAKEN");
 
     const now = this.now();
     const end = overlapEnd(now, this.policy);
-    const current = this.store.keysOf(agent_code);
+    const current = await this.store.keysOf(agent_code);
     const expected = new Map(current.map((k) => [k.kid, k.row_version]));
     const shorten = new Map(
       current
@@ -126,39 +126,40 @@ export class AgentKeys {
     let ok: boolean;
     try {
       // Статус проверен по версии записи агента: исключение между проверкой и вставкой — конкурентное изменение.
-      ok = this.store.addKey(key, expected, shorten, rec.row_version);
+      ok = await this.store.addKey(key, expected, shorten, rec.row_version);
     } catch (e) {
       if (e instanceof KeyTakenError) {
         // Одновременная вставка того же ключа: свой действующий — тот же ответ, иначе — занят (РП23 доп. 7).
-        const raced = this.ownActive(agent_code, parsed.kid);
+        const raced = await this.ownActive(agent_code, parsed.kid);
         if (raced) return raced;
         throw new KeyInvalidError(agent_code, "TAKEN");
       }
       throw e;
     }
     if (!ok) throw new ConcurrentChangeError(agent_code);
-    return this.store.getKey(key.kid) as AgentKey;
+    return (await this.store.getKey(key.kid)) as AgentKey;
   }
 
   /** Отзыв своего ключа, включая последний (РП23 п. 5). Необратим; повторный отзыв возвращает отозванный ключ. */
-  revoke(agent_code: string, kid: string): AgentKey {
-    const cur = this.own(agent_code, kid);
-    if (!cur) throw new KeyNotFoundError(agent_code, kid, this.store.getKey(kid) ? "FOREIGN" : "UNKNOWN");
+  async revoke(agent_code: string, kid: string): Promise<AgentKey> {
+    const cur = await this.own(agent_code, kid);
+    if (!cur) throw new KeyNotFoundError(agent_code, kid, (await this.store.getKey(kid)) ? "FOREIGN" : "UNKNOWN");
     if (cur.revoked_at !== null) return cur;
-    const next = this.store.revokeKey(kid, cur.row_version, this.now().toISOString());
+    const next = await this.store.revokeKey(kid, cur.row_version, this.now().toISOString());
     if (!next) throw new ConcurrentChangeError(agent_code);
     return next;
   }
 
   /** Ключи агента в виде схемы Key ПАО, со статусом на сейчас. */
-  list(agent_code: string): Key[] {
+  async list(agent_code: string): Promise<Key[]> {
+    const keys = await this.store.keysOf(agent_code);
     const now = this.now();
-    return this.store.keysOf(agent_code).map((k) => toPaoKey(k, now));
+    return keys.map((k) => toPaoKey(k, now));
   }
 
   /** Ключ для проверки подписи: только среди ключей агента agent_code; статус — на момент вызова (РП23 п. 3–4). */
-  lookup(agent_code: string, kid: string): KeyForVerify | undefined {
-    const key = this.own(agent_code, kid);
+  async lookup(agent_code: string, kid: string): Promise<KeyForVerify | undefined> {
+    const key = await this.own(agent_code, kid);
     return key && { alg: key.alg, publicKey: key.public_key, status: keyStatus(key, this.now()) };
   }
 
@@ -168,28 +169,29 @@ export class AgentKeys {
    * Одна функция для эмулятора продавцов (PS-12) и HTTP-адреса каталога (PS-30).
    * Только агенты своего контура (РП56 п. 2): ключ песочницы в каталоге контура оператора — подпись прошла бы у боевого продавца.
    */
-  jwks(contour: Contour): AgentJwks {
+  async jwks(contour: Contour): Promise<AgentJwks> {
+    // Последовательно, по порядку допуска: 2N + 1 чтений; один запрос — STATUS «Открыто», КТ1 ч. 2а № 10.
+    const keys: AgentKey[] = [];
+    for (const code of await this.store.agentCodes()) {
+      const rec = await this.store.get(code);
+      if (rec?.status === "ACTIVE" && rec.contour === contour) keys.push(...(await this.store.keysOf(code)));
+    }
     const now = this.now();
-    const keys = this.store
-      .agentCodes()
-      .filter((code) => {
-        const rec = this.store.get(code);
-        return rec?.status === "ACTIVE" && rec.contour === contour;
-      })
-      .flatMap((code) => this.store.keysOf(code))
-      .filter((k) => keyStatus(k, now) === "ACTIVE" && Date.parse(k.valid_from) <= now.getTime())
-      .map(agentJwk)
-      .filter((k) => k !== null);
-    return { keys };
+    return {
+      keys: keys
+        .filter((k) => keyStatus(k, now) === "ACTIVE" && Date.parse(k.valid_from) <= now.getTime())
+        .map(agentJwk)
+        .filter((k) => k !== null),
+    };
   }
 
-  private ownActive(agent_code: string, kid: string): AgentKey | undefined {
-    const key = this.own(agent_code, kid);
+  private async ownActive(agent_code: string, kid: string): Promise<AgentKey | undefined> {
+    const key = await this.own(agent_code, kid);
     return key && keyStatus(key, this.now()) === "ACTIVE" ? key : undefined;
   }
 
-  private own(agent_code: string, kid: string): AgentKey | undefined {
-    const key = this.store.getKey(kid);
+  private async own(agent_code: string, kid: string): Promise<AgentKey | undefined> {
+    const key = await this.store.getKey(kid);
     return key && key.agent_code === agent_code ? key : undefined;
   }
 }

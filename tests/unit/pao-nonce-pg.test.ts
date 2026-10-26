@@ -30,14 +30,14 @@ const A = "nspk:agent:buyref-01:v3";
 const B = "nspk:agent:other-01:v1";
 
 /** Реестр в памяти с допущенными A и B; «экземпляр шлюза» — проверяющий на своём пуле той же базы. */
-function registry() {
+async function registry() {
   const store = new InMemoryAgentRegistryStore();
   const reg = new AgentRegistry(store, { keys: params });
   const keys = new AgentKeys(store, { keys: params });
   const sides = new Map<string, AgentSide>();
   for (const code of [A, B]) {
     const side = newAgentSide();
-    expect(reg.admit(buyerApplication(code, side), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect((await reg.admit(buyerApplication(code, side), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
     sides.set(code, side);
   }
   const gateway = (client: SqlClient, now: () => Date = () => new Date()) =>
@@ -82,7 +82,7 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
     ).rows[0]!.n;
 
   it("повтор nonce после «перезапуска» (новый экземпляр шлюза на той же базе) — SIGNATURE_INVALID", async () => {
-    const r = registry();
+    const r = await registry();
     const n = fresh();
     const req = signed(r.sides.get(A)!, A, n);
     expect(code(await r.gateway(db.pool).verify(req))).toBe("OK");
@@ -92,7 +92,7 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
   });
 
   it("тот же x-nonce у другого агента — принят: одна область pao, агент различается значением", async () => {
-    const r = registry();
+    const r = await registry();
     const n = fresh();
     const g = r.gateway(db.pool);
     expect(code(await g.verify(signed(r.sides.get(A)!, A, n)))).toBe("OK");
@@ -102,7 +102,7 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
   });
 
   it("из 20 одновременных одинаковых обращений на двух экземплярах принято одно", async () => {
-    const r = registry();
+    const r = await registry();
     const req = signed(r.sides.get(A)!, A, fresh());
     const g1 = r.gateway(db.pool);
     const g2 = r.gateway(db.reopen());
@@ -114,7 +114,7 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
   // Тест выше идёт через пул: первый вызов успевает и проверку, и запись, поэтому поломку «проверка и захват двумя
   // командами» он не ловит (№ 21 ядра). Через барьер первые ответы базы — по одному на обращение — приходят вместе.
   it("10 одновременных через барьер ответов базы — принято ровно одно (проверка и захват — одна команда)", async () => {
-    const r = registry();
+    const r = await registry();
     const req = signed(r.sides.get(A)!, A, fresh());
     const n = 10;
     const b = barrierClient(db.pool, n);
@@ -127,7 +127,7 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
   });
 
   it("неподписанное, с чужой подписью или просроченное обращение nonce не записывает", async () => {
-    const r = registry();
+    const r = await registry();
     const side = r.sides.get(A)!;
     const n = fresh();
     const g = r.gateway(db.pool);
@@ -140,7 +140,7 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
     // Отозванный ключ — AGENT_KEY_REVOKED до подписи и nonce (РП23 п. 6.2): nonce не пишется.
     const revoked = r.sides.get(B)!;
     const m = fresh();
-    r.keys.revoke(B, revoked.kid);
+    await r.keys.revoke(B, revoked.kid);
     expect(code(await g.verify(signed(revoked, B, m)))).toBe("AGENT_KEY_REVOKED");
     expect(await rows(nonceValue(B, m))).toBe(0);
     expect(code(await g.verify(good))).toBe("OK");
@@ -149,7 +149,7 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
 
   it("x-nonce 8 000 знаков — принят и записан хэшем, повтор — SIGNATURE_INVALID (РП62 п. 11; аудит К2.3 № 8)", async () => {
     // Сырой x-nonce длиннее ≈ 2,7 КБ не помещался в индекс первичного ключа core_nonces — PostgreSQL отвечал ошибкой, 503.
-    const r = registry();
+    const r = await registry();
     const n = "n".repeat(7_990) + fresh();
     const g = r.gateway(db.pool);
     const req = signed(r.sides.get(A)!, A, n);
@@ -159,7 +159,7 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
   });
 
   it("пустой x-nonce — SIGNATURE_INVALID, в базу не попадает (приставка агента не делает его непустым)", async () => {
-    const r = registry();
+    const r = await registry();
     expect(code(await r.gateway(db.pool).verify(signed(r.sides.get(A)!, A, "")))).toBe("SIGNATURE_INVALID");
     expect(await rows(nonceValue(A, ""))).toBe(0);
   });
@@ -179,7 +179,7 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
   });
 
   it("зависшая база (строка nonce под чужой блокировкой) — UPSTREAM_UNAVAILABLE по таймауту запроса, не ожидание", async () => {
-    const r = registry();
+    const r = await registry();
     const n = fresh();
     const holder = await db.pool.connect();
     try {
@@ -201,7 +201,7 @@ describe.skipIf(!DATABASE_URL)("nonce шлюза ПАО на PostgreSQL (РП30,
   });
 
   it("сбой базы — UPSTREAM_UNAVAILABLE с причиной, проверка не пропускает обращение", async () => {
-    const r = registry();
+    const r = await registry();
     const down = db.reopen();
     await down.end();
     const res = await r.gateway(down).verify(signed(r.sides.get(A)!, A, fresh()));
@@ -217,7 +217,7 @@ describe("сбой хранилища nonce по HTTP — 503 с Retry-After (Р
   });
 
   it("503 UPSTREAM_UNAVAILABLE, Retry-After из параметров, тело без текста исключения", async () => {
-    const r = registry();
+    const r = await registry();
     const failing = {
       query: async (): Promise<never> => {
         throw new Error("connect ECONNREFUSED secret-db:5432");

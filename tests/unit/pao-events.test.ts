@@ -438,12 +438,12 @@ describe("GET /pao/v1/events на стенде (ПАО §5, РП39 п. 7)", () =
   let other: AgentSide;
   const valid_to = new Date(Date.now() + 7 * 86_400_000).toISOString();
 
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     side = newAgentSide();
     other = newAgentSide();
-    expect(stand.admit(buyerApplication(code, side), "op").admitted).toBe(true);
-    expect(stand.admit(buyerApplication(otherCode, other), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(code, side), "op")).admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(otherCode, other), "op")).admitted).toBe(true);
   });
   afterAll(async () => stand.close());
 

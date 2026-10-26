@@ -229,10 +229,10 @@ describe("PUT /pao/v1/subscription на стенде (РП40 п. 1–3, 6–8)",
   let side: AgentSide;
   const url = `https://${STAND_AGENT_EMULATOR_HOST}/pao/events`;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(code, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(code, side), "op")).admitted).toBe(true);
   });
   afterEach(() => stand.dns.reset());
   afterAll(async () => stand.close());
@@ -250,12 +250,12 @@ describe("PUT /pao/v1/subscription на стенде (РП40 п. 1–3, 6–8)",
     const first = await put({ url, events: ["mandate.signed", "mandate.revoked"] }, key);
     expect(first.statusCode).toBe(200);
     expect(first.json()).toEqual({ url, events: ["mandate.signed", "mandate.revoked"] });
-    expect(stand.registry.subscription(code)).toEqual({ url, events: ["mandate.signed", "mandate.revoked"] });
+    expect(await stand.registry.subscription(code)).toEqual({ url, events: ["mandate.signed", "mandate.revoked"] });
     expect((await put({ url, events: ["mandate.signed", "mandate.revoked"] }, key)).json()).toEqual(first.json());
 
     const off = await put({ url, events: [] });
     expect(off.statusCode).toBe(200);
-    expect(stand.registry.subscription(code)).toEqual({ url, events: [] });
+    expect(await stand.registry.subscription(code)).toEqual({ url, events: [] });
   });
 
   it.each([
@@ -267,12 +267,12 @@ describe("PUT /pao/v1/subscription на стенде (РП40 п. 1–3, 6–8)",
     ["порт", `https://${STAND_AGENT_EMULATOR_HOST}:8443/pao/events`],
     ["userinfo", `https://u:p@${STAND_AGENT_EMULATOR_HOST}/pao/events`],
   ])("%s — 400 REQUEST_INVALID, подписка не меняется", async (_name, bad) => {
-    const before = stand.registry.subscription(code);
+    const before = await stand.registry.subscription(code);
     const res = await put({ url: bad, events: ["mandate.signed"] });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ code: "REQUEST_INVALID" });
     expect(res.body).not.toMatch(/scheme|ip_literal|host_not_allowed|port|userinfo/);
-    expect(stand.registry.subscription(code)).toEqual(before);
+    expect(await stand.registry.subscription(code)).toEqual(before);
   });
 
   it.each([
@@ -284,11 +284,11 @@ describe("PUT /pao/v1/subscription на стенде (РП40 п. 1–3, 6–8)",
     ["имя не разрешается", []],
   ])("подмена DNS: %s — 400 REQUEST_INVALID", async (_name, addrs) => {
     stand.dns.set(STAND_AGENT_EMULATOR_HOST, addrs);
-    const before = stand.registry.subscription(code);
+    const before = await stand.registry.subscription(code);
     const res = await put({ url, events: ["mandate.signed"] });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ code: "REQUEST_INVALID" });
-    expect(stand.registry.subscription(code)).toEqual(before);
+    expect(await stand.registry.subscription(code)).toEqual(before);
   });
 
   it("тело не по схеме — 400 REQUEST_INVALID; без Idempotency-Key — 400 IDEMPOTENCY_REQUIRED", async () => {
@@ -301,13 +301,13 @@ describe("PUT /pao/v1/subscription на стенде (РП40 п. 1–3, 6–8)",
   it.each(["SUSPENDED", "EXCLUDED"] as const)("%s — 403 AGENT_SUSPENDED, подписка не меняется (РП40 п. 6–7)", async (to) => {
     const c = `nspk:agent:subscription-${to.toLowerCase()}:v1`;
     const s = newAgentSide();
-    expect(stand.admit(buyerApplication(c, s), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(c, s), "op")).admitted).toBe(true);
     expect((await put({ url, events: ["mandate.signed"] }, randomUUID(), s, c)).statusCode).toBe(200);
-    stand.registry.changeStatus(c, { to, ground: "KEY_COMPROMISE" });
+    await stand.registry.changeStatus(c, { to, ground: "KEY_COMPROMISE" });
     const res = await put({ url, events: [] }, randomUUID(), s, c);
     expect(res.statusCode).toBe(403);
     expect(res.json()).toMatchObject({ code: "AGENT_SUSPENDED" });
-    expect(stand.registry.subscription(c)).toEqual({ url, events: ["mandate.signed"] });
+    expect(await stand.registry.subscription(c)).toEqual({ url, events: ["mandate.signed"] });
   });
 });
 
@@ -322,7 +322,7 @@ describe("шлюз подписки: журнал процесса, таймау
     const registry = new AgentRegistry(store, { keys: params });
     const keys = new AgentKeys(store, { keys: params });
     const side = newAgentSide();
-    expect(registry.admit(buyerApplication(code, side), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(code, side), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
     const lines: Record<string, unknown>[] = [];
     const app = Fastify({ logger: { level: "info", stream: { write: (l: string) => void lines.push(JSON.parse(l)) } } });
     await app.register(async (scope) =>
@@ -381,11 +381,11 @@ describe("шлюз подписки: журнал процесса, таймау
     expect(refusals(g.lines)).toEqual([]);
     expect(g.lines.filter((l) => String(l.msg).includes("сбой разрешения имени")).map((l) => l.host)).toEqual([STAND_AGENT_EMULATOR_HOST]);
     expect(JSON.stringify(g.lines)).not.toMatch(/secret-path|t0p/);
-    expect(g.registry.subscription(code)).toBeUndefined();
+    expect(await g.registry.subscription(code)).toBeUndefined();
     hang = false;
     const again = await g.put(url, key);
     expect(again.statusCode).toBe(200);
-    expect(g.registry.subscription(code)).toMatchObject({ events: [] });
+    expect(await g.registry.subscription(code)).toMatchObject({ events: [] });
     await g.app.close();
   });
 

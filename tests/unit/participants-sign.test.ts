@@ -468,7 +468,7 @@ describe("стенд: эмулятор эмитента подписывает �
     const stand = createStand();
     const code = "nspk:agent:sign-stand:v1";
     const side = newAgentSide();
-    expect(stand.admit(buyerApplication(code, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(code, side), "op")).admitted).toBe(true);
     const valid_to = new Date(Date.now() + 7 * 86_400_000).toISOString();
     const created = await signedInject(stand.app, side, code, {
       method: "POST",

@@ -22,8 +22,8 @@ describe("ПС01: допуск оператора агента и выдача �
 
   const admit = () => s.registry.admit(buyerApplication(CODE, side), { contour: "sandbox", operator: OPERATOR });
 
-  it("заявление оператора BuyerAgent → решение о допуске: код, класс BUYER, уровень 1, ключ, ACTIVE", () => {
-    const d = admit();
+  it("заявление оператора BuyerAgent → решение о допуске: код, класс BUYER, уровень 1, ключ, ACTIVE", async () => {
+    const d = await admit();
     expect(d).toMatchObject({
       admitted: true,
       record: { agent_code: CODE, issuer: "nspk:agent", class: "BUYER", level: 1, status: "ACTIVE", operator: OPERATOR },
@@ -32,7 +32,7 @@ describe("ПС01: допуск оператора агента и выдача �
   });
 
   it("GET /pao/v1/agent возвращает статус, класс, уровень, ключи из реестра и предел частоты по уровню", async () => {
-    admit();
+    await admit();
     const res = await signedInject(s.app, side, CODE);
     expect(res.statusCode).toBe(200);
     const self = res.json();
@@ -60,7 +60,7 @@ describe("ПС01: допуск оператора агента и выдача �
   });
 
   it("класс и уровень в строке запроса и заголовках игнорируются — только реестр (инвариант 5)", async () => {
-    admit();
+    await admit();
     const res = await signedInject(s.app, side, CODE, {
       query: "class=SELLER&level=9&status=ACTIVE",
       headers: { "x-agent-class": "SELLER", "x-agent-level": "9" },
@@ -70,15 +70,15 @@ describe("ПС01: допуск оператора агента и выдача �
   });
 
   it("статус — из реестра в момент обращения: приостановление видно сразу", async () => {
-    admit();
-    s.registry.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" });
+    await admit();
+    await s.registry.changeStatus(CODE,{ to: "SUSPENDED", ground: "OUT_OF_MANDATE" });
     const res = await signedInject(s.app, side, CODE);
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ status: "SUSPENDED" });
   });
 
   it("без подписи — 401 по ПАО §6, тело только code/message/norm/retry", async () => {
-    admit();
+    await admit();
     const res = await s.app.inject({ method: "GET", url: "/pao/v1/agent", headers: { "x-agent-code": CODE } });
     expect(res.statusCode).toBe(401);
     expect(res.json()).toEqual({
@@ -94,7 +94,7 @@ describe("ПС01: допуск оператора агента и выдача �
   });
 
   it("класс и уровень в теле запроса игнорируются: POST /pao/v1/agent/keys, затем GET /pao/v1/agent — из реестра (инвариант 5)", async () => {
-    admit();
+    await admit();
     const next = newAgentSide();
     const res = await signedInject(s.app, side, CODE, {
       method: "POST",
@@ -106,7 +106,7 @@ describe("ПС01: допуск оператора агента и выдача �
     expect(res.json()).not.toHaveProperty("class");
     const self = (await signedInject(s.app, next, CODE)).json();
     expect(self).toMatchObject({ class: "BUYER", level: 1, status: "ACTIVE" });
-    expect(s.registry.get(CODE)).toMatchObject({ class: "BUYER", level: 1 });
+    expect(await s.registry.get(CODE)).toMatchObject({ class: "BUYER", level: 1 });
   });
   it.todo("сертификат mTLS, связанный с agent_code, выдаётся при допуске — РП27, PS-05");
 });

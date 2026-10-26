@@ -107,9 +107,9 @@ describe("код агента (РП21 п. 1)", () => {
 });
 
 describe("ПС01 (часть реестра): допуск оператора BuyerAgent по заявлению", () => {
-  it("агент ACTIVE, класс BUYER, уровень 1", () => {
+  it("агент ACTIVE, класс BUYER, уровень 1", async () => {
     const reg = fresh();
-    const rec = admitted(reg.admit(buyerApplication(), ctx()));
+    const rec = admitted(await reg.admit(buyerApplication(), ctx()));
     expect(rec).toMatchObject({
       agent_code: "nspk:agent:buyref-01:v3",
       issuer: "nspk:agent",
@@ -125,18 +125,18 @@ describe("ПС01 (часть реестра): допуск оператора Bu
       admitted_at: NOW.toISOString(),
       row_version: 1,
     });
-    expect(reg.get("nspk:agent:buyref-01:v3")).toEqual(rec);
+    expect(await reg.get("nspk:agent:buyref-01:v3")).toEqual(rec);
     expect(Object.isFrozen(rec)).toBe(true);
   });
 
-  it("уровень, статус и оператор из заявления не берутся (инвариант 5)", () => {
-    const rec = admitted(fresh().admit(buyerApplication({ level: 9, status: "SUSPENDED", operator: "evil" }), ctx()));
+  it("уровень, статус и оператор из заявления не берутся (инвариант 5)", async () => {
+    const rec = admitted(await fresh().admit(buyerApplication({ level: 9, status: "SUSPENDED", operator: "evil" }), ctx()));
     expect(rec).toMatchObject({ level: 1, status: "ACTIVE", operator: OPERATOR });
   });
 
-  it("в записи только поля реестра: поля вне белого списка не попадают (A2 п. 1.2)", () => {
+  it("в записи только поля реестра: поля вне белого списка не попадают (A2 п. 1.2)", async () => {
     const rec = admitted(
-      fresh().admit(buyerApplication({ comment: "x", principal_ref: "P-1", cardholder_name: "x", fio: "x" }), ctx()),
+      await fresh().admit(buyerApplication({ comment: "x", principal_ref: "P-1", cardholder_name: "x", fio: "x" }), ctx()),
     );
     expect(Object.keys(rec).sort()).toEqual(
       [
@@ -161,9 +161,9 @@ describe("ПС01 (часть реестра): допуск оператора Bu
     );
   });
 
-  it("нет оператора в контексте или неизвестный контур — исключение вызывающему, не отказ заявителю", () => {
-    expect(() => fresh().admit(buyerApplication(), ctx("sandbox", " "))).toThrow();
-    expect(() => fresh().admit(buyerApplication(), ctx("prod" as Contour))).toThrow();
+  it("нет оператора в контексте или неизвестный контур — исключение вызывающему, не отказ заявителю", async () => {
+    await expect(fresh().admit(buyerApplication(), ctx("sandbox", " "))).rejects.toThrow();
+    await expect(fresh().admit(buyerApplication(), ctx("prod" as Contour))).rejects.toThrow();
   });
 });
 
@@ -220,8 +220,8 @@ describe("основания отказа — закрытый перечень 
     return app;
   };
 
-  it.each(cases)("%s: %j в контуре %s — ровно это основание", (reason, over, contour) => {
-    expect(refused(freshFor(contour).admit(build(over), ctx(contour)))).toEqual([reason]);
+  it.each(cases)("%s: %j в контуре %s — ровно это основание", async (reason, over, contour) => {
+    expect(refused(await freshFor(contour).admit(build(over), ctx(contour)))).toEqual([reason]);
   });
 
   it("каждое основание перечня покрыто случаем с точным набором оснований", () => {
@@ -241,119 +241,119 @@ describe("основания отказа — закрытый перечень 
     ["тип принципала в Agent Card", card({ principal_type: "INDIVIDUAL" })],
     ["OAuth в стандартной части Agent Card", oauthCard()],
     ["модель с датой и версия среды", { model: "model-2024-08-06", runtime: "node-20.19.0" }],
-  ])("без оснований — допуск: %s (A6 п. 2.1)", (_name, over) => {
-    admitted(fresh().admit(build(over), ctx()));
+  ])("без оснований — допуск: %s (A6 п. 2.1)", async (_name, over) => {
+    admitted(await fresh().admit(build(over), ctx()));
   });
 
-  it("CODE_TAKEN: тот же код повторно", () => {
+  it("CODE_TAKEN: тот же код повторно", async () => {
     const reg = fresh();
-    admitted(reg.admit(buyerApplication(), ctx()));
-    expect(refused(reg.admit(buyerApplication(), ctx()))).toEqual(["CODE_TAKEN"]);
+    admitted(await reg.admit(buyerApplication(), ctx()));
+    expect(refused(await reg.admit(buyerApplication(), ctx()))).toEqual(["CODE_TAKEN"]);
   });
 
-  it("CODE_TAKEN: новая версия чужого агента, оператор в теле не помогает; своя новая версия — новая запись", () => {
+  it("CODE_TAKEN: новая версия чужого агента, оператор в теле не помогает; своя новая версия — новая запись", async () => {
     const reg = fresh();
-    admitted(reg.admit(buyerApplication(), ctx()));
+    admitted(await reg.admit(buyerApplication(), ctx()));
     const v4 = buyerApplication({ agent_code: "nspk:agent:buyref-01:v4" });
-    expect(refused(reg.admit(v4, ctx("sandbox", "someone-else")))).toEqual(["CODE_TAKEN"]);
-    expect(refused(reg.admit({ ...v4, operator: OPERATOR }, ctx("sandbox", "someone-else")))).toEqual(["CODE_TAKEN"]);
-    expect(admitted(reg.admit(v4, ctx())).version).toBe(4);
-    expect(reg.get("nspk:agent:buyref-01:v3")?.version).toBe(3);
+    expect(refused(await reg.admit(v4, ctx("sandbox", "someone-else")))).toEqual(["CODE_TAKEN"]);
+    expect(refused(await reg.admit({ ...v4, operator: OPERATOR }, ctx("sandbox", "someone-else")))).toEqual(["CODE_TAKEN"]);
+    expect(admitted(await reg.admit(v4, ctx())).version).toBe(4);
+    expect((await reg.get("nspk:agent:buyref-01:v3"))?.version).toBe(3);
   });
 
-  it("CODE_INVALID и CODE_TAKEN — разные основания", () => {
+  it("CODE_INVALID и CODE_TAKEN — разные основания", async () => {
     const reg = fresh();
-    admitted(reg.admit(buyerApplication(), ctx()));
-    expect(refused(reg.admit(buyerApplication({ agent_code: "nspk:agent:buyref-01:3" }), ctx()))).toEqual([
+    admitted(await reg.admit(buyerApplication(), ctx()));
+    expect(refused(await reg.admit(buyerApplication({ agent_code: "nspk:agent:buyref-01:3" }), ctx()))).toEqual([
       "CODE_INVALID",
     ]);
   });
 
-  it("длина кода (РП63 п. 11, № 43): 256 знаков — допуск, 257 — CODE_INVALID; предел = MAX_PATH_PARAM_LENGTH", () => {
+  it("длина кода (РП63 п. 11, № 43): 256 знаков — допуск, 257 — CODE_INVALID; предел = MAX_PATH_PARAM_LENGTH", async () => {
     expect(AGENT_CODE_MAX_LENGTH).toBe(MAX_PATH_PARAM_LENGTH);
     const of = (n: number) => `nspk:agent:${"a".repeat(n - "nspk:agent::v1".length)}:v1`;
     expect([of(256).length, of(257).length]).toEqual([256, 257]);
     const reg = fresh();
-    expect(admitted(reg.admit(buyerApplication({ agent_code: of(256) }), ctx())).agent_code).toBe(of(256));
-    expect(refused(reg.admit(buyerApplication({ agent_code: of(257) }), ctx()))).toEqual(["CODE_INVALID"]);
+    expect(admitted(await reg.admit(buyerApplication({ agent_code: of(256) }), ctx())).agent_code).toBe(of(256));
+    expect(refused(await reg.admit(buyerApplication({ agent_code: of(257) }), ctx()))).toEqual(["CODE_INVALID"]);
     expect(() => parseAgentCode(of(257))).toThrow(AgentCodeError);
   });
 
-  it("все применимые основания сразу", () => {
-    const reasons = refused(fresh().admit({ agent_code: "x", class: "BOT", model: "a@b.ru" }, ctx("operator")));
+  it("все применимые основания сразу", async () => {
+    const reasons = refused(await fresh().admit({ agent_code: "x", class: "BOT", model: "a@b.ru" }, ctx("operator")));
     expect([...reasons].sort()).toEqual(
       ["APPLICATION_INCOMPLETE", "CLASS_UNKNOWN", "CODE_INVALID", "CONFORMANCE_MISSING", "PRINCIPAL_DATA"].sort(),
     );
   });
 
-  it("не объект — отказ по перечню, не исключение", () => {
+  it("не объект — отказ по перечню, не исключение", async () => {
     for (const v of [null, "x", 3, []]) {
-      expect(refused(fresh().admit(v, ctx()))).toEqual(["APPLICATION_INCOMPLETE", "CLASS_UNKNOWN"]);
+      expect(refused(await fresh().admit(v, ctx()))).toEqual(["APPLICATION_INCOMPLETE", "CLASS_UNKNOWN"]);
     }
   });
 
-  it.each(["", 5, "RUN-77"])("песочница: conformance_run_ref %j не учитывается и не записывается (РП17)", (ref) => {
-    const rec = admitted(fresh().admit(buyerApplication({ conformance_run_ref: ref }), ctx()));
+  it.each(["", 5, "RUN-77"])("песочница: conformance_run_ref %j не учитывается и не записывается (РП17)", async (ref) => {
+    const rec = admitted(await fresh().admit(buyerApplication({ conformance_run_ref: ref }), ctx()));
     expect(rec.conformance_run_ref).toBeNull();
   });
 
-  it("CODE_TAKEN неделим с вставкой: хранилище само отказывает при чужом владельце", () => {
+  it("CODE_TAKEN неделим с вставкой: хранилище само отказывает при чужом владельце", async () => {
     const store = new InMemoryAgentRegistryStore();
-    const d = new AgentRegistry(store, opts).admit(buyerApplication(), ctx());
+    const d = await new AgentRegistry(store, opts).admit(buyerApplication(), ctx());
     const rec = admitted(d);
     const key = (d as { key: AgentKey }).key;
-    expect(store.ownerOf("nspk:agent", "buyref-01")).toBe(OPERATOR);
+    expect(await store.ownerOf("nspk:agent", "buyref-01")).toBe(OPERATOR);
     const v4 = { ...rec, agent_code: "nspk:agent:buyref-01:v4", version: 4, operator: "x" };
-    expect(() => store.insert(v4, { ...key, kid: "other", agent_code: v4.agent_code })).toThrow(AgentCodeTakenError);
-    expect(() => store.insert(rec, key)).toThrow(AgentCodeTakenError);
+    await expect(store.insert(v4, { ...key, kid: "other", agent_code: v4.agent_code })).rejects.toThrow(AgentCodeTakenError);
+    await expect(store.insert(rec, key)).rejects.toThrow(AgentCodeTakenError);
   });
 
-  it("контур оператора с прогоном набора — допуск, ссылка в записи (РП17)", () => {
+  it("контур оператора с прогоном набора — допуск, ссылка в записи (РП17)", async () => {
     const rec = admitted(
-      freshFor("operator").admit(buyerApplication({ conformance_run_ref: "RUN-77" }), ctx("operator")),
+      await freshFor("operator").admit(buyerApplication({ conformance_run_ref: "RUN-77" }), ctx("operator")),
     );
     expect(rec).toMatchObject({ contour: "operator", conformance_run_ref: "RUN-77" });
   });
 
-  it("поля заявления из прототипа не учитываются", () => {
+  it("поля заявления из прототипа не учитываются", async () => {
     const app = Object.create(buyerApplication()) as Record<string, unknown>;
-    expect(refused(fresh().admit(app, ctx()))).toContain("APPLICATION_INCOMPLETE");
+    expect(refused(await fresh().admit(app, ctx()))).toContain("APPLICATION_INCOMPLETE");
   });
 
-  it("одинаковые условия: исход не зависит от оператора (A6 п. 2.1, РП17)", () => {
+  it("одинаковые условия: исход не зависит от оператора (A6 п. 2.1, РП17)", async () => {
     const strip = (r: AgentRecord): Record<string, unknown> => ({ ...r, operator: "" });
-    const base = strip(admitted(fresh().admit(buyerApplication(), ctx())));
+    const base = strip(admitted(await fresh().admit(buyerApplication(), ctx())));
     for (const operator of ["third-party-ltd", "bank-42"]) {
-      expect(strip(admitted(fresh().admit(buyerApplication(), ctx("sandbox", operator))))).toEqual(base);
+      expect(strip(admitted(await fresh().admit(buyerApplication(), ctx("sandbox", operator))))).toEqual(base);
     }
   });
 });
 
 describe("статус допуска (РП21 п. 4)", () => {
-  const admittedReg = (): AgentRegistry => {
+  const admittedReg = async (): Promise<AgentRegistry> => {
     const reg = fresh();
-    admitted(reg.admit(buyerApplication(), ctx()));
+    admitted(await reg.admit(buyerApplication(), ctx()));
     return reg;
   };
   const CODE = "nspk:agent:buyref-01:v3";
 
-  it.each(SUSPENSION_GROUNDS)("ACTIVE → SUSPENDED (%s) → ACTIVE", (ground) => {
-    const reg = admittedReg();
-    expect(reg.changeStatus(CODE, { to: "SUSPENDED", ground })).toMatchObject({
+  it.each(SUSPENSION_GROUNDS)("ACTIVE → SUSPENDED (%s) → ACTIVE", async (ground) => {
+    const reg = await admittedReg();
+    expect(await reg.changeStatus(CODE, { to: "SUSPENDED", ground })).toMatchObject({
       status: "SUSPENDED",
       status_ground: ground,
     });
-    expect(reg.changeStatus(CODE, { to: "ACTIVE" })).toMatchObject({
+    expect(await reg.changeStatus(CODE, { to: "ACTIVE" })).toMatchObject({
       status: "ACTIVE",
       status_ground: null,
     });
   });
 
-  it.each(EXCLUSION_GROUNDS)("EXCLUDED (%s) — из любого статуса, выхода нет", (ground) => {
+  it.each(EXCLUSION_GROUNDS)("EXCLUDED (%s) — из любого статуса, выхода нет", async (ground) => {
     for (const suspendFirst of [false, true]) {
-      const reg = admittedReg();
-      if (suspendFirst) reg.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
-      expect(reg.changeStatus(CODE, { to: "EXCLUDED", ground })).toMatchObject({
+      const reg = await admittedReg();
+      if (suspendFirst) await reg.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+      expect(await reg.changeStatus(CODE, { to: "EXCLUDED", ground })).toMatchObject({
         status: "EXCLUDED",
         status_ground: ground,
       });
@@ -362,7 +362,7 @@ describe("статус допуска (РП21 п. 4)", () => {
         { to: "SUSPENDED", ground: "KEY_COMPROMISE" },
         { to: "EXCLUDED", ground },
       ]) {
-        expect(() => reg.changeStatus(CODE, change)).toThrow(StatusTransitionError);
+        await expect(reg.changeStatus(CODE, change)).rejects.toThrow(StatusTransitionError);
       }
     }
   });
@@ -377,88 +377,88 @@ describe("статус допуска (РП21 п. 4)", () => {
     [{ to: "PAUSED", ground: "KEY_COMPROMISE" }],
     [null],
     ["SUSPENDED"],
-  ])("недопустимый переход из ACTIVE: %j — отказ", (change) => {
-    expect(() => admittedReg().changeStatus(CODE, change)).toThrow(StatusTransitionError);
+  ])("недопустимый переход из ACTIVE: %j — отказ", async (change) => {
+    await expect((await admittedReg()).changeStatus(CODE, change)).rejects.toThrow(StatusTransitionError);
   });
 
-  it("основание из прототипа не принимается", () => {
+  it("основание из прототипа не принимается", async () => {
     const change = Object.create({ ground: "KEY_COMPROMISE" }) as Record<string, unknown>;
     change.to = "SUSPENDED";
-    expect(() => admittedReg().changeStatus(CODE, change)).toThrow(StatusTransitionError);
+    await expect((await admittedReg()).changeStatus(CODE, change)).rejects.toThrow(StatusTransitionError);
   });
 
-  it("SUSPENDED → SUSPENDED — отказ", () => {
-    const reg = admittedReg();
-    reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" });
-    expect(() => reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" })).toThrow(StatusTransitionError);
+  it("SUSPENDED → SUSPENDED — отказ", async () => {
+    const reg = await admittedReg();
+    await reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" });
+    await expect(reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" })).rejects.toThrow(StatusTransitionError);
   });
 
-  it("нет агента — исключение", () => {
-    expect(() => fresh().changeStatus(CODE, { to: "ACTIVE" })).toThrow(AgentNotFoundError);
+  it("нет агента — исключение", async () => {
+    await expect(fresh().changeStatus(CODE, { to: "ACTIVE" })).rejects.toThrow(AgentNotFoundError);
   });
 
-  it("конкурентное изменение: проверка по версии строки, ABA не проходит", () => {
+  it("конкурентное изменение: проверка по версии строки, ABA не проходит", async () => {
     const store = new InMemoryAgentRegistryStore();
     const reg = new AgentRegistry(store, opts);
-    const rec = admitted(reg.admit(buyerApplication(), ctx()));
+    const rec = admitted(await reg.admit(buyerApplication(), ctx()));
     expect(rec.row_version).toBe(1);
     // Пока первый читатель держит запись с версией 1, второй успевает ACTIVE → SUSPENDED → ACTIVE.
-    reg.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
-    reg.changeStatus(CODE, { to: "ACTIVE" });
-    expect(store.get(CODE)?.status).toBe("ACTIVE");
+    await reg.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    await reg.changeStatus(CODE, { to: "ACTIVE" });
+    expect((await store.get(CODE))?.status).toBe("ACTIVE");
     expect(
-      store.updateStatus(CODE, rec.row_version, {
+      await store.updateStatus(CODE, rec.row_version, {
         status: "EXCLUDED",
         status_ground: "WITHDRAWN",
         status_changed_at: "x",
         suspended_at: null,
       }),
     ).toBeUndefined();
-    expect(store.get(CODE)).toMatchObject({ status: "ACTIVE", row_version: 3 });
+    expect(await store.get(CODE)).toMatchObject({ status: "ACTIVE", row_version: 3 });
     const stale: AgentRegistryStore = {
       ...store,
-      get: () => rec,
-      agentCodes: () => [],
-      ownerOf: () => undefined,
-      insert: () => undefined,
+      get: async () => rec,
+      agentCodes: async () => [],
+      ownerOf: async () => undefined,
+      insert: async () => undefined,
       updateStatus: (c, v, f) => store.updateStatus(c, v, f),
-      getKey: () => undefined,
-      keysOf: () => [],
-      addKey: () => false,
-      revokeKey: () => undefined,
-      subscriptionOf: () => undefined,
-      setSubscription: () => false,
+      getKey: async () => undefined,
+      keysOf: async () => [],
+      addKey: async () => false,
+      revokeKey: async () => undefined,
+      subscriptionOf: async () => undefined,
+      setSubscription: async () => false,
     };
-    expect(() =>
+    await expect(
       new AgentRegistry(stale, opts).changeStatus(CODE, { to: "EXCLUDED", ground: "WITHDRAWN" }),
-    ).toThrow(ConcurrentChangeError);
+    ).rejects.toThrow(ConcurrentChangeError);
   });
 
-  it("смена статуса меняет только поля статуса", () => {
+  it("смена статуса меняет только поля статуса", async () => {
     const store = new InMemoryAgentRegistryStore();
     const reg = new AgentRegistry(store, opts);
-    admitted(reg.admit(buyerApplication(), ctx()));
-    const before = store.get(CODE) as AgentRecord;
-    const after = reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" });
+    admitted(await reg.admit(buyerApplication(), ctx()));
+    const before = (await store.get(CODE)) as AgentRecord;
+    const after = await reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" });
     const STATUS_FIELDS = new Set(["status", "status_ground", "status_changed_at", "suspended_at", "row_version"]);
     const rest = (r: AgentRecord): Record<string, unknown> =>
       Object.fromEntries(Object.entries(r).filter(([k]) => !STATUS_FIELDS.has(k)));
     expect(rest(after)).toEqual(rest(before));
   });
 
-  it("suspended_at — время последнего приостановления: при снятии и исключении сохраняется (РП54 п. 5)", () => {
+  it("suspended_at — время последнего приостановления: при снятии и исключении сохраняется (РП54 п. 5)", async () => {
     let t = Date.parse("2026-10-23T10:00:00.000Z");
     const reg = new AgentRegistry(new InMemoryAgentRegistryStore(), { ...opts, now: () => new Date(t) });
-    expect(admitted(reg.admit(buyerApplication(), ctx())).suspended_at).toBeNull();
+    expect(admitted(await reg.admit(buyerApplication(), ctx())).suspended_at).toBeNull();
     t += 1000;
-    const first = reg.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" }).suspended_at;
+    const first = (await reg.changeStatus(CODE, { to: "SUSPENDED", ground: "KEY_COMPROMISE" })).suspended_at;
     expect(first).toBe("2026-10-23T10:00:01.000Z");
     t += 1000;
-    expect(reg.changeStatus(CODE, { to: "ACTIVE" }).suspended_at).toBe(first);
+    expect((await reg.changeStatus(CODE, { to: "ACTIVE" })).suspended_at).toBe(first);
     t += 1000;
-    expect(reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" }).suspended_at).toBe("2026-10-23T10:00:03.000Z");
+    expect((await reg.changeStatus(CODE, { to: "SUSPENDED", ground: "OUT_OF_MANDATE" })).suspended_at).toBe("2026-10-23T10:00:03.000Z");
     t += 1000;
-    expect(reg.changeStatus(CODE, { to: "EXCLUDED", ground: "WITHDRAWN" }).suspended_at).toBe("2026-10-23T10:00:03.000Z");
+    expect((await reg.changeStatus(CODE, { to: "EXCLUDED", ground: "WITHDRAWN" })).suspended_at).toBe("2026-10-23T10:00:03.000Z");
   });
 
   it("неизвестный текущий статус — переход запрещён (инвариант 3)", () => {
@@ -467,9 +467,9 @@ describe("статус допуска (РП21 п. 4)", () => {
     );
   });
 
-  it("запись в хранилище не меняется снаружи", () => {
-    const reg = admittedReg();
-    const rec = reg.get(CODE) as AgentRecord;
+  it("запись в хранилище не меняется снаружи", async () => {
+    const reg = await admittedReg();
+    const rec = (await reg.get(CODE)) as AgentRecord;
     expect(() => {
       (rec as { level: number }).level = 5;
     }).toThrow(TypeError);

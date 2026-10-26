@@ -45,7 +45,7 @@ export interface ReconcileDeps {
   /** Статус мандата реквизита по свёртке журнала (в том числе метка revoke-all); нет — undefined. */
   readonly mandateStatus: (mandate_id: string, agent_code: string) => Promise<string | undefined>;
   /** Последнее приостановление агента из реестра (РП54 п. 5); не приостанавливался — null. */
-  readonly suspendedAt: (agent_code: string) => string | null | undefined;
+  readonly suspendedAt: (agent_code: string) => Promise<string | null | undefined>;
   readonly now: () => Date;
 }
 
@@ -71,7 +71,7 @@ export async function reconcile(deps: ReconcileDeps, rec: PaymentMetadataSignedR
   const status = await deps.mandateStatus(cred.mandate_id, cred.agent_code);
   if (status === undefined) throw new Error(`сверка: мандат ${cred.mandate_id} реквизита ${cred.credential_ref} не найден`);
   if (status === "REVOKED") return { ...base, result: "NOT_USED", reason: "MANDATE_REVOKED" };
-  if (issuedBeforeSuspension(cred.created_at, deps.suspendedAt(cred.agent_code))) {
+  if (issuedBeforeSuspension(cred.created_at, await deps.suspendedAt(cred.agent_code))) {
     return { ...base, result: "NOT_USED", reason: "AGENT_SUSPENDED" };
   }
   if (!(deps.now().getTime() < parseRfc3339(cred.valid_to))) return { ...base, result: "NOT_USED", reason: "EXPIRED" };

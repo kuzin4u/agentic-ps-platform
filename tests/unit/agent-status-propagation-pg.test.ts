@@ -56,10 +56,10 @@ describe.skipIf(!DATABASE_URL)("распространение приостан�
     const registry = new AgentRegistry(store, { keys: params });
     const keys = new AgentKeys(store, { keys: params });
     const side = newAgentSide();
-    expect(registry.admit(buyerApplication(AGENT, side), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect((await registry.admit(buyerApplication(AGENT, side), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
     const events = new PgConsentStore(db.pool);
     // Подписки нет — строк попытки push нет; доставка — tests/unit/agent-status.test.ts.
-    const service = new AgentStatusService(registry, { events, pushFor: () => false });
+    const service = new AgentStatusService(registry, { events, pushFor: async () => false });
     const gateway = new PaoRequestVerifier(
       { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
       { skewSec: params.signature_skew_sec, nonces: paoNonceStore({ client: db.pool, skewSec: params.signature_skew_sec }) },

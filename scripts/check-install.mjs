@@ -58,7 +58,7 @@ const jwk = createPublicKey({ key: Buffer.from(publicKey, "base64"), format: "de
 const kid = createHash("sha256").update(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x })).digest("base64url");
 
 const s = createStand();
-const d = s.admit({ agent_code: code, class: "BUYER", model: "install-check", runtime: "node", alg: "ed25519", public_key: publicKey }, "install-check-operator");
+const d = await s.admit({ agent_code: code, class: "BUYER", model: "install-check", runtime: "node", alg: "ed25519", public_key: publicKey }, "install-check-operator");
 if (!d.admitted) throw new Error("допуск не прошёл: " + JSON.stringify(d));
 const baseUrl = await s.listen();
 try {

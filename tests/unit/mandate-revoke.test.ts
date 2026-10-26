@@ -290,12 +290,12 @@ describe("ПАО relinquish и отзыв клиентом на стенде (Р
   let other: AgentSide;
   const valid_to = new Date(Date.now() + 7 * 86_400_000).toISOString();
 
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     side = newAgentSide();
     other = newAgentSide();
-    expect(stand.admit(buyerApplication(code, side), "op").admitted).toBe(true);
-    expect(stand.admit(buyerApplication(otherCode, other), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(code, side), "op")).admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(otherCode, other), "op")).admitted).toBe(true);
   });
   afterAll(async () => stand.close());
 
@@ -369,12 +369,12 @@ describe("relinquish приостановленным агентом (#33)", () 
   let ex: AgentSide;
   const valid_to = new Date(Date.now() + 7 * 86_400_000).toISOString();
 
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     side = newAgentSide();
     ex = newAgentSide();
-    expect(stand.admit(buyerApplication(code, side), "op").admitted).toBe(true);
-    expect(stand.admit(buyerApplication(excluded, ex), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(code, side), "op")).admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(excluded, ex), "op")).admitted).toBe(true);
   });
   afterAll(async () => stand.close());
 
@@ -390,7 +390,7 @@ describe("relinquish приостановленным агентом (#33)", () 
 
   it("SUSPENDED: relinquish — 200 REVOKED, запись отказа; GET, новый мандат и регистрация ключа — 403 AGENT_SUSPENDED", async () => {
     const p = await signedIntent(side, code);
-    stand.registry.changeStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    await stand.registry.changeStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
 
     const res = await call(side, code, "POST", `/pao/v1/mandates/${p}/relinquish`);
     expect(res.statusCode).toBe(200);
@@ -408,7 +408,7 @@ describe("relinquish приостановленным агентом (#33)", () 
     }
 
     // После снятия приостановки: мандат отозван агентом, запись — агент и ключ проверенного обращения.
-    stand.registry.changeStatus(code, { to: "ACTIVE" });
+    await stand.registry.changeStatus(code, { to: "ACTIVE" });
     const ev = (await call(side, code, "GET", `/pao/v1/mandates/${p}/evidence`)).json() as {
       mandate_chain: { status: string }[];
       records: { kind: string; payload: unknown }[];
@@ -419,7 +419,7 @@ describe("relinquish приостановленным агентом (#33)", () 
 
   it("EXCLUDED: relinquish — 403 AGENT_SUSPENDED (решение касается только приостановленного)", async () => {
     const p = await signedIntent(ex, excluded);
-    stand.registry.changeStatus(excluded, { to: "EXCLUDED", ground: "WITHDRAWN" });
+    await stand.registry.changeStatus(excluded, { to: "EXCLUDED", ground: "WITHDRAWN" });
     const res = await call(ex, excluded, "POST", `/pao/v1/mandates/${p}/relinquish`);
     expect([res.statusCode, (res.json() as { code: string }).code]).toEqual([403, "AGENT_SUSPENDED"]);
   });

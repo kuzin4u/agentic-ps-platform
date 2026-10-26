@@ -83,7 +83,7 @@ describe("журнал запросов без значений параметр
     sink.routes.length = 0;
     s = stand();
     a = newAgentSide();
-    expect(s.admit(buyerApplication(A, a), "op").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(A, a), "op")).admitted).toBe(true);
     await s.app.ready();
   });
   afterEach(async () => {
@@ -155,13 +155,13 @@ describe("отзыв ключа: kid в собственной записи — 
   let a: AgentSide;
   let b: AgentSide;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     sink.lines.length = 0;
     s = stand();
     a = newAgentSide();
     b = newAgentSide();
-    expect(s.admit(buyerApplication(A, a), "op").admitted).toBe(true);
-    expect(s.admit(buyerApplication(B, b), "op").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(A, a), "op")).admitted).toBe(true);
+    expect((await s.admit(buyerApplication(B, b), "op")).admitted).toBe(true);
   });
   afterEach(async () => {
     await s.app.close();

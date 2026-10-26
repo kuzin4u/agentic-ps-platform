@@ -37,7 +37,7 @@ describe("ПС21 на стенде (частично до PS-21): человек
     expect(stand.params.upk_sbp_enabled).toBe(true);
     stand.setClock(new Date("2026-10-22T09:00:00Z"));
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
     const intentId = await mandate({ type: "INTENT", amount_limit: 5_000_000, subject: "техника" });
     cartId = await mandate({
       type: "CART",

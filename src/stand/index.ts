@@ -27,7 +27,7 @@ import { MemoryOpLock } from "../fulfilment/oplock.js";
 import { MemoryRefundStore } from "../fulfilment/refunds.js";
 import { MemoryReversalStore } from "../fulfilment/reversals.js";
 import { EventDeliverer, type DeliveryRow } from "../pao/delivery.js";
-import { pushAllowed, type PaoEventType } from "../pao/events.js";
+import { pushForRegistry } from "../pao/events.js";
 import { MemoryLimitsStore, type LimitsRecord } from "../participants/limits.js";
 import {
   MemoryParticipantNotificationStore,
@@ -219,7 +219,7 @@ export interface Stand {
   /** Текущее время стенда — те же часы, что у реестра и эмуляторов. */
   now(): Date;
   /** Допуск по заявлению (РП21, РП23) в контуре sandbox; оператор — от вызывающего (только стенд, №9). */
-  admit(application: unknown, operator: string): AdmissionDecision;
+  admit(application: unknown, operator: string): Promise<AdmissionDecision>;
   /**
    * Действие оператора Системы (РП54 п. 1, ПС25): приостановление с основанием A2 п. 7.1 и событие agent.suspended.
    * Повтор с тем же основанием дописывает недостающее событие; HTTP оператора — PS-32.
@@ -283,8 +283,7 @@ export function createStand(opts: StandOptions = {}): Stand {
   const operations = new MemoryOperationStore();
   const notifications = new MemoryParticipantNotificationStore(operations);
   const consentStore = new MemoryConsentStore({ notifications });
-  const pushFor = (code: string, type: PaoEventType): boolean =>
-    pushAllowed(registry.get(code)?.status, type) && (registry.subscription(code)?.events.includes(type) ?? false);
+  const pushFor = pushForRegistry(registry);
   // Приостановление и снятие — одно действие оператора со событием в ленте стенда (РП54 п. 1–2).
   const agentStatus = new AgentStatusService(registry, { events: consentStore, pushFor });
   const consent: ConsentJournal = new ConsentJournal(consentStore, {
@@ -403,7 +402,7 @@ export function createStand(opts: StandOptions = {}): Stand {
         reconcile: {
           credentials: credentialStore,
           mandateStatus: async (id, agent_code) => (await consent.adpMandate(id, agent_code))?.status,
-          suspendedAt: (agent_code) => registry.get(agent_code)?.suspended_at ?? null,
+          suspendedAt: async (agent_code) => (await registry.get(agent_code))?.suspended_at ?? null,
           now,
         },
         skewSec: params.signature_skew_sec,

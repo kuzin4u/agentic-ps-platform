@@ -99,7 +99,7 @@ describe("ПИ-8 POST /participants/v1/merchants/{id}/payments — сверка 
     side = newAgentSide();
     code = `nspk:agent:rcn-${letters()}:v1`;
     principal = opaquePrincipalRef("prn_rcn_");
-    expect(s.admit(buyerApplication(code, side), "op-rcn").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(code, side), "op-rcn")).admitted).toBe(true);
     expect((await s.issuer.setLimits(principal, { per_period: 1_000_000, period: "DAY", currency: "RUB" }, 1)).statusCode).toBe(200);
   });
   afterEach(async () => {
@@ -244,7 +244,7 @@ describe("Попытка по неизвестному или чужому ре�
       params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 },
       payments: {
         store,
-        reconcile: { credentials: { credentialForMerchant: async () => undefined }, mandateStatus: async () => "ACTIVE", suspendedAt: () => null, now: () => new Date() },
+        reconcile: { credentials: { credentialForMerchant: async () => undefined }, mandateStatus: async () => "ACTIVE", suspendedAt: async () => null, now: () => new Date() },
         skewSec: 300,
       },
     });
@@ -281,7 +281,7 @@ describe("ПИ-8 GET /participants/v1/agents/{code}/status — статус аг
     try {
       const side = newAgentSide();
       const code = `nspk:agent:sts-${letters()}:v1`;
-      expect(s.admit(buyerApplication(code, side), "op-sts").admitted).toBe(true);
+      expect((await s.admit(buyerApplication(code, side), "op-sts")).admitted).toBe(true);
       const r = await s.acquirerParticipant.getAgentStatus(code);
       const pub = await s.app.inject({ method: "GET", url: `/merchants/v1/agents/${code}` });
       expect([r.statusCode, r.body]).toEqual([200, pub.json()]);

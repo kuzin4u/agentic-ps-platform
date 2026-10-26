@@ -23,11 +23,11 @@ type Feed = { notifications: { notification_id: string; seq: number; type: strin
 describe("ПС09 на стенде: LIMIT_EXCEEDED и уведомление эмитенту для клиента (A3 п. 5.3)", () => {
   let stand: Stand;
   let side: AgentSide;
-  beforeAll(() => {
+  beforeAll(async () => {
     stand = createStand();
     stand.setClock(new Date("2026-10-20T09:00:00Z"));
     side = newAgentSide();
-    expect(stand.admit(buyerApplication(CODE, side), "op").admitted).toBe(true);
+    expect((await stand.admit(buyerApplication(CODE, side), "op")).admitted).toBe(true);
   });
   afterAll(async () => stand.close());
 

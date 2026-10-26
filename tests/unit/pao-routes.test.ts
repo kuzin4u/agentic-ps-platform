@@ -20,10 +20,10 @@ describe("ПАО по HTTP: сбой источника", () => {
     const keys = new AgentKeys(new InMemoryAgentRegistryStore(), { keys: params });
     const verifier = new PaoRequestVerifier(
       {
-        getAgent: () => {
+        getAgent: async () => {
           throw new Error("db down: secret-host:5432");
         },
-        lookupKey: () => undefined,
+        lookupKey: async () => undefined,
       },
       { skewSec: params.signature_skew_sec },
     );
@@ -50,7 +50,7 @@ describe("ПАО по HTTP: сбой источника", () => {
     const store = new InMemoryAgentRegistryStore();
     const keys = new AgentKeys(store, { keys: params });
     const verifier = new PaoRequestVerifier(
-      { getAgent: () => undefined, lookupKey: () => undefined },
+      { getAgent: async () => undefined, lookupKey: async () => undefined },
       { skewSec: params.signature_skew_sec },
     );
     app = buildServer({ env: "sandbox", pao: { verifier, keys, idempotency: paoIdempotency({ ttlSec: params.idempotency_ttl_sec }), params, consent: memoryConsent() } });

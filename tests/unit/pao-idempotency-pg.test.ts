@@ -27,14 +27,14 @@ const B = "nspk:agent:other-01:v1";
 const PATH = "/pao/v1/agent/keys";
 
 /** Реестр в памяти с A и B; «экземпляр шлюза» — сервер на своём пуле той же базы (nonce и идемпотентность — PG). */
-function platform() {
+async function platform() {
   const store = new InMemoryAgentRegistryStore();
   const reg = new AgentRegistry(store, { keys: params });
   const keys = new AgentKeys(store, { keys: params });
   const sides = new Map<string, AgentSide>();
   for (const code of [A, B]) {
     const side = newAgentSide();
-    expect(reg.admit(buyerApplication(code, side), { contour: "sandbox", operator: "op" }).admitted).toBe(true);
+    expect((await reg.admit(buyerApplication(code, side), { contour: "sandbox", operator: "op" })).admitted).toBe(true);
     sides.set(code, side);
   }
   const apps: FastifyInstance[] = [];
@@ -57,7 +57,7 @@ const keyBody = (pub: string) => JSON.stringify({ alg: "ed25519", public_key: pu
 
 describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на PostgreSQL (РП30 п. 3, Ш16)", () => {
   let db: TestDb;
-  let p: ReturnType<typeof platform> | undefined;
+  let p: Awaited<ReturnType<typeof platform>> | undefined;
   beforeAll(async () => {
     db = await openTestDb("idem");
   });
@@ -77,7 +77,7 @@ describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на Postg
     ])).rows;
 
   it("повтор после «перезапуска» (новый экземпляр на той же базе) — прежний ответ, второго ключа нет", async () => {
-    p = platform();
+    p = await platform();
     const a = p.sides.get(A)!;
     const key = randomUUID();
     const body = keyBody(newAgentSide().publicKey);
@@ -85,11 +85,11 @@ describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на Postg
     const again = await post(p.instance(db.reopen()), a, A, body, key);
     expect([first.statusCode, again.statusCode]).toEqual([201, 201]);
     expect(again.json()).toEqual(first.json());
-    expect(p.keys.list(A)).toHaveLength(2);
+    expect(await p.keys.list(A)).toHaveLength(2);
   });
 
   it("в хранилище — SHA-256 от Idempotency-Key, область pao:<agent_code>; ключ 16 КБ → 201 и повтор, не 503", async () => {
-    p = platform();
+    p = await platform();
     const a = p.sides.get(A)!;
     const key = "k".repeat(16 * 1024);
     const body = keyBody(newAgentSide().publicKey);
@@ -103,7 +103,7 @@ describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на Postg
   });
 
   it("из 20 одновременных одинаковых обращений на двух экземплярах — один ключ; остальные — повтор или 503 same_key", async () => {
-    p = platform();
+    p = await platform();
     const a = p.sides.get(A)!;
     const key = randomUUID();
     const body = keyBody(newAgentSide().publicKey);
@@ -116,7 +116,7 @@ describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на Postg
     for (const r of res.filter((x) => x.statusCode === 503)) expect(r.json()).toMatchObject({ retry: "same_key" });
     const ok = res.filter((r) => r.statusCode === 201).map((r) => r.json());
     for (const x of ok) expect(x).toEqual(ok[0]);
-    expect(p.keys.list(A)).toHaveLength(2);
+    expect(await p.keys.list(A)).toHaveLength(2);
   });
 
   // Тест выше идёт через пулы: первый вызов успевает и проверку, и захват, поэтому поломку «проверка и захват двумя
@@ -124,7 +124,7 @@ describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на Postg
   // вместе; nonce — на своём пуле, мимо барьера. Остальные девять — повтор сохранённого ответа или 503 same_key,
   // смотря по тому, успел ли обработчик записать ответ: обработчик ровно один.
   it("10 одновременных через барьер ответов базы — обработчик ровно один (проверка и захват — одна команда)", async () => {
-    p = platform();
+    p = await platform();
     const a = p.sides.get(A)!;
     const key = randomUUID();
     const body = keyBody(newAgentSide().publicKey);
@@ -142,11 +142,11 @@ describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на Postg
     const ok = res.filter((r) => r.statusCode === 201).map((r) => r.json());
     expect(ok.length).toBeGreaterThanOrEqual(1);
     for (const x of ok) expect(x).toEqual(ok[0]);
-    expect(p.keys.list(A)).toHaveLength(2);
+    expect(await p.keys.list(A)).toHaveLength(2);
   });
 
   it("тот же Idempotency-Key у другого агента — не повтор (Ш16)", async () => {
-    p = platform();
+    p = await platform();
     const key = randomUUID();
     const app = p.instance(db.pool);
     const nb = newAgentSide();
@@ -157,7 +157,7 @@ describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на Postg
   });
 
   it("другое тело с тем же ключом — 409 IDEMPOTENCY_CONFLICT", async () => {
-    p = platform();
+    p = await platform();
     const a = p.sides.get(A)!;
     const key = randomUUID();
     const app = p.instance(db.pool);
@@ -165,11 +165,11 @@ describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на Postg
     const other = await post(app, a, A, keyBody(newAgentSide().publicKey), key);
     expect(other.statusCode).toBe(409);
     expect(other.json()).toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
-    expect(p.keys.list(A)).toHaveLength(2);
+    expect(await p.keys.list(A)).toHaveLength(2);
   });
 
   it("сбой хранилища идемпотентности — 503 до обработчика, ключ не добавлен, тело без текста исключения", async () => {
-    p = platform();
+    p = await platform();
     const failing = {
       query: async (): Promise<never> => {
         throw new Error("connect ECONNREFUSED secret-db:5432");
@@ -180,6 +180,6 @@ describe.skipIf(!DATABASE_URL)("идемпотентность ПАО на Postg
     expect(res.headers["retry-after"]).toBe(String(params.unavailable_retry_after_sec));
     expect(res.json()).toMatchObject({ code: "UPSTREAM_UNAVAILABLE", retry: "same_key" });
     expect(res.body).not.toContain("secret-db");
-    expect(p.keys.list(A)).toHaveLength(1);
+    expect(await p.keys.list(A)).toHaveLength(1);
   });
 });

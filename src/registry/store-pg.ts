@@ -1,11 +1,11 @@
 // П1 Реестр агентов на PostgreSQL (РП64 п. 1–3, PS-05в ч. 2а): тот же договор, что InMemoryAgentRegistryStore, за
-// асинхронным портом. Чтение — из базы на каждом обращении, кэша нет (инвариант 8 между экземплярами). Подключение к
-// серверу, статус и событие одной транзакцией и отсечка по часам базы — PS-05в ч. 2б (РП64 п. 4–7).
+// портом AgentRegistryStore. Чтение — из базы на каждом обращении, кэша нет (инвариант 8 между экземплярами). Подключение
+// к серверу, статус и событие одной транзакцией и отсечка по часам базы — PS-05в ч. 2б-2 (РП64 п. 4–7).
 import type { SqlClient } from "@kuzin4u/agentic-core";
 import type { TxSqlPool } from "../consent/store.js";
 import type { AgentKey } from "./keys.js";
 import type { AgentRecord, AgentSubscription } from "./model.js";
-import { AgentCodeTakenError, KeyTakenError, type AgentRegistryStoreAsync, type StatusFields } from "./store.js";
+import { AgentCodeTakenError, KeyTakenError, type AgentRegistryStore, type StatusFields } from "./store.js";
 
 interface AgentRow extends Record<string, unknown> {
   agent_code: string;
@@ -84,8 +84,20 @@ const violated = (err: unknown, code: "23505" | "23503", constraint: string): bo
   (err as { code?: unknown }).code === code &&
   (err as { constraint?: unknown }).constraint === constraint;
 
-export class PgAgentRegistryStore implements AgentRegistryStoreAsync {
-  constructor(private readonly client: TxSqlPool) {}
+/**
+ * Точки внутри транзакции addKey — только для тестов гонок (КТ1 ч. 2а № 3): "agent" — после FOR SHARE строки агента,
+ * до проверки kid; "kid" — после проверки kid и версии агента, до блокировки ключей; "keys" — после второго чтения
+ * ключей, до сокращения и вставки.
+ */
+export interface PgAgentRegistryStoreHooks {
+  readonly inTx?: (step: "agent" | "kid" | "keys", key: AgentKey) => Promise<void>;
+}
+
+export class PgAgentRegistryStore implements AgentRegistryStore {
+  constructor(
+    private readonly client: TxSqlPool,
+    private readonly hooks: PgAgentRegistryStoreHooks = {},
+  ) {}
 
   async get(agent_code: string): Promise<AgentRecord | undefined> {
     const r = await this.client.query<AgentRow>(`SELECT ${AGENT_COLUMNS} FROM agents WHERE agent_code = $1`, [agent_code]);
@@ -190,14 +202,17 @@ export class PgAgentRegistryStore implements AgentRegistryStoreAsync {
         key.agent_code,
       ]);
       if (!agent.rows[0]) throw new Error(`Агента нет в реестре: ${key.agent_code}`);
+      await this.hooks.inTx?.("agent", key);
       if ((await tx.query("SELECT 1 FROM agent_keys WHERE kid = $1", [key.kid])).rows.length > 0) throw new KeyTakenError(key.kid);
       if (Number(agent.rows[0].row_version) !== agentRowVersion) return false;
+      await this.hooks.inTx?.("kid", key);
       await tx.query("SELECT 1 FROM agent_keys WHERE agent_code = $1 ORDER BY kid FOR UPDATE", [key.agent_code]);
       const cur = await tx.query<{ kid: string; row_version: string }>("SELECT kid, row_version FROM agent_keys WHERE agent_code = $1", [
         key.agent_code,
       ]);
       const same = cur.rows.length === expected.size && cur.rows.every((k) => Number(k.row_version) === expected.get(k.kid));
       if (!same || [...shorten.keys()].some((kid) => !expected.has(kid))) return false;
+      await this.hooks.inTx?.("keys", key);
       for (const [kid, valid_to] of shorten) {
         await tx.query("UPDATE agent_keys SET valid_to = $2, row_version = row_version + 1 WHERE kid = $1", [kid, valid_to]);
       }

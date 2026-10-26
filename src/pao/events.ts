@@ -108,6 +108,18 @@ export function agentStatusEventIdFor(agent_code: string, version: number): stri
 export const pushAllowed = (status: AgentStatus | undefined, type: PaoEventType): boolean =>
   status === "ACTIVE" || (status === "SUSPENDED" && type === "agent.suspended");
 
+/**
+ * Строка попытки push из реестра (РП40 п. 5): статус позволяет и агент подписан на тип — на момент записи. Чтение — из
+ * хранилища реестра на каждом вызове (РП64 п. 3); сбой — отклонённое обещание.
+ */
+export const pushForRegistry =
+  (registry: {
+    get(agent_code: string): Promise<{ readonly status: AgentStatus } | undefined>;
+    subscription(agent_code: string): Promise<{ readonly events: readonly PaoEventType[] } | undefined>;
+  }) =>
+  async (agent_code: string, type: PaoEventType): Promise<boolean> =>
+    pushAllowed((await registry.get(agent_code))?.status, type) && ((await registry.subscription(agent_code))?.events.includes(type) ?? false);
+
 function uuidV8(input: string): string {
   const b = createHash("sha256").update(input, "utf8").digest().subarray(0, 16);
   b[6] = (b[6]! & 0x0f) | 0x80; // версия 8

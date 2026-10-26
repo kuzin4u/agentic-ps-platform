@@ -22,7 +22,7 @@ describe("РП25: стенд для тестов агента", () => {
   it("допуск в контуре sandbox и GET /pao/v1/agent клиентом core по HTTP — 200", async () => {
     s = createStand();
     const side = newAgentSide();
-    expect(s.admit(buyerApplication(CODE, side), "buyref-operator").admitted).toBe(true);
+    expect((await s.admit(buyerApplication(CODE, side), "buyref-operator")).admitted).toBe(true);
     const baseUrl = await s.listen();
     const self = await new PaoClient({ baseUrl, agentCode: CODE, signer: side.signer, maxAttempts: 1 }).call(
       "GET /pao/v1/agent",

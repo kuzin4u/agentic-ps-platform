@@ -91,7 +91,7 @@ async function world(
     clientLeft: (...a) => c.state.clientLeft(...a),
   };
   const adpOpts: AdpOptions = {
-    agents: { get: (code) => (code === A || code === B ? { status: "ACTIVE", level: 2 } : undefined) },
+    agents: { get: async (code) => (code === A || code === B ? { status: "ACTIVE", level: 2 } : undefined) },
     mandates: { get: (id, a) => c.consent.adpMandate(id, a) },
     clientLimits: { get: async () => versions },
     state,
@@ -414,7 +414,7 @@ describe("ADP: агентский токен без aoi — по домену т
   it("очередь 2: агент домена приостановлен — AGENT_SUSPENDED (реестр — по коду из домена, инвариант 5)", async () => {
     const w = await world({ phase: 2 });
     const cred = await w.issue();
-    const adp = w.adpWith({ agents: { get: (code) => (code === A ? { status: "SUSPENDED", level: 2 } : undefined) } });
+    const adp = w.adpWith({ agents: { get: async (code) => (code === A ? { status: "SUSPENDED", level: 2 } : undefined) } });
     expect(parseDecision(await adp.decide(noAoi(w, cred)), "adp").reason).toBe("AGENT_SUSPENDED");
     expect(await status(w)).toBe("ISSUED");
   });

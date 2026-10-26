@@ -1,5 +1,7 @@
-// Хранилище реестра: порт и реализация в памяти. PostgreSQL — за тем же портом вместе с журналом согласий (PS-06).
+// Хранилище реестра: порт и реализация в памяти; PostgreSQL — PgAgentRegistryStore за тем же портом (РП64 п. 1–3).
 // Записи агентов и их ключи — в одном порту: допуск неделим, запись и первый ключ вместе (РП23 п. 2).
+// Порт асинхронный, кэша нет (РП64 п. 3): статус и ключи читаются из хранилища на каждом обращении; сбой чтения —
+// отклонённое обещание, вызывающий отказывает (инвариант 3).
 import type { AgentKey } from "./keys.js";
 import type { AgentRecord, AgentSubscription } from "./model.js";
 
@@ -20,24 +22,24 @@ export class KeyTakenError extends Error {
 export type StatusFields = Pick<AgentRecord, "status" | "status_ground" | "status_changed_at" | "suspended_at">;
 
 export interface AgentRegistryStore {
-  get(agent_code: string): AgentRecord | undefined;
+  get(agent_code: string): Promise<AgentRecord | undefined>;
   /** Коды всех агентов в порядке допуска — для каталога ключей (РП22 п. 1). */
-  agentCodes(): readonly string[];
+  agentCodes(): Promise<readonly string[]>;
   /** Оператор, которому принадлежат версии агента «сторона : идентификатор»; нет версий — undefined. */
-  ownerOf(issuer: string, id: string): string | undefined;
+  ownerOf(issuer: string, id: string): Promise<string | undefined>;
   /**
    * Вставка записи вместе с первым ключом — неделимо (РП23 п. 2). Код занят или «сторона : идентификатор» принадлежит
    * другому оператору — AgentCodeTakenError (A2 п. 4.1, РП21 п. 2); kid уже есть — KeyTakenError. При ошибке не сохраняется ничего.
    */
-  insert(record: AgentRecord, firstKey: AgentKey): void;
+  insert(record: AgentRecord, firstKey: AgentKey): Promise<void>;
   /**
    * Изменение только полей статуса при совпадении row_version; не совпала — undefined (конкурентное изменение).
    * row_version записи агента растёт только здесь: по ней event_id события смены статуса (РП54 п. 2, КТ1 № 3).
    */
-  updateStatus(agent_code: string, expectedRowVersion: number, fields: StatusFields): AgentRecord | undefined;
+  updateStatus(agent_code: string, expectedRowVersion: number, fields: StatusFields): Promise<AgentRecord | undefined>;
 
-  getKey(kid: string): AgentKey | undefined;
-  keysOf(agent_code: string): readonly AgentKey[];
+  getKey(kid: string): Promise<AgentKey | undefined>;
+  keysOf(agent_code: string): Promise<readonly AgentKey[]>;
   /**
    * Новый ключ и сокращение valid_to остальных — неделимо (РП23 п. 4). `expected` — kid → row_version всех ключей агента
    * на момент чтения, `agentRowVersion` — версия записи агента, по которой проверен статус (РП23, дополнения):
@@ -48,26 +50,17 @@ export interface AgentRegistryStore {
     expected: ReadonlyMap<string, number>,
     shorten: ReadonlyMap<string, string>,
     agentRowVersion: number,
-  ): boolean;
+  ): Promise<boolean>;
   /** Отзыв при совпадении row_version; не совпала — undefined. */
-  revokeKey(kid: string, expectedRowVersion: number, revoked_at: string): AgentKey | undefined;
+  revokeKey(kid: string, expectedRowVersion: number, revoked_at: string): Promise<AgentKey | undefined>;
 
   /** Подписка агента на события (РП40 п. 1); нет подписки — undefined. */
-  subscriptionOf(agent_code: string): AgentSubscription | undefined;
+  subscriptionOf(agent_code: string): Promise<AgentSubscription | undefined>;
   /** Замена подписки целиком; агента нет — false. Статус не проверяется: push проверяет его перед каждой отправкой (РП40 п. 6). */
-  setSubscription(agent_code: string, subscription: AgentSubscription): boolean;
+  setSubscription(agent_code: string, subscription: AgentSubscription): Promise<boolean>;
 }
 
-/**
- * Асинхронный порт реестра (РП64 п. 3): тот же договор, что у AgentRegistryStore, методы — Promise. Реализация на
- * PostgreSQL — PgAgentRegistryStore; в PS-05в ч. 2б заменяет синхронный порт целиком.
- */
-export type AgentRegistryStoreAsync = {
-  readonly [K in keyof AgentRegistryStore]: (
-    ...args: Parameters<AgentRegistryStore[K]>
-  ) => Promise<ReturnType<AgentRegistryStore[K]>>;
-};
-
+/** Память (стенд, dev без DATABASE_URL — РП64 п. 7): тело каждого метода без await — один процесс, одна очередь. */
 export class InMemoryAgentRegistryStore implements AgentRegistryStore {
   readonly #byCode = new Map<string, AgentRecord>();
   readonly #owners = new Map<string, string>();
@@ -75,19 +68,19 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
   readonly #keysByAgent = new Map<string, string[]>();
   readonly #subscriptions = new Map<string, AgentSubscription>();
 
-  get(agent_code: string): AgentRecord | undefined {
+  async get(agent_code: string): Promise<AgentRecord | undefined> {
     return this.#byCode.get(agent_code);
   }
 
-  agentCodes(): readonly string[] {
+  async agentCodes(): Promise<readonly string[]> {
     return [...this.#byCode.keys()];
   }
 
-  ownerOf(issuer: string, id: string): string | undefined {
+  async ownerOf(issuer: string, id: string): Promise<string | undefined> {
     return this.#owners.get(`${issuer}\u0000${id}`);
   }
 
-  insert(record: AgentRecord, firstKey: AgentKey): void {
+  async insert(record: AgentRecord, firstKey: AgentKey): Promise<void> {
     const key = `${record.issuer}\u0000${record.id}`;
     const owner = this.#owners.get(key);
     if (this.#byCode.has(record.agent_code) || (owner !== undefined && owner !== record.operator)) {
@@ -101,7 +94,7 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
     this.#keysByAgent.set(record.agent_code, [firstKey.kid]);
   }
 
-  updateStatus(agent_code: string, expectedRowVersion: number, fields: StatusFields): AgentRecord | undefined {
+  async updateStatus(agent_code: string, expectedRowVersion: number, fields: StatusFields): Promise<AgentRecord | undefined> {
     const cur = this.#byCode.get(agent_code);
     if (!cur || cur.row_version !== expectedRowVersion) return undefined;
     const next = Object.freeze({
@@ -116,20 +109,20 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
     return next;
   }
 
-  getKey(kid: string): AgentKey | undefined {
+  async getKey(kid: string): Promise<AgentKey | undefined> {
     return this.#keys.get(kid);
   }
 
-  keysOf(agent_code: string): readonly AgentKey[] {
+  async keysOf(agent_code: string): Promise<readonly AgentKey[]> {
     return (this.#keysByAgent.get(agent_code) ?? []).map((kid) => this.#keys.get(kid) as AgentKey);
   }
 
-  addKey(
+  async addKey(
     key: AgentKey,
     expected: ReadonlyMap<string, number>,
     shorten: ReadonlyMap<string, string>,
     agentRowVersion: number,
-  ): boolean {
+  ): Promise<boolean> {
     const kids = this.#keysByAgent.get(key.agent_code);
     if (!kids) throw new Error(`Агента нет в реестре: ${key.agent_code}`);
     if (this.#keys.has(key.kid)) throw new KeyTakenError(key.kid);
@@ -146,7 +139,7 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
     return true;
   }
 
-  revokeKey(kid: string, expectedRowVersion: number, revoked_at: string): AgentKey | undefined {
+  async revokeKey(kid: string, expectedRowVersion: number, revoked_at: string): Promise<AgentKey | undefined> {
     const cur = this.#keys.get(kid);
     if (!cur || cur.row_version !== expectedRowVersion || cur.revoked_at !== null) return undefined;
     const next = Object.freeze({ ...cur, revoked_at, row_version: cur.row_version + 1 });
@@ -154,11 +147,11 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
     return next;
   }
 
-  subscriptionOf(agent_code: string): AgentSubscription | undefined {
+  async subscriptionOf(agent_code: string): Promise<AgentSubscription | undefined> {
     return this.#subscriptions.get(agent_code);
   }
 
-  setSubscription(agent_code: string, subscription: AgentSubscription): boolean {
+  async setSubscription(agent_code: string, subscription: AgentSubscription): Promise<boolean> {
     if (!this.#byCode.has(agent_code)) return false;
     this.#subscriptions.set(agent_code, Object.freeze({ url: subscription.url, events: Object.freeze([...subscription.events]) }));
     return true;

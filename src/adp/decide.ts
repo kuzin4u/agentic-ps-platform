@@ -37,7 +37,7 @@ import {
 export type AdpAgent = Pick<AgentRecord, "status" | "level"> & { readonly suspended_at?: string | null };
 
 export interface AdpAgents {
-  get(agent_code: string): AdpAgent | undefined;
+  get(agent_code: string): Promise<AdpAgent | undefined>;
 }
 
 /**
@@ -411,7 +411,7 @@ export class Adp {
     // 3. Агент — из реестра (инвариант 5). Исключённый — вне реестра (A1 п. 5.3); сбой реестра — не подтверждено.
     let agent: AdpAgent | undefined;
     try {
-      agent = this.opts.agents.get(agent_code);
+      agent = await this.opts.agents.get(agent_code);
     } catch {
       this.log("warn", { op_ref: msg.op_ref }, "ADP: реестр агентов не прочитан");
       return no("STATE_UNAVAILABLE");

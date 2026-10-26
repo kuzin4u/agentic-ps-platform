@@ -596,9 +596,9 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
         }
         return fail("SIGNATURE_INVALID");
       }
-      let view: ReturnType<typeof agentStatusView>;
+      let view: Awaited<ReturnType<typeof agentStatusView>>;
       try {
-        view = agentStatusView(agentStatus, req.params.code);
+        view = await agentStatusView(agentStatus, req.params.code);
       } catch (err) {
         req.log.error({ err }, "ПИ-8: статус агента — реестр недоступен");
         return fail("UPSTREAM_UNAVAILABLE");

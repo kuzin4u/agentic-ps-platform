@@ -98,9 +98,9 @@ describe.skipIf(!DATABASE_URL)("запись об исполнении и operat
   it("запись и событие — одной транзакцией; повтор — прежняя запись без второго события; суммы — числа; только вставка (23001)", async () => {
     const store = new PgFulfilmentStore(db.pool);
     const f = record("OP-ful-once");
-    expect(await store.record(f, settledEventFor(f))).toBeUndefined();
+    expect(await store.record(f, await settledEventFor(f))).toBeUndefined();
     expect(await store.get("OP-ful-once")).toEqual(f);
-    expect(await store.record(record("OP-ful-once", { final_amount: 50_000 }), settledEventFor(f))).toEqual(f);
+    expect(await store.record(record("OP-ful-once", { final_amount: 50_000 }), await settledEventFor(f))).toEqual(f);
     expect(await events("OP-ful-once")).toEqual([
       { type: "operation.settled", data: JSON.stringify({ op_ref: "OP-ful-once" }), event_id: operationEventIdFor("OP-ful-once", "operation.settled") },
     ]);
@@ -114,7 +114,7 @@ describe.skipIf(!DATABASE_URL)("запись об исполнении и operat
 
   it("агент не установлен — запись без события", async () => {
     const f = record("OP-ful-noagent", { agent_code: null });
-    expect(await new PgFulfilmentStore(db.pool).record(f, settledEventFor(f))).toBeUndefined();
+    expect(await new PgFulfilmentStore(db.pool).record(f, await settledEventFor(f))).toBeUndefined();
     expect(await events("OP-ful-noagent")).toEqual([]);
   });
 
@@ -131,9 +131,10 @@ describe.skipIf(!DATABASE_URL)("запись об исполнении и operat
     });
     const b = new PgFulfilmentStore(pool2);
     const f = record("OP-ful-race");
-    const pa = a.record(f, settledEventFor(f));
+    const ev = await settledEventFor(f);
+    const pa = a.record(f, ev);
     await holding;
-    const pb = b.record(record("OP-ful-race", { final_amount: 45_000 }), settledEventFor(f));
+    const pb = b.record(record("OP-ful-race", { final_amount: 45_000 }), ev);
     for (let i = 0; i < 150; i++) {
       const r = await db.pool.query<{ n: string }>("SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()");
       if (Number(r.rows[0]!.n) > 0) break;

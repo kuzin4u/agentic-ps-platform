@@ -18,10 +18,10 @@ describe("ПС02: отзыв ключа и распространение", () =
   let s: Stand;
   let side: AgentSide;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     s = stand();
     side = newAgentSide();
-    const d = s.registry.admit(buyerApplication(CODE, side), { contour: "sandbox", operator: "buyref-operator" });
+    const d = await s.registry.admit(buyerApplication(CODE, side), { contour: "sandbox", operator: "buyref-operator" });
     expect(d.admitted).toBe(true);
   });
   afterEach(async () => {

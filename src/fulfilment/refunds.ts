@@ -22,9 +22,9 @@ export interface RefundRecord {
 }
 
 /** operation.refunded — только агенту из домена токена; data — только {op_ref} (РП55 п. 3, A7 п. 8.3). */
-export function refundedEventFor(r: RefundRecord, pushFor?: PushFor): OperationEventDraft | undefined {
+export async function refundedEventFor(r: RefundRecord, pushFor?: PushFor): Promise<OperationEventDraft | undefined> {
   if (r.agent_code === null) return undefined;
-  return { agent_code: r.agent_code, type: "operation.refunded", data: { op_ref: r.op_ref }, push: pushFor?.(r.agent_code, "operation.refunded") ?? false };
+  return { agent_code: r.agent_code, type: "operation.refunded", data: { op_ref: r.op_ref }, push: (await pushFor?.(r.agent_code, "operation.refunded")) ?? false };
 }
 
 /** Сбой любого метода — исключение. */
@@ -187,7 +187,7 @@ export async function acceptRefund(deps: RefundDeps, msg: Readonly<Record<string
     currency,
     at: (deps.now ?? (() => new Date()))().toISOString(),
   };
-  const raced = await deps.refunds.record(r, refundedEventFor(r, deps.pushFor));
+  const raced = await deps.refunds.record(r, await refundedEventFor(r, deps.pushFor));
   if (raced && raced.amount !== amount) log("warn", { op_ref, prior: raced.amount, amount, incident: true }, "П8: одновременный возврат с другой суммой — запись прежняя");
   return 202;
 }
