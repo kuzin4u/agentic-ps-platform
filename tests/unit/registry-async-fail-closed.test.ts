@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MemoryConfirmationStore, newConfirmationId, type ConfirmationRecord } from "../../src/confirm/index.js";
 import { MemoryConsentStore } from "../../src/consent/store.js";
-import { OperationOutcomeCollector, type OutcomeStore } from "../../src/fulfilment/outcomes.js";
+import { MemoryOperationStore } from "../../src/adp/operations.js";
+import { MemoryOutcomeStore, OperationOutcomeCollector, type OutcomeStore } from "../../src/fulfilment/outcomes.js";
 import { PaoRequestVerifier } from "../../src/pao/verify.js";
 import { reconcile } from "../../src/participants/payments.js";
 import {
@@ -122,6 +123,14 @@ describe("сбой чтения реестра — отказ (РП64 п. 3, и�
     await expect(store.create(rec)).rejects.toThrow("реестр недоступен");
     expect(await store.byKey(rec)).toEqual([]);
     expect(await events.listEvents(CODE, undefined, 10)).toEqual([]);
+
+    // Повтор уже записанного запроса реестр не читает — тот же запрос и при сбое, как на PG (КТ1 ч. 2б-1 № 4).
+    let up = true;
+    const flaky = new MemoryConfirmationStore({ events, pushFor: async () => (up ? false : down()) });
+    const first = await flaky.create(rec);
+    up = false;
+    expect(await flaky.create({ ...rec, confirmation_id: newConfirmationId() })).toEqual(first);
+    expect(await events.listEvents(CODE, undefined, 10)).toHaveLength(1);
   });
 
   it("сборщик итогов: строка push не прочитана — итог не записан, проход считает сбой и не прерывается", async () => {
@@ -135,6 +144,32 @@ describe("сбой чтения реестра — отказ (РП64 п. 3, и�
     const c = new OperationOutcomeCollector(store, { horizonSec: 86_400, maxDelaySec: 30, pushFor: down, now: () => Date.parse(AT) });
     expect(await c.runOnce()).toMatchObject({ recorded: 0, failed: 2 });
     expect(recorded).toEqual([]);
+  });
+
+  it("сборщик итогов: итог, пропущенный при сбое чтения реестра, записывается следующим проходом — одно событие (КТ1 ч. 2б-1 № 1)", async () => {
+    const ops = new MemoryOperationStore();
+    expect(await ops.begin("OP-retry", "h", AT)).toBeUndefined();
+    await ops.finish({
+      op_ref: "OP-retry",
+      msg_hash: "h",
+      decision: { decision: "DECLINE", reason: "LIMIT_EXCEEDED", reservation_id: null, decided_in_ms: 1 },
+      mandate_id: "mnd_x",
+      holds: [],
+      at: AT,
+      facts: { agent_code: CODE } as never,
+    });
+    const events = new MemoryConsentStore();
+    let failures = 1;
+    const pushFor = async (): Promise<boolean> => {
+      if (failures-- > 0) throw new Error("реестр недоступен");
+      return false;
+    };
+    const c = new OperationOutcomeCollector(new MemoryOutcomeStore(ops, events), { horizonSec: 86_400, maxDelaySec: 30, pushFor, now: () => Date.parse(AT) });
+    expect(await c.runOnce()).toMatchObject({ recorded: 0, failed: 1 });
+    expect(await events.listEvents(CODE, undefined, 10)).toEqual([]);
+    expect(await c.runOnce()).toMatchObject({ recorded: 1, failed: 0 });
+    expect((await events.listEvents(CODE, undefined, 10)).map((e) => e.type)).toEqual(["operation.declined"]);
+    expect(await c.runOnce()).toMatchObject({ recorded: 0, failed: 0 });
   });
 });
 

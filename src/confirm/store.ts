@@ -78,10 +78,15 @@ export class MemoryConfirmationStore implements ConfirmationStore {
   /** Проверка и запись без await между ними: один процесс — одна очередь. */
   async create(rec: ConfirmationRecord): Promise<ConfirmationRecord> {
     if (rec.status !== "PENDING") throw new Error("confirmations: вставка — только PENDING");
-    const push = await pushOf(this.opts.pushFor, rec.agent_code, "confirmation.required");
     const k = keyOf(rec);
-    const prior = [...this.#rows.values()].find((r) => keyOf(r) === k);
-    if (prior) return structuredClone(prior);
+    const prior = (): ConfirmationRecord | undefined => [...this.#rows.values()].find((r) => keyOf(r) === k);
+    // Повтор существующего запроса — без чтения реестра, как на PG (push читается только при вставке; КТ1 ч. 2б-1 № 4).
+    const early = prior();
+    if (early) return structuredClone(early);
+    const push = await pushOf(this.opts.pushFor, rec.agent_code, "confirmation.required");
+    // После await — проверка заново: между ней и записью await нет.
+    const raced = prior();
+    if (raced) return structuredClone(raced);
     if (this.#rows.has(rec.confirmation_id)) throw new Error("confirmations: confirmation_id уже записан");
     this.#transit(rec, "confirmation.required", rec.created_at, push);
     return structuredClone(rec);
