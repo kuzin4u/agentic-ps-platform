@@ -65,13 +65,41 @@ describe.skipIf(!hasOpenssl)("перекрёстная проверка УЦ и 
     if (!r.ok) throw new Error(r.reason);
     const caFile = file("ca.crt", pem(ca.certificateDer));
     const agentFile = file("agent.crt", pem(r.certificate.der));
-    const ok = openssl("verify", "-CAfile", caFile, "-purpose", "sslclient", agentFile);
+    // -x509_strict: без SKI в корневом и AKI в агентском цепочка отвергается (ошибки 85, 86; РП65 нюанс 4).
+    const ok = openssl("verify", "-x509_strict", "-CAfile", caFile, "-purpose", "sslclient", agentFile);
     expect(ok.status, ok.stdout + ok.stderr).toBe(0);
     expect(ok.stdout).toContain("OK");
     const other = file("other.crt", pem(SandboxCa.generate({ now: NOW, ttlDays: 3650 }).certificateDer));
     expect(openssl("verify", "-CAfile", other, "-purpose", "sslclient", agentFile).status).not.toBe(0);
     // Сертификат агента для сервера не годится: только clientAuth.
     expect(openssl("verify", "-CAfile", caFile, "-purpose", "sslserver", agentFile).status).not.toBe(0);
+  });
+
+  it("расширения из CSR не переносятся: чужой SAN и CA:TRUE в запросе → SAN из реестра и CA:FALSE (инвариант 5, КТ1 № 2)", () => {
+    const key = join(dir, "ext.key");
+    expect(openssl("ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", key).status).toBe(0);
+    const csr = join(dir, "ext.csr.der");
+    const made = openssl(
+      "req", "-new", "-key", key, "-subj", "/CN=nspk:agent:other:v1", "-outform", "DER", "-out", csr,
+      "-addext", "subjectAltName=URI:urn:nspk:agent:other:v1",
+      "-addext", "basicConstraints=critical,CA:TRUE",
+    );
+    expect(made.status, made.stderr).toBe(0);
+    // Запрос действительно несёт чужой SAN и CA:TRUE.
+    const asked = openssl("req", "-in", csr, "-inform", "DER", "-noout", "-text");
+    expect(asked.stdout).toContain("URI:urn:nspk:agent:other:v1");
+    expect(asked.stdout).toContain("CA:TRUE");
+
+    const ca = SandboxCa.generate({ now: NOW, ttlDays: 3650 });
+    const r = ca.issueAgentCertificate(readFileSync(csr).toString("base64"), CODE, NOW, 90);
+    if (!r.ok) throw new Error(r.reason);
+    const der = Buffer.from(r.certificate.der, "base64");
+    expect(new X509Certificate(der).subjectAltName).toBe(`URI:urn:${CODE}`);
+    expect(der.includes(Buffer.from("urn:nspk:agent:other:v1", "ascii"))).toBe(false);
+    expect(der.includes(Buffer.from("300c0603551d130101ff04023000", "hex"))).toBe(true);
+    const t = openssl("x509", "-in", file("ext-agent.crt", pem(der)), "-noout", "-text");
+    expect(t.stdout).toMatch(/CA:FALSE/);
+    expect(t.stdout).not.toContain("other");
   });
 
   it("openssl x509: SAN — ровно URI кода агента, CA:FALSE, digitalSignature, clientAuth; субъект пуст", () => {

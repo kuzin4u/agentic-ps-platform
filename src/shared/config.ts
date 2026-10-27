@@ -192,7 +192,7 @@ const RULES: Record<keyof Params, Rule> = {
   key_ttl_days: int(1),
   key_overlap_days: int(0),
   agent_cert_ttl_days: int(1, 397),
-  sandbox_ca_ttl_days: int(1),
+  sandbox_ca_ttl_days: int(1, 36500),
   qualified_signature_above_kop: int(1),
   qualified_signature_above_days: int(1),
   restore_budget_on_refund: bool,

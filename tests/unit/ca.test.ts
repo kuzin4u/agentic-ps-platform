@@ -1,9 +1,9 @@
 // П1 УЦ песочницы и разбор CSR (РП27 п. 1–2, РП65 п. 1–2, 5): один шаблон, строгий DER, пределы длин, владение ключом.
-import { generateKeyPairSync, X509Certificate } from "node:crypto";
+import { createHash, generateKeyPairSync, sign, X509Certificate } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { SANDBOX_CA_NAME, SandboxCa } from "../../src/registry/ca/ca.js";
 import { CSR_MAX_BASE64_CHARS, P256_SPKI_PREFIX, parseCsr } from "../../src/registry/ca/csr.js";
-import { DerError, MAX_DEPTH, oid, parseStrict, seq, set, time, uint } from "../../src/registry/ca/der.js";
+import { bitString, DerError, MAX_DEPTH, oid, parseStrict, seq, set, time, tlv, uint } from "../../src/registry/ca/der.js";
 import { buildCsrDer, newCsr, p256 } from "../support/csr.js";
 
 const CODE = "nspk:agent:buyref-01:v3";
@@ -29,7 +29,12 @@ describe("УЦ песочницы: выпуск сертификата аген�
     expect(cert.ca).toBe(false);
     // X509Certificate.ca учитывает и keyUsage: CA:true без keyCertSign он тоже назовёт false (поломка К2 П6) — поэтому
     // расширение сверяется байтами: basicConstraints, критичное, пустая последовательность (CA:false по умолчанию).
-    expect(Buffer.from(r.certificate.der, "base64").includes(Buffer.from("300c0603551d130101ff04023000", "hex"))).toBe(true);
+    const der = Buffer.from(r.certificate.der, "base64");
+    expect(der.includes(Buffer.from("300c0603551d130101ff04023000", "hex"))).toBe(true);
+    // keyUsage digitalSignature, критичное: Node отдаёт в keyUsage только EKU — сверка байтами (КТ1 № 10).
+    expect(der.includes(Buffer.from("300e0603551d0f0101ff040403020780", "hex"))).toBe(true);
+    // AKI — только keyIdentifier, равный SKI УЦ, некритичное (РП65 нюанс 4).
+    expect(der.includes(Buffer.concat([Buffer.from("301f0603551d23041830168014", "hex"), c.keyId]))).toBe(true);
     expect(cert.keyUsage).toEqual(["1.3.6.1.5.5.7.3.2"]);
     expect(cert.verify(c.publicKey)).toBe(true);
     expect(cert.checkIssued(root)).toBe(true);
@@ -52,6 +57,10 @@ describe("УЦ песочницы: выпуск сертификата аген�
     expect(root.verify(root.publicKey)).toBe(true);
     expect(Date.parse(root.validTo) - Date.parse(root.validFrom)).toBe(3650 * DAY);
     expect(c.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    // SKI — SHA-1 от subjectPublicKey (метод 1 RFC 5280), некритичное (РП65 нюанс 4).
+    const point = c.publicKey.export({ format: "der", type: "spki" }).subarray(P256_SPKI_PREFIX.length);
+    expect(c.keyId).toEqual(createHash("sha1").update(point).digest());
+    expect(c.certificateDer.includes(Buffer.concat([Buffer.from("301d0603551d0e04160414", "hex"), c.keyId]))).toBe(true);
   });
 
   it("срок сертификата не выходит за срок УЦ: notAfter = min(now + ttl, notAfter УЦ)", () => {
@@ -77,6 +86,9 @@ describe("УЦ песочницы: выпуск сертификата аген�
     const c = ca(NOW, 10);
     expect(() => c.issueAgentCertificate(newCsr().csr, "other:agent:x:v1", NOW, 90)).toThrow(/не песочницы/);
     expect(() => c.issueAgentCertificate(newCsr().csr, `${CODE} `, NOW, 90)).toThrow(/не песочницы/);
+    // Грамматика — та же, что у реестра (parseAgentCode, КТ1 № 7): версия не длиннее 9 цифр.
+    expect(() => c.issueAgentCertificate(newCsr().csr, "nspk:agent:buyref-01:v1234567890", NOW, 90)).toThrow(/не песочницы/);
+    expect(() => c.issueAgentCertificate(newCsr().csr, CODE, new Date(Number.NaN), 90)).toThrow(/не разбирается/);
     expect(() => c.issueAgentCertificate(newCsr().csr, CODE, new Date(NOW.getTime() + 10 * DAY), 90)).toThrow(/вне срока/);
     expect(() => c.issueAgentCertificate(newCsr().csr, CODE, new Date(NOW.getTime() - 1000), 90)).toThrow(/вне срока/);
   });
@@ -101,11 +113,20 @@ describe("разбор CSR: запись и пределы (РП65 п. 1–2)", 
     ["с переводом строки", `${good.csr.slice(0, 40)}\n${good.csr.slice(40)}`],
     ["с пробелом", ` ${good.csr}`],
     ["base64url", Buffer.from(good.csr, "base64").toString("base64url")],
-    ["без дополнения", good.csr.replace(/=+$/, "")],
   ])("%s — FORMAT", (_n, v) => {
-    // Без дополнения строка может совпасть с канонической, если длина кратна 3 — тогда проверка не о том.
-    if (_n === "без дополнения" && !good.csr.endsWith("=")) return;
     expect(parseCsr(v)).toEqual({ ok: false, reason: "FORMAT" });
+  });
+
+  it("без дополнения — FORMAT (CSR подобран так, что его запись кончается на «=», КТ1 № 5)", () => {
+    // Длина подписи ECDSA плавает — CN удлиняется, пока длина DER не станет некратной 3.
+    let padded: string | undefined;
+    for (let n = 1; !padded && n < 64; n++) {
+      const c = newCsr("x".repeat(n)).csr;
+      if (c.endsWith("=")) padded = c;
+    }
+    expect(padded).toBeDefined();
+    expect(parseCsr(padded as string).ok).toBe(true);
+    expect(parseCsr((padded as string).replace(/=+$/, ""))).toEqual({ ok: false, reason: "FORMAT" });
   });
 
   it("лишние биты перед «=» — FORMAT (каноническая запись, РП23 доп. 6)", () => {
@@ -164,15 +185,17 @@ describe("разбор CSR: строгий DER (РП65 п. 2)", () => {
     expect(parseCsr(b64(indefinite))).toEqual({ ok: false, reason: "DER" });
   });
 
-  it("вложенность глубже предела в субъекте, который не читается, — DER", () => {
-    let deep = seq();
-    for (let i = 0; i < MAX_DEPTH; i++) deep = seq(deep);
+  it("вложенность — граница с обеих сторон (РП65 нюанс 6): субъект на глубине 3, 4 обёртки — принят, 5 — DER", () => {
+    const wrapped = (n: number): Buffer => {
+      let s = seq();
+      for (let i = 0; i < n; i++) s = seq(s);
+      return s;
+    };
     const pair = p256();
-    expect(parseCsr(b64(buildCsrDer({ ...pair, subject: deep })))).toEqual({ ok: false, reason: "DER" });
-    // На пределе — принимается: субъект не читается, но разобран.
-    let ok = seq();
-    for (let i = 0; i < MAX_DEPTH - 4; i++) ok = seq(ok);
-    expect(parseCsr(b64(buildCsrDer({ ...pair, subject: ok }))).ok).toBe(true);
+    // Субъект — глубина 3 (CSR 1, CRI 2): n обёрток кладут пустую SEQUENCE на глубину 3 + n; MAX_DEPTH — отказ.
+    expect(MAX_DEPTH).toBe(8);
+    expect(parseCsr(b64(buildCsrDer({ ...pair, subject: wrapped(4) }))).ok).toBe(true);
+    expect(parseCsr(b64(buildCsrDer({ ...pair, subject: wrapped(5) })))).toEqual({ ok: false, reason: "DER" });
   });
 
   it("parseStrict: многобайтовый тег и длина длиннее двух байт — DerError", () => {
@@ -232,6 +255,40 @@ describe("разбор CSR: шаблон и подпись (РП65 п. 2)", () =
     const v1 = Buffer.from(good);
     v1[i + 2] = 0x01;
     expect(parseCsr(b64(v1))).toEqual({ ok: false, reason: "TEMPLATE" });
+  });
+
+  // КТ1 № 6: остальные отступления от шаблона — подписаны верно, отказ только по шаблону.
+  describe("отступления от шаблона при верной подписи — TEMPLATE", () => {
+    const pair = p256();
+    const spki = pair.publicKey.export({ format: "der", type: "spki" });
+    const ecdsa = seq(oid("1.2.840.10045.4.3.2"));
+    const signed = (info: Buffer): Buffer => sign("sha256", info, { key: pair.privateKey, dsaEncoding: "der" });
+    const info = seq(uint(Buffer.from([0])), seq(), spki, tlv(0xa0));
+
+    it("ecdsa-with-SHA256 с параметром NULL", () => {
+      const csr = seq(info, seq(oid("1.2.840.10045.4.3.2"), tlv(0x05)), bitString(signed(info)));
+      expect(parseCsr(b64(csr))).toEqual({ ok: false, reason: "TEMPLATE" });
+    });
+
+    it("неиспользуемые биты подписи ≠ 0", () => {
+      const csr = seq(info, ecdsa, bitString(signed(info), 1));
+      expect(parseCsr(b64(csr))).toEqual({ ok: false, reason: "TEMPLATE" });
+    });
+
+    it("четвёртый элемент верхнего уровня", () => {
+      const csr = seq(info, ecdsa, bitString(signed(info)), tlv(0x05));
+      expect(parseCsr(b64(csr))).toEqual({ ok: false, reason: "TEMPLATE" });
+    });
+
+    it("CRI без атрибутов [0]", () => {
+      const noAttrs = seq(uint(Buffer.from([0])), seq(), spki);
+      const csr = seq(noAttrs, ecdsa, bitString(signed(noAttrs)));
+      expect(parseCsr(b64(csr))).toEqual({ ok: false, reason: "TEMPLATE" });
+    });
+
+    it("тот же CSR по шаблону — принят (контроль)", () => {
+      expect(parseCsr(b64(seq(info, ecdsa, bitString(signed(info))))).ok).toBe(true);
+    });
   });
 });
 
