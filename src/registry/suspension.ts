@@ -1,7 +1,7 @@
 // Приостановление и снятие приостановления агента (РП54, PS-17): одно действие оператора Системы — смена статуса по
-// РП21 п. 4 и событие agent.suspended / agent.reinstated. Статус — первым: с этого момента отказывают ADP (п. 3) и шлюз
-// ПАО; событие — следом. Реестр в памяти, лента — в своём хранилище: общей транзакции нет (РП54 п. 2). HTTP-метода
-// оператора нет — PS-32; на стенде — stand.suspendAgent / stand.reinstateAgent.
+// РП21 п. 4 и событие agent.suspended / agent.reinstated. Реестр на PG (РП64 п. 4) — статус и событие одной транзакцией
+// (AgentStatusTx). В памяти — статус первым: с этого момента отказывают ADP (п. 3) и шлюз ПАО; событие — следом, общей
+// транзакции нет (РП54 п. 2). HTTP-метода оператора нет — PS-32; на стенде — stand.suspendAgent / stand.reinstateAgent.
 import type { AgentStatusEventDraft } from "../pao/events.js";
 import type { AgentRecord } from "./model.js";
 import { AgentNotFoundError, type AgentRegistry } from "./registry.js";
@@ -11,11 +11,43 @@ export interface AgentStatusEvents {
   appendAgentStatusEvent(draft: AgentStatusEventDraft, at: string): Promise<boolean>;
 }
 
+/** Действие оператора: приостановить с основанием A2 п. 7.1 или снять приостановление. */
+export type AgentStatusRequest = { readonly to: "SUSPENDED"; readonly ground: unknown } | { readonly to: "ACTIVE" };
+
+/**
+ * Статус и событие agent.* одной транзакцией (РП64 п. 4) — реестр на PG. Нет агента — AgentNotFoundError, недопустимый
+ * переход — StatusTransitionError; событие новой версии не вставилось — AgentStatusEventConflictError и откат.
+ */
+export interface AgentStatusTx {
+  transitStatus(agent_code: string, req: AgentStatusRequest): Promise<{ readonly record: AgentRecord; readonly written: boolean }>;
+}
+
 export interface AgentStatusServiceDeps {
   readonly events: AgentStatusEvents;
   /** Строка попытки push в той же записи: agent.suspended — и при SUSPENDED (РП54 п. 9, pushAllowed). */
   readonly pushFor: (agent_code: string, type: AgentStatusEventDraft["type"]) => Promise<boolean>;
+  /** Реестр на PG: смена статуса с событием одной транзакцией; тогда events и pushFor не используются. */
+  readonly tx?: AgentStatusTx;
   readonly log?: (level: "info" | "warn" | "error", fields: Record<string, unknown>, msg: string) => void;
+}
+
+/**
+ * Повтор действия в достигнутом статусе (РП54 п. 2): приостановление — уже SUSPENDED с тем же основанием; снятие — уже
+ * ACTIVE после приостановления (suspended_at есть: в ACTIVE после приостановления ведёт только снятие). По смыслу, не по
+ * версии записи (КТ1 № 3).
+ */
+export const isStatusRepeat = (cur: AgentRecord, req: AgentStatusRequest): boolean =>
+  req.to === "SUSPENDED" ? cur.status === "SUSPENDED" && cur.status_ground === req.ground : cur.status === "ACTIVE" && cur.suspended_at !== null;
+
+/** Событие новой версии статуса уже есть — статус не меняется (откат), повтор — заново (РП64 п. 4). */
+export class AgentStatusEventConflictError extends Error {
+  constructor(
+    readonly agent_code: string,
+    readonly version: number,
+  ) {
+    super(`AGENT_STATUS_EVENT_CONFLICT: ${agent_code} v${version}`);
+    this.name = "AgentStatusEventConflictError";
+  }
 }
 
 /** Статус сменён, событие не записано (РП54 п. 2): статус действует, повтор того же действия дописывает событие. */
@@ -41,23 +73,24 @@ export class AgentStatusService {
    * меняется, недостающее событие дописывается; с другим основанием — StatusTransitionError (как неизвестное).
    */
   async suspend(agent_code: string, ground: unknown): Promise<AgentRecord> {
-    const cur = await this.current(agent_code);
-    const repeat = cur.status === "SUSPENDED" && cur.status_ground === ground;
-    const rec = repeat ? cur : await this.registry.changeStatus(agent_code, { to: "SUSPENDED", ground });
-    await this.emit(rec, "agent.suspended");
-    return rec;
+    return this.apply(agent_code, { to: "SUSPENDED", ground }, "agent.suspended");
   }
 
-  /**
-   * SUSPENDED → ACTIVE без основания. Уже ACTIVE и приостанавливался (suspended_at есть: в ACTIVE после приостановления
-   * ведёт только снятие) — повтор с дописыванием события; ACTIVE с допуска — StatusTransitionError. По смыслу, не по
-   * версии записи: версия может начать расти и от других полей (КТ1 № 3).
-   */
+  /** SUSPENDED → ACTIVE без основания. Уже ACTIVE после приостановления — повтор; ACTIVE с допуска — StatusTransitionError. */
   async reinstate(agent_code: string): Promise<AgentRecord> {
+    return this.apply(agent_code, { to: "ACTIVE" }, "agent.reinstated");
+  }
+
+  private async apply(agent_code: string, req: AgentStatusRequest, type: AgentStatusEventDraft["type"]): Promise<AgentRecord> {
+    if (this.deps.tx) {
+      // Одна транзакция (РП64 п. 4): сбой — ничего не изменено, ошибка оператору, повтор — заново.
+      const { record, written } = await this.deps.tx.transitStatus(agent_code, req);
+      this.deps.log?.("info", { agent_code, type, version: record.row_version, written }, "П1: статус агента сменён");
+      return record;
+    }
     const cur = await this.current(agent_code);
-    const repeat = cur.status === "ACTIVE" && cur.suspended_at !== null;
-    const rec = repeat ? cur : await this.registry.changeStatus(agent_code, { to: "ACTIVE" });
-    await this.emit(rec, "agent.reinstated");
+    const rec = isStatusRepeat(cur, req) ? cur : await this.registry.changeStatus(agent_code, req);
+    await this.emit(rec, type);
     return rec;
   }
 

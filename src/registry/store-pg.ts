@@ -1,11 +1,15 @@
 // П1 Реестр агентов на PostgreSQL (РП64 п. 1–3, PS-05в ч. 2а): тот же договор, что InMemoryAgentRegistryStore, за
-// портом AgentRegistryStore. Чтение — из базы на каждом обращении, кэша нет (инвариант 8 между экземплярами). Подключение
-// к серверу, статус и событие одной транзакцией и отсечка по часам базы — PS-05в ч. 2б-2 (РП64 п. 4–7).
+// портом AgentRegistryStore. Чтение — из базы на каждом обращении, кэша нет (инвариант 8 между экземплярами). Статус и
+// событие agent.* одной транзакцией, отсечка по часам базы — AgentStatusTx (РП64 п. 4–5, ч. 2б-2).
 import type { SqlClient } from "@kuzin4u/agentic-core";
-import type { TxSqlPool } from "../consent/store.js";
+import { insertAgentStatusEventTx, type TxSqlPool } from "../consent/store.js";
+import { pushAllowed } from "../pao/events.js";
 import type { AgentKey } from "./keys.js";
-import type { AgentRecord, AgentSubscription } from "./model.js";
+import type { AgentRecord, AgentSubscription, Contour } from "./model.js";
+import { AgentNotFoundError } from "./registry.js";
+import { checkTransition } from "./status.js";
 import { AgentCodeTakenError, KeyTakenError, type AgentRegistryStore, type StatusFields } from "./store.js";
+import { AgentStatusEventConflictError, isStatusRepeat, type AgentStatusRequest, type AgentStatusTx } from "./suspension.js";
 
 interface AgentRow extends Record<string, unknown> {
   agent_code: string;
@@ -91,9 +95,11 @@ const violated = (err: unknown, code: "23505" | "23503", constraint: string): bo
  */
 export interface PgAgentRegistryStoreHooks {
   readonly inTx?: (step: "agent" | "kid" | "keys", key: AgentKey) => Promise<void>;
+  /** Точки транзакции статуса (РП64 п. 4): "locked" — после FOR UPDATE строки агента; "updated" — после смены, до события. */
+  readonly inStatusTx?: (step: "locked" | "updated", agent_code: string) => Promise<void>;
 }
 
-export class PgAgentRegistryStore implements AgentRegistryStore {
+export class PgAgentRegistryStore implements AgentRegistryStore, AgentStatusTx {
   constructor(
     private readonly client: TxSqlPool,
     private readonly hooks: PgAgentRegistryStoreHooks = {},
@@ -107,6 +113,16 @@ export class PgAgentRegistryStore implements AgentRegistryStore {
   async agentCodes(): Promise<readonly string[]> {
     const r = await this.client.query<{ agent_code: string }>("SELECT agent_code FROM agents ORDER BY seq");
     return r.rows.map((x) => x.agent_code);
+  }
+
+  /** Каталог ключей одним запросом (КТ1 ч. 2а № 10): порядок — seq агента, затем как keysOf (created_at, kid). */
+  async catalogKeys(contour: Contour): Promise<readonly AgentKey[]> {
+    const r = await this.client.query<KeyRow>(
+      `SELECT ${KEY_COLUMNS.split(", ").map((c) => `k.${c}`).join(", ")} FROM agent_keys k JOIN agents a ON a.agent_code = k.agent_code
+        WHERE a.status = 'ACTIVE' AND a.contour = $1 ORDER BY a.seq, k.created_at, k.kid`,
+      [contour],
+    );
+    return r.rows.map(toKey);
   }
 
   async ownerOf(issuer: string, id: string): Promise<string | undefined> {
@@ -170,6 +186,43 @@ export class PgAgentRegistryStore implements AgentRegistryStore {
       [agent_code, expectedRowVersion, fields.status, fields.status_ground, fields.status_changed_at, fields.suspended_at],
     );
     return r.rows[0] && toRecord(r.rows[0]);
+  }
+
+  /**
+   * Статус и событие agent.* одной транзакцией (РП64 п. 4; РП54 остаточные риски 2, 8): строка агента FOR UPDATE, повтор
+   * или переход (РП21 п. 4), UPDATE, строка push на том же соединении, номер ленты, событие ON CONFLICT DO NOTHING.
+   * Время — часы базы после блокировки, до миллисекунды (РП64 п. 5, дополнение «2б-2» п. 1): status_changed_at, при
+   * приостановлении и suspended_at. Повтор — без изменений; недостающее событие дописывается, второго нет.
+   */
+  async transitStatus(agent_code: string, req: AgentStatusRequest): Promise<{ readonly record: AgentRecord; readonly written: boolean }> {
+    const type = req.to === "SUSPENDED" ? "agent.suspended" : "agent.reinstated";
+    return this.tx(async (tx) => {
+      const cur = await tx.query<AgentRow>(`SELECT ${AGENT_COLUMNS} FROM agents WHERE agent_code = $1 FOR UPDATE`, [agent_code]);
+      if (!cur.rows[0]) throw new AgentNotFoundError(agent_code);
+      let record = toRecord(cur.rows[0]);
+      await this.hooks.inStatusTx?.("locked", agent_code);
+      const repeat = isStatusRepeat(record, req);
+      if (!repeat) {
+        const c = checkTransition(record.status, req);
+        const r = await tx.query<AgentRow>(
+          `UPDATE agents SET status = $2::text, status_ground = $3::text, status_changed_at = c.t,
+             suspended_at = CASE WHEN $2::text = 'SUSPENDED' THEN c.t ELSE suspended_at END, row_version = row_version + 1
+           FROM (SELECT date_trunc('milliseconds', clock_timestamp()) AS t) c
+           WHERE agent_code = $1 RETURNING ${AGENT_COLUMNS}`,
+          [agent_code, c.to, c.to === "ACTIVE" ? null : c.ground],
+        );
+        if (!r.rows[0]) throw new Error(`Строка агента не изменена под блокировкой: ${agent_code}`);
+        record = toRecord(r.rows[0]);
+      }
+      await this.hooks.inStatusTx?.("updated", agent_code);
+      // Push «на момент записи» (РП40 п. 5; нюанс 2б-1 К2 п. 10): статус — из этой транзакции, подписка — тем же соединением.
+      const sub = await tx.query<{ events: string[] }>("SELECT events FROM agent_subscriptions WHERE agent_code = $1", [agent_code]);
+      const push = pushAllowed(record.status, type) && (sub.rows[0]?.events.includes(type) ?? false);
+      const draft = { agent_code, type, data: { agent_code }, version: record.row_version, push } as const;
+      const written = await insertAgentStatusEventTx(tx, draft, record.status_changed_at);
+      if (!written && !repeat) throw new AgentStatusEventConflictError(agent_code, record.row_version);
+      return { record, written };
+    });
   }
 
   async getKey(kid: string): Promise<AgentKey | undefined> {

@@ -72,6 +72,7 @@ function stand(policy: KeyPolicy = POLICY) {
 const wrap = (store: AgentRegistryStore, over: Partial<AgentRegistryStore>): AgentRegistryStore => ({
   get: (c) => store.get(c),
   agentCodes: () => store.agentCodes(),
+  catalogKeys: (ct) => store.catalogKeys(ct),
   ownerOf: (i, id) => store.ownerOf(i, id),
   insert: (r, k) => store.insert(r, k),
   updateStatus: (c, v, f) => store.updateStatus(c, v, f),

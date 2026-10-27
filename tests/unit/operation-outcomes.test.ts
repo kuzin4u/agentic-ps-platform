@@ -128,6 +128,8 @@ describe("итог операции и operation.* на стенде (РП52)", 
       expect((await feedOf(side, CODE)).statusCode).toBe(403);
     } finally {
       await stand.registry.changeStatus(CODE, { to: "ACTIVE" });
+      // Реквизит в ту же миллисекунду, что приостановление, — выдан «до» (Р-634): следующим тестам — часы на 1 мс вперёд.
+      stand.setClock(new Date(stand.now().getTime() + 1));
     }
     expect((await opEvents(op)).map((e) => e.type)).toEqual(["operation.declined"]);
   });

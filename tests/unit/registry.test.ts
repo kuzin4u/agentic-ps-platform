@@ -419,6 +419,7 @@ describe("статус допуска (РП21 п. 4)", () => {
       ...store,
       get: async () => rec,
       agentCodes: async () => [],
+      catalogKeys: async () => [],
       ownerOf: async () => undefined,
       insert: async () => undefined,
       updateStatus: (c, v, f) => store.updateStatus(c, v, f),
