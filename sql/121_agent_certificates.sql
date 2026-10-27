@@ -3,7 +3,7 @@
 -- здесь нет: ключ сертификата — у оператора агента, ключ УЦ — файл на постоянном томе (РП65 п. 4).
 CREATE TABLE agent_certificates (
   -- Серийный номер — 16 байт в hex нижнего регистра (РП65 п. 2).
-  serial      text NOT NULL CHECK (serial ~ '^[0-9a-f]{32}$'),
+  serial      text PRIMARY KEY CHECK (serial ~ '^[0-9a-f]{32}$'),
   agent_code  text NOT NULL REFERENCES agents (agent_code),
   -- Сертификат, DER в канонической base64.
   der         text NOT NULL,

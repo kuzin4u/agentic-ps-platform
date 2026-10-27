@@ -198,18 +198,18 @@ export class PgAgentRegistryStore implements AgentRegistryStore, AgentStatusTx {
         throw err;
       }
       await this.insertKey(tx, firstKey);
+      // Совпадение серийного номера — нарушение agent_certificates_pkey, исключение без перевода: допуск не выполнен (РП65 п. 3).
+      if (certificate) {
+        await tx.query(`INSERT INTO agent_certificates (${CERTIFICATE_COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6)`, [
+          certificate.serial,
+          certificate.agent_code,
+          certificate.der,
+          certificate.not_before,
+          certificate.not_after,
+          certificate.revoked_at,
+        ]);
+      }
     });
-    // ПОЛОМКА К4 строка 1: сертификат после COMMIT, вне транзакции допуска.
-    if (certificate) {
-      await this.client.query(`INSERT INTO agent_certificates (${CERTIFICATE_COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6)`, [
-        certificate.serial,
-        certificate.agent_code,
-        certificate.der,
-        certificate.not_before,
-        certificate.not_after,
-        certificate.revoked_at,
-      ]);
-    }
   }
 
   async getCertificate(serial: string): Promise<AgentCertificateRecord | undefined> {
@@ -228,7 +228,7 @@ export class PgAgentRegistryStore implements AgentRegistryStore, AgentStatusTx {
   /** Отзыв одним UPDATE по условию revoked_at IS NULL; уже отозванный или проигравший гонку — перечитывание (прежний revoked_at). */
   async revokeCertificate(serial: string, revoked_at: string): Promise<AgentCertificateRecord | undefined> {
     const r = await this.client.query<CertificateRow>(
-      `UPDATE agent_certificates SET revoked_at = $2 WHERE serial = $1 RETURNING ${CERTIFICATE_COLUMNS}`,
+      `UPDATE agent_certificates SET revoked_at = $2 WHERE serial = $1 AND revoked_at IS NULL RETURNING ${CERTIFICATE_COLUMNS}`,
       [serial, revoked_at],
     );
     return r.rows[0] ? toCertificate(r.rows[0]) : this.getCertificate(serial);
