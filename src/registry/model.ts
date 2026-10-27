@@ -1,5 +1,6 @@
 // Запись реестра агентов (A2, РП17, РП21). Сведений о принципалах нет (A2 п. 1.2), номера карты нет (инвариант 1).
 import type { AgentSelf } from "../shared/pao.js";
+import type { AgentCertificate } from "./ca/ca.js";
 
 /** Классы агентов (A2 п. 2.1–2.4) — перечень AgentSelf.class ПАО. */
 export const AGENT_CLASSES = ["BUYER", "SELLER", "SURFACE", "SERVICE"] as const;
@@ -66,6 +67,15 @@ export interface AgentRecord {
   readonly suspended_at: string | null;
   /** Версия строки: каждое изменение записи увеличивает её на 1; изменение — по условию версии. */
   readonly row_version: number;
+}
+
+/**
+ * Сертификат mTLS агента в реестре рядом с записью агента (РП27 п. 4, РП65 п. 3): выпуск — в транзакции допуска, отзыв —
+ * необратим; список отзыва — revoked_at этих строк.
+ */
+export interface AgentCertificateRecord extends AgentCertificate {
+  readonly agent_code: string;
+  readonly revoked_at: string | null;
 }
 
 /** Подписка на события в записи агента (РП40 п. 1, SECURITY С6): заменяется целиком; пустой events — push выключен. */

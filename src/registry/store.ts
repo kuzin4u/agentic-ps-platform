@@ -3,7 +3,7 @@
 // Порт асинхронный, кэша нет (РП64 п. 3): статус и ключи читаются из хранилища на каждом обращении; сбой чтения —
 // отклонённое обещание, вызывающий отказывает (инвариант 3).
 import type { AgentKey } from "./keys.js";
-import type { AgentRecord, AgentSubscription, Contour } from "./model.js";
+import type { AgentCertificateRecord, AgentRecord, AgentSubscription, Contour } from "./model.js";
 
 export class AgentCodeTakenError extends Error {
   constructor(readonly agent_code: string) {
@@ -33,10 +33,11 @@ export interface AgentRegistryStore {
   /** Оператор, которому принадлежат версии агента «сторона : идентификатор»; нет версий — undefined. */
   ownerOf(issuer: string, id: string): Promise<string | undefined>;
   /**
-   * Вставка записи вместе с первым ключом — неделимо (РП23 п. 2). Код занят или «сторона : идентификатор» принадлежит
-   * другому оператору — AgentCodeTakenError (A2 п. 4.1, РП21 п. 2); kid уже есть — KeyTakenError. При ошибке не сохраняется ничего.
+   * Вставка записи вместе с первым ключом и сертификатом mTLS, если он выдан, — неделимо (РП23 п. 2, РП65 п. 3). Код занят
+   * или «сторона : идентификатор» принадлежит другому оператору — AgentCodeTakenError (A2 п. 4.1, РП21 п. 2); kid уже
+   * есть — KeyTakenError; серийный номер уже есть — исключение. При ошибке не сохраняется ничего.
    */
-  insert(record: AgentRecord, firstKey: AgentKey): Promise<void>;
+  insert(record: AgentRecord, firstKey: AgentKey, certificate?: AgentCertificateRecord): Promise<void>;
   /**
    * Изменение только полей статуса при совпадении row_version; не совпала — undefined (конкурентное изменение).
    * row_version записи агента растёт только здесь: по ней event_id события смены статуса (РП54 п. 2, КТ1 № 3).
@@ -59,6 +60,16 @@ export interface AgentRegistryStore {
   /** Отзыв при совпадении row_version; не совпала — undefined. */
   revokeKey(kid: string, expectedRowVersion: number, revoked_at: string): Promise<AgentKey | undefined>;
 
+  /** Сертификат mTLS по серийному номеру (РП65 п. 3); нет — undefined. Чтение — на каждом обращении, без кэша. */
+  getCertificate(serial: string): Promise<AgentCertificateRecord | undefined>;
+  /** Сертификаты агента в порядке выпуска. */
+  certificatesOf(agent_code: string): Promise<readonly AgentCertificateRecord[]>;
+  /**
+   * Отзыв сертификата — необратим (РП65 п. 3): уже отозванный возвращается без изменений с прежним revoked_at
+   * (как РП23 доп. 3); нет такого — undefined.
+   */
+  revokeCertificate(serial: string, revoked_at: string): Promise<AgentCertificateRecord | undefined>;
+
   /** Подписка агента на события (РП40 п. 1); нет подписки — undefined. */
   subscriptionOf(agent_code: string): Promise<AgentSubscription | undefined>;
   /** Замена подписки целиком; агента нет — false. Статус не проверяется: push проверяет его перед каждой отправкой (РП40 п. 6). */
@@ -72,6 +83,7 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
   readonly #keys = new Map<string, AgentKey>();
   readonly #keysByAgent = new Map<string, string[]>();
   readonly #subscriptions = new Map<string, AgentSubscription>();
+  readonly #certificates = new Map<string, AgentCertificateRecord>();
 
   async get(agent_code: string): Promise<AgentRecord | undefined> {
     return this.#byCode.get(agent_code);
@@ -91,7 +103,7 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
       .flatMap((r) => (this.#keysByAgent.get(r.agent_code) ?? []).map((kid) => this.#keys.get(kid) as AgentKey));
   }
 
-  async insert(record: AgentRecord, firstKey: AgentKey): Promise<void> {
+  async insert(record: AgentRecord, firstKey: AgentKey, certificate?: AgentCertificateRecord): Promise<void> {
     const key = `${record.issuer}\u0000${record.id}`;
     const owner = this.#owners.get(key);
     if (this.#byCode.has(record.agent_code) || (owner !== undefined && owner !== record.operator)) {
@@ -99,10 +111,29 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
     }
     if (firstKey.agent_code !== record.agent_code) throw new Error("Первый ключ не этого агента");
     if (this.#keys.has(firstKey.kid)) throw new KeyTakenError(firstKey.kid);
+    if (certificate && certificate.agent_code !== record.agent_code) throw new Error("Сертификат не этого агента");
+    if (certificate && this.#certificates.has(certificate.serial)) throw new Error(`Серийный номер уже выдан: ${certificate.serial}`);
     this.#owners.set(key, record.operator);
     this.#byCode.set(record.agent_code, Object.freeze({ ...record }));
     this.#keys.set(firstKey.kid, Object.freeze({ ...firstKey }));
     this.#keysByAgent.set(record.agent_code, [firstKey.kid]);
+    if (certificate) this.#certificates.set(certificate.serial, Object.freeze({ ...certificate }));
+  }
+
+  async getCertificate(serial: string): Promise<AgentCertificateRecord | undefined> {
+    return this.#certificates.get(serial);
+  }
+
+  async certificatesOf(agent_code: string): Promise<readonly AgentCertificateRecord[]> {
+    return [...this.#certificates.values()].filter((c) => c.agent_code === agent_code);
+  }
+
+  async revokeCertificate(serial: string, revoked_at: string): Promise<AgentCertificateRecord | undefined> {
+    const cur = this.#certificates.get(serial);
+    if (!cur || cur.revoked_at !== null) return cur;
+    const next = Object.freeze({ ...cur, revoked_at });
+    this.#certificates.set(serial, next);
+    return next;
   }
 
   async updateStatus(agent_code: string, expectedRowVersion: number, fields: StatusFields): Promise<AgentRecord | undefined> {

@@ -5,7 +5,7 @@ import type { SqlClient } from "@kuzin4u/agentic-core";
 import { insertAgentStatusEventTx, type TxSqlPool } from "../consent/store.js";
 import { pushAllowed } from "../pao/events.js";
 import type { AgentKey } from "./keys.js";
-import type { AgentRecord, AgentSubscription, Contour } from "./model.js";
+import type { AgentCertificateRecord, AgentRecord, AgentSubscription, Contour } from "./model.js";
 import { AgentNotFoundError } from "./registry.js";
 import { checkTransition } from "./status.js";
 import { AgentCodeTakenError, KeyTakenError, type AgentRegistryStore, type StatusFields } from "./store.js";
@@ -41,6 +41,17 @@ interface KeyRow extends Record<string, unknown> {
   revoked_at: Date | null;
   row_version: string;
 }
+
+interface CertificateRow extends Record<string, unknown> {
+  serial: string;
+  agent_code: string;
+  der: string;
+  not_before: Date;
+  not_after: Date;
+  revoked_at: Date | null;
+}
+
+const CERTIFICATE_COLUMNS = "serial, agent_code, der, not_before, not_after, revoked_at";
 
 const AGENT_COLUMNS = `agent_code, issuer, id, version, operator, class, level, status, status_ground, model, runtime, contour,
   conformance_run_ref, admitted_at, status_changed_at, suspended_at, row_version`;
@@ -79,6 +90,16 @@ const toKey = (r: KeyRow): AgentKey =>
     valid_to: iso(r.valid_to),
     revoked_at: r.revoked_at && iso(r.revoked_at),
     row_version: Number(r.row_version),
+  });
+
+const toCertificate = (r: CertificateRow): AgentCertificateRecord =>
+  Object.freeze({
+    serial: r.serial,
+    agent_code: r.agent_code,
+    der: r.der,
+    not_before: iso(r.not_before),
+    not_after: iso(r.not_after),
+    revoked_at: r.revoked_at && iso(r.revoked_at),
   });
 
 /** Нарушение уникальности (23505) или ссылки (23503) — с именем ограничения. */
@@ -131,12 +152,13 @@ export class PgAgentRegistryStore implements AgentRegistryStore, AgentStatusTx {
   }
 
   /**
-   * Владелец идентификатора, запись и первый ключ — одной транзакцией (РП23 п. 2): сбой любой вставки — ничего не
-   * сохранено. Одновременная вставка того же «сторона : идентификатор» другим оператором ждёт фиксации первой
-   * (уникальный ключ agent_ids) и видит чужого владельца — AgentCodeTakenError.
+   * Владелец идентификатора, запись, первый ключ и сертификат mTLS — одной транзакцией (РП23 п. 2, РП65 п. 3): сбой любой
+   * вставки — ничего не сохранено. Одновременная вставка того же «сторона : идентификатор» другим оператором ждёт фиксации
+   * первой (уникальный ключ agent_ids) и видит чужого владельца — AgentCodeTakenError.
    */
-  async insert(record: AgentRecord, firstKey: AgentKey): Promise<void> {
+  async insert(record: AgentRecord, firstKey: AgentKey, certificate?: AgentCertificateRecord): Promise<void> {
     if (firstKey.agent_code !== record.agent_code) throw new Error("Первый ключ не этого агента");
+    if (certificate && certificate.agent_code !== record.agent_code) throw new Error("Сертификат не этого агента");
     await this.tx(async (tx) => {
       await tx.query("INSERT INTO agent_ids (issuer, id, operator) VALUES ($1, $2, $3) ON CONFLICT (issuer, id) DO NOTHING", [
         record.issuer,
@@ -176,7 +198,40 @@ export class PgAgentRegistryStore implements AgentRegistryStore, AgentStatusTx {
         throw err;
       }
       await this.insertKey(tx, firstKey);
+      // Совпадение серийного номера — нарушение agent_certificates_pkey, исключение без перевода: допуск не выполнен (РП65 п. 3).
+      if (certificate) {
+        await tx.query(`INSERT INTO agent_certificates (${CERTIFICATE_COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6)`, [
+          certificate.serial,
+          certificate.agent_code,
+          certificate.der,
+          certificate.not_before,
+          certificate.not_after,
+          certificate.revoked_at,
+        ]);
+      }
     });
+  }
+
+  async getCertificate(serial: string): Promise<AgentCertificateRecord | undefined> {
+    const r = await this.client.query<CertificateRow>(`SELECT ${CERTIFICATE_COLUMNS} FROM agent_certificates WHERE serial = $1`, [serial]);
+    return r.rows[0] && toCertificate(r.rows[0]);
+  }
+
+  async certificatesOf(agent_code: string): Promise<readonly AgentCertificateRecord[]> {
+    const r = await this.client.query<CertificateRow>(
+      `SELECT ${CERTIFICATE_COLUMNS} FROM agent_certificates WHERE agent_code = $1 ORDER BY created_at, serial`,
+      [agent_code],
+    );
+    return r.rows.map(toCertificate);
+  }
+
+  /** Отзыв одним UPDATE по условию revoked_at IS NULL; уже отозванный или проигравший гонку — перечитывание (прежний revoked_at). */
+  async revokeCertificate(serial: string, revoked_at: string): Promise<AgentCertificateRecord | undefined> {
+    const r = await this.client.query<CertificateRow>(
+      `UPDATE agent_certificates SET revoked_at = $2 WHERE serial = $1 AND revoked_at IS NULL RETURNING ${CERTIFICATE_COLUMNS}`,
+      [serial, revoked_at],
+    );
+    return r.rows[0] ? toCertificate(r.rows[0]) : this.getCertificate(serial);
   }
 
   async updateStatus(agent_code: string, expectedRowVersion: number, fields: StatusFields): Promise<AgentRecord | undefined> {
