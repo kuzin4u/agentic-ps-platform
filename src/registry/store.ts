@@ -19,7 +19,14 @@ export class KeyTakenError extends Error {
   }
 }
 
-export type StatusFields = Pick<AgentRecord, "status" | "status_ground" | "status_changed_at" | "suspended_at">;
+/**
+ * Ограничение схемы agent_certificates (sql/121, CHECK not_after > not_before): то же условие — у хранилища в памяти, чтобы
+ * сбой вставки сертификата в транзакции допуска был одинаковым на обоих (РП65 нюанс 13).
+ */
+export const certificatePeriodValid = (c: Pick<AgentCertificateRecord, "not_before" | "not_after">): boolean =>
+  Date.parse(c.not_after) > Date.parse(c.not_before);
+
+export type StatusFields =Pick<AgentRecord, "status" | "status_ground" | "status_changed_at" | "suspended_at">;
 
 export interface AgentRegistryStore {
   get(agent_code: string): Promise<AgentRecord | undefined>;
@@ -113,6 +120,7 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
     if (this.#keys.has(firstKey.kid)) throw new KeyTakenError(firstKey.kid);
     if (certificate && certificate.agent_code !== record.agent_code) throw new Error("Сертификат не этого агента");
     if (certificate && this.#certificates.has(certificate.serial)) throw new Error(`Серийный номер уже выдан: ${certificate.serial}`);
+    if (certificate && !certificatePeriodValid(certificate)) throw new Error(`Срок сертификата пуст: ${certificate.serial}`);
     this.#owners.set(key, record.operator);
     this.#byCode.set(record.agent_code, Object.freeze({ ...record }));
     this.#keys.set(firstKey.kid, Object.freeze({ ...firstKey }));

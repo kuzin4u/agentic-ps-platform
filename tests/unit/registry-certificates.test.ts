@@ -182,17 +182,17 @@ describe.each(variants)("сертификат mTLS при допуске: %s (Р
     return [rec, key];
   };
 
-  it("допуск неделим: сбой вставки сертификата (повтор серийного номера) — нет ни агента, ни владельца, ни ключа", async () => {
+  it("допуск неделим: сбой вставки сертификата (пустой срок — CHECK not_after > not_before) — нет ни агента, ни владельца, ни ключа", async () => {
     const { store, registry } = setup();
     const c = cert(await registry.admit(application(uid(), { csr: newCsr().csr }), { contour: "sandbox", operator: OPERATOR }));
     const [rec, key] = await another(store, c.agent_code);
-    await expect(store.insert(rec, key, { ...c, agent_code: rec.agent_code })).rejects.toThrow();
+    // Новый серийный номер: сбой — только по сроку, не по повтору номера (повтор — отдельные тесты, РП65 нюанс 13).
+    const bad = { ...c, serial: "2".repeat(32), agent_code: rec.agent_code, not_after: c.not_before };
+    await expect(store.insert(rec, key, bad)).rejects.toThrow();
     expect(await store.get(rec.agent_code)).toBeUndefined();
     expect(await store.ownerOf(rec.issuer, rec.id)).toBeUndefined();
     expect(await store.getKey(key.kid)).toBeUndefined();
-    expect(await store.certificatesOf(rec.agent_code)).toEqual([]);
-    // Прежний сертификат с этим серийным номером — у прежнего агента.
-    expect(await store.getCertificate(c.serial)).toEqual(c);
+    expect(await store.getCertificate(bad.serial)).toBeUndefined();
   });
 
   it("сертификат чужого агента в insert — исключение, ничего не сохранено", async () => {
@@ -202,6 +202,27 @@ describe.each(variants)("сертификат mTLS при допуске: %s (Р
     await expect(store.insert(rec, key, { ...c, serial: "1".repeat(32) })).rejects.toThrow(/не этого агента/);
     expect(await store.get(rec.agent_code)).toBeUndefined();
     expect(await store.getCertificate("1".repeat(32))).toBeUndefined();
+  });
+});
+
+describe("хранилище в памяти: повтор серийного номера (РП65 нюанс 13)", () => {
+  it("второй сертификат с тем же serial — исключение, ничего не сохранено; прежний — у прежнего агента", async () => {
+    const store = new InMemoryAgentRegistryStore();
+    const registry = new AgentRegistry(store, {
+      keys: { key_ttl_days: 90, key_overlap_days: 7 },
+      now: () => NOW,
+      certificates: { ca: SandboxCa.generate({ now: NOW, ttlDays: 3650 }), ttlDays: 90, required: false },
+    });
+    const d = await registry.admit(application(uid(), { csr: newCsr().csr }), { contour: "sandbox", operator: OPERATOR });
+    if (!d.admitted || !d.certificate) throw new Error("сертификата нет");
+    const c = d.certificate;
+    const id = uid();
+    const rec: AgentRecord = { ...d.record, agent_code: `nspk:agent:${id}:v1`, id };
+    const key: AgentKey = { ...d.key, kid: `kid-${id}`, agent_code: rec.agent_code, public_key: `pk-${id}` };
+    await expect(store.insert(rec, key, { ...c, agent_code: rec.agent_code })).rejects.toThrow(/Серийный номер уже выдан/);
+    expect(await store.get(rec.agent_code)).toBeUndefined();
+    expect(await store.getKey(key.kid)).toBeUndefined();
+    expect(await store.getCertificate(c.serial)).toEqual(c);
   });
 });
 
