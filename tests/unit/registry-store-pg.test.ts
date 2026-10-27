@@ -81,6 +81,22 @@ describe.each(variants)("порт реестра агентов: %s (РП64 п. 
     expect(codes.indexOf(a.agent_code)).toBeLessThan(codes.indexOf(b.agent_code));
   });
 
+  it("каталог ключей (КТ1 ч. 2а № 10): ключи ACTIVE агентов контура в порядке допуска и порядке ключей; SUSPENDED и другой контур — нет", async () => {
+    const s = make();
+    const a = record(uid());
+    const sus = record(uid());
+    const op = record(uid(), { contour: "operator", conformance_run_ref: "run-1" });
+    const b = record(uid());
+    for (const r of [a, sus, op, b]) await s.insert(r, key(`k-${r.id}`, r.agent_code));
+    expect(await s.addKey(key(`k2-${a.id}`, a.agent_code, { valid_from: LATER }), new Map([[`k-${a.id}`, 1]]), new Map(), 1)).toBe(true);
+    expect(await s.updateStatus(sus.agent_code, 1, { status: "SUSPENDED", status_ground: "OUT_OF_MANDATE", status_changed_at: LATER, suspended_at: LATER })).toBeDefined();
+    const mine = new Set([a, sus, op, b].map((r) => r.agent_code));
+    const kids = (await s.catalogKeys("sandbox")).filter((k) => mine.has(k.agent_code)).map((k) => k.kid);
+    expect(kids).toEqual([`k-${a.id}`, `k2-${a.id}`, `k-${b.id}`]);
+    expect((await s.catalogKeys("operator")).filter((k) => mine.has(k.agent_code)).map((k) => k.kid)).toEqual([`k-${op.id}`]);
+    expect(await s.catalogKeys("sandbox")).toEqual(expect.arrayContaining([await s.getKey(`k-${a.id}`)]));
+  });
+
   it("вставка неделима: код занят, идентификатор у другого оператора, kid занят — ничего не сохранено (РП23 п. 2)", async () => {
     const s = make();
     const a = record(uid());

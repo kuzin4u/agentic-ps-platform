@@ -5,7 +5,7 @@ import type { SqlClient } from "@kuzin4u/agentic-core";
 import { insertAgentStatusEventTx, type TxSqlPool } from "../consent/store.js";
 import { pushAllowed } from "../pao/events.js";
 import type { AgentKey } from "./keys.js";
-import type { AgentRecord, AgentSubscription } from "./model.js";
+import type { AgentRecord, AgentSubscription, Contour } from "./model.js";
 import { AgentNotFoundError } from "./registry.js";
 import { checkTransition } from "./status.js";
 import { AgentCodeTakenError, KeyTakenError, type AgentRegistryStore, type StatusFields } from "./store.js";
@@ -113,6 +113,16 @@ export class PgAgentRegistryStore implements AgentRegistryStore, AgentStatusTx {
   async agentCodes(): Promise<readonly string[]> {
     const r = await this.client.query<{ agent_code: string }>("SELECT agent_code FROM agents ORDER BY seq");
     return r.rows.map((x) => x.agent_code);
+  }
+
+  /** Каталог ключей одним запросом (КТ1 ч. 2а № 10): порядок — seq агента, затем как keysOf (created_at, kid). */
+  async catalogKeys(contour: Contour): Promise<readonly AgentKey[]> {
+    const r = await this.client.query<KeyRow>(
+      `SELECT ${KEY_COLUMNS.split(", ").map((c) => `k.${c}`).join(", ")} FROM agent_keys k JOIN agents a ON a.agent_code = k.agent_code
+        WHERE a.status = 'ACTIVE' AND a.contour = $1 ORDER BY a.seq, k.created_at, k.kid`,
+      [contour],
+    );
+    return r.rows.map(toKey);
   }
 
   async ownerOf(issuer: string, id: string): Promise<string | undefined> {

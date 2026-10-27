@@ -3,7 +3,7 @@
 // Порт асинхронный, кэша нет (РП64 п. 3): статус и ключи читаются из хранилища на каждом обращении; сбой чтения —
 // отклонённое обещание, вызывающий отказывает (инвариант 3).
 import type { AgentKey } from "./keys.js";
-import type { AgentRecord, AgentSubscription } from "./model.js";
+import type { AgentRecord, AgentSubscription, Contour } from "./model.js";
 
 export class AgentCodeTakenError extends Error {
   constructor(readonly agent_code: string) {
@@ -23,8 +23,13 @@ export type StatusFields = Pick<AgentRecord, "status" | "status_ground" | "statu
 
 export interface AgentRegistryStore {
   get(agent_code: string): Promise<AgentRecord | undefined>;
-  /** Коды всех агентов в порядке допуска — для каталога ключей (РП22 п. 1). */
+  /** Коды всех агентов в порядке допуска. */
   agentCodes(): Promise<readonly string[]>;
+  /**
+   * Ключи агентов ACTIVE этого контура — для каталога ключей (РП22 п. 1), одним чтением (КТ1 ч. 2а № 10): порядок — допуск
+   * агента, затем порядок ключей агента (как keysOf). Срок и отзыв ключа отбирает вызывающий по своим часам.
+   */
+  catalogKeys(contour: Contour): Promise<readonly AgentKey[]>;
   /** Оператор, которому принадлежат версии агента «сторона : идентификатор»; нет версий — undefined. */
   ownerOf(issuer: string, id: string): Promise<string | undefined>;
   /**
@@ -78,6 +83,12 @@ export class InMemoryAgentRegistryStore implements AgentRegistryStore {
 
   async ownerOf(issuer: string, id: string): Promise<string | undefined> {
     return this.#owners.get(`${issuer}\u0000${id}`);
+  }
+
+  async catalogKeys(contour: Contour): Promise<readonly AgentKey[]> {
+    return [...this.#byCode.values()]
+      .filter((r) => r.status === "ACTIVE" && r.contour === contour)
+      .flatMap((r) => (this.#keysByAgent.get(r.agent_code) ?? []).map((kid) => this.#keys.get(kid) as AgentKey));
   }
 
   async insert(record: AgentRecord, firstKey: AgentKey): Promise<void> {

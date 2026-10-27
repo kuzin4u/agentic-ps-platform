@@ -14,7 +14,7 @@ import { paoIdempotency } from "./pao/idempotency.js";
 import { paoNonceStore, paoPoolConfig, requireDatabaseUrl, startNoncePurge } from "./pao/stores.js";
 import { systemResolver } from "./pao/subscription.js";
 import { PaoRequestVerifier } from "./pao/verify.js";
-import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore } from "./registry/index.js";
+import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore, PgAgentRegistryStore, type AgentRegistryStore } from "./registry/index.js";
 import { loadParams, type Params } from "./shared/config.js";
 import { applyPlatformMigrations } from "./shared/migrations.js";
 import {
@@ -143,9 +143,10 @@ async function serve(): Promise<void> {
   const nonces = paoNonceStore({ client: pool, skewSec: params.signature_skew_sec });
   const idempotency = paoIdempotency({ client: pool, ttlSec: params.idempotency_ttl_sec });
 
-  // Реестр в памяти до подключения PostgreSQL (PS-05в ч. 2б-2, РП64 п. 7); порт асинхронный (п. 3). Допуск операторов
-  // по HTTP — после их аутентификации (SEC-1, расхождение №9).
-  const store = new InMemoryAgentRegistryStore();
+  // Реестр агентов (РП64 п. 7, PS-05в ч. 2б-2): с DATABASE_URL — только PostgreSQL (sql/120, кэша нет — п. 3), без — память
+  // (dev, один процесс; переноса данных нет). Допуск операторов по HTTP — после их аутентификации (SEC-1, расхождение №9).
+  // Служба приостановления и хранилища П5 / П6 на PG сюда не подключаются до РП64 п. 6 (ч. 3) — страж main-wiring-guard.
+  const store: AgentRegistryStore = pool ? new PgAgentRegistryStore(pool) : new InMemoryAgentRegistryStore();
   const registry = new AgentRegistry(store, { keys: params });
   const keys = new AgentKeys(store, { keys: params });
   const verifier = new PaoRequestVerifier(
@@ -241,7 +242,7 @@ async function serve(): Promise<void> {
     merchants: { registry, keys, contour: "sandbox", params, readiness },
   });
   app.log.info({ params }, "стендовые параметры загружены");
-  if (!pool) app.log.warn("DATABASE_URL не задан (dev): nonce, идемпотентность, журнал согласий, удержания П3 и лимиты клиента в памяти — один процесс, повтор после перезапуска не ловится");
+  if (!pool) app.log.warn("DATABASE_URL не задан (dev): реестр агентов, nonce, идемпотентность, журнал согласий, удержания П3 и лимиты клиента в памяти — один процесс, повтор после перезапуска не ловится");
   const stopPurge = startNoncePurge(nonces, params.signature_skew_sec * 1000, (err) =>
     app.log.error({ err }, "ПАО: сбой очистки nonce"),
   );

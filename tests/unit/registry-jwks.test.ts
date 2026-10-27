@@ -1,7 +1,10 @@
 // РП22 п. 1–2: каталог ключей агентов — JWKS; kid = Key.kid ПАО; только действующие ключи агентов ACTIVE.
 import { describe, expect, it } from "vitest";
+import type { TxSqlPool } from "../../src/consent/store.js";
 import { createStand } from "../../src/stand/index.js";
+import { AgentKeys, PgAgentRegistryStore } from "../../src/registry/index.js";
 import { jwkThumbprint } from "../../src/registry/keys.js";
+import { loadParams } from "../../src/shared/config.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
 
 const A = "nspk:agent:jwks-a:v1";
@@ -72,5 +75,26 @@ describe("РП22 п. 2: только действующие ключи аген�
     expect((await s.keys.jwks("sandbox")).keys.filter((k) => k.agent_code === A)).toHaveLength(2);
     s.setClock(new Date(t0.getTime() + (s.params.key_overlap_days + 1) * DAY));
     expect((await s.keys.jwks("sandbox")).keys.filter((k) => k.agent_code === A).map((k) => k.kid)).toEqual([next.kid]);
+  });
+});
+
+describe("каталог на PostgreSQL — одним запросом (КТ1 PS-05в ч. 2а № 10)", () => {
+  it("jwks — одно обращение к базе вместо 2N + 1, ключи из ответа запроса", async () => {
+    const queries: string[] = [];
+    const row = { kid: "k1", agent_code: A, alg: "ed25519", public_key: "pk", valid_from: new Date("2026-10-01T00:00:00Z"), valid_to: new Date("2027-01-01T00:00:00Z"), revoked_at: null, row_version: "1" };
+    const pool = {
+      query: async (text: string) => {
+        queries.push(text);
+        return { rows: [row, { ...row, kid: "k2", agent_code: B }] };
+      },
+      connect: async () => {
+        throw new Error("транзакция каталогу не нужна");
+      },
+    } as unknown as TxSqlPool;
+    const keys = new AgentKeys(new PgAgentRegistryStore(pool), { keys: loadParams(), now: () => new Date("2026-10-27T00:00:00Z") });
+    // Ключи не Ed25519 (pk не SPKI) каталог отбрасывает — здесь важно число обращений, а не JWK.
+    await keys.jwks("sandbox");
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toMatch(/FROM agent_keys k JOIN agents a/);
   });
 });

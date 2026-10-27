@@ -170,12 +170,8 @@ export class AgentKeys {
    * Только агенты своего контура (РП56 п. 2): ключ песочницы в каталоге контура оператора — подпись прошла бы у боевого продавца.
    */
   async jwks(contour: Contour): Promise<AgentJwks> {
-    // Последовательно, по порядку допуска: 2N + 1 чтений; один запрос — STATUS «Открыто», КТ1 ч. 2а № 10.
-    const keys: AgentKey[] = [];
-    for (const code of await this.store.agentCodes()) {
-      const rec = await this.store.get(code);
-      if (rec?.status === "ACTIVE" && rec.contour === contour) keys.push(...(await this.store.keysOf(code)));
-    }
+    // Одно чтение хранилища (КТ1 ч. 2а № 10): ключи агентов ACTIVE контура в порядке допуска; срок — по часам Платформы.
+    const keys = await this.store.catalogKeys(contour);
     const now = this.now();
     return {
       keys: keys
