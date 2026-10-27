@@ -1,4 +1,5 @@
-// П9 Проверка обращения ПАО (ПАО §2, A2 п. 5, РП23 п. 6): агент в реестре → подпись → статус агента.
+// П9 Проверка обращения ПАО (ПАО §2, A2 п. 5, РП23 п. 6): [сертификат канала — РП66, если mtls] → агент в реестре →
+// подпись → статус агента.
 // Подпись проверяет agentic-core verifyRequestAsync — тот же код, которым подписывает агент (совместный тест С0).
 // Ключ ищется только среди ключей агента из x-agent-code: иначе агент A подписывал бы за агента B (инвариант 5).
 // Nonce — хранилище ядра, проверка и запись одной командой после верной подписи (РП30 п. 1–2, Ш3а).
@@ -6,6 +7,7 @@ import { createHash } from "node:crypto";
 import { ed25519Verifier, verifyRequestAsync, type AsyncNonceStore, type Verifier } from "@kuzin4u/agentic-core";
 import type { KeyForVerify } from "../registry/agent-keys.js";
 import type { AgentRecord } from "../registry/model.js";
+import { checkChannel, type ChannelOptions, type ChannelReject } from "./channel.js";
 import { paoNonceStore } from "./stores.js";
 
 /** Обращение в том виде, в каком оно пришло: путь и запрос — без декодирования, тело — строкой, без тела — "" (РП16). */
@@ -20,6 +22,8 @@ export interface PaoRequest {
    * проверялась бы по digest пустого тела, а тело другое — SIGNATURE_INVALID.
    */
   readonly unexpectedBody?: boolean;
+  /** Сертификат клиента из TLS-соединения, DER; без TLS или без сертификата — нет (ступень 0, РП66 п. 1). */
+  readonly clientCertificate?: Buffer;
 }
 
 /**
@@ -43,6 +47,8 @@ export type PaoAuthResult =
       readonly norm?: string;
       /** Исключение источника — для журнала процесса Платформы; агенту не передаётся. */
       readonly cause?: unknown;
+      /** Вид причины отказа ступени 0 — для журнала процесса; агенту — только AGENT_UNKNOWN (РП66 п. 2). */
+      readonly channel?: ChannelReject;
     };
 
 /** Сбой реестра или ключей — не ошибка агента: 503 UPSTREAM_UNAVAILABLE, same_key (ПАО §6; РП23 п. 6; аудит PS-04 №2). */
@@ -89,6 +95,8 @@ export interface PaoVerifierOptions {
   readonly nonces?: AsyncNonceStore;
   /** Проверка подписи по алгоритму ключа — точка расширения РП5; по умолчанию ed25519. */
   readonly verifier?: Verifier;
+  /** Ступень 0 — сертификат канала (песочница с mTLS, РП66 п. 1); без неё — стенд и dev (РП27 п. 5). */
+  readonly mtls?: ChannelOptions;
 }
 
 export class PaoRequestVerifier {
@@ -122,6 +130,12 @@ export class PaoRequestVerifier {
   private async head(
     req: Omit<PaoRequest, "body">,
   ): Promise<Extract<PaoAuthResult, { ok: false }> | { readonly agent: AgentRecord; readonly headers: Record<string, string> }> {
+    // Ступень 0 — до РП23 п. 6.1 и до разбора заголовков (РП27 п. 3, РП66 п. 1): повтор x-agent-code — несовпадение кода.
+    if (this.opts.mtls) {
+      const ch = await checkChannel(req.clientCertificate, req.headers["x-agent-code"], this.now(), this.opts.mtls);
+      if (!ch.ok) return "cause" in ch ? upstreamFail(ch.cause) : { ok: false, code: "AGENT_UNKNOWN", norm: "A2 п. 5.1", channel: ch.reject };
+    }
+
     // Повтор заголовка — неоднозначность, не догадка (инвариант 3).
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(req.headers)) {

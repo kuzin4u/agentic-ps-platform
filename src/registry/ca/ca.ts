@@ -21,7 +21,7 @@ const OID_EXT_KEY_USAGE = "2.5.29.37";
 const OID_CLIENT_AUTH = "1.3.6.1.5.5.7.3.2";
 
 /** Только коды песочницы (РП23 п. 1) по той же грамматике, что у реестра (РП21 п. 1): в SAN — urn: и код агента. */
-const isSandboxAgentCode = (code: string): boolean => {
+export const isSandboxAgentCode = (code: string): boolean => {
   try {
     return parseAgentCode(code).issuer === REGISTRY_ISSUER;
   } catch (e) {
