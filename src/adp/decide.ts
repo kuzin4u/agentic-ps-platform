@@ -49,7 +49,7 @@ export function issuedBeforeSuspension(created_at: string, suspended_at: string 
   if (suspended_at === null || suspended_at === undefined) return false;
   const issued = Date.parse(created_at);
   const suspended = Date.parse(suspended_at);
-  return !(Number.isFinite(issued) && Number.isFinite(suspended)) || issued < suspended;
+  return !(Number.isFinite(issued) && Number.isFinite(suspended)) || issued <= suspended;
 }
 
 export type AdpMandate = Pick<Mandate, "status" | "type" | "parent_id" | "merchant_scope" | "currency" | "amount_limit"> & {
