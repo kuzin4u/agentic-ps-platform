@@ -197,11 +197,12 @@ export class PgAgentRegistryStore implements AgentRegistryStore, AgentStatusTx {
   async transitStatus(agent_code: string, req: AgentStatusRequest): Promise<{ readonly record: AgentRecord; readonly written: boolean }> {
     const type = req.to === "SUSPENDED" ? "agent.suspended" : "agent.reinstated";
     return this.tx(async (tx) => {
-      const cur = await tx.query<AgentRow>(`SELECT ${AGENT_COLUMNS} FROM agents WHERE agent_code = $1 FOR UPDATE`, [agent_code]);
+      const cur = await tx.query<AgentRow>(`SELECT ${AGENT_COLUMNS} FROM agents WHERE agent_code = $1`, [agent_code]);
       if (!cur.rows[0]) throw new AgentNotFoundError(agent_code);
       let record = toRecord(cur.rows[0]);
       await this.hooks.inStatusTx?.("locked", agent_code);
       const repeat = isStatusRepeat(record, req);
+      if (repeat) return { record, written: false };
       if (!repeat) {
         const c = checkTransition(record.status, req);
         const r = await tx.query<AgentRow>(

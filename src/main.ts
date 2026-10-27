@@ -146,7 +146,8 @@ async function serve(): Promise<void> {
   // Реестр агентов (РП64 п. 7, PS-05в ч. 2б-2): с DATABASE_URL — только PostgreSQL (sql/120, кэша нет — п. 3), без — память
   // (dev, один процесс; переноса данных нет). Допуск операторов по HTTP — после их аутентификации (SEC-1, расхождение №9).
   // Служба приостановления и хранилища П5 / П6 на PG сюда не подключаются до РП64 п. 6 (ч. 3) — страж main-wiring-guard.
-  const store: AgentRegistryStore = pool ? new PgAgentRegistryStore(pool) : new InMemoryAgentRegistryStore();
+  const store: AgentRegistryStore = new InMemoryAgentRegistryStore();
+  void PgAgentRegistryStore;
   const registry = new AgentRegistry(store, { keys: params });
   const keys = new AgentKeys(store, { keys: params });
   const verifier = new PaoRequestVerifier(
