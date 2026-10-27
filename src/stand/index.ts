@@ -45,6 +45,7 @@ import {
   AgentRegistry,
   AgentStatusService,
   InMemoryAgentRegistryStore,
+  SandboxCa,
   type AdmissionDecision,
   type AgentRecord,
 } from "../registry/index.js";
@@ -167,6 +168,11 @@ export interface Stand {
   readonly params: Params;
   readonly registry: AgentRegistry;
   readonly keys: AgentKeys;
+  /**
+   * Корневой сертификат УЦ стенда, DER в base64 (РП65 п. 1): им подписан сертификат из решения о допуске, если в заявлении
+   * был csr. Стенд — без mTLS (РП27 п. 5): сертификат на стенде не проверяется; УЦ — в памяти, у каждого стенда свой.
+   */
+  readonly caCertificate: string;
   readonly app: FastifyInstance;
   /** Разрешение имени стенда для адреса подписки (РП40 п. 8): подмена DNS в тестах. */
   readonly dns: StandDns;
@@ -248,7 +254,20 @@ export function createStand(opts: StandOptions = {}): Stand {
   let clock: Date | undefined;
   const now = (): Date => clock ?? new Date();
   const store = new InMemoryAgentRegistryStore();
-  const registry = new AgentRegistry(store, { keys: params, now });
+  // УЦ стенда — в памяти, CSR необязателен (РП65 п. 1): агент на стенде CSR не шлёт. Срок УЦ отсчитывается от часов при
+  // создании стенда: допуск с CSR при часах раньше этого — исключение УЦ «вне срока».
+  const ca = SandboxCa.generate({ now: now(), ttlDays: params.sandbox_ca_ttl_days });
+  const registry = new AgentRegistry(store, {
+    keys: params,
+    now,
+    certificates: {
+      ca,
+      ttlDays: params.agent_cert_ttl_days,
+      required: false,
+      // Вид причины — только в журнал процесса, оператору — KEY_INVALID (РП65 п. 1). app создаётся ниже; допуск — после.
+      onRejected: (reason) => app.log.info({ reason }, "П1: CSR заявления отклонён — KEY_INVALID"),
+    },
+  });
   const keys = new AgentKeys(store, { keys: params, now });
   const verifier = new PaoRequestVerifier(
     { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
@@ -667,6 +686,7 @@ export function createStand(opts: StandOptions = {}): Stand {
     tsp,
     setClock: (d) => (clock = d),
     now,
+    caCertificate: ca.certificateDer.toString("base64"),
     admit: (application, operator) => registry.admit(application, { contour: "sandbox", operator }),
     suspendAgent: (agent_code, ground) => agentStatus.suspend(agent_code, ground),
     reinstateAgent: (agent_code) => agentStatus.reinstate(agent_code),

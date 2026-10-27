@@ -1,7 +1,10 @@
 // ПС01 · позитив · П1 · Допуск оператора агента и выдача ключа (A2 п. 3–5, ФП1, РП21, РП23).
-// Сертификат mTLS из ожидаемого результата — SEC-1 (joint-plan); остальное — здесь.
+// Сертификат mTLS из ожидаемого результата — выпуск по CSR при допуске (SEC-1-код ч. 1, РП65); проверка сертификата в
+// обращении (ступень 0, РП27 п. 3) — SEC-1-код ч. 2.
+import { X509Certificate } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
+import { newCsr } from "../support/csr.js";
 import { signedInject } from "../support/signed-inject.js";
 import { stand, type Stand } from "../support/stand.js";
 
@@ -108,5 +111,25 @@ describe("ПС01: допуск оператора агента и выдача �
     expect(self).toMatchObject({ class: "BUYER", level: 1, status: "ACTIVE" });
     expect(await s.registry.get(CODE)).toMatchObject({ class: "BUYER", level: 1 });
   });
-  it.todo("сертификат mTLS, связанный с agent_code, выдаётся при допуске — РП27, PS-05");
+  it("сертификат mTLS, связанный с agent_code, выдаётся при допуске (РП27 п. 2, РП65): по CSR оператора, УЦ песочницы, SAN — код агента", async () => {
+    // Ключ сертификата генерирует оператор агента, Платформа получает только CSR (РП27 п. 2).
+    const { csr, publicKey } = newCsr();
+    const d = await s.registry.admit({ ...buyerApplication(CODE, side), csr }, { contour: "sandbox", operator: OPERATOR });
+    if (!d.admitted || !d.certificate) throw new Error("сертификата в решении о допуске нет");
+    expect(d.record).toMatchObject({ agent_code: CODE, class: "BUYER", level: 1, status: "ACTIVE" });
+    const cert = new X509Certificate(Buffer.from(d.certificate.der, "base64"));
+    const ca = new X509Certificate(Buffer.from(s.caCertificate, "base64"));
+    // Связь с agent_code — ровно один SAN URI из записи реестра; выпущен УЦ песочницы; только для клиента.
+    expect(cert.subjectAltName).toBe(`URI:urn:${CODE}`);
+    expect(cert.checkIssued(ca) && cert.verify(ca.publicKey)).toBe(true);
+    expect(cert.keyUsage).toEqual(["1.3.6.1.5.5.7.3.2"]);
+    expect(cert.publicKey.export({ format: "der", type: "spki" })).toEqual(publicKey.export({ format: "der", type: "spki" }));
+    // Сертификат — в реестре рядом с записью агента (РП27 п. 4).
+    expect(await s.registry.certificatesOf(CODE)).toEqual([d.certificate]);
+    expect(d.certificate).toMatchObject({ agent_code: CODE, revoked_at: null });
+    // Допуск с сертификатом не меняет ПАО: GET /pao/v1/agent — как без него (стенд dev — без mTLS, РП27 п. 5).
+    const res = await signedInject(s.app, side, CODE);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).not.toHaveProperty("certificate");
+  });
 });

@@ -427,6 +427,9 @@ describe("статус допуска (РП21 п. 4)", () => {
       keysOf: async () => [],
       addKey: async () => false,
       revokeKey: async () => undefined,
+      getCertificate: async () => undefined,
+      certificatesOf: async () => [],
+      revokeCertificate: async () => undefined,
       subscriptionOf: async () => undefined,
       setSubscription: async () => false,
     };

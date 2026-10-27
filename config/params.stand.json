@@ -29,6 +29,8 @@
   "pao_agent_rate_limit_per_min_l3": 6000,
   "key_ttl_days": 90,
   "key_overlap_days": 7,
+  "agent_cert_ttl_days": 90,
+  "sandbox_ca_ttl_days": 3650,
   "qualified_signature_above_kop": 5000000,
   "qualified_signature_above_days": 30,
   "restore_budget_on_refund": false,

@@ -1,11 +1,14 @@
 // П1 Реестр агентов: допуск по заявлению с первым ключом, класс, уровень, статус (SPEC §3, ФП1, A2, РП17, РП21, РП23).
 // Класс и уровень агента — только отсюда, не из тела запросов агента (инвариант 5).
+import type { SandboxCa } from "./ca/ca.js";
+import { parseCsr, type CsrRejection } from "./ca/csr.js";
 import { REGISTRY_ISSUER, parseAgentCode, type AgentCode } from "./code.js";
 import {
   ADMISSION_LEVEL,
   AGENT_CLASSES,
   isOneOf,
   type AdmissionRefusal,
+  type AgentCertificateRecord,
   type AgentRecord,
   type AgentSubscription,
   type Contour,
@@ -15,8 +18,25 @@ import { checkTransition } from "./status.js";
 import { AgentCodeTakenError, KeyTakenError, type AgentRegistryStore } from "./store.js";
 
 export type AdmissionDecision =
-  | { readonly admitted: true; readonly record: AgentRecord; readonly key: AgentKey }
+  | {
+      readonly admitted: true;
+      readonly record: AgentRecord;
+      readonly key: AgentKey;
+      /** Сертификат mTLS — только если выдан по CSR заявления (РП65 п. 1, 3). */
+      readonly certificate?: AgentCertificateRecord;
+    }
   | { readonly admitted: false; readonly reasons: readonly [AdmissionRefusal, ...AdmissionRefusal[]] };
+
+/** Выпуск сертификата mTLS при допуске в контуре sandbox (РП27 п. 2, РП65 п. 1). */
+export interface RegistryCertificates {
+  readonly ca: SandboxCa;
+  /** agent_cert_ttl_days (РП65 п. 5). */
+  readonly ttlDays: number;
+  /** Песочница с mTLS — CSR обязателен (нет — APPLICATION_INCOMPLETE); стенд dev — нет (РП65 п. 1). */
+  readonly required: boolean;
+  /** Вид причины отказа CSR — для журнала процесса; оператору — только KEY_INVALID (РП65 п. 1, РП31 п. 2). */
+  readonly onRejected?: (reason: CsrRejection) => void;
+}
 
 /** Контекст вызова допуска: контур (РП17) и оператор агента — аутентифицированный вызывающий, не тело заявления. */
 export interface AdmissionContext {
@@ -94,12 +114,15 @@ export interface RegistryOptions {
   readonly now?: () => Date;
   /** Алгоритмы ключей по контуру — точка расширения РП5; по умолчанию DEFAULT_KEY_ALGORITHMS. */
   readonly algorithms?: Readonly<Record<Contour, readonly KeyAlgorithm[]>>;
+  /** УЦ песочницы; без него поле csr не читается и сертификат не выдаётся (рабочий сервер до SEC-1-кода ч. 2, РП65 п. 1). */
+  readonly certificates?: RegistryCertificates;
 }
 
 export class AgentRegistry {
   private readonly now: () => Date;
   private readonly policy: KeyPolicy;
   private readonly algorithms: Readonly<Record<Contour, readonly KeyAlgorithm[]>>;
+  private readonly certificates: RegistryCertificates | undefined;
 
   constructor(
     private readonly store: AgentRegistryStore,
@@ -108,6 +131,7 @@ export class AgentRegistry {
     this.policy = opts.keys;
     this.now = opts.now ?? (() => new Date());
     this.algorithms = opts.algorithms ?? DEFAULT_KEY_ALGORITHMS;
+    this.certificates = opts.certificates;
   }
 
   /**
@@ -153,6 +177,18 @@ export class AgentRegistry {
     const parsedKey = parseKey(this.algorithms[contour], alg, publicKey);
     if (alg !== undefined && publicKey !== undefined && (!parsedKey || (await this.store.getKey(parsedKey.kid)))) {
       reasons.add("KEY_INVALID");
+    }
+
+    // CSR сертификата mTLS (РП65 п. 1): только в sandbox и только при УЦ; в контуре operator — УЦ оператора (РП27 п. 6).
+    const certs = contour === "sandbox" ? this.certificates : undefined;
+    const csr = certs ? own(a, "csr") : undefined;
+    if (certs?.required && csr === undefined) reasons.add("APPLICATION_INCOMPLETE");
+    if (certs && csr !== undefined) {
+      const parsed = parseCsr(csr);
+      if (!parsed.ok) {
+        reasons.add("KEY_INVALID");
+        certs.onRejected?.(parsed.reason);
+      }
     }
 
     const cls = own(a, "class");
@@ -203,18 +239,43 @@ export class AgentRegistry {
       suspended_at: null,
       row_version: 1,
     };
+    // Сертификат — по коду из записи, не из CSR (инвариант 5); CSR уже разобран выше, отказ здесь — нарушение порядка.
+    let certificate: AgentCertificateRecord | undefined;
+    if (certs && csr !== undefined) {
+      const issued = certs.ca.issueAgentCertificate(csr, record.agent_code, now, certs.ttlDays);
+      if (!issued.ok) throw new Error(`CSR прошёл разбор, но не выпуск: ${issued.reason}`);
+      certificate = { ...issued.certificate, agent_code: record.agent_code, revoked_at: null };
+    }
     try {
-      await this.store.insert(record, newAgentKey(record.agent_code, parsedKey, now, this.policy));
+      await this.store.insert(record, newAgentKey(record.agent_code, parsedKey, now, this.policy), certificate);
     } catch (e) {
       if (e instanceof AgentCodeTakenError) return { admitted: false, reasons: ["CODE_TAKEN"] };
       if (e instanceof KeyTakenError) return { admitted: false, reasons: ["KEY_INVALID"] };
       throw e;
     }
-    return {
+    const decision = {
       admitted: true,
       record: (await this.store.get(record.agent_code)) as AgentRecord,
       key: (await this.store.getKey(parsedKey.kid)) as AgentKey,
-    };
+    } as const;
+    return certificate ? { ...decision, certificate: (await this.store.getCertificate(certificate.serial)) as AgentCertificateRecord } : decision;
+  }
+
+  /** Сертификат mTLS по серийному номеру — из хранилища на каждом вызове (РП65 п. 3). */
+  getCertificate(serial: string): Promise<AgentCertificateRecord | undefined> {
+    return this.store.getCertificate(serial);
+  }
+
+  certificatesOf(agent_code: string): Promise<readonly AgentCertificateRecord[]> {
+    return this.store.certificatesOf(agent_code);
+  }
+
+  /**
+   * Отзыв сертификата mTLS (РП27 п. 4, РП65 п. 3): при компрометации ключа сертификата и по заявлению оператора; необратим,
+   * повтор — тот же отозванный с прежним revoked_at; нет такого — undefined. По HTTP — PS-31; проверка списка — ч. 2.
+   */
+  revokeCertificate(serial: string): Promise<AgentCertificateRecord | undefined> {
+    return this.store.revokeCertificate(serial, this.now().toISOString());
   }
 
   /** Запись агента — из хранилища на каждом вызове (РП64 п. 3); сбой чтения — отклонённое обещание. */
