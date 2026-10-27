@@ -205,6 +205,28 @@ describe.each(variants)("сертификат mTLS при допуске: %s (Р
   });
 });
 
+describe.skipIf(!DATABASE_URL)("схема agent_certificates на PostgreSQL (РП65 нюанс 12)", () => {
+  it("дубль серийного номера — отказ базы: прямая вставка второй строки с тем же serial — 23505 agent_certificates_pkey", async () => {
+    const store = new PgAgentRegistryStore((db as TestDb).pool);
+    const registry = new AgentRegistry(store, {
+      keys: { key_ttl_days: 90, key_overlap_days: 7 },
+      now: () => NOW,
+      certificates: { ca: SandboxCa.generate({ now: NOW, ttlDays: 3650 }), ttlDays: 90, required: false },
+    });
+    const d = await registry.admit(application(uid(), { csr: newCsr().csr }), { contour: "sandbox", operator: OPERATOR });
+    if (!d.admitted || !d.certificate) throw new Error("сертификата нет");
+    const c = d.certificate;
+    await expect(
+      (db as TestDb).pool.query(
+        "INSERT INTO agent_certificates (serial, agent_code, der, not_before, not_after) VALUES ($1, $2, $3, $4, $5)",
+        [c.serial, c.agent_code, c.der, c.not_before, c.not_after],
+      ),
+    ).rejects.toMatchObject({ code: "23505", constraint: "agent_certificates_pkey" });
+    const rows = await (db as TestDb).pool.query("SELECT 1 FROM agent_certificates WHERE serial = $1", [c.serial]);
+    expect(rows.rowCount).toBe(1);
+  });
+});
+
 describe("стенд: csr в заявлении необязателен, УЦ стенда (РП65 п. 1)", () => {
   it("с CSR — сертификат, подписанный caCertificate стенда; без CSR — как прежде; плохой CSR — KEY_INVALID", async () => {
     const s = createStand();
