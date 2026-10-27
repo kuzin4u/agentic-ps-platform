@@ -401,13 +401,10 @@ export class PgConsentStore implements ConsentStore, AgentStatusEventStore {
   /**
    * Событие смены статуса агента (РП54 п. 2, 8): своя транзакция — блокировка агента (номер общий с прочими событиями,
    * РП39 п. 2), вставка с ON CONFLICT DO NOTHING по (agent_code, agent_status_version); строка попытки — только у
-   * вставленного события.
+   * вставленного события. Реестр на PG пишет событие в своей транзакции — insertAgentStatusEventTx (РП64 п. 4).
    */
   async appendAgentStatusEvent(draft: AgentStatusEventDraft, at: string): Promise<boolean> {
-    return this.tx(async (tx) => {
-      await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(draft.agent_code)]);
-      return insertEventTx(tx, agentStatusEventOf(draft, at, 0), draft.push, draft.version);
-    });
+    return this.tx((tx) => insertAgentStatusEventTx(tx, draft, at));
   }
 
   async appendNotice(notice: ParticipantNotice, at: string): Promise<void> {
@@ -664,6 +661,16 @@ async function insertEventTx(tx: SqlClient, ev: StoredEvent, push: boolean | und
 export async function insertConfirmationEventTx(tx: SqlClient, draft: ConfirmationEventDraft, at: string): Promise<void> {
   await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(draft.agent_code)]);
   await insertEventTx(tx, confirmationEventOf(draft, at, 0), draft.push);
+}
+
+/**
+ * Событие смены статуса агента в транзакции вызывающего — у реестра на PG одной транзакцией со сменой статуса (РП64 п. 4):
+ * блокировка номера ленты агента (РП39 п. 2), вставка ON CONFLICT DO NOTHING по (agent_code, agent_status_version);
+ * false — событие этой версии уже есть.
+ */
+export async function insertAgentStatusEventTx(tx: SqlClient, draft: AgentStatusEventDraft, at: string): Promise<boolean> {
+  await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [eventSeqLockKey(draft.agent_code)]);
+  return insertEventTx(tx, agentStatusEventOf(draft, at, 0), draft.push, draft.version);
 }
 
 /** Событие итога операции в транзакции итога (РП52 п. 7–8): блокировка агента до фиксации, затем вставка (как РП51 п. 3). */

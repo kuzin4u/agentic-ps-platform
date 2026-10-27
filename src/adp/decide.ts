@@ -42,13 +42,14 @@ export interface AdpAgents {
 
 /**
  * Выдано раньше последнего приостановления агента (РП54 п. 5–6): реквизит и confirmation_ref не действуют и после снятия.
- * Время не разбирается — «раньше» (fail-closed, инвариант 3).
+ * Время не разбирается — «раньше» (fail-closed, инвариант 3). Равенство — «раньше» (Р-634; РП64 дополнение «2б-2» п. 1):
+ * метки до миллисекунды, выданное в ту же миллисекунду до приостановления не должно пережить снятие.
  */
 export function issuedBeforeSuspension(created_at: string, suspended_at: string | null | undefined): boolean {
   if (suspended_at === null || suspended_at === undefined) return false;
   const issued = Date.parse(created_at);
   const suspended = Date.parse(suspended_at);
-  return !(Number.isFinite(issued) && Number.isFinite(suspended)) || issued < suspended;
+  return !(Number.isFinite(issued) && Number.isFinite(suspended)) || issued <= suspended;
 }
 
 export type AdpMandate = Pick<Mandate, "status" | "type" | "parent_id" | "merchant_scope" | "currency" | "amount_limit"> & {
