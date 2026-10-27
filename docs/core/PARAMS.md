@@ -30,6 +30,7 @@
 | `pao_agent_rate_limit_per_min_l2` | 4 500 | То же для уровня 2 (РП63 п. 4) | то же |
 | `pao_agent_rate_limit_per_min_l3` | 6 000 | То же для уровня 3 (РП63 п. 4) | то же |
 | `key_ttl_days` / `key_overlap_days` | 90 / 7 | Ключи агентов | O02 |
+| `agent_cert_ttl_days` / `sandbox_ca_ttl_days` | 90 / 3 650 | Срок сертификата mTLS агента и корневого сертификата УЦ песочницы, дней (РП65 п. 5): сертификат агента — не дольше УЦ (`notAfter` ≤ `notAfter` УЦ) | прогон песочницы для сторонних агентов (PS-26) |
 | `qualified_signature_above_*` | 50 000 ₽ / 30 дней | Усиленная подпись мандата | юридическая оценка (O08, Р9) |
 | `restore_budget_on_refund` | false | Восстановление бюджета при возврате; `true` до PS-23 — отказ запуска (РП55 п. 4) | юридическая оценка (В8, РП9) |
 | `aoi_rollout_phase` | 3 | Очередь внедрения признака | A1 п. 8.3 |
@@ -52,7 +53,7 @@
 
 | Правило | Почему |
 |---|---|
-| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `participant_notify_max_delay_sec`, `participant_notify_horizon_sec`, `operation_outcome_every_ms`, `operation_outcome_max_delay_sec`, `operation_outcome_horizon_sec`, `operation_reread_interval_sec`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `merchant_jwks_max_age_sec`, `merchant_jwks_refetch_min_sec`, `merchant_readiness_max_age_sec`, `pao_rate_limit_per_30s` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
+| Целые ≥ 1: `adp_p99_ms`, `adp_timeout_ms`, `revocation_propagation_max_ms`, `reservation_ttl_sec`, `cryptogram_ttl_sec`, `order_hold_sec`, `confirm_above_kop`, `split_window_sec`, `signature_skew_sec`, `key_ttl_days`, `participant_notify_max_delay_sec`, `participant_notify_horizon_sec`, `operation_outcome_every_ms`, `operation_outcome_max_delay_sec`, `operation_outcome_horizon_sec`, `operation_reread_interval_sec`, `qualified_signature_above_kop`, `qualified_signature_above_days`, `cx_outcome_timeout_days`, `protocol_overlap_days`, `event_retry_max`, `event_page_max`, `event_delivery_timeout_ms`, `merchant_rate_limit_per_min`, `merchant_jwks_max_age_sec`, `merchant_jwks_refetch_min_sec`, `merchant_readiness_max_age_sec`, `pao_rate_limit_per_30s`, `sandbox_ca_ttl_days` | ноль вырождает механизм (РП20: `protocol_overlap_days`, `event_retry_max`) |
 | Целые ≥ 0: `bypass_overhead_ms`, `event_reorder_window_ms`, `key_overlap_days` | ноль допустим |
 | `split_min_ops` ≥ 2 | дробление — от двух операций |
 | Чётные целые ≥ 2: `pao_agent_rate_limit_per_min_l1`, `pao_agent_rate_limit_per_min_l2`, `pao_agent_rate_limit_per_min_l3` | предел в минуту делится на два окна по 30 с без остатка (РП63 п. 3–4) |
@@ -62,6 +63,7 @@
 | `bypass_overhead_ms` < `adp_p99_ms` | РП4, РП20 |
 | `adp_timeout_ms` > `adp_p99_ms` | ПИ §3, РП20 |
 | `key_overlap_days` < `key_ttl_days` | перекрытие ключей короче их жизни |
+| `agent_cert_ttl_days` — целое 1…397; `sandbox_ca_ttl_days` > `agent_cert_ttl_days` | 397 — наибольший срок сертификата TLS в отрасли; УЦ живёт дольше выданного им сертификата (РП65 п. 5) |
 | `participant_notify_horizon_sec` ≥ 2 × `participant_notify_max_delay_sec` | признак отставания — половина горизонта; она не короче наибольшей задержки уведомления (РП46 доп. п. 9 (о2)) |
 | `operation_outcome_every_ms` < `operation_outcome_max_delay_sec` × 1000; `operation_outcome_horizon_sec` ≥ 2 × `operation_outcome_max_delay_sec` | проход чаще предела задержки; горизонт не короче двух пределов (РП52 «Дополнения» п. 1, 3) |
 | `operation_reread_interval_sec` — целое ≥ 1, меньше `reservation_ttl_sec` | перечитывание укладывается в срок авторизации хотя бы раз (РП55 п. 2) |
@@ -100,3 +102,4 @@
 | 23.10.2026 | `merchant_jwks_refetch_min_sec` | — | 1 (рабочее — 30) | PS-30 ч. 1 К1, окно перечитывания каталога по неизвестному `kid`; решение владельца 23.10 (РП56 п. 3) |
 | 24.10.2026 | `merchant_readiness_max_age_sec` | — | 1 (рабочее — 60) | PS-30 ч. 2 К1, срок кэша статуса знака готовности у продавца; решение владельца 24.10 (РП57 п. 3, вопрос 6) |
 | 25.10.2026 | `pao_agent_rate_limit_per_min_l1` / `_l2` / `_l3` | — | 3 000 / 4 500 / 6 000 | PS-05б ч. 4 К1.1, второй слой лимита шлюза ПАО по агенту и уровню (ПАО §2, AG-08); решение владельца 25.10 (РП63 п. 4, вариант (а)) |
+| 27.10.2026 | `agent_cert_ttl_days` / `sandbox_ca_ttl_days` | — | 90 / 3 650 | SEC-1-код ч. 1 К2, срок сертификата агента и УЦ песочницы; решение владельца 27.10 (РП65 п. 5) |

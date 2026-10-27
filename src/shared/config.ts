@@ -58,6 +58,10 @@ export interface Params {
   readonly pao_agent_rate_limit_per_min_l3: number;
   readonly key_ttl_days: number;
   readonly key_overlap_days: number;
+  /** Срок сертификата mTLS агента, дней; 1…397, не дольше УЦ (РП65 п. 5). */
+  readonly agent_cert_ttl_days: number;
+  /** Срок корневого сертификата УЦ песочницы, дней; больше agent_cert_ttl_days (РП65 п. 5). */
+  readonly sandbox_ca_ttl_days: number;
   readonly qualified_signature_above_kop: number;
   readonly qualified_signature_above_days: number;
   readonly restore_budget_on_refund: boolean;
@@ -187,6 +191,8 @@ const RULES: Record<keyof Params, Rule> = {
   pao_agent_rate_limit_per_min_l3: evenInt(2),
   key_ttl_days: int(1),
   key_overlap_days: int(0),
+  agent_cert_ttl_days: int(1, 397),
+  sandbox_ca_ttl_days: int(1),
   qualified_signature_above_kop: int(1),
   qualified_signature_above_days: int(1),
   restore_budget_on_refund: bool,
@@ -263,6 +269,8 @@ export function parseParams(raw: unknown): Params {
     if (p.adp_timeout_ms <= p.adp_p99_ms) problems.push("adp_timeout_ms не больше adp_p99_ms");
     if (p.bypass_overhead_ms >= p.adp_p99_ms) problems.push("bypass_overhead_ms не меньше adp_p99_ms");
     if (p.key_overlap_days >= p.key_ttl_days) problems.push("key_overlap_days не меньше key_ttl_days");
+    // УЦ живёт дольше выданного им сертификата агента (РП65 п. 5).
+    if (p.sandbox_ca_ttl_days <= p.agent_cert_ttl_days) problems.push("sandbox_ca_ttl_days не больше agent_cert_ttl_days");
     // Признак отставания — половина горизонта (РП46 доп. п. 9 (о2)); она не короче наибольшей задержки уведомления.
     if (p.participant_notify_horizon_sec < 2 * p.participant_notify_max_delay_sec) {
       problems.push("participant_notify_horizon_sec меньше двух participant_notify_max_delay_sec");
