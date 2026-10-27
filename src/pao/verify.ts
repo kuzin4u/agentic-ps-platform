@@ -132,7 +132,13 @@ export class PaoRequestVerifier {
   ): Promise<Extract<PaoAuthResult, { ok: false }> | { readonly agent: AgentRecord; readonly headers: Record<string, string> }> {
     // Ступень 0 — до РП23 п. 6.1 и до разбора заголовков (РП27 п. 3, РП66 п. 1): повтор x-agent-code — несовпадение кода.
     if (this.opts.mtls) {
-      const ch = await checkChannel(req.clientCertificate, req.headers["x-agent-code"], this.now(), this.opts.mtls);
+      let ch: Awaited<ReturnType<typeof checkChannel>>;
+      try {
+        ch = await checkChannel(req.clientCertificate, req.headers["x-agent-code"], this.now(), this.opts.mtls);
+      } catch {
+        // Исключение проверки (не чтения реестра — то UPSTREAM внутри checkChannel) — отказ по §6, а не 500 (КТ1 № 4).
+        ch = { ok: false, reject: "CHECK_FAILED" };
+      }
       if (!ch.ok) return "cause" in ch ? upstreamFail(ch.cause) : { ok: false, code: "AGENT_UNKNOWN", norm: "A2 п. 5.1", channel: ch.reject };
     }
 

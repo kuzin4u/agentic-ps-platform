@@ -14,7 +14,9 @@ export type ChannelReject =
   | "NOT_IN_REGISTRY"
   | "CODE_MISMATCH"
   | "OUTSIDE_VALIDITY"
-  | "REVOKED";
+  | "REVOKED"
+  /** Исключение самой проверки (не источника) — отказ, а не 500 из хука (КТ1 № 4). */
+  | "CHECK_FAILED";
 
 export interface ChannelOptions {
   /** Корневой сертификат УЦ песочницы — единственный доверенный (РП66 п. 3). */
@@ -59,6 +61,8 @@ export async function checkChannel(
   const code = agentCodeOf(cert);
   if (code === undefined) return { ok: false, reject: "SUBJECT_NOT_AGENT" };
 
+  // Node отдаёт серийный номер hex в верхнем регистре, реестр хранит в нижнем (РП65 нюанс 12); ведущих нулей нет —
+  // newSerial ставит старшие биты 01 (ca.ts), поэтому запись Node и serial.toString("hex") совпадают по длине.
   let record: AgentCertificateRecord | undefined;
   try {
     record = await opts.getCertificate(cert.serialNumber.toLowerCase());
@@ -70,8 +74,12 @@ export async function checkChannel(
 
   if (typeof xAgentCode !== "string" || xAgentCode !== code) return { ok: false, reject: "CODE_MISMATCH" };
 
+  // Неразбираемое время — отказ, а не допуск: сравнения с NaN ложны, и срок прошёл бы (инвариант 3; как в ca.ts).
   const t = now.getTime();
-  if (t < Date.parse(record.not_before) || t >= Date.parse(record.not_after)) return { ok: false, reject: "OUTSIDE_VALIDITY" };
+  const notBefore = Date.parse(record.not_before);
+  const notAfter = Date.parse(record.not_after);
+  if (![t, notBefore, notAfter].every(Number.isFinite)) return { ok: false, reject: "OUTSIDE_VALIDITY" };
+  if (t < notBefore || t >= notAfter) return { ok: false, reject: "OUTSIDE_VALIDITY" };
   if (record.revoked_at !== null) return { ok: false, reject: "REVOKED" };
   return { ok: true };
 }

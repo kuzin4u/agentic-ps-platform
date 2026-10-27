@@ -18,7 +18,8 @@ import {
   type AgentRegistryStore,
   type KeyPolicy,
 } from "../../src/registry/index.js";
-import { BOOLEAN_TRUE, octetString, oid, seq, tlv } from "../../src/registry/ca/der.js";
+import { BOOLEAN_TRUE, octetString, oid, seq, tlv, utf8 } from "../../src/registry/ca/der.js";
+import type { AgentCertificateRecord } from "../../src/registry/model.js";
 import { newCsr } from "../support/csr.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
@@ -72,19 +73,31 @@ function signed(signer: Signer, agent_code: string, cert: Buffer | undefined, ts
 
 const outcome = (r: PaoAuthResult | undefined): string => (r === undefined || r.ok ? "OK" : r.channel ? `${r.code}/${r.channel}` : r.code);
 
+/** GeneralName SAN: [6] URI, [2] DNS, [0] otherName (OID и значение UTF8String). */
+const uri = (s: string): Buffer => tlv(0x86, Buffer.from(s, "ascii"));
+const dns = (s: string): Buffer => tlv(0x82, Buffer.from(s, "ascii"));
+const otherName = (): Buffer => tlv(0xa0, Buffer.concat([oid("1.3.6.1.4.1.99999.1"), tlv(0xa0, utf8("x"))]));
+
 /**
- * Сертификат с произвольным SAN, подписанный ключом УЦ, — для шага «вид субъекта»: штатный выпуск УЦ кода не песочницы не
- * подписывает (РП65 нюанс 3). Закрытый метод signTbs — только в тесте.
+ * Сертификат с произвольным SAN, подписанный ключом УЦ, — для шага «вид субъекта» (решение владельца 27.10, PR #79).
+ * Закрытый метод signTbs вызывается только здесь и намеренно: штатный выпуск (issueAgentCertificate) подписывает ровно один
+ * URI кода песочницы (РП65 п. 2, нюанс 3), а открыть в коде выпуск с произвольным SAN — значит обойти шаблон РП65. Без
+ * подписи УЦ такой сертификат отсёк бы шаг 2, и шаг 3 остался бы непроверенным.
  */
-function caSigned(ca: SandboxCa, sanUri: string, serial: Buffer): Buffer {
+function caSigned(ca: SandboxCa, names: string | readonly Buffer[], serial: Buffer): Buffer {
   const { publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
-  const san = seq(oid("2.5.29.17"), BOOLEAN_TRUE, octetString(seq(tlv(0x86, Buffer.from(sanUri, "ascii")))));
+  const general = typeof names === "string" ? [uri(names)] : names;
+  const san = seq(oid("2.5.29.17"), BOOLEAN_TRUE, octetString(seq(...general)));
   const signTbs = (ca as unknown as { signTbs: (...a: unknown[]) => Buffer }).signTbs.bind(ca);
   return signTbs(serial, seq(), NOW, new Date(NOW.getTime() + 86_400_000), publicKey, [san]);
 }
 
 describe.each(variants)("ступень 0 — сертификат канала: %s (РП66 п. 1)", (_name, v) => {
-  function stand() {
+  /**
+   * tamper — подмена записи, которую видит проверка: запись другого агента или другие байты под тем же серийным номером
+   * (в реестре так не бывает — серийный номер первичный ключ; проверяется, что шаг 4 сверяет запись целиком).
+   */
+  function stand(opts: { tamper?: (r: AgentCertificateRecord) => AgentCertificateRecord; caOverride?: X509Certificate } = {}) {
     let clock = NOW;
     const now = (): Date => clock;
     const ca = SandboxCa.generate({ now: NOW, ttlDays: 3650 });
@@ -92,16 +105,14 @@ describe.each(variants)("ступень 0 — сертификат канала:
     const registry = new AgentRegistry(store, { keys: POLICY, now, certificates: { ca, ttlDays: TTL_DAYS, required: true } });
     const keys = new AgentKeys(store, { keys: POLICY, now });
     let failReads = false;
+    const read = async (serial: string): Promise<AgentCertificateRecord | undefined> => {
+      if (failReads) throw new Error("PG: нет соединения");
+      const r = await registry.getCertificate(serial);
+      return r && opts.tamper ? opts.tamper(r) : r;
+    };
     const verifier = new PaoRequestVerifier(
       { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
-      {
-        skewSec: SKEW,
-        now,
-        mtls: {
-          ca: new X509Certificate(ca.certificateDer),
-          getCertificate: (serial) => (failReads ? Promise.reject(new Error("PG: нет соединения")) : registry.getCertificate(serial)),
-        },
-      },
+      { skewSec: SKEW, now, mtls: { ca: opts.caOverride ?? new X509Certificate(ca.certificateDer), getCertificate: read } },
     );
     const admit = async (): Promise<{ code: string; signer: Signer; cert: Buffer; serial: string }> => {
       const code = `nspk:agent:${uid()}:v1`;
@@ -121,6 +132,9 @@ describe.each(variants)("ступень 0 — сертификат канала:
     const a = await s.admit();
     expect(outcome(await s.verifier.verify(signed(a.signer, a.code, a.cert)))).toBe("OK");
     expect(outcome(await s.verifier.precheck(signed(a.signer, a.code, a.cert)))).toBe("OK");
+    // Связка серийного номера (КТ1 № 6): Node — hex в верхнем регистре, реестр — в нижнем, ведущих нулей нет.
+    expect(new X509Certificate(a.cert).serialNumber.toLowerCase()).toBe(a.serial);
+    expect(a.serial).toMatch(/^[4-7][0-9a-f]{31}$/);
   });
 
   it("шаг 1: сертификата нет — AGENT_UNKNOWN / NO_CERTIFICATE, раньше реестра агентов", async () => {
@@ -151,7 +165,37 @@ describe.each(variants)("ступень 0 — сертификат канала:
     }
   });
 
-  it("шаг 4: выпущен УЦ, но нет в реестре (или запись другого агента) — AGENT_UNKNOWN / NOT_IN_REGISTRY", async () => {
+  it("шаг 3: несколько записей SAN, хотя первая — URI агента, — AGENT_UNKNOWN / SUBJECT_NOT_AGENT (ровно один URI, КТ1 № 2)", async () => {
+    const s = stand();
+    const a = await s.admit();
+    const b = await s.admit();
+    const cases: [string, Buffer[]][] = [
+      ["[URI A, URI A]", [uri(`urn:${a.code}`), uri(`urn:${a.code}`)]],
+      ["[URI A, URI B]", [uri(`urn:${a.code}`), uri(`urn:${b.code}`)]],
+      ["[DNS, URI A]", [dns("agent.example"), uri(`urn:${a.code}`)]],
+      ["[URI A, otherName]", [uri(`urn:${a.code}`), otherName()]],
+    ];
+    for (const [name, names] of cases) {
+      const der = caSigned(s.ca, names, Buffer.from("4000000000000000000000000000000b", "hex"));
+      expect(outcome(await s.verifier.verify(signed(a.signer, a.code, der))), name).toBe("AGENT_UNKNOWN/SUBJECT_NOT_AGENT");
+    }
+  });
+
+  it("шаг 4: запись реестра другого агента под тем же серийным номером — AGENT_UNKNOWN / NOT_IN_REGISTRY", async () => {
+    // Байты те же — держит только сверка agent_code записи с кодом из SAN.
+    const s = stand({ tamper: (r) => ({ ...r, agent_code: "nspk:agent:someone-else:v1" }) });
+    const a = await s.admit();
+    expect(outcome(await s.verifier.verify(signed(a.signer, a.code, a.cert)))).toBe("AGENT_UNKNOWN/NOT_IN_REGISTRY");
+  });
+
+  it("шаг 4: под тем же серийным номером в реестре другие байты DER — AGENT_UNKNOWN / NOT_IN_REGISTRY (нюанс РП66)", async () => {
+    // Агент в записи тот же — держит только сверка байтов: сертификат не тот, что выдан, хотя номер и SAN совпадают.
+    const s = stand({ tamper: (r) => ({ ...r, der: Buffer.from(r.der, "base64").reverse().toString("base64") }) });
+    const a = await s.admit();
+    expect(outcome(await s.verifier.verify(signed(a.signer, a.code, a.cert)))).toBe("AGENT_UNKNOWN/NOT_IN_REGISTRY");
+  });
+
+  it("шаг 4: выпущен УЦ, но нет в реестре — AGENT_UNKNOWN / NOT_IN_REGISTRY", async () => {
     const s = stand();
     const a = await s.admit();
     const issued = s.ca.issueAgentCertificate(newCsr().csr, a.code, NOW, TTL_DAYS);
@@ -187,6 +231,26 @@ describe.each(variants)("ступень 0 — сертификат канала:
     expect(outcome(await s.verifier.precheck(signed(a.signer, a.code, a.cert)))).toBe("AGENT_UNKNOWN/OUTSIDE_VALIDITY");
     s.setClock(new Date(NOW.getTime() - 1000));
     expect(outcome(await s.verifier.precheck(signed(a.signer, a.code, a.cert)))).toBe("AGENT_UNKNOWN/OUTSIDE_VALIDITY");
+  });
+
+  it("шаг 6: неразбираемое время в записи или часах — AGENT_UNKNOWN / OUTSIDE_VALIDITY, не допуск (КТ1 № 3, инвариант 3)", async () => {
+    for (const field of ["not_before", "not_after"] as const) {
+      const s = stand({ tamper: (r) => ({ ...r, [field]: "не дата" }) });
+      const a = await s.admit();
+      expect(outcome(await s.verifier.precheck(signed(a.signer, a.code, a.cert))), field).toBe("AGENT_UNKNOWN/OUTSIDE_VALIDITY");
+    }
+    const s = stand();
+    const a = await s.admit();
+    s.setClock(new Date(Number.NaN));
+    expect(outcome(await s.verifier.precheck(signed(a.signer, a.code, a.cert)))).toBe("AGENT_UNKNOWN/OUTSIDE_VALIDITY");
+  });
+
+  it("исключение самой проверки — AGENT_UNKNOWN / CHECK_FAILED, а не исключение из хука (КТ1 № 4)", async () => {
+    // Доверенный УЦ не сертификат — checkIssued бросает: отказ без обращения к реестру.
+    const s = stand({ caOverride: {} as X509Certificate });
+    const a = await s.admit();
+    expect(outcome(await s.verifier.precheck(signed(a.signer, a.code, a.cert)))).toBe("AGENT_UNKNOWN/CHECK_FAILED");
+    expect(outcome(await s.verifier.verify(signed(a.signer, a.code, a.cert)))).toBe("AGENT_UNKNOWN/CHECK_FAILED");
   });
 
   it("шаг 6: отозван — следующая же проверка AGENT_UNKNOWN / REVOKED; отзыв «другим процессом» виден без кэша", async () => {
