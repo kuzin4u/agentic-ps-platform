@@ -31,8 +31,8 @@ export interface ConfirmationStore {
 }
 
 /**
- * Строка попытки push в транзакции события (РП40 п. 5): агент ACTIVE и подписан на тип — на момент записи. Чтение реестра
- * (РП64 п. 3): сбой — отклонённое обещание, переход и событие не записываются.
+ * Строка попытки push в транзакции события (РП40 п. 5): агент ACTIVE и подписан на тип. Чтение реестра (РП64 п. 3) — до
+ * BEGIN у PG (КТ1 ч. 2б-1 № 2): сбой — отклонённое обещание, переход и событие не записываются.
  */
 export type PushFor = (agent_code: string, type: PaoEventType) => Promise<boolean>;
 
@@ -245,7 +245,15 @@ export class PgConfirmationStore implements ConfirmationStore {
     return r.rows.map(recordOf);
   }
 
+  /**
+   * Строка push читается до BEGIN (КТ1 ч. 2б-1 № 2): реестр — другим соединением того же пула, и внутри транзакции
+   * N одновременных переходов держали бы N соединений и ждали ещё N — пул мог бы встать. Повтор существующего запроса —
+   * без чтения реестра, как в памяти (КТ1 ч. 2б-1 № 4).
+   */
   async create(rec: ConfirmationRecord): Promise<ConfirmationRecord> {
+    const [early] = await this.byKey(rec);
+    if (early) return early;
+    const push = await pushOf(this.opts.pushFor, rec.agent_code, "confirmation.required");
     // Событие — только у вставившего: при конфликте ключа запрос и его событие уже записаны другим (РП51 п. 2).
     // Путь авторизации: ожидание блокировок (строка ключа, блокировка агента) — не дольше lockTimeoutMs, иначе исключение
     // (→ STATE_UNAVAILABLE) и откат без запроса и события (Дополнения РП51 п. 1; как окно дробления, доп. РП44 п. 2).
@@ -259,10 +267,7 @@ export class PgConfirmationStore implements ConfirmationStore {
         [rec.confirmation_id, rec.agent_code, rec.mandate_id, rec.merchant_id, rec.amount, rec.currency, rec.order_ref, rec.split_detected,
           rec.created_at, rec.expires_at],
       );
-      if (ins.rows.length === 1) {
-        const push = await pushOf(this.opts.pushFor, rec.agent_code, "confirmation.required");
-        await insertConfirmationEventTx(tx, draftOf(rec, "confirmation.required", push), rec.created_at);
-      }
+      if (ins.rows.length === 1) await insertConfirmationEventTx(tx, draftOf(rec, "confirmation.required", push), rec.created_at);
     });
     const [row] = await this.byKey(rec);
     if (!row) throw new Error("confirmations: запрос не найден после вставки");
@@ -279,21 +284,28 @@ export class PgConfirmationStore implements ConfirmationStore {
     return r.rows[0] && recordOf(r.rows[0]);
   }
 
+  /** agent_code запроса не меняется (confirmations_guard): строка push — по строке, прочитанной до BEGIN (№ 2 выше). */
   async expire(confirmation_id: string, now: string): Promise<boolean> {
+    const cur = await this.get(confirmation_id);
+    if (!cur) return false;
+    const push = await pushOf(this.opts.pushFor, cur.agent_code, "confirmation.expired");
     return this.tx(async (tx) => {
       const r = await tx.query<Row>(
         `UPDATE confirmations SET status = 'EXPIRED' WHERE confirmation_id = $1 AND status = 'PENDING' AND expires_at <= $2 RETURNING ${COLS}`,
         [confirmation_id, now],
       );
       if (!r.rows[0]) return false;
-      const rec = recordOf(r.rows[0]);
-      await insertConfirmationEventTx(tx, draftOf(rec, "confirmation.expired", await pushOf(this.opts.pushFor, rec.agent_code, "confirmation.expired")), now);
+      await insertConfirmationEventTx(tx, draftOf(recordOf(r.rows[0]), "confirmation.expired", push), now);
       return true;
     });
   }
 
   async decide(confirmation_id: string, d: ConfirmationDecision, confirmation_ref: string | null, now: string): Promise<ConfirmationRecord | undefined> {
     const approve = d.decision === "APPROVE";
+    const type = approve ? "confirmation.approved" : "confirmation.rejected";
+    const cur = await this.get(confirmation_id);
+    if (!cur) return undefined;
+    const push = await pushOf(this.opts.pushFor, cur.agent_code, type);
     return this.tx(async (tx) => {
       const r = await tx.query<Row>(
         `UPDATE confirmations SET status = $2, confirmation_ref = $3, participant_code = $4, kid = $5, decision = $6, totals_hash = $7,
@@ -304,8 +316,7 @@ export class PgConfirmationStore implements ConfirmationStore {
       );
       if (!r.rows[0]) return undefined;
       const next = recordOf(r.rows[0]);
-      const type = approve ? "confirmation.approved" : "confirmation.rejected";
-      await insertConfirmationEventTx(tx, draftOf(next, type, await pushOf(this.opts.pushFor, next.agent_code, type)), now);
+      await insertConfirmationEventTx(tx, draftOf(next, type, push), now);
       return next;
     });
   }
