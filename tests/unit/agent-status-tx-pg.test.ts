@@ -159,39 +159,96 @@ describe.skipIf(!DATABASE_URL)("статус и событие agent.* одно�
     expect(await eventsOf(code)).toHaveLength(1);
   });
 
-  it("два экземпляра: приостановление держит строку, снятие ждёт и видит SUSPENDED — события в порядке версий (РП54 остаточный риск 8)", async () => {
+  /**
+   * Ожидание блокировки строки агента транзакцией статуса — по pg_stat_activity (как lockWaits в registry-store-pg, КТ1 № 4).
+   * Срок — 150 опросов через 20 мс (≈ 3 с, меньше предела теста vitest 5 с): нет ожидания — 0 и падение с сообщением, не зависание.
+   */
+  const statusLockWaits = async (): Promise<number> => {
+    let found = 0;
+    for (let i = 0; i < 150 && found === 0; i++) {
+      if (i > 0) await new Promise((res) => setTimeout(res, 20));
+      const r = await db.pool.query<{ n: string }>(
+        "SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database() AND query LIKE '%FROM agents%FOR UPDATE%'",
+      );
+      found = Number(r.rows[0]!.n);
+    }
+    return found;
+  };
+
+  /** Первый экземпляр держит строку агента в точке "locked"; второй стартует и должен ждать её FOR UPDATE. */
+  const heldBy = (pool: pg.Pool) => {
     const g = gate();
     const reached = gate();
-    const first = new PgAgentRegistryStore(db.pool, {
+    const store = new PgAgentRegistryStore(pool, {
       inStatusTx: async (step) => {
         if (step !== "locked") return;
         reached.open();
         await g.wait();
       },
     });
+    return { store, reached: reached.wait, release: g.open };
+  };
+
+  it("два экземпляра: приостановление держит строку, снятие ждёт блокировку и видит SUSPENDED — события в порядке версий (РП54 остаточный риск 8)", async () => {
+    const first = heldBy(db.pool);
     const second = new PgAgentRegistryStore(pool2);
     const code = await admitted(second);
-    const suspend = first.transitStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
-    await reached.wait();
-    const reinstate = second.transitStatus(code, { to: "ACTIVE" });
-    g.open();
-    expect((await suspend).record.row_version).toBe(2);
-    expect((await reinstate).record).toMatchObject({ status: "ACTIVE", row_version: 3 });
+    const suspend = first.store.transitStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    try {
+      await first.reached();
+      let settled = false;
+      const reinstate = second.transitStatus(code, { to: "ACTIVE" }).finally(() => (settled = true));
+      const waited = await statusLockWaits();
+      expect(waited, "второй экземпляр не встал на блокировку строки агента (FOR UPDATE) за ≈ 3 с").toBeGreaterThan(0);
+      expect(settled, "второй экземпляр завершился, не дождавшись фиксации первого").toBe(false);
+      first.release();
+      expect((await suspend).record.row_version).toBe(2);
+      expect((await reinstate).record).toMatchObject({ status: "ACTIVE", row_version: 3 });
+    } finally {
+      // Провал за барьером не должен держать транзакцию до таймаута afterAll.
+      first.release();
+    }
     expect((await eventsOf(code)).map((e) => [e.seq, e.type, e.version])).toEqual([
       [1, "agent.suspended", 2],
       [2, "agent.reinstated", 3],
     ]);
   });
 
-  it("одновременное приостановление с двух экземпляров — одна смена и одно событие, второй — повтор", async () => {
-    const [a, b] = [new PgAgentRegistryStore(db.pool), new PgAgentRegistryStore(pool2)];
-    const code = await admitted(a);
-    const out = await Promise.all([
-      a.transitStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" }),
-      b.transitStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" }),
+  it("одновременное приостановление с двух экземпляров: второй ждёт блокировку, видит SUSPENDED — повтор; одна смена и одно событие", async () => {
+    const first = heldBy(db.pool);
+    const second = new PgAgentRegistryStore(pool2);
+    const code = await admitted(second);
+    const a = first.store.transitStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    try {
+      await first.reached();
+      let settled = false;
+      const b = second.transitStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" }).finally(() => (settled = true));
+      const waited = await statusLockWaits();
+      expect(waited, "второй экземпляр не встал на блокировку строки агента (FOR UPDATE) за ≈ 3 с").toBeGreaterThan(0);
+      expect(settled, "второй экземпляр завершился, не дождавшись фиксации первого").toBe(false);
+      first.release();
+      const [ra, rb] = await Promise.all([a, b]);
+      expect([ra.written, rb.written]).toEqual([true, false]);
+      expect(rb.record).toEqual(ra.record);
+    } finally {
+      first.release();
+    }
+    expect(await eventsOf(code)).toHaveLength(1);
+  });
+
+  it("повтор дописывает недостающее событие: статус сменён без события — transitStatus тем же действием пишет событие текущей версии и строку push", async () => {
+    const store = new PgAgentRegistryStore(db.pool);
+    const code = await admitted(store);
+    // registry.changeStatus меняет статус без события — как смена до РП64 п. 4 или сбой записи события в памяти.
+    const changed = await new AgentRegistry(store, { keys: loadParams() }).changeStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    expect(await eventsOf(code)).toEqual([]);
+    const r = await store.transitStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" });
+    expect(r).toEqual({ record: changed, written: true });
+    expect(await eventsOf(code)).toEqual([
+      { seq: 1, event_id: agentStatusEventIdFor(code, 2), type: "agent.suspended", at: changed.status_changed_at, version: 2 },
     ]);
-    expect(out.map((x) => x.written).sort()).toEqual([false, true]);
-    expect(out.map((x) => x.record.row_version)).toEqual([2, 2]);
+    expect(await pushRows(code)).toBe(1);
+    expect(await store.transitStatus(code, { to: "SUSPENDED", ground: "KEY_COMPROMISE" })).toEqual({ record: changed, written: false });
     expect(await eventsOf(code)).toHaveLength(1);
   });
 
