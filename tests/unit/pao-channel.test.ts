@@ -6,7 +6,7 @@
 import { X509Certificate, generateKeyPairSync } from "node:crypto";
 import { newEd25519Signer, signRequest, type HttpLike, type Signer } from "@kuzin4u/agentic-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PaoRequestVerifier, type PaoAuthResult, type PaoRequest } from "../../src/pao/index.js";
+import { PaoRequestVerifier, type ChannelTicket, type PaoAuthResult, type PaoPrecheckResult, type PaoRequest } from "../../src/pao/index.js";
 import {
   AgentKeys,
   AgentRegistry,
@@ -27,6 +27,8 @@ const NOW = new Date("2026-10-27T12:00:00.000Z");
 const SKEW = 300;
 const POLICY: KeyPolicy = { key_ttl_days: 90, key_overlap_days: 7 };
 const TTL_DAYS = 90;
+/** revocation_propagation_max_ms стенда — срок отметки предпроверки (КТ1 К3.2 № 1 (а)). */
+const TICKET_MS = 1000;
 
 let db: TestDb | undefined;
 beforeAll(async () => {
@@ -59,7 +61,8 @@ function agentSigner(): { signer: Signer; publicKey: string } {
 }
 
 let nonceSeq = 0;
-function signed(signer: Signer, agent_code: string, cert: Buffer | undefined, ts: Date = NOW): PaoRequest {
+/** cert — DER; authorized — итог проверки цепочки TLS (по умолчанию подтверждена: здесь проверяются свои шаги). */
+function signed(signer: Signer, agent_code: string, cert: Buffer | undefined, ts: Date = NOW, authorized = true): PaoRequest {
   const req: HttpLike = {
     method: "GET",
     path: "/pao/v1/agent",
@@ -68,10 +71,10 @@ function signed(signer: Signer, agent_code: string, cert: Buffer | undefined, ts
     body: "",
   };
   const s = signRequest(req, signer);
-  return { method: s.method, path: s.path, query: s.query ?? "", headers: s.headers, body: "", ...(cert ? { clientCertificate: cert } : {}) };
+  return { method: s.method, path: s.path, query: s.query ?? "", headers: s.headers, body: "", ...(cert ? { clientCertificate: { der: cert, authorized } } : {}) };
 }
 
-const outcome = (r: PaoAuthResult | undefined): string => (r === undefined || r.ok ? "OK" : r.channel ? `${r.code}/${r.channel}` : r.code);
+const outcome = (r: PaoAuthResult | PaoPrecheckResult): string => (r === undefined || r.ok ? "OK" : r.channel ? `${r.code}/${r.channel}` : r.code);
 
 /** GeneralName SAN: [6] URI, [2] DNS, [0] otherName (OID и значение UTF8String). */
 const uri = (s: string): Buffer => tlv(0x86, Buffer.from(s, "ascii"));
@@ -105,14 +108,16 @@ describe.each(variants)("ступень 0 — сертификат канала:
     const registry = new AgentRegistry(store, { keys: POLICY, now, certificates: { ca, ttlDays: TTL_DAYS, backdateSec: 300, required: true } });
     const keys = new AgentKeys(store, { keys: POLICY, now });
     let failReads = false;
+    let reads = 0;
     const read = async (serial: string): Promise<AgentCertificateRecord | undefined> => {
+      reads++;
       if (failReads) throw new Error("PG: нет соединения");
       const r = await registry.getCertificate(serial);
       return r && opts.tamper ? opts.tamper(r) : r;
     };
     const verifier = new PaoRequestVerifier(
       { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
-      { skewSec: SKEW, now, mtls: { ca: opts.caOverride ?? new X509Certificate(ca.certificateDer), getCertificate: read } },
+      { skewSec: SKEW, now, mtls: { ca: opts.caOverride ?? new X509Certificate(ca.certificateDer), getCertificate: read, ticketMaxAgeMs: TICKET_MS } },
     );
     const admit = async (): Promise<{ code: string; signer: Signer; cert: Buffer; serial: string }> => {
       const code = `nspk:agent:${uid()}:v1`;
@@ -124,7 +129,7 @@ describe.each(variants)("ступень 0 — сертификат канала:
       if (!d.admitted || !d.certificate) throw new Error("допуск с сертификатом не прошёл");
       return { code, signer, cert: Buffer.from(d.certificate.der, "base64"), serial: d.certificate.serial };
     };
-    return { ca, store, registry, verifier, admit, setClock: (d: Date) => (clock = d), failReads: () => (failReads = true) };
+    return { ca, store, registry, verifier, admit, setClock: (d: Date) => (clock = d), failReads: () => (failReads = true), reads: () => reads };
   }
 
   it("свой сертификат, код из SAN = x-agent-code — принято (verify и предпроверка)", async () => {
@@ -142,6 +147,13 @@ describe.each(variants)("ступень 0 — сертификат канала:
     const a = await s.admit();
     expect(outcome(await s.verifier.verify(signed(a.signer, a.code, undefined)))).toBe("AGENT_UNKNOWN/NO_CERTIFICATE");
     expect(outcome(await s.verifier.precheck(signed(a.signer, a.code, undefined)))).toBe("AGENT_UNKNOWN/NO_CERTIFICATE");
+  });
+
+  it("TLS не подтвердил цепочку (authorized ≠ true) — AGENT_UNKNOWN / TLS_NOT_AUTHORIZED, хотя сертификат свой (дополнение 1)", async () => {
+    const s = stand();
+    const a = await s.admit();
+    expect(outcome(await s.verifier.verify(signed(a.signer, a.code, a.cert, NOW, false)))).toBe("AGENT_UNKNOWN/TLS_NOT_AUTHORIZED");
+    expect(outcome(await s.verifier.precheck(signed(a.signer, a.code, a.cert, NOW, false)))).toBe("AGENT_UNKNOWN/TLS_NOT_AUTHORIZED");
   });
 
   it("шаг 2: чужой УЦ или не сертификат — AGENT_UNKNOWN / NOT_ISSUED_BY_CA", async () => {
@@ -260,6 +272,104 @@ describe.each(variants)("ступень 0 — сертификат канала:
     await new AgentRegistry(v.other(s.store), { keys: POLICY, now: () => NOW }).revokeCertificate(a.serial);
     expect(outcome(await s.verifier.verify(signed(a.signer, a.code, a.cert)))).toBe("AGENT_UNKNOWN/REVOKED");
     expect(outcome(await s.verifier.precheck(signed(a.signer, a.code, a.cert)))).toBe("AGENT_UNKNOWN/REVOKED");
+  });
+
+  it("отметка предпроверки: verify не читает реестр сертификатов второй раз; отзыв во время чтения тела обращение не прерывает (нюанс 7 РП66)", async () => {
+    const s = stand();
+    const a = await s.admit();
+    const req = signed(a.signer, a.code, a.cert);
+    const pre = await s.verifier.precheck(req);
+    if (!pre?.ok) throw new Error("предпроверка не прошла");
+    expect(s.reads()).toBe(1);
+    // Отзыв между onRequest и preHandler (чтение тела): обращение уже допущено ступенью 0 — исполняется (инвариант 8).
+    await new AgentRegistry(v.other(s.store), { keys: POLICY, now: () => NOW }).revokeCertificate(a.serial);
+    expect(outcome(await s.verifier.verify({ ...req, channelTicket: pre.channelTicket }))).toBe("OK");
+    expect(s.reads()).toBe(1);
+  });
+
+  it("отметка старше revocation_propagation_max_ms по часам Платформы — ступень 0 заново: REVOKED; на границе — принята (КТ1 № 1 (а))", async () => {
+    const s = stand();
+    const a = await s.admit();
+    const issue = async () => {
+      s.setClock(NOW);
+      const req = signed(a.signer, a.code, a.cert);
+      const pre = await s.verifier.precheck(req);
+      if (!pre?.ok) throw new Error("предпроверка не прошла");
+      return { req, ticket: pre.channelTicket };
+    };
+    const onBorder = await issue();
+    const late = await issue();
+    await new AgentRegistry(v.other(s.store), { keys: POLICY, now: () => NOW }).revokeCertificate(a.serial);
+    s.setClock(new Date(NOW.getTime() + TICKET_MS));
+    expect(outcome(await s.verifier.verify({ ...onBorder.req, channelTicket: onBorder.ticket }))).toBe("OK");
+    s.setClock(new Date(NOW.getTime() + TICKET_MS + 1));
+    expect(outcome(await s.verifier.verify({ ...late.req, channelTicket: late.ticket }))).toBe("AGENT_UNKNOWN/REVOKED");
+  });
+
+  it("часы Платформы пошли назад после предпроверки — отметка не принимается, ступень 0 заново (инвариант 3)", async () => {
+    const s = stand();
+    const a = await s.admit();
+    const req = signed(a.signer, a.code, a.cert);
+    const pre = await s.verifier.precheck(req);
+    if (!pre?.ok) throw new Error("предпроверка не прошла");
+    // Возраст отметки отрицателен; ступень 0 заново отсекает срок (часы раньше notBefore = notBefore УЦ), а принятая отметка
+    // дала бы OK.
+    s.setClock(new Date(NOW.getTime() - 1));
+    expect(outcome(await s.verifier.verify({ ...req, channelTicket: pre.channelTicket }))).toBe("AGENT_UNKNOWN/OUTSIDE_VALIDITY");
+  });
+
+  it("отметка однократна: повтор той же отметки — ступень 0 заново", async () => {
+    const s = stand();
+    const a = await s.admit();
+    const req = signed(a.signer, a.code, a.cert);
+    const pre = await s.verifier.precheck(req);
+    if (!pre?.ok) throw new Error("предпроверка не прошла");
+    expect(outcome(await s.verifier.verify({ ...req, channelTicket: pre.channelTicket }))).toBe("OK");
+    await new AgentRegistry(v.other(s.store), { keys: POLICY, now: () => NOW }).revokeCertificate(a.serial);
+    const again = signed(a.signer, a.code, a.cert);
+    expect(outcome(await s.verifier.verify({ ...again, channelTicket: pre.channelTicket }))).toBe("AGENT_UNKNOWN/REVOKED");
+  });
+
+  it("прямой verify с отозванным сертификатом и чужой отметкой (не выданной проверяющим) — ступень 0 сам: REVOKED (В2)", async () => {
+    const s = stand();
+    const a = await s.admit();
+    await new AgentRegistry(v.other(s.store), { keys: POLICY, now: () => NOW }).revokeCertificate(a.serial);
+    const forged = Object.freeze({}) as ChannelTicket;
+    expect(outcome(await s.verifier.verify({ ...signed(a.signer, a.code, a.cert), channelTicket: forged }))).toBe("AGENT_UNKNOWN/REVOKED");
+  });
+
+  it("отметка другого обращения (другие DER и x-agent-code) — не принимается: REVOKED (В2)", async () => {
+    const s = stand();
+    const a = await s.admit();
+    const b = await s.admit();
+    const pre = await s.verifier.precheck(signed(b.signer, b.code, b.cert));
+    if (!pre?.ok) throw new Error("предпроверка B не прошла");
+    await new AgentRegistry(v.other(s.store), { keys: POLICY, now: () => NOW }).revokeCertificate(a.serial);
+    expect(outcome(await s.verifier.verify({ ...signed(a.signer, a.code, a.cert), channelTicket: pre.channelTicket }))).toBe(
+      "AGENT_UNKNOWN/REVOKED",
+    );
+  });
+
+  it("отметка того же x-agent-code, но другой сертификат (DER) — не принимается: CODE_MISMATCH", async () => {
+    const s = stand();
+    const a = await s.admit();
+    const b = await s.admit();
+    const pre = await s.verifier.precheck(signed(a.signer, a.code, a.cert));
+    if (!pre?.ok) throw new Error("предпроверка не прошла");
+    expect(outcome(await s.verifier.verify({ ...signed(a.signer, a.code, b.cert), channelTicket: pre.channelTicket }))).toBe(
+      "AGENT_UNKNOWN/CODE_MISMATCH",
+    );
+  });
+
+  it("отметка того же сертификата, но другой x-agent-code — не принимается: CODE_MISMATCH", async () => {
+    const s = stand();
+    const a = await s.admit();
+    const b = await s.admit();
+    const pre = await s.verifier.precheck(signed(a.signer, a.code, a.cert));
+    if (!pre?.ok) throw new Error("предпроверка не прошла");
+    expect(outcome(await s.verifier.verify({ ...signed(b.signer, b.code, a.cert), channelTicket: pre.channelTicket }))).toBe(
+      "AGENT_UNKNOWN/CODE_MISMATCH",
+    );
   });
 
   it("сбой чтения реестра сертификатов — UPSTREAM_UNAVAILABLE с причиной, не AGENT_UNKNOWN (РП23 доп. 4)", async () => {

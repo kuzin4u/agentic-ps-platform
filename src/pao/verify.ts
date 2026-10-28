@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { ed25519Verifier, verifyRequestAsync, type AsyncNonceStore, type Verifier } from "@kuzin4u/agentic-core";
 import type { KeyForVerify } from "../registry/agent-keys.js";
 import type { AgentRecord } from "../registry/model.js";
-import { checkChannel, type ChannelOptions, type ChannelReject } from "./channel.js";
+import { checkChannel, type ChannelOptions, type ChannelReject, type ClientCertificate } from "./channel.js";
 import { paoNonceStore } from "./stores.js";
 
 /** Обращение в том виде, в каком оно пришло: путь и запрос — без декодирования, тело — строкой, без тела — "" (РП16). */
@@ -22,8 +22,19 @@ export interface PaoRequest {
    * проверялась бы по digest пустого тела, а тело другое — SIGNATURE_INVALID.
    */
   readonly unexpectedBody?: boolean;
-  /** Сертификат клиента из TLS-соединения, DER; без TLS или без сертификата — нет (ступень 0, РП66 п. 1). */
-  readonly clientCertificate?: Buffer;
+  /** Сертификат клиента из TLS-соединения; без TLS или без сертификата — нет (ступень 0, РП66 п. 1). */
+  readonly clientCertificate?: ClientCertificate;
+  /** Отметка предпроверки этого же обращения (нюанс 7 РП66): ступень 0 пройдена, реестр сертификатов второй раз не читается. */
+  readonly channelTicket?: ChannelTicket;
+}
+
+/**
+ * Непрозрачная отметка «ступень 0 пройдена» (решение владельца 28.10 по В2): выдаёт только precheck, хранит вызывающий на
+ * объекте запроса. Принимается однократно, только если выдана этим же проверяющим и DER и x-agent-code совпадают; иначе
+ * verify проверяет ступень 0 сам.
+ */
+export interface ChannelTicket {
+  readonly __channelTicket: never;
 }
 
 /**
@@ -50,6 +61,12 @@ export type PaoAuthResult =
       /** Вид причины отказа ступени 0 — для журнала процесса; агенту — только AGENT_UNKNOWN (РП66 п. 2). */
       readonly channel?: ChannelReject;
     };
+
+/** Итог предпроверки: отказ; пройдена с отметкой ступени 0 (mtls); пройдена — undefined. */
+export type PaoPrecheckResult =
+  | Extract<PaoAuthResult, { ok: false }>
+  | { readonly ok: true; readonly channelTicket: ChannelTicket }
+  | undefined;
 
 /** Сбой реестра или ключей — не ошибка агента: 503 UPSTREAM_UNAVAILABLE, same_key (ПАО §6; РП23 п. 6; аудит PS-04 №2). */
 const upstreamFail = (cause: unknown): Extract<PaoAuthResult, { ok: false }> => ({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause });
@@ -103,6 +120,8 @@ export class PaoRequestVerifier {
   private readonly now: () => Date;
   readonly nonces: AsyncNonceStore;
   private readonly verifier: Verifier;
+  /** Выданные отметки ступени 0: что именно проверено (WeakMap — отметка не переживает обращение). */
+  private readonly tickets = new WeakMap<ChannelTicket, { readonly der: Buffer; readonly code: string; readonly at: number }>();
 
   constructor(
     private readonly sources: PaoAuthSources,
@@ -113,6 +132,11 @@ export class PaoRequestVerifier {
     this.verifier = opts.verifier ?? ed25519Verifier;
   }
 
+  /** Ступень 0 включена — сервер обязан завершать TLS с сертификатом клиента (РП66 п. 3, дополнение В1). */
+  get mtls(): boolean {
+    return this.opts.mtls !== undefined;
+  }
+
   /**
    * Порядок РП23 п. 6: AGENT_UNKNOWN → SIGNATURE_INVALID / AGENT_KEY_REVOKED → AGENT_SUSPENDED. Любой сбой — отказ:
    * сбой источника (реестр, ключи, хранилище nonce — РП30 п. 1) — UPSTREAM_UNAVAILABLE, прочие исключения проверки —
@@ -120,18 +144,41 @@ export class PaoRequestVerifier {
    */
   /**
    * Проверки до тела (РП63 п. 9): повтор заголовка, агент в реестре, тело у метода без тела — в onRequest, тело обращения
-   * неизвестного агента не читается. Тот же порядок и коды, что в начале verify; verify повторяет их сам.
+   * неизвестного агента не читается. Тот же порядок и коды, что в начале verify; verify повторяет их сам, кроме ступени 0
+   * при отметке этой предпроверки (нюанс 7 РП66: agent_certificates — одно чтение за обращение).
    */
-  async precheck(req: Omit<PaoRequest, "body">): Promise<Extract<PaoAuthResult, { ok: false }> | undefined> {
+  async precheck(req: Omit<PaoRequest, "body" | "channelTicket">): Promise<PaoPrecheckResult> {
     const r = await this.head(req);
-    return "agent" in r ? undefined : r;
+    if (!("agent" in r)) return r;
+    const der = req.clientCertificate?.der;
+    const code = req.headers["x-agent-code"];
+    if (!this.opts.mtls || der === undefined || typeof code !== "string") return undefined;
+    const ticket = Object.freeze({}) as ChannelTicket;
+    this.tickets.set(ticket, { der, code, at: this.now().getTime() });
+    return { ok: true, channelTicket: ticket };
+  }
+
+  /**
+   * Отметка выдана этим проверяющим для тех же DER и x-agent-code, не старше ticketMaxAgeMs по часам Платформы
+   * (решение владельца 28.10, КТ1 К3.2 № 1 (а)); принимается один раз. Неразбираемое время — не принимается (инвариант 3).
+   */
+  private redeem(req: Omit<PaoRequest, "body">): boolean {
+    const t = req.channelTicket;
+    const mtls = this.opts.mtls;
+    if (t === undefined || mtls === undefined) return false;
+    const seen = this.tickets.get(t);
+    this.tickets.delete(t);
+    const der = req.clientCertificate?.der;
+    if (seen === undefined || der === undefined || !seen.der.equals(der) || req.headers["x-agent-code"] !== seen.code) return false;
+    const age = this.now().getTime() - seen.at;
+    return Number.isFinite(age) && age >= 0 && age <= mtls.ticketMaxAgeMs;
   }
 
   private async head(
     req: Omit<PaoRequest, "body">,
   ): Promise<Extract<PaoAuthResult, { ok: false }> | { readonly agent: AgentRecord; readonly headers: Record<string, string> }> {
     // Ступень 0 — до РП23 п. 6.1 и до разбора заголовков (РП27 п. 3, РП66 п. 1): повтор x-agent-code — несовпадение кода.
-    if (this.opts.mtls) {
+    if (this.opts.mtls && !this.redeem(req)) {
       let ch: Awaited<ReturnType<typeof checkChannel>>;
       try {
         ch = await checkChannel(req.clientCertificate, req.headers["x-agent-code"], this.now(), this.opts.mtls);

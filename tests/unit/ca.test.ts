@@ -134,6 +134,28 @@ describe("notBefore с запасом в прошлое (РП66 п. 5)", () => {
 });
 
 describe("УЦ песочницы: сертификат сервера Платформы (РП66 п. 4)", () => {
+  // Поломки К3.1 — каждая своим тестом (Р-747; ревью из чата 28.10, № 1): serverAuth, SAN критичное, AKI.
+  const server = () => {
+    const c = ca();
+    return { c, s: c.issueServerCertificate(["localhost"], NOW, 90, 300) };
+  };
+
+  it("extKeyUsage — только serverAuth", () => {
+    const { s } = server();
+    expect(new X509Certificate(s.certificateDer).keyUsage).toEqual(["1.3.6.1.5.5.7.3.1"]);
+  });
+
+  it("SAN — критичное при пустом субъекте (RFC 5280 §4.2.1.6; дополнение чата 2)", () => {
+    const { s } = server();
+    expect(new X509Certificate(s.certificateDer).subject ?? "").toBe("");
+    expect(s.certificateDer.includes(Buffer.from("0603551d110101ff04", "hex"))).toBe(true);
+  });
+
+  it("AKI — keyIdentifier = SKI УЦ (РП65 нюанс 4)", () => {
+    const { c, s } = server();
+    expect(s.certificateDer.includes(Buffer.concat([Buffer.from("301f0603551d23041830168014", "hex"), c.keyId]))).toBe(true);
+  });
+
   it("по шаблону: пустой субъект, SAN критичное — DNS и IP, serverAuth, digitalSignature, CA:false, SKI / AKI, подпись УЦ", () => {
     const c = ca();
     const later = new Date(NOW.getTime() + DAY);

@@ -1,7 +1,8 @@
 // П9 Ступень 0 проверки обращения ПАО — сертификат канала mTLS (РП27 п. 3, РП66 п. 1–2): своя проверка DER из соединения
-// по часам Платформы, а не флаг TLS authorized (тот смотрит системные часы). Любой отказ — AGENT_UNKNOWN: сертификат
-// канала перевыпускает оператор агента, а AGENT_KEY_REVOKED (new_key) вёл бы агента к ротации ключа подписи (РП66 п. 2).
-// Вид причины — только в журнал процесса (РП31 п. 2). Сбой чтения реестра — UPSTREAM_UNAVAILABLE (РП23 доп. 4).
+// по часам Платформы в дополнение к флагу TLS authorized (тот смотрит системные часы; РП66 нюанс К3 п. 2). Любой отказ —
+// AGENT_UNKNOWN: сертификат канала перевыпускает оператор агента, а AGENT_KEY_REVOKED (new_key) вёл бы агента к ротации
+// ключа подписи (РП66 п. 2). Вид причины — только в журнал процесса (РП31 п. 2). Сбой чтения реестра — UPSTREAM_UNAVAILABLE
+// (РП23 доп. 4).
 import { X509Certificate } from "node:crypto";
 import { isSandboxAgentCode } from "../registry/ca/ca.js";
 import type { AgentCertificateRecord } from "../registry/model.js";
@@ -9,6 +10,8 @@ import type { AgentCertificateRecord } from "../registry/model.js";
 /** Вид причины отказа ступени 0 — шаги РП66 п. 1 по порядку. */
 export type ChannelReject =
   | "NO_CERTIFICATE"
+  /** TLS не подтвердил цепочку к доверенному УЦ (socket.authorized !== true; дополнение чата 1, решение владельца 28.10). */
+  | "TLS_NOT_AUTHORIZED"
   | "NOT_ISSUED_BY_CA"
   | "SUBJECT_NOT_AGENT"
   | "NOT_IN_REGISTRY"
@@ -23,6 +26,17 @@ export interface ChannelOptions {
   readonly ca: X509Certificate;
   /** Запись сертификата в реестре по серийному номеру — на каждом обращении, без кэша (РП64 п. 3, РП65 п. 3). */
   getCertificate(serial: string): Promise<AgentCertificateRecord | undefined>;
+  /**
+   * revocation_propagation_max_ms: отметка предпроверки (verify.ts) старше этого по часам Платформы не принимается — ступень 0
+   * заново; окно «отзыв во время чтения тела» ограничено временем распространения отзыва (инвариант 8; РП66 нюанс К3 п. 5).
+   */
+  readonly ticketMaxAgeMs: number;
+}
+
+/** Сертификат клиента из TLS-соединения: DER и итог проверки цепочки TLS (socket.authorized). */
+export interface ClientCertificate {
+  readonly der: Buffer;
+  readonly authorized: boolean;
 }
 
 export type ChannelResult =
@@ -38,17 +52,20 @@ function agentCodeOf(cert: X509Certificate): string | undefined {
 }
 
 /**
- * Шаги РП66 п. 1: сертификат есть → выпущен УЦ песочницы → SAN — ровно один URI агента → запись реестра того же агента и
- * с теми же байтами → код из SAN = x-agent-code → срок по часам Платформы и отзыв. xAgentCode — значение заголовка как
- * пришло: повтор (массив) или нет — несовпадение.
+ * Шаги РП66 п. 1: сертификат есть → TLS подтвердил цепочку (authorized) → выпущен УЦ песочницы → SAN — ровно один URI
+ * агента → запись реестра того же агента и с теми же байтами → код из SAN = x-agent-code → срок по часам Платформы и
+ * отзыв. authorized — условие в дополнение к своей проверке, а не вместо неё: TLS смотрит системные часы, своя проверка —
+ * часы Платформы и реестр. xAgentCode — значение заголовка как пришло: повтор (массив) или нет — несовпадение.
  */
 export async function checkChannel(
-  der: Buffer | undefined,
+  client: ClientCertificate | undefined,
   xAgentCode: string | readonly string[] | undefined,
   now: Date,
   opts: ChannelOptions,
 ): Promise<ChannelResult> {
-  if (der === undefined || der.length === 0) return { ok: false, reject: "NO_CERTIFICATE" };
+  if (client === undefined || client.der.length === 0) return { ok: false, reject: "NO_CERTIFICATE" };
+  if (client.authorized !== true) return { ok: false, reject: "TLS_NOT_AUTHORIZED" };
+  const der = client.der;
 
   let cert: X509Certificate;
   try {
