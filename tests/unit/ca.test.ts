@@ -190,6 +190,13 @@ describe("УЦ песочницы: сертификат сервера Плат�
     expect(Date.parse(cert.validTo)).toBe(Date.parse("2026-10-28T10:00:00Z") + 90 * DAY);
   });
 
+  it("цифры в метках, кроме последней, — допустимы (RFC 1123 §2.1): 1.2.3.example, host-01.local, 0x1.local", () => {
+    const s = ca().issueServerCertificate(["1.2.3.example", "host-01.local", "0x1.local"], NOW, 90, 300);
+    const cert = new X509Certificate(s.certificateDer);
+    expect(cert.checkHost("1.2.3.example")).toBe("1.2.3.example");
+    expect(cert.checkHost("host-01.local")).toBe("host-01.local");
+  });
+
   it("срок не дольше УЦ; УЦ вне срока — исключение", () => {
     const c = ca(NOW, 100);
     expect(c.issueServerCertificate(["localhost"], new Date(NOW.getTime() + 50 * DAY), 90, 300).notAfter).toEqual(c.notAfter);
@@ -209,6 +216,12 @@ describe("УЦ песочницы: сертификат сервера Плат�
     ["пробел", ["platform .local"]],
     ["пустая строка", [""]],
     ["одно верное, одно нет", ["localhost", "Localhost"]],
+    // КТ1 К3.2 № 7 (RFC 1123 §2.1): последняя метка из одних цифр — не адрес IP и не имя DNS.
+    ["IPv4 вне диапазона", ["256.1.1.1"]],
+    ["IPv4 с ведущим нулём", ["01.2.3.4"]],
+    ["три октета", ["1.2.3"]],
+    ["одна цифровая метка", ["8080"]],
+    ["имя с цифровой последней меткой", ["platform.123"]],
   ])("имена: %s — исключение", (_n, names) => {
     expect(() => ca().issueServerCertificate(names, NOW, 90, 300)).toThrow(/имена сервера|имя сервера/);
   });

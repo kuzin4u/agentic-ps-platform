@@ -15,6 +15,7 @@ import { participantRoutes, type ParticipantDeps } from "./participants/routes.j
 import { paoConfigurationRoutes, paoConfigurationUnavailable, type PaoConfigurationDeps } from "./pao/configuration.js";
 import { paoNotFound, paoRoutes, type PaoDeps } from "./pao/routes.js";
 import { errFields, frameworkErrors, paoUnavailable } from "./pao/transport.js";
+import { isServerName } from "./registry/ca/ca.js";
 
 // Среды — SPEC §8, ARCHITECTURE «Среды». dev работает в памяти, без PostgreSQL.
 export const ENVIRONMENTS = ["dev", "sandbox"] as const;
@@ -140,6 +141,20 @@ export function parseTrustedProxies(value: string | undefined): string[] {
         `PAO_TRUSTED_PROXIES: «${item}» — не адрес и не CIDR или префикс шире IPv4 /16, IPv6 /32; доверять всем нельзя (РП32 п. 5)`,
       );
     }
+  }
+  return items;
+}
+
+/**
+ * PLATFORM_TLS_HOSTNAMES — имена DNS и адреса IP сертификата сервера через запятую (РП66 п. 4; настройка развёртывания, а не
+ * стендовый параметр). Нет, пусто или имя не по правилу (isServerName, в том числе последняя метка из цифр — КТ1 К3.2 № 7) —
+ * отказ запуска STARTUP_PARAMS_INVALID: сертификат не на те имена клиент отверг бы, догадки нет.
+ */
+export function parseTlsHostnames(value: string | undefined): string[] {
+  const items = (value ?? "").split(",").map((s) => s.trim()).filter((s) => s !== "");
+  if (items.length === 0) throw new Error("PLATFORM_TLS_HOSTNAMES: не задан или пуст (РП66 п. 4)");
+  for (const item of items) {
+    if (!isServerName(item)) throw new Error(`PLATFORM_TLS_HOSTNAMES: «${item}» — не имя DNS в нижнем регистре и не адрес IP (РП66 п. 4)`);
   }
   return items;
 }

@@ -1,5 +1,5 @@
 import pg from "pg";
-import { buildServer, parseEnv, parseTrustedProxies, type PlatformEnv } from "./server.js";
+import { buildServer, parseEnv, parseTlsHostnames, parseTrustedProxies, type PlatformEnv } from "./server.js";
 import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
 import { MemoryLimitsStore, PgLimitsStore } from "./participants/limits.js";
 import { MemoryReadinessStore, PgReadinessStore } from "./participants/readiness.js";
@@ -47,6 +47,8 @@ let databaseUrl: string | undefined;
 let trusted: TrustedParticipants;
 /** УЦ песочницы из PLATFORM_CA_KEY_PATH — только sandbox (РП66 п. 6); подключение к TLS и реестру — К3.1 (ч. 2б-2). */
 let ca: SandboxCa | undefined;
+/** Имена и адреса сертификата сервера из PLATFORM_TLS_HOSTNAMES — только sandbox (РП66 п. 4); выпуск и TLS — К3.1. */
+let tlsHostnames: string[] | undefined;
 
 const checks: StartupCheck[] = [
   {
@@ -59,6 +61,8 @@ const checks: StartupCheck[] = [
       port = Number(process.env.PORT ?? 8080);
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`Недопустимый PORT=${process.env.PORT}`);
       host = process.env.HOST ?? "127.0.0.1";
+      // Имена сертификата сервера (РП66 п. 4) — настройка развёртывания, как PORT и HOST; dev без TLS их не читает (п. 7).
+      if (env === "sandbox") tlsHostnames = parseTlsHostnames(process.env.PLATFORM_TLS_HOSTNAMES);
       return "ok";
     },
   },
@@ -266,7 +270,7 @@ async function serve(): Promise<void> {
   });
   app.log.info({ params }, "стендовые параметры загружены");
   // Отпечаток корневого УЦ — открытый, тот же, что вывел ca:init: оператор сверяет, что смонтирован прежний УЦ (РП66 п. 6).
-  if (ca) app.log.info({ ca_fingerprint: ca.fingerprint, ca_not_after: ca.notAfter.toISOString() }, "УЦ песочницы загружен");
+  if (ca) app.log.info({ ca_fingerprint: ca.fingerprint, ca_not_after: ca.notAfter.toISOString(), tls_hostnames: tlsHostnames }, "УЦ песочницы загружен");
   if (!pool) app.log.warn("DATABASE_URL не задан (dev): реестр агентов, nonce, идемпотентность, журнал согласий, удержания П3 и лимиты клиента в памяти — один процесс, повтор после перезапуска не ловится");
   const stopPurge = startNoncePurge(nonces, params.signature_skew_sec * 1000, (err) =>
     app.log.error({ err }, "ПАО: сбой очистки nonce"),

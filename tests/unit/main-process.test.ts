@@ -111,4 +111,14 @@ describe("рабочая сборка src/main.ts (sandbox): ключ УЦ — S
     expect(open.out).not.toContain(pem.split("\n")[1]);
     expect(open.out).not.toContain(p);
   }, 60_000);
+
+  it("PLATFORM_TLS_HOSTNAMES (РП66 п. 4; № 7): нет или 256.1.1.1 — STARTUP_PARAMS_INVALID; localhost,127.0.0.1 — params проходит", () => {
+    const params = { check: "params", code: "STARTUP_PARAMS_INVALID", error: "Error" };
+    expect(failures({}).failures).toContainEqual(params);
+    expect(failures({ PLATFORM_TLS_HOSTNAMES: "localhost,256.1.1.1" }).failures).toContainEqual(params);
+    // Остальные отказы (нет базы и ключа УЦ) — свои; params среди них нет.
+    const ok = failures({ PLATFORM_TLS_HOSTNAMES: "localhost,127.0.0.1" });
+    expect(ok.code).toBe(1);
+    expect(ok.failures.map((f) => f.check)).not.toContain("params");
+  }, 60_000);
 });

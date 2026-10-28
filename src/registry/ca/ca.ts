@@ -48,11 +48,21 @@ function ipBytes(ip: string): Buffer | undefined {
   return out;
 }
 
+/**
+ * Имя сервера по правилу (РП66 нюанс К3 п. 7): адрес IP (isIP, без зоны) или имя DNS, у которого последняя метка — не из
+ * одних цифр (RFC 1123 §2.1; КТ1 К3.2 № 7): «256.1.1.1», «01.2.3.4», «1.2.3» — не адрес и не имя, клиент разобрал бы их
+ * по-своему.
+ */
+export function isServerName(name: string): boolean {
+  if (ipBytes(name)) return true;
+  return DNS_NAME.test(name) && !/^\d+$/.test(name.slice(name.lastIndexOf(".") + 1));
+}
+
 /** SAN сервера: dNSName [2] или iPAddress [7]; имя не по правилу — исключение (ошибка развёртывания, не догадка). */
 function serverName(name: string): Buffer {
   const ip = ipBytes(name);
   if (ip) return tlv(0x87, ip);
-  if (!DNS_NAME.test(name)) throw new Error(`имя сервера не по правилу (DNS в нижнем регистре без точки в конце или IP): ${name}`);
+  if (!isServerName(name)) throw new Error(`имя сервера не по правилу (DNS в нижнем регистре без точки в конце или IP): ${name}`);
   return tlv(0x82, Buffer.from(name, "ascii"));
 }
 

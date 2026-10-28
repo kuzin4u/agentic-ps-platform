@@ -15,7 +15,7 @@ import { PaoRequestVerifier, paoIdempotency } from "../../src/pao/index.js";
 import { clientCertificate } from "../../src/pao/routes.js";
 import { AgentKeys, AgentRegistry, ED25519, InMemoryAgentRegistryStore, SandboxCa, parseKey } from "../../src/registry/index.js";
 import type { AgentCertificateRecord } from "../../src/registry/model.js";
-import { buildServer, TLS_MIN_VERSION } from "../../src/server.js";
+import { buildServer, parseTlsHostnames, TLS_MIN_VERSION } from "../../src/server.js";
 import { loadParams } from "../../src/shared/config.js";
 import { memoryConsent } from "../support/consent.js";
 import { newCsr } from "../support/csr.js";
@@ -387,5 +387,33 @@ describe("TLS и ступень 0 — только вместе (В1, допол
     const on = buildServer({ env: "sandbox", pao: d.pao, tls: d.tls });
     opened.push(off, on);
     expect((await off.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
+  });
+});
+
+describe("PLATFORM_TLS_HOSTNAMES — имена сертификата сервера (РП66 п. 4; КТ1 К3.2 № 7)", () => {
+  it("DNS и IP через запятую, пробелы вокруг — отбрасываются", () => {
+    expect(parseTlsHostnames("platform.sandbox.local, localhost,127.0.0.1 , ::1")).toEqual(["platform.sandbox.local", "localhost", "127.0.0.1", "::1"]);
+  });
+
+  it.each([
+    ["нет", undefined],
+    ["пусто", ""],
+    ["только запятые и пробелы", " , ,"],
+    ["верхний регистр", "Platform.local"],
+    ["шаблон «*»", "*.platform.local"],
+    ["зона IPv6", "fe80::1%eth0"],
+    ["№ 7: IPv4 вне диапазона", "localhost,256.1.1.1"],
+    ["№ 7: ведущий ноль", "01.2.3.4"],
+    ["№ 7: три октета", "1.2.3"],
+  ])("%s — исключение (STARTUP_PARAMS_INVALID в main.ts)", (_n, value) => {
+    expect(() => parseTlsHostnames(value)).toThrow(/PLATFORM_TLS_HOSTNAMES/);
+  });
+
+  it("принятые имена выпускаются в сертификат сервера без исключения (одно правило — isServerName)", () => {
+    const names = parseTlsHostnames("platform.sandbox.local,1.2.3.example,10.0.0.1,::ffff:10.0.0.1");
+    const ca = SandboxCa.generate({ now: new Date(), ttlDays: 3650 });
+    const cert = new X509Certificate(ca.issueServerCertificate(names, new Date(), 90, 300).certificateDer);
+    expect(cert.checkHost("1.2.3.example")).toBe("1.2.3.example");
+    expect(cert.checkIP("10.0.0.1")).toBe("10.0.0.1");
   });
 });
