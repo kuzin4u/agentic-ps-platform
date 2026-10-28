@@ -1,4 +1,4 @@
-import { X509Certificate, type KeyObject } from "node:crypto";
+import { constants as cryptoConstants, X509Certificate, type KeyObject } from "node:crypto";
 import type { ServerOptions as HttpsServerOptions } from "node:https";
 import { isIP } from "node:net";
 import Fastify, { LogController, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from "fastify";
@@ -83,9 +83,15 @@ export interface ServerTls {
 /** Только TLS 1.3 (В3, решение владельца 28.10): повторного согласования нет — сертификат клиента на соединении не меняется. */
 export const TLS_MIN_VERSION = "TLSv1.3";
 
-/** HTTPS-опции Fastify (РП66 п. 3): requestCert, без обрыва рукопожатия, доверенный — только УЦ песочницы. */
+/**
+ * HTTPS-опции Fastify (РП66 п. 3): requestCert, без обрыва рукопожатия, доверенный — только УЦ песочницы. Возобновления
+ * сессии нет (развилка № 8 (А), решение владельца 28.10): SSL_OP_NO_TICKET — без билетов сессии, а кэша сессий у сервера
+ * Node нет без обработчиков newSession / resumeSession; каждое подключение — полное рукопожатие с сертификатом клиента.
+ * Пересмотр — по нагрузочному тесту этапа 6 (тогда — короткий срок, не 300 с).
+ */
 function httpsOptions(t: ServerTls): HttpsServerOptions {
   return {
+    secureOptions: cryptoConstants.SSL_OP_NO_TICKET,
     key: t.key.export({ format: "pem", type: "pkcs8" }),
     cert: new X509Certificate(t.certificateDer).toString(),
     ca: [new X509Certificate(t.caDer).toString()],

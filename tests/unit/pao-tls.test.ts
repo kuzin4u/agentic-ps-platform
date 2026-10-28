@@ -266,28 +266,31 @@ describe("TLS песочницы: рукопожатие и ступень 0 (Р
   });
 });
 
-describe("возобновлённая сессия TLS 1.3 (дополнение чата 3)", () => {
-  it("сессия с сертификатом — сертификат доступен при возобновлении: 200", async () => {
+// Развилка № 8, вариант (А) (решение владельца 28.10, PR #80): возобновление сессии TLS на канале ПАО отключено — блоб
+// сессии у клиента не даёт канал агента без закрытого ключа сертификата (остаточный риск РП66 нюанса К3 п. 6 снят).
+// До 2б оба теста ниже проверяли возобновление (200 с сертификатом исходной сессии; NO_CERTIFICATE у сессии без него) —
+// теперь сохранённая сессия не принимается, каждое подключение — полное рукопожатие с сертификатом клиента.
+describe("сохранённая сессия TLS 1.3 не принимается — полное рукопожатие (развилка № 8 (А))", () => {
+  it("сессия с сертификатом: повтор с сохранённой сессией — isSessionReused() === false, сертификат предъявлен заново: 200", async () => {
     const r = await start();
     const a = await r.admit();
     const first = await call(r, { client: a, sign: a });
     expect(first.status).toBe(200);
     expect(first.session).toBeDefined();
-    const resumed = await call(r, { client: a, sign: a, session: first.session as Buffer });
-    expect(resumed.reused).toBe(true);
-    expect(resumed.status, resumed.body).toBe(200);
+    const again = await call(r, { client: a, sign: a, session: first.session as Buffer });
+    expect(again.reused).toBe(false);
+    expect(again.status, again.body).toBe(200);
   });
 
-  it("сессия без сертификата — при возобновлении сертификата нет (null): 401 AGENT_UNKNOWN / NO_CERTIFICATE", async () => {
+  it("сессия без сертификата: повтор с сохранённой сессией — полное рукопожатие с сертификатом клиента: 200, не NO_CERTIFICATE", async () => {
     const r = await start();
     const a = await r.admit();
     const first = await call(r, { path: "/health" });
     expect(first.session).toBeDefined();
-    // Клиент предъявляет сертификат в опциях, но сессия возобновлена — сертификат не передаётся.
-    const resumed = await call(r, { client: a, sign: a, session: first.session as Buffer });
-    expect(resumed.reused).toBe(true);
-    expect(resumed.status).toBe(401);
-    expect(channelLogs(r).map((l) => l.pao_channel)).toEqual(["NO_CERTIFICATE"]);
+    const again = await call(r, { client: a, sign: a, session: first.session as Buffer });
+    expect(again.reused).toBe(false);
+    expect(again.status, again.body).toBe(200);
+    expect(channelLogs(r)).toEqual([]);
   });
 });
 
