@@ -112,7 +112,7 @@ export const PLATFORM_DIAG: Readonly<Record<PlatformCode, DiagEntry>> = {
   STARTUP_PARAMS_INVALID: platform("STARTUP_PARAMS_INVALID", ["environment"], "after_human", DOWN,
     "Стендовые параметры не прошли проверку loadParams: исправить config/params.stand.json или переменные среды.", "РП42 п. 4; PARAMS", "0.7.0"),
   STARTUP_PROXIES_INVALID: platform("STARTUP_PROXIES_INVALID", ["environment"], "after_human", DOWN,
-    "PAO_TRUSTED_PROXIES — не адрес и не CIDR или префикс шире IPv4 /16, IPv6 /32.", "РП42 п. 4; РП32 п. 5", "0.7.0"),
+    "PAO_TRUSTED_PROXIES — не адрес и не CIDR или префикс шире IPv4 /16, IPv6 /32 (вид причины INVALID); в sandbox (TLS в процессе) — непустой список (TLS_IN_PROCESS): оставить пустым.", "РП42 п. 4; РП32 п. 5; РП67", "0.7.0"),
   STARTUP_DB_REQUIRED: platform("STARTUP_DB_REQUIRED", ["environment"], "after_human", DOWN,
     "Среда sandbox без DATABASE_URL: задать адрес PostgreSQL.", "РП42 п. 4; РП30 п. 5", "0.7.0"),
   STARTUP_DB_MEMORY: platform("STARTUP_DB_MEMORY", ["environment"], "after_human",

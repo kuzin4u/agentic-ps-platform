@@ -1,6 +1,15 @@
 import pg from "pg";
 import { X509Certificate } from "node:crypto";
-import { buildServer, parseEnv, parseTlsHostnames, parseTrustedProxies, type PlatformEnv, type ServerTls } from "./server.js";
+import {
+  buildServer,
+  parseEnv,
+  parseTlsHostnames,
+  parseTrustedProxies,
+  PROXIES_REASONS,
+  ProxiesError,
+  type PlatformEnv,
+  type ServerTls,
+} from "./server.js";
 import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
 import { MemoryLimitsStore, PgLimitsStore } from "./participants/limits.js";
 import { MemoryReadinessStore, PgReadinessStore } from "./participants/readiness.js";
@@ -69,11 +78,17 @@ const checks: StartupCheck[] = [
     },
   },
   {
-    // Доверенные прокси (РП32 п. 5): неверный список — отказ запуска.
+    // Доверенные прокси (РП32 п. 5): неверный список — отказ запуска. sandbox всегда с TLS в процессе (без файла УЦ не
+    // запускается — РП66 п. 6): прокси перед ним только L4, X-Forwarded-For — от клиента, и непустой список дал бы агенту
+    // обойти грубый лимит подстановкой адреса — отказ запуска (РП67 п. 1). dev — без изменений (п. 3).
     check: "proxies",
     fail: "STARTUP_PROXIES_INVALID",
+    reasons: PROXIES_REASONS,
     run: () => {
       trustedProxies = parseTrustedProxies(process.env.PAO_TRUSTED_PROXIES);
+      if (env === "sandbox" && trustedProxies.length > 0) {
+        throw new ProxiesError("TLS_IN_PROCESS", "PAO_TRUSTED_PROXIES в sandbox: TLS в процессе, прокси только L4 (РП67 п. 1)");
+      }
       return "ok";
     },
   },
