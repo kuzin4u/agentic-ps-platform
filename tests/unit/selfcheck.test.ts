@@ -70,6 +70,27 @@ describe("startPlatform: решение о запуске (РП42 п. 4)", () =>
     );
   });
 
+  it("вид причины (РП66 п. 6): только значение из перечня проверки, текста исключения нет; вне перечня или без перечня — нет поля", async () => {
+    const withReason = (reason: unknown, reasons?: readonly string[]): StartupCheck => ({
+      check: "ca.key",
+      fail: "STARTUP_CA_KEY_INVALID",
+      ...(reasons ? { reasons } : {}),
+      run: () => {
+        throw Object.assign(new Error("причина для журнала"), { reason });
+      },
+    });
+    const listed = await launch([withReason("MODE_TOO_OPEN", ["NO_PATH", "MODE_TOO_OPEN"])]);
+    expect(listed.decision.failures).toEqual([{ check: "ca.key", code: "STARTUP_CA_KEY_INVALID", error: "Error", reason: "MODE_TOO_OPEN" }]);
+    expect(JSON.stringify(listed.log.mock.calls)).not.toContain("причина для журнала");
+
+    // Значение не из перечня (в том числе текст), не строка, перечня нет — поля reason нет: в журнале только класс.
+    for (const c of [withReason("причина для журнала", ["NO_PATH"]), withReason({ x: 1 }, ["NO_PATH"]), withReason("NO_PATH")]) {
+      const r = await launch([c]);
+      expect(r.decision.failures).toEqual([{ check: "ca.key", code: "STARTUP_CA_KEY_INVALID", error: "Error" }]);
+      expect(JSON.stringify(r.log.mock.calls)).not.toContain("причина для журнала");
+    }
+  });
+
   it("warn STARTUP_DB_MEMORY готовность не снимает — порт открывается, код 0", async () => {
     const r = await launch([ok("params"), { check: "db.storage", fail: "STARTUP_DB_REQUIRED", run: () => ({ warn: "STARTUP_DB_MEMORY" }) }]);
     expect(r.decision.report.ready).toBe(true);

@@ -1,8 +1,8 @@
 // П1 УЦ песочницы (РП27 п. 1–2, РП65 п. 2): ключ ECDSA P-256, самоподписанный корневой сертификат, выпуск сертификата
 // агента по CSR — один шаблон: пустой субъект, SAN — ровно один URI кода агента из записи реестра (не из CSR), CA:false,
 // digitalSignature, clientAuth. Сертификат сервера Платформы — от того же УЦ (РП66 п. 4). notBefore — с запасом в прошлое
-// (РП66 п. 5). Ключ УЦ — только в памяти процесса; файл с явной инициализацией — SEC-1-код ч. 2б (РП66 п. 6).
-import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from "node:crypto";
+// (РП66 п. 5). Ключ УЦ — файл с явной инициализацией (РП66 п. 6): разбор и выгрузка PEM — здесь, файл — file.ts.
+import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, sign, X509Certificate, type KeyObject } from "node:crypto";
 import { isIP } from "node:net";
 import { AgentCodeError, parseAgentCode, REGISTRY_ISSUER } from "../code.js";
 import { parseCsr, ECDSA_SHA256, P256_SPKI_PREFIX, type CsrRejection } from "./csr.js";
@@ -116,6 +116,34 @@ export interface SandboxCaOptions {
   readonly ttlDays: number;
 }
 
+/** Корневой сертификат, прочитанный из файла: DER и срок из него же. */
+interface LoadedRoot {
+  readonly der: Buffer;
+  readonly notBefore: Date;
+  readonly notAfter: Date;
+}
+
+/**
+ * Вид причины отказа загрузки УЦ из PEM (РП66 п. 6) — только в журнал процесса: не разбирается (не два блока PEM, ключ не
+ * P-256, сертификат не корневой УЦ песочницы), ключ не от сертификата, часы Платформы вне срока УЦ.
+ */
+export type CaLoadRejection = "UNPARSABLE" | "KEY_MISMATCH" | "OUTSIDE_VALIDITY";
+
+export type CaLoadResult = { readonly ok: true; readonly ca: SandboxCa } | { readonly ok: false; readonly reason: CaLoadRejection };
+
+const PEM_BLOCK = /-----BEGIN ([A-Z ]+)-----\r?\n([A-Za-z0-9+/=\r\n]+?)-----END \1-----/g;
+
+/** Блоки PEM по меткам; текст вне блоков, кроме пробельных, — не PEM (undefined). */
+function pemBlocks(text: string): Map<string, string[]> | undefined {
+  const blocks = new Map<string, string[]>();
+  let rest = text;
+  for (const m of text.matchAll(PEM_BLOCK)) {
+    blocks.set(m[1]!, [...(blocks.get(m[1]!) ?? []), m[0]]);
+    rest = rest.replace(m[0], "");
+  }
+  return rest.trim() === "" ? blocks : undefined;
+}
+
 export class SandboxCa {
   /** Корневой сертификат УЦ, DER. */
   readonly certificateDer: Buffer;
@@ -128,13 +156,19 @@ export class SandboxCa {
   private constructor(
     private readonly privateKey: KeyObject,
     publicKey: KeyObject,
-    opts: SandboxCaOptions,
+    root: SandboxCaOptions | LoadedRoot,
   ) {
-    if (!Number.isInteger(opts.ttlDays) || opts.ttlDays < 1) throw new Error("срок УЦ: целое ≥ 1");
     this.publicKey = publicKey;
-    this.notBefore = toSecond(opts.now);
-    this.notAfter = new Date(this.notBefore.getTime() + opts.ttlDays * DAY_MS);
     this.keyId = keyIdentifier(publicKey);
+    if ("der" in root) {
+      this.certificateDer = root.der;
+      this.notBefore = root.notBefore;
+      this.notAfter = root.notAfter;
+      return;
+    }
+    if (!Number.isInteger(root.ttlDays) || root.ttlDays < 1) throw new Error("срок УЦ: целое ≥ 1");
+    this.notBefore = toSecond(root.now);
+    this.notAfter = new Date(this.notBefore.getTime() + root.ttlDays * DAY_MS);
     const extensions = [
       extension(OID_BASIC_CONSTRAINTS, true, seq(BOOLEAN_TRUE, uint(Buffer.from([0])))),
       extension(OID_KEY_USAGE, true, KU_KEY_CERT_SIGN),
@@ -143,10 +177,57 @@ export class SandboxCa {
     this.certificateDer = this.signTbs(newSerial(), name(SANDBOX_CA_NAME), this.notBefore, this.notAfter, publicKey, extensions);
   }
 
-  /** Новая пара P-256 и корневой сертификат (ч. 1 — в памяти; загрузка из файла — ч. 2). */
+  /** Новая пара P-256 и корневой сертификат — для `npm run ca:init` и стенда (в памяти). */
   static generate(opts: SandboxCaOptions): SandboxCa {
     const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
     return new SandboxCa(privateKey, publicKey, opts);
+  }
+
+  /**
+   * УЦ из PEM файла (РП66 п. 6): ровно один блок PRIVATE KEY (PKCS#8, P-256) и один CERTIFICATE — корневой УЦ песочницы
+   * (субъект — SANDBOX_CA_NAME, CA:true, самоподписанный). Ключ не от сертификата — KEY_MISMATCH; часы Платформы вне срока
+   * УЦ — OUTSIDE_VALIDITY. Вид причины — без текста исключения и без содержимого файла.
+   */
+  static load(pem: string, now: Date): CaLoadResult {
+    const blocks = pemBlocks(pem);
+    const keyPem = blocks?.get("PRIVATE KEY");
+    const certPem = blocks?.get("CERTIFICATE");
+    if (!blocks || blocks.size !== 2 || keyPem?.length !== 1 || certPem?.length !== 1) return { ok: false, reason: "UNPARSABLE" };
+    let privateKey: KeyObject;
+    let cert: X509Certificate;
+    try {
+      privateKey = createPrivateKey({ key: keyPem[0]!, format: "pem" });
+      cert = new X509Certificate(certPem[0]!);
+    } catch {
+      return { ok: false, reason: "UNPARSABLE" };
+    }
+    if (privateKey.asymmetricKeyType !== "ec" || privateKey.asymmetricKeyDetails?.namedCurve !== "prime256v1") {
+      return { ok: false, reason: "UNPARSABLE" };
+    }
+    if (!cert.checkPrivateKey(privateKey)) return { ok: false, reason: "KEY_MISMATCH" };
+    if (cert.subject !== `CN=${SANDBOX_CA_NAME}` || !cert.ca || !cert.verify(cert.publicKey)) return { ok: false, reason: "UNPARSABLE" };
+    const notBefore = new Date(cert.validFrom);
+    const notAfter = new Date(cert.validTo);
+    // Неразбираемое время — до сравнения: сравнения с NaN ложны (как в validity).
+    if (!Number.isFinite(notBefore.getTime()) || !Number.isFinite(notAfter.getTime()) || !Number.isFinite(now.getTime())) {
+      return { ok: false, reason: "UNPARSABLE" };
+    }
+    const t = toSecond(now).getTime();
+    if (t < notBefore.getTime() || t >= notAfter.getTime()) return { ok: false, reason: "OUTSIDE_VALIDITY" };
+    return { ok: true, ca: new SandboxCa(privateKey, cert.publicKey, { der: cert.raw, notBefore, notAfter }) };
+  }
+
+  /** Корневой сертификат, PEM — открытый: вывод `ca:init` и доверие агента к серверу (решение владельца 28.10). */
+  get certificatePem(): string {
+    return new X509Certificate(this.certificateDer).toString();
+  }
+
+  /**
+   * Закрытый ключ PKCS#8 и корневой сертификат одним PEM — только для записи файла `ca:init` (РП66 п. 6). В журнал,
+   * ответы и вывод не передаётся (страж — ca-file.test.ts).
+   */
+  exportPem(): string {
+    return `${this.privateKey.export({ format: "pem", type: "pkcs8" }) as string}${this.certificatePem}`;
   }
 
   /**

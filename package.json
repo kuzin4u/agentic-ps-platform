@@ -28,6 +28,7 @@
     "prepare": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "dev": "tsx watch src/main.ts",
+    "ca:init": "node dist/ca-init.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "tsc --noEmit",

@@ -11,5 +11,14 @@ export * from "./keys.js";
 export * from "./agent-keys.js";
 export * from "./jwks.js";
 export * from "./suspension.js";
-export { SandboxCa, SANDBOX_CA_NAME, type AgentCertificate, type IssueResult, type SandboxCaOptions } from "./ca/ca.js";
+export {
+  SandboxCa,
+  SANDBOX_CA_NAME,
+  type AgentCertificate,
+  type CaLoadRejection,
+  type CaLoadResult,
+  type IssueResult,
+  type SandboxCaOptions,
+} from "./ca/ca.js";
+export { CA_KEY_REASONS, CaKeyError, initCaFile, loadCaFile, type CaKeyReason } from "./ca/file.js";
 export { parseCsr, CSR_MAX_DER_BYTES, type CsrRejection, type CsrParseResult } from "./ca/csr.js";

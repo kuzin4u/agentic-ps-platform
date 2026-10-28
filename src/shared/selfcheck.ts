@@ -28,6 +28,11 @@ export interface StartupCheck {
   /** Код при исключении из `run`. */
   readonly fail: StartupCode;
   readonly run: () => StartupOutcome | Promise<StartupOutcome>;
+  /**
+   * Закрытый перечень видов причины (РП66 п. 6): строковое поле `reason` исключения попадает в журнал, только если оно из
+   * перечня; иначе — как без перечня, только класс. Текст исключения не пишется никогда (РП42 доп. п. 12).
+   */
+  readonly reasons?: readonly string[];
 }
 
 /**
@@ -39,6 +44,8 @@ export interface StartupFailure {
   readonly code: StartupCode;
   /** Класс ошибки (`Error`, `TypeError`, `AggregateError`); не Error — `typeof` значения. */
   readonly error: string;
+  /** Вид причины — только значение из `StartupCheck.reasons` (STARTUP_CA_KEY_INVALID: NO_PATH … OUTSIDE_VALIDITY). */
+  readonly reason?: string;
 }
 
 export interface StartupDecision {
@@ -51,6 +58,12 @@ export interface StartupDecision {
 }
 
 const errorClass = (err: unknown): string => (err instanceof Error ? err.constructor.name || "Error" : typeof err);
+
+/** Вид причины из закрытого перечня проверки; что-либо иное — undefined (в журнал не попадает). */
+const reasonOf = (err: unknown, reasons: readonly string[] | undefined): string | undefined => {
+  const r: unknown = err instanceof Error ? (err as Error & { reason?: unknown }).reason : undefined;
+  return typeof r === "string" && reasons?.includes(r) ? r : undefined;
+};
 
 /** Проверки по порядку; исключение — `fail` с кодом проверки, `skip` в отчёт не попадает. */
 export async function runSelfCheck(
@@ -65,7 +78,8 @@ export async function runSelfCheck(
       outcome = await c.run();
     } catch (err) {
       items.push({ check: c.check, status: "fail", code: c.fail });
-      failures.push({ check: c.check, code: c.fail, error: errorClass(err) });
+      const reason = reasonOf(err, c.reasons);
+      failures.push({ check: c.check, code: c.fail, error: errorClass(err), ...(reason ? { reason } : {}) });
       continue;
     }
     if (outcome === "skip") continue;

@@ -14,7 +14,16 @@ import { paoIdempotency } from "./pao/idempotency.js";
 import { paoNonceStore, paoPoolConfig, requireDatabaseUrl, startNoncePurge } from "./pao/stores.js";
 import { systemResolver } from "./pao/subscription.js";
 import { PaoRequestVerifier } from "./pao/verify.js";
-import { AgentKeys, AgentRegistry, InMemoryAgentRegistryStore, PgAgentRegistryStore, type AgentRegistryStore } from "./registry/index.js";
+import {
+  AgentKeys,
+  AgentRegistry,
+  CA_KEY_REASONS,
+  InMemoryAgentRegistryStore,
+  loadCaFile,
+  PgAgentRegistryStore,
+  type AgentRegistryStore,
+  type SandboxCa,
+} from "./registry/index.js";
 import { loadParams, type Params } from "./shared/config.js";
 import { applyPlatformMigrations } from "./shared/migrations.js";
 import {
@@ -36,6 +45,8 @@ let host: string;
 let trustedProxies: string[];
 let databaseUrl: string | undefined;
 let trusted: TrustedParticipants;
+/** УЦ песочницы из PLATFORM_CA_KEY_PATH — только sandbox (РП66 п. 6); подключение к TLS и реестру — К3.1 (ч. 2б-2). */
+let ca: SandboxCa | undefined;
 
 const checks: StartupCheck[] = [
   {
@@ -108,6 +119,18 @@ const checks: StartupCheck[] = [
     fail: "STARTUP_PARTICIPANTS_INVALID",
     run: () => {
       trusted = loadTrustedParticipants(process.env.PARTICIPANT_KEYS_PATH, { stand: false });
+      return "ok";
+    },
+  },
+  {
+    // Ключ УЦ песочницы (РП66 п. 6): только sandbox; файл создаёт только npm run ca:init — здесь лишь чтение. dev файл не
+    // читает (п. 7). Вид причины — в журнал отказа из закрытого перечня, текста исключения нет (РП42 доп. п. 12).
+    check: "ca.key",
+    fail: "STARTUP_CA_KEY_INVALID",
+    reasons: CA_KEY_REASONS,
+    run: () => {
+      if (env !== "sandbox") return "skip";
+      ca = loadCaFile(process.env.PLATFORM_CA_KEY_PATH, new Date());
       return "ok";
     },
   },
@@ -242,6 +265,8 @@ async function serve(): Promise<void> {
     merchants: { registry, keys, contour: "sandbox", params, readiness },
   });
   app.log.info({ params }, "стендовые параметры загружены");
+  // Отпечаток корневого УЦ — открытый, тот же, что вывел ca:init: оператор сверяет, что смонтирован прежний УЦ (РП66 п. 6).
+  if (ca) app.log.info({ ca_fingerprint: ca.fingerprint, ca_not_after: ca.notAfter.toISOString() }, "УЦ песочницы загружен");
   if (!pool) app.log.warn("DATABASE_URL не задан (dev): реестр агентов, nonce, идемпотентность, журнал согласий, удержания П3 и лимиты клиента в памяти — один процесс, повтор после перезапуска не ловится");
   const stopPurge = startNoncePurge(nonces, params.signature_skew_sec * 1000, (err) =>
     app.log.error({ err }, "ПАО: сбой очистки nonce"),

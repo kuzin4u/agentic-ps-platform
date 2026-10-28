@@ -74,6 +74,7 @@ export const STARTUP_CODES = [
   "STARTUP_PARTICIPANTS_INVALID",
   "STARTUP_PAO_SPEC_MISMATCH",
   "STARTUP_DIAG_INCOMPLETE",
+  "STARTUP_CA_KEY_INVALID",
   // Исключение из правила STARTUP_* (источник environment, отказ запуска): признак, а не отказ — готовность не снимает,
   // источник — сама Платформа (РП46 доп. п. 9 (о2), 10; решение владельца по КТ1). Довод: уведомления клиента в решении
   // о платеже не участвуют, снимать приём трафика из-за них неверно. Тот же код — в журнале прохода и в /health.
@@ -125,6 +126,8 @@ export const PLATFORM_DIAG: Readonly<Record<PlatformCode, DiagEntry>> = {
     "Версия ПАО или PAO_SPEC_SHA256 agentic-core не равны Платформе: дефект сборки, подключить ядро с той же копией ПАО.", "РП42 п. 4; РП16", "0.7.0"),
   STARTUP_DIAG_INCOMPLETE: platform("STARTUP_DIAG_INCOMPLETE", ["platform"], "after_fix", DOWN,
     "Реестр кодов неполон или запись не по формату К17 (checkDiagRegistry): дефект сборки, дописать запись.", "РП42 п. 3–4", "0.7.0"),
+  STARTUP_CA_KEY_INVALID: platform("STARTUP_CA_KEY_INVALID", ["environment"], "after_human", DOWN,
+    "Ключ УЦ песочницы (PLATFORM_CA_KEY_PATH) не загружен — вид причины в журнале процесса: NO_PATH, NO_FILE, MODE_TOO_OPEN (права шире 0600), UNPARSABLE, KEY_MISMATCH, OUTSIDE_VALIDITY. Новый УЦ — только npm run ca:init; прежние сертификаты агентов при новом УЦ не проверяются.", "РП42 п. 4; РП66 п. 6", "0.32.0"),
   PARTICIPANT_NOTIFY_LAGGING: platform("PARTICIPANT_NOTIFY_LAGGING", ["platform"], "after_human",
     "Уведомления о покупках через помощника могут прийти с задержкой.",
     "Уведомитель участников не разобрал запись операции старше половины горизонта (participant_notify_horizon_sec): проверить процесс уведомителя и PostgreSQL; за горизонтом уведомлений по старым решениям не будет.", "РП46 доп. п. 7, 9 (о2); A3 п. 5.3", "0.11.0"),

@@ -1,10 +1,14 @@
 // Рабочая сборка (остаточный риск v0.26.0; РП60 п. 9–13, РП61 п. 3): src/main.ts — отдельным процессом, dev без базы,
 // 127.0.0.1, свободный порт. Маршруты отзыва и конфигурации подключены в main.ts, а журнал при logger: true — с шаблоном
 // маршрута, без url и значений пути. Процесс запускается без оболочки и останавливается только по своему номеру.
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { SandboxCa } from "../../src/registry/ca/ca.js";
 
 const freePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -72,5 +76,39 @@ describe("рабочая сборка src/main.ts (dev, без базы)", () =>
     );
     for (const e of incoming) expect(e.req).not.toHaveProperty("url");
     expect(out).not.toContain(mark);
+  }, 60_000);
+});
+
+describe("рабочая сборка src/main.ts (sandbox): ключ УЦ — STARTUP_CA_KEY_INVALID (РП66 п. 6)", () => {
+  /** Запуск до выхода: отказ самопроверки — код 1 без открытия порта; запись отказа — последняя строка JSON уровня error. */
+  const failures = (extra: NodeJS.ProcessEnv) => {
+    const env: NodeJS.ProcessEnv = { ...process.env, PLATFORM_ENV: "sandbox", PORT: "1", HOST: "127.0.0.1", ...extra };
+    for (const k of ["DATABASE_URL", "PAO_TRUSTED_PROXIES", "PARTICIPANT_KEYS_PATH"]) delete env[k];
+    if (extra.PLATFORM_CA_KEY_PATH === undefined) delete env.PLATFORM_CA_KEY_PATH;
+    const r = spawnSync(process.execPath, ["--import", "tsx", "src/main.ts"], { env, encoding: "utf8" });
+    const out = `${r.stdout}${r.stderr}`;
+    const rec = out
+      .split("\n")
+      .filter((l) => l.startsWith("{"))
+      .map((l) => JSON.parse(l) as { level?: string; failures?: Record<string, unknown>[] })
+      .find((e) => e.level === "error" && e.failures);
+    return { code: r.status, out, failures: rec?.failures ?? [] };
+  };
+
+  it("пути нет — отказ запуска, вид причины NO_PATH; файл с правами 0644 — MODE_TOO_OPEN, ключа в журнале нет", () => {
+    const none = failures({});
+    expect(none.code, none.out).toBe(1);
+    expect(none.failures).toContainEqual({ check: "ca.key", code: "STARTUP_CA_KEY_INVALID", error: "CaKeyError", reason: "NO_PATH" });
+
+    const p = join(mkdtempSync(join(tmpdir(), "main-ca-")), "ca.pem");
+    const pem = SandboxCa.generate({ now: new Date(), ttlDays: 3650 }).exportPem();
+    writeFileSync(p, pem, { mode: 0o644 });
+    chmodSync(p, 0o644);
+    const open = failures({ PLATFORM_CA_KEY_PATH: p });
+    expect(open.code, open.out).toBe(1);
+    expect(open.failures).toContainEqual({ check: "ca.key", code: "STARTUP_CA_KEY_INVALID", error: "CaKeyError", reason: "MODE_TOO_OPEN" });
+    expect(open.out).not.toContain(["PRIVATE", "KEY"].join(" "));
+    expect(open.out).not.toContain(pem.split("\n")[1]);
+    expect(open.out).not.toContain(p);
   }, 60_000);
 });
