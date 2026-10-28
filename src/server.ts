@@ -129,9 +129,28 @@ export const MAX_PATH_PARAM_LENGTH = 256;
 export const TRUSTED_PROXY_MIN_PREFIX = Object.freeze({ v4: 16, v6: 32 });
 
 /**
+ * Виды причины STARTUP_PROXIES_INVALID (РП67 п. 2) — закрытый перечень, только в журнал процесса: INVALID — список не по
+ * правилу РП32 п. 5; TLS_IN_PROCESS — sandbox с непустым списком (TLS в процессе, X-Forwarded-For — от клиента).
+ */
+export const PROXIES_REASONS = ["INVALID", "TLS_IN_PROCESS"] as const;
+export type ProxiesReason = (typeof PROXIES_REASONS)[number];
+
+/** Отказ PAO_TRUSTED_PROXIES с видом причины; в журнал попадают только класс и вид причины (РП42 доп. п. 12). */
+export class ProxiesError extends Error {
+  constructor(
+    readonly reason: ProxiesReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ProxiesError";
+  }
+}
+
+/**
  * PAO_TRUSTED_PROXIES — адреса и CIDR через запятую (РП32 п. 5). Пусто или нет — прокси не доверяем.
  * «true» («доверять всем») и всё, что не адрес и не CIDR, — отказ запуска: агент обошёл бы лимит подстановкой заголовка.
  * Префикс — не шире IPv4 /16 и IPv6 /32 (РП32, дополнение п. 2): иначе список из широких сетей — тот же «доверять всем».
+ * Отказ — ProxiesError с видом причины INVALID (РП67 п. 2).
  */
 export function parseTrustedProxies(value: string | undefined): string[] {
   const items = (value ?? "").split(",").map((s) => s.trim()).filter((s) => s !== "");
@@ -143,7 +162,8 @@ export function parseTrustedProxies(value: string | undefined): string[] {
     const min = v === 6 ? TRUSTED_PROXY_MIN_PREFIX.v6 : TRUSTED_PROXY_MIN_PREFIX.v4;
     const okBits = bits === undefined || (/^[1-9]\d{0,2}$/.test(bits) && Number(bits) >= min && Number(bits) <= max);
     if (v === 0 || extra !== undefined || !okBits) {
-      throw new Error(
+      throw new ProxiesError(
+        "INVALID",
         `PAO_TRUSTED_PROXIES: «${item}» — не адрес и не CIDR или префикс шире IPv4 /16, IPv6 /32; доверять всем нельзя (РП32 п. 5)`,
       );
     }

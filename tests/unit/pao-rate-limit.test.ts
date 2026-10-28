@@ -512,6 +512,8 @@ describe("PAO_TRUSTED_PROXIES (РП32 п. 5)", () => {
     "«%s» — отказ запуска: доверять всем или не адрес",
     (v) => {
       expect(() => parseTrustedProxies(v)).toThrow(/PAO_TRUSTED_PROXIES/);
+      // Вид причины для журнала отказа запуска (РП67 п. 2).
+      expect(() => parseTrustedProxies(v)).toThrow(expect.objectContaining({ name: "ProxiesError", reason: "INVALID" }));
     },
   );
 });

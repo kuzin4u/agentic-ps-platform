@@ -83,7 +83,7 @@ describe("рабочая сборка src/main.ts (sandbox): ключ УЦ — S
   /** Запуск до выхода: отказ самопроверки — код 1 без открытия порта; запись отказа — последняя строка JSON уровня error. */
   const failures = (extra: NodeJS.ProcessEnv) => {
     const env: NodeJS.ProcessEnv = { ...process.env, PLATFORM_ENV: "sandbox", PORT: "1", HOST: "127.0.0.1", ...extra };
-    for (const k of ["DATABASE_URL", "PAO_TRUSTED_PROXIES", "PARTICIPANT_KEYS_PATH"]) delete env[k];
+    for (const k of ["DATABASE_URL", "PAO_TRUSTED_PROXIES", "PARTICIPANT_KEYS_PATH"]) if (extra[k] === undefined) delete env[k];
     if (extra.PLATFORM_CA_KEY_PATH === undefined) delete env.PLATFORM_CA_KEY_PATH;
     const r = spawnSync(process.execPath, ["--import", "tsx", "src/main.ts"], { env, encoding: "utf8" });
     const out = `${r.stdout}${r.stderr}`;
@@ -120,5 +120,25 @@ describe("рабочая сборка src/main.ts (sandbox): ключ УЦ — S
     const ok = failures({ PLATFORM_TLS_HOSTNAMES: "localhost,127.0.0.1" });
     expect(ok.code).toBe(1);
     expect(ok.failures.map((f) => f.check)).not.toContain("params");
+  }, 60_000);
+
+  it("PAO_TRUSTED_PROXIES (РП67): sandbox с непустым списком — TLS_IN_PROCESS, неверный — INVALID; dev со списком — без отказа", () => {
+    const proxies = { check: "proxies", code: "STARTUP_PROXIES_INVALID", error: "ProxiesError" };
+    const tls = failures({ PAO_TRUSTED_PROXIES: "10.0.0.1" });
+    expect(tls.code, tls.out).toBe(1);
+    expect(tls.failures).toContainEqual({ ...proxies, reason: "TLS_IN_PROCESS" });
+    expect(tls.out).not.toContain("10.0.0.1");
+    // Разбор — раньше условия sandbox: неверный список в sandbox — INVALID.
+    expect(failures({ PAO_TRUSTED_PROXIES: "true" }).failures).toContainEqual({ ...proxies, reason: "INVALID" });
+    // Значение элемента есть в тексте исключения INVALID — в журнал оно не попадает (РП42 доп. п. 12; КТ1 К1.1 № 1).
+    const wide = failures({ PAO_TRUSTED_PROXIES: "10.0.0.0/8" });
+    expect(wide.failures).toContainEqual({ ...proxies, reason: "INVALID" });
+    expect(wide.out).not.toContain("10.0.0.0/8");
+    expect(failures({ PAO_TRUSTED_PROXIES: " , " }).failures.map((f) => f.check)).not.toContain("proxies");
+    // dev (РП67 п. 3): тот же список проходит; PORT=0 — отказ params, процесс выходит без открытия порта.
+    const dev = failures({ PLATFORM_ENV: "dev", PORT: "0", PAO_TRUSTED_PROXIES: "10.0.0.1" });
+    expect(dev.code, dev.out).toBe(1);
+    expect(dev.failures.map((f) => f.check)).toContain("params");
+    expect(dev.failures.map((f) => f.check)).not.toContain("proxies");
   }, 60_000);
 });
