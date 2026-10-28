@@ -1,5 +1,6 @@
-// П1 УЦ песочницы и разбор CSR (РП27 п. 1–2, РП65 п. 1–2, 5): один шаблон, строгий DER, пределы длин, владение ключом.
-import { createHash, generateKeyPairSync, sign, X509Certificate } from "node:crypto";
+// П1 УЦ песочницы и разбор CSR (РП27 п. 1–2, РП65 п. 1–2, 5): один шаблон, строгий DER, пределы длин, владение ключом;
+// сертификат сервера и notBefore с запасом (РП66 п. 4, 5).
+import { createHash, createVerify, generateKeyPairSync, sign, X509Certificate } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { SANDBOX_CA_NAME, SandboxCa } from "../../src/registry/ca/ca.js";
 import { CSR_MAX_BASE64_CHARS, P256_SPKI_PREFIX, parseCsr } from "../../src/registry/ca/csr.js";
@@ -17,7 +18,7 @@ describe("УЦ песочницы: выпуск сертификата аген�
   it("сертификат по шаблону: пустой субъект, SAN — ровно URI кода агента, CA:false, clientAuth, подпись УЦ", () => {
     const c = ca();
     const { csr, publicKey } = newCsr("попытка подставить CN=nspk:agent:other:v1");
-    const r = c.issueAgentCertificate(csr, CODE, NOW, 90);
+    const r = c.issueAgentCertificate(csr, CODE, NOW, 90, 300);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const cert = x509(r.certificate.der);
@@ -66,7 +67,7 @@ describe("УЦ песочницы: выпуск сертификата аген�
   it("срок сертификата не выходит за срок УЦ: notAfter = min(now + ttl, notAfter УЦ)", () => {
     const c = ca(NOW, 100);
     const later = new Date(NOW.getTime() + 50 * DAY);
-    const r = c.issueAgentCertificate(newCsr().csr, CODE, later, 90);
+    const r = c.issueAgentCertificate(newCsr().csr, CODE, later, 90, 300);
     expect(r.ok && r.certificate.not_after).toBe(c.notAfter.toISOString());
   });
 
@@ -74,7 +75,7 @@ describe("УЦ песочницы: выпуск сертификата аген�
     const c = ca();
     const serials = new Set<string>();
     for (let i = 0; i < 20; i++) {
-      const r = c.issueAgentCertificate(newCsr().csr, CODE, NOW, 90);
+      const r = c.issueAgentCertificate(newCsr().csr, CODE, NOW, 90, 300);
       if (!r.ok) throw new Error(r.reason);
       expect(r.certificate.serial).toMatch(/^[4-7][0-9a-f]{31}$/);
       serials.add(r.certificate.serial);
@@ -84,18 +85,110 @@ describe("УЦ песочницы: выпуск сертификата аген�
 
   it("код агента не песочницы и УЦ вне срока — исключение, а не сертификат (инвариант 3)", () => {
     const c = ca(NOW, 10);
-    expect(() => c.issueAgentCertificate(newCsr().csr, "other:agent:x:v1", NOW, 90)).toThrow(/не песочницы/);
-    expect(() => c.issueAgentCertificate(newCsr().csr, `${CODE} `, NOW, 90)).toThrow(/не песочницы/);
+    expect(() => c.issueAgentCertificate(newCsr().csr, "other:agent:x:v1", NOW, 90, 300)).toThrow(/не песочницы/);
+    expect(() => c.issueAgentCertificate(newCsr().csr, `${CODE} `, NOW, 90, 300)).toThrow(/не песочницы/);
     // Грамматика — та же, что у реестра (parseAgentCode, КТ1 № 7): версия не длиннее 9 цифр.
-    expect(() => c.issueAgentCertificate(newCsr().csr, "nspk:agent:buyref-01:v1234567890", NOW, 90)).toThrow(/не песочницы/);
-    expect(() => c.issueAgentCertificate(newCsr().csr, CODE, new Date(Number.NaN), 90)).toThrow(/не разбирается/);
-    expect(() => c.issueAgentCertificate(newCsr().csr, CODE, new Date(NOW.getTime() + 10 * DAY), 90)).toThrow(/вне срока/);
-    expect(() => c.issueAgentCertificate(newCsr().csr, CODE, new Date(NOW.getTime() - 1000), 90)).toThrow(/вне срока/);
+    expect(() => c.issueAgentCertificate(newCsr().csr, "nspk:agent:buyref-01:v1234567890", NOW, 90, 300)).toThrow(/не песочницы/);
+    expect(() => c.issueAgentCertificate(newCsr().csr, CODE, new Date(Number.NaN), 90, 300)).toThrow(/не разбирается/);
+    expect(() => c.issueAgentCertificate(newCsr().csr, CODE, new Date(NOW.getTime() + 10 * DAY), 90, 300)).toThrow(/вне срока/);
+    expect(() => c.issueAgentCertificate(newCsr().csr, CODE, new Date(NOW.getTime() - 1000), 90, 300)).toThrow(/вне срока/);
   });
 
   it("плохой CSR — отказ с видом причины, сертификата нет", () => {
-    const r = ca().issueAgentCertificate("нет", CODE, NOW, 90);
+    const r = ca().issueAgentCertificate("нет", CODE, NOW, 90, 300);
     expect(r).toEqual({ ok: false, reason: "FORMAT" });
+  });
+});
+
+describe("notBefore с запасом в прошлое (РП66 п. 5)", () => {
+  const SEC0 = Date.parse("2026-10-27T10:00:00Z");
+
+  it("notBefore = часы − запас, notAfter = часы + срок: чужие часы клиента отстают", () => {
+    const c = ca();
+    const later = new Date(NOW.getTime() + DAY);
+    const r = c.issueAgentCertificate(newCsr().csr, CODE, later, 90, 300);
+    expect(r.ok && r.certificate.not_before).toBe(new Date(SEC0 + DAY - 300_000).toISOString());
+    expect(r.ok && r.certificate.not_after).toBe(new Date(SEC0 + DAY + 90 * DAY).toISOString());
+    expect(r.ok && Date.parse(x509(r.certificate.der).validFrom)).toBe(SEC0 + DAY - 300_000);
+  });
+
+  it("notBefore не раньше notBefore УЦ: max(notBefore УЦ, часы − запас)", () => {
+    const c = ca();
+    const r = c.issueAgentCertificate(newCsr().csr, CODE, new Date(NOW.getTime() + 100_000), 90, 300);
+    expect(r.ok && r.certificate.not_before).toBe(c.notBefore.toISOString());
+    const s = c.issueServerCertificate(["localhost"], new Date(NOW.getTime() + 100_000), 90, 300);
+    expect(s.notBefore.toISOString()).toBe(c.notBefore.toISOString());
+  });
+
+  it("запас 0 и 3 600 — принят; вне 0…3 600 и не целое — исключение", () => {
+    const c = ca();
+    const later = new Date(NOW.getTime() + DAY);
+    expect(c.issueAgentCertificate(newCsr().csr, CODE, later, 90, 0).ok).toBe(true);
+    const r = c.issueAgentCertificate(newCsr().csr, CODE, later, 90, 3600);
+    expect(r.ok && r.certificate.not_before).toBe(new Date(SEC0 + DAY - 3_600_000).toISOString());
+    for (const bad of [-1, 3601, 1.5, Number.NaN]) {
+      expect(() => c.issueAgentCertificate(newCsr().csr, CODE, later, 90, bad), String(bad)).toThrow(/запас notBefore/);
+      expect(() => c.issueServerCertificate(["localhost"], later, 90, bad), String(bad)).toThrow(/запас notBefore/);
+    }
+  });
+});
+
+describe("УЦ песочницы: сертификат сервера Платформы (РП66 п. 4)", () => {
+  it("по шаблону: пустой субъект, SAN критичное — DNS и IP, serverAuth, digitalSignature, CA:false, SKI / AKI, подпись УЦ", () => {
+    const c = ca();
+    const later = new Date(NOW.getTime() + DAY);
+    const s = c.issueServerCertificate(["platform.sandbox.local", "localhost", "127.0.0.1", "::1", "::ffff:10.0.0.1"], later, 90, 300);
+    const cert = new X509Certificate(s.certificateDer);
+    expect(cert.subject ?? "").toBe("");
+    expect(cert.issuer).toBe(`CN=${SANDBOX_CA_NAME}`);
+    expect(cert.checkIssued(new X509Certificate(c.certificateDer))).toBe(true);
+    expect(cert.verify(c.publicKey)).toBe(true);
+    // SAN при пустом субъекте — критичное (RFC 5280 §4.2.1.6; дополнение чата 2): OID, BOOLEAN TRUE, OCTET STRING.
+    expect(s.certificateDer.includes(Buffer.from("0603551d110101ff04", "hex"))).toBe(true);
+    expect(cert.checkHost("platform.sandbox.local")).toBe("platform.sandbox.local");
+    expect(cert.checkHost("localhost")).toBe("localhost");
+    expect(cert.checkHost("other.local")).toBeUndefined();
+    expect(cert.checkIP("127.0.0.1")).toBe("127.0.0.1");
+    expect(cert.checkIP("::1")).toBe("::1");
+    expect(cert.checkIP("::ffff:10.0.0.1")).toBe("::ffff:10.0.0.1");
+    expect(cert.checkIP("127.0.0.2")).toBeUndefined();
+    expect(cert.keyUsage).toEqual(["1.3.6.1.5.5.7.3.1"]);
+    expect(cert.ca).toBe(false);
+    expect(s.certificateDer.includes(Buffer.from("300c0603551d130101ff04023000", "hex"))).toBe(true);
+    expect(s.certificateDer.includes(Buffer.from("300e0603551d0f0101ff040403020780", "hex"))).toBe(true);
+    // SKI — от своего ключа; AKI — SKI УЦ (РП65 нюанс 4).
+    const point = cert.publicKey.export({ format: "der", type: "spki" }).subarray(P256_SPKI_PREFIX.length);
+    const ski = createHash("sha1").update(point).digest();
+    expect(s.certificateDer.includes(Buffer.concat([Buffer.from("301d0603551d0e04160414", "hex"), ski]))).toBe(true);
+    expect(s.certificateDer.includes(Buffer.concat([Buffer.from("301f0603551d23041830168014", "hex"), c.keyId]))).toBe(true);
+    // Закрытый ключ — пара к сертификату: подпись им проверяется открытым ключом сертификата.
+    const sig = sign("sha256", Buffer.from("x"), s.privateKey);
+    expect(createVerify("sha256").update("x").verify(cert.publicKey, sig)).toBe(true);
+    expect(Date.parse(cert.validFrom)).toBe(Date.parse("2026-10-28T10:00:00Z") - 300_000);
+    expect(Date.parse(cert.validTo)).toBe(Date.parse("2026-10-28T10:00:00Z") + 90 * DAY);
+  });
+
+  it("срок не дольше УЦ; УЦ вне срока — исключение", () => {
+    const c = ca(NOW, 100);
+    expect(c.issueServerCertificate(["localhost"], new Date(NOW.getTime() + 50 * DAY), 90, 300).notAfter).toEqual(c.notAfter);
+    expect(() => c.issueServerCertificate(["localhost"], new Date(NOW.getTime() + 100 * DAY), 90, 300)).toThrow(/вне срока/);
+  });
+
+  it.each([
+    ["пустой список", []],
+    ["верхний регистр", ["Platform.local"]],
+    ["завершающая точка", ["platform.local."]],
+    ["шаблон «*»", ["*.platform.local"]],
+    ["пустая метка", ["platform..local"]],
+    ["дефис в начале метки", ["-platform.local"]],
+    ["метка длиннее 63", [`${"a".repeat(64)}.local`]],
+    ["имя длиннее 253", [Array.from({ length: 64 }, () => "abc").join(".")]],
+    ["зона IPv6", ["fe80::1%eth0"]],
+    ["пробел", ["platform .local"]],
+    ["пустая строка", [""]],
+    ["одно верное, одно нет", ["localhost", "Localhost"]],
+  ])("имена: %s — исключение", (_n, names) => {
+    expect(() => ca().issueServerCertificate(names, NOW, 90, 300)).toThrow(/имена сервера|имя сервера/);
   });
 });
 

@@ -47,7 +47,7 @@ describe.skipIf(!hasOpenssl)("перекрёстная проверка УЦ и 
     expect(r.status, r.stderr).toBe(0);
     const b64 = readFileSync(csr).toString("base64");
     expect(parseCsr(b64).ok).toBe(true);
-    const issued = SandboxCa.generate({ now: NOW, ttlDays: 3650 }).issueAgentCertificate(b64, CODE, NOW, 90);
+    const issued = SandboxCa.generate({ now: NOW, ttlDays: 3650 }).issueAgentCertificate(b64, CODE, NOW, 90, 300);
     expect(issued.ok).toBe(true);
   });
 
@@ -61,7 +61,7 @@ describe.skipIf(!hasOpenssl)("перекрёстная проверка УЦ и 
 
   it("openssl verify -purpose sslclient: сертификат агента выпущен УЦ, чужой УЦ — отказ", () => {
     const ca = SandboxCa.generate({ now: NOW, ttlDays: 3650 });
-    const r = ca.issueAgentCertificate(newCsr().csr, CODE, NOW, 90);
+    const r = ca.issueAgentCertificate(newCsr().csr, CODE, NOW, 90, 300);
     if (!r.ok) throw new Error(r.reason);
     const caFile = file("ca.crt", pem(ca.certificateDer));
     const agentFile = file("agent.crt", pem(r.certificate.der));
@@ -73,6 +73,21 @@ describe.skipIf(!hasOpenssl)("перекрёстная проверка УЦ и 
     expect(openssl("verify", "-CAfile", other, "-purpose", "sslclient", agentFile).status).not.toBe(0);
     // Сертификат агента для сервера не годится: только clientAuth.
     expect(openssl("verify", "-CAfile", caFile, "-purpose", "sslserver", agentFile).status).not.toBe(0);
+  });
+
+  it("openssl verify -purpose sslserver: сертификат сервера Платформы (РП66 п. 4), имя и адрес; для клиента не годится", () => {
+    const ca = SandboxCa.generate({ now: NOW, ttlDays: 3650 });
+    const s = ca.issueServerCertificate(["platform.sandbox.local", "127.0.0.1"], NOW, 90, 300);
+    const caFile = file("srv-ca.crt", pem(ca.certificateDer));
+    const srv = file("server.crt", pem(s.certificateDer));
+    const ok = openssl("verify", "-x509_strict", "-CAfile", caFile, "-purpose", "sslserver", "-verify_hostname", "platform.sandbox.local", srv);
+    expect(ok.status, ok.stdout + ok.stderr).toBe(0);
+    expect(openssl("verify", "-x509_strict", "-CAfile", caFile, "-purpose", "sslserver", "-verify_ip", "127.0.0.1", srv).status).toBe(0);
+    expect(openssl("verify", "-CAfile", caFile, "-purpose", "sslserver", "-verify_hostname", "other.local", srv).status).not.toBe(0);
+    expect(openssl("verify", "-CAfile", caFile, "-purpose", "sslclient", srv).status).not.toBe(0);
+    const t = openssl("x509", "-in", srv, "-noout", "-text");
+    expect(t.stdout).toMatch(/X509v3 Subject Alternative Name: critical\s+DNS:platform\.sandbox\.local, IP Address:127\.0\.0\.1\s/);
+    expect(t.stdout).toMatch(/X509v3 Extended Key Usage:\s+TLS Web Server Authentication\s/);
   });
 
   it("расширения из CSR не переносятся: чужой SAN и CA:TRUE в запросе → SAN из реестра и CA:FALSE (инвариант 5, КТ1 № 2)", () => {
@@ -91,7 +106,7 @@ describe.skipIf(!hasOpenssl)("перекрёстная проверка УЦ и 
     expect(asked.stdout).toContain("CA:TRUE");
 
     const ca = SandboxCa.generate({ now: NOW, ttlDays: 3650 });
-    const r = ca.issueAgentCertificate(readFileSync(csr).toString("base64"), CODE, NOW, 90);
+    const r = ca.issueAgentCertificate(readFileSync(csr).toString("base64"), CODE, NOW, 90, 300);
     if (!r.ok) throw new Error(r.reason);
     const der = Buffer.from(r.certificate.der, "base64");
     expect(new X509Certificate(der).subjectAltName).toBe(`URI:urn:${CODE}`);
@@ -104,7 +119,7 @@ describe.skipIf(!hasOpenssl)("перекрёстная проверка УЦ и 
 
   it("openssl x509: SAN — ровно URI кода агента, CA:FALSE, digitalSignature, clientAuth; субъект пуст", () => {
     const ca = SandboxCa.generate({ now: NOW, ttlDays: 3650 });
-    const r = ca.issueAgentCertificate(newCsr().csr, CODE, NOW, 90);
+    const r = ca.issueAgentCertificate(newCsr().csr, CODE, NOW, 90, 300);
     if (!r.ok) throw new Error(r.reason);
     const f = file("agent-text.crt", pem(r.certificate.der));
     const t = openssl("x509", "-in", f, "-noout", "-text");

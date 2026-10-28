@@ -31,6 +31,7 @@
   "key_overlap_days": 7,
   "agent_cert_ttl_days": 90,
   "sandbox_ca_ttl_days": 3650,
+  "cert_not_before_backdate_sec": 300,
   "qualified_signature_above_kop": 5000000,
   "qualified_signature_above_days": 30,
   "restore_budget_on_refund": false,

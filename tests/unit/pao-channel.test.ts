@@ -102,7 +102,7 @@ describe.each(variants)("ступень 0 — сертификат канала:
     const now = (): Date => clock;
     const ca = SandboxCa.generate({ now: NOW, ttlDays: 3650 });
     const store = v.store();
-    const registry = new AgentRegistry(store, { keys: POLICY, now, certificates: { ca, ttlDays: TTL_DAYS, required: true } });
+    const registry = new AgentRegistry(store, { keys: POLICY, now, certificates: { ca, ttlDays: TTL_DAYS, backdateSec: 300, required: true } });
     const keys = new AgentKeys(store, { keys: POLICY, now });
     let failReads = false;
     const read = async (serial: string): Promise<AgentCertificateRecord | undefined> => {
@@ -147,7 +147,7 @@ describe.each(variants)("ступень 0 — сертификат канала:
   it("шаг 2: чужой УЦ или не сертификат — AGENT_UNKNOWN / NOT_ISSUED_BY_CA", async () => {
     const s = stand();
     const a = await s.admit();
-    const foreign = SandboxCa.generate({ now: NOW, ttlDays: 3650 }).issueAgentCertificate(newCsr().csr, a.code, NOW, TTL_DAYS);
+    const foreign = SandboxCa.generate({ now: NOW, ttlDays: 3650 }).issueAgentCertificate(newCsr().csr, a.code, NOW, TTL_DAYS, 300);
     if (!foreign.ok) throw new Error("выпуск чужим УЦ");
     const der = Buffer.from(foreign.certificate.der, "base64");
     expect(outcome(await s.verifier.verify(signed(a.signer, a.code, der)))).toBe("AGENT_UNKNOWN/NOT_ISSUED_BY_CA");
@@ -198,7 +198,7 @@ describe.each(variants)("ступень 0 — сертификат канала:
   it("шаг 4: выпущен УЦ, но нет в реестре — AGENT_UNKNOWN / NOT_IN_REGISTRY", async () => {
     const s = stand();
     const a = await s.admit();
-    const issued = s.ca.issueAgentCertificate(newCsr().csr, a.code, NOW, TTL_DAYS);
+    const issued = s.ca.issueAgentCertificate(newCsr().csr, a.code, NOW, TTL_DAYS, 300);
     if (!issued.ok) throw new Error("выпуск");
     expect(outcome(await s.verifier.verify(signed(a.signer, a.code, Buffer.from(issued.certificate.der, "base64"))))).toBe(
       "AGENT_UNKNOWN/NOT_IN_REGISTRY",
