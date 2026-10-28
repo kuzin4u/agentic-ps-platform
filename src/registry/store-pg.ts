@@ -212,17 +212,9 @@ export class PgAgentRegistryStore implements AgentRegistryStore, AgentStatusTx {
     });
   }
 
-  // К3.3 ПОЛОМКА через CI (Р-199; будет отменена git revert): кэш записи сертификата в экземпляре хранилища — отзыв другим
-  // экземпляром (пулом) не виден.
-  private readonly certCache = new Map<string, AgentCertificateRecord>();
-
   async getCertificate(serial: string): Promise<AgentCertificateRecord | undefined> {
-    const cached = this.certCache.get(serial);
-    if (cached) return cached;
     const r = await this.client.query<CertificateRow>(`SELECT ${CERTIFICATE_COLUMNS} FROM agent_certificates WHERE serial = $1`, [serial]);
-    const rec = r.rows[0] && toCertificate(r.rows[0]);
-    if (rec) this.certCache.set(serial, rec);
-    return rec;
+    return r.rows[0] && toCertificate(r.rows[0]);
   }
 
   async certificatesOf(agent_code: string): Promise<readonly AgentCertificateRecord[]> {
@@ -239,7 +231,6 @@ export class PgAgentRegistryStore implements AgentRegistryStore, AgentStatusTx {
       `UPDATE agent_certificates SET revoked_at = $2 WHERE serial = $1 AND revoked_at IS NULL RETURNING ${CERTIFICATE_COLUMNS}`,
       [serial, revoked_at],
     );
-    if (r.rows[0]) this.certCache.set(serial, toCertificate(r.rows[0]));
     return r.rows[0] ? toCertificate(r.rows[0]) : this.getCertificate(serial);
   }
 
