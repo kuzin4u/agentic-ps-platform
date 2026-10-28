@@ -4,10 +4,10 @@
 // Ключи — только сгенерированные в тесте, файлы — во временном каталоге; рамка PEM ключа собирается из частей (guard.py).
 import { spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync, X509Certificate, type KeyObject } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SandboxCa } from "../../src/registry/ca/ca.js";
 import { CA_KEY_REASONS, CaKeyError, initCaFile, loadCaFile, type CaKeyReason } from "../../src/registry/ca/file.js";
 import { newCsr } from "../support/csr.js";
@@ -66,6 +66,21 @@ describe("ca:init — initCaFile (РП66 п. 6)", () => {
     const before = sha256(p);
     expect(() => initCaFile(p, { now: NOW, ttlDays: 3650 })).toThrow(expect.objectContaining({ code: "EEXIST" }));
     expect(sha256(p)).toBe(before);
+  });
+
+  it("сорванная запись — созданный файл удаляется, ошибка — наружу; следующий ca:init создаёт файл (К1.1а, ревью из чата № 3)", () => {
+    const p = join(dir(), "ca.pem");
+    const spy = vi.spyOn(SandboxCa.prototype, "exportPem").mockImplementation(() => {
+      throw new Error("сбой записи");
+    });
+    try {
+      expect(() => initCaFile(p, { now: NOW, ttlDays: 3650 })).toThrow("сбой записи");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(existsSync(p)).toBe(false);
+    initCaFile(p, { now: NOW, ttlDays: 3650 });
+    expect(statSync(p).mode & 0o777).toBe(0o600);
   });
 
   it("УЦ из файла выпускает сертификат, который проверяется исходным корневым (подпись и AKI)", () => {
