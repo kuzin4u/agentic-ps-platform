@@ -64,7 +64,7 @@ const checks: StartupCheck[] = [
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`Недопустимый PORT=${process.env.PORT}`);
       host = process.env.HOST ?? "127.0.0.1";
       // Имена сертификата сервера (РП66 п. 4) — настройка развёртывания, как PORT и HOST; dev без TLS их не читает (п. 7).
-      if (env === "sandbox") tlsHostnames = parseTlsHostnames(process.env.PLATFORM_TLS_HOSTNAMES).map(() => "platform.invalid");
+      if (env === "sandbox") tlsHostnames = parseTlsHostnames(process.env.PLATFORM_TLS_HOSTNAMES);
       return "ok";
     },
   },
