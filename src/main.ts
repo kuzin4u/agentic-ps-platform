@@ -1,5 +1,6 @@
 import pg from "pg";
-import { buildServer, parseEnv, parseTlsHostnames, parseTrustedProxies, type PlatformEnv } from "./server.js";
+import { X509Certificate } from "node:crypto";
+import { buildServer, parseEnv, parseTlsHostnames, parseTrustedProxies, type PlatformEnv, type ServerTls } from "./server.js";
 import { ConsentJournal, MemoryConsentStore, PgConsentStore } from "./consent/index.js";
 import { MemoryLimitsStore, PgLimitsStore } from "./participants/limits.js";
 import { MemoryReadinessStore, PgReadinessStore } from "./participants/readiness.js";
@@ -22,6 +23,7 @@ import {
   loadCaFile,
   PgAgentRegistryStore,
   type AgentRegistryStore,
+  type CsrRejection,
   type SandboxCa,
 } from "./registry/index.js";
 import { loadParams, type Params } from "./shared/config.js";
@@ -45,9 +47,9 @@ let host: string;
 let trustedProxies: string[];
 let databaseUrl: string | undefined;
 let trusted: TrustedParticipants;
-/** УЦ песочницы из PLATFORM_CA_KEY_PATH — только sandbox (РП66 п. 6); подключение к TLS и реестру — К3.1 (ч. 2б-2). */
+/** УЦ песочницы из PLATFORM_CA_KEY_PATH — только sandbox (РП66 п. 6): TLS, ступень 0 и выпуск сертификатов при допуске. */
 let ca: SandboxCa | undefined;
-/** Имена и адреса сертификата сервера из PLATFORM_TLS_HOSTNAMES — только sandbox (РП66 п. 4); выпуск и TLS — К3.1. */
+/** Имена и адреса сертификата сервера из PLATFORM_TLS_HOSTNAMES — только sandbox (РП66 п. 4). */
 let tlsHostnames: string[] | undefined;
 
 const checks: StartupCheck[] = [
@@ -174,12 +176,49 @@ async function serve(): Promise<void> {
   // (dev, один процесс; переноса данных нет). Допуск операторов по HTTP — после их аутентификации (SEC-1, расхождение №9).
   // Служба приостановления и хранилища П5 / П6 на PG сюда не подключаются до РП64 п. 6 (ч. 3) — страж main-wiring-guard.
   const store: AgentRegistryStore = pool ? new PgAgentRegistryStore(pool) : new InMemoryAgentRegistryStore();
-  const registry = new AgentRegistry(store, { keys: params });
+  // sandbox (РП66 п. 3, 7): реестр выдаёт сертификат mTLS только по CSR заявления — CSR обязателен (required); вид причины
+  // отказа CSR — в журнал процесса, оператору — KEY_INVALID (РП65 нюанс 9). dev — без УЦ: сертификаты не выдаются.
+  const registry = new AgentRegistry(store, {
+    keys: params,
+    ...(ca
+      ? {
+          certificates: {
+            ca,
+            ttlDays: params.agent_cert_ttl_days,
+            backdateSec: params.cert_not_before_backdate_sec,
+            required: true,
+            onRejected: (reason: CsrRejection) => app.log.info({ reason }, "П1: CSR заявления отклонён — KEY_INVALID"),
+          },
+        }
+      : {}),
+  });
   const keys = new AgentKeys(store, { keys: params });
+  // Ступень 0 (РП66 п. 1): только sandbox, вместе с TLS (нюанс К3 п. 1); запись сертификата — из реестра на PG на каждом
+  // обращении (РП64 п. 3); отметка предпроверки не старше revocation_propagation_max_ms (нюанс К3 п. 4–5).
   const verifier = new PaoRequestVerifier(
     { getAgent: (c) => registry.get(c), lookupKey: (c, kid) => keys.lookup(c, kid) },
-    { skewSec: params.signature_skew_sec, nonces },
+    {
+      skewSec: params.signature_skew_sec,
+      nonces,
+      ...(ca
+        ? {
+            mtls: {
+              ca: new X509Certificate(ca.certificateDer),
+              getCertificate: (serial: string) => registry.getCertificate(serial),
+              ticketMaxAgeMs: params.revocation_propagation_max_ms,
+            },
+          }
+        : {}),
+    },
   );
+  // Сертификат сервера (РП66 п. 4): от УЦ из файла на имена PLATFORM_TLS_HOSTNAMES; ключ — только в памяти, новый при
+  // каждом запуске; срок — agent_cert_ttl_days от запуска (продление — перезапуском). Возобновления сессии нет (К2.2).
+  const serverCert =
+    ca && tlsHostnames
+      ? ca.issueServerCertificate(tlsHostnames, new Date(), params.agent_cert_ttl_days, params.cert_not_before_backdate_sec)
+      : undefined;
+  const tls: ServerTls | undefined =
+    ca && serverCert ? { key: serverCert.privateKey, certificateDer: serverCert.certificateDer, caDer: ca.certificateDer } : undefined;
 
   // Журнал согласий (П2): PostgreSQL при DATABASE_URL, иначе (dev) — память ядра. Порядок отзыва — из записи участника (РП37).
   // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6); agent.suspended — и
@@ -242,6 +281,8 @@ async function serve(): Promise<void> {
   const app = buildServer({
     env,
     logger: true,
+    // TLS и ступень 0 — только вместе (РП66 нюанс К3 п. 1): buildServer отказывает при несогласованности.
+    ...(tls ? { tls } : {}),
     ...(notifier ? { notifier } : {}),
     ...(outcomes ? { outcomes } : {}),
     trustedProxies,
@@ -270,7 +311,18 @@ async function serve(): Promise<void> {
   });
   app.log.info({ params }, "стендовые параметры загружены");
   // Отпечаток корневого УЦ — открытый, тот же, что вывел ca:init: оператор сверяет, что смонтирован прежний УЦ (РП66 п. 6).
-  if (ca) app.log.info({ ca_fingerprint: ca.fingerprint, ca_not_after: ca.notAfter.toISOString(), tls_hostnames: tlsHostnames }, "УЦ песочницы загружен");
+  // Срок сертификата сервера — продления без перезапуска нет (КТ1 К3.1 № 1, «Открыто»): по нему оператор планирует перезапуск.
+  if (ca) {
+    app.log.info(
+      {
+        ca_fingerprint: ca.fingerprint,
+        ca_not_after: ca.notAfter.toISOString(),
+        tls_hostnames: tlsHostnames,
+        server_cert_not_after: serverCert?.notAfter.toISOString(),
+      },
+      "УЦ песочницы загружен",
+    );
+  }
   if (!pool) app.log.warn("DATABASE_URL не задан (dev): реестр агентов, nonce, идемпотентность, журнал согласий, удержания П3 и лимиты клиента в памяти — один процесс, повтор после перезапуска не ловится");
   const stopPurge = startNoncePurge(nonces, params.signature_skew_sec * 1000, (err) =>
     app.log.error({ err }, "ПАО: сбой очистки nonce"),
