@@ -28,3 +28,39 @@ describe("страж: src/main.ts до РП64 п. 6 (ч. 3)", () => {
     expect(code()).toMatch(/pool \? new PgAgentRegistryStore\(pool\) : new InMemoryAgentRegistryStore\(\)/);
   });
 });
+
+// Подключение sandbox (РП66 п. 3, 7; SEC-1-код ч. 2б-2 К3.1): поведение — дымовой тест на PG с рукопожатием
+// (main-process-pg, только CI); здесь — что нужные значения переданы и dev их не получает (УЦ только в sandbox).
+describe("страж: src/main.ts sandbox — TLS, ступень 0, обязательный CSR (РП66 п. 3, 7)", () => {
+  it("УЦ загружается только в sandbox; TLS, ступень 0 и выпуск сертификатов — только при загруженном УЦ", () => {
+    const text = code();
+    expect(text).toMatch(/if \(env !== "sandbox"\) return "skip";\s*ca = loadCaFile\(process\.env\.PLATFORM_CA_KEY_PATH/);
+    expect(text).toMatch(/\.\.\.\(ca\s*\?\s*\{\s*certificates:/);
+    expect(text).toMatch(/\.\.\.\(ca\s*\?\s*\{\s*mtls:/);
+    expect(text).toMatch(/ca && tlsHostnames\s*\?/);
+  });
+
+  it("реестр sandbox — CSR обязателен (required: true), вид причины CSR — в журнал через onRejected", () => {
+    const text = code();
+    expect(text).toMatch(/certificates: \{[^}]*required: true,[^}]*onRejected:/);
+    expect(text).not.toMatch(/required: false/);
+  });
+
+  it("ступень 0: корень — УЦ из файла, запись сертификата — из реестра, ticketMaxAgeMs = revocation_propagation_max_ms", () => {
+    const text = code();
+    expect(text).toMatch(/mtls: \{\s*ca: new X509Certificate\(ca\.certificateDer\),/);
+    expect(text).toMatch(/getCertificate: \(serial: string\) => registry\.getCertificate\(serial\)/);
+    expect(text).toMatch(/ticketMaxAgeMs: params\.revocation_propagation_max_ms/);
+  });
+
+  it("сертификат сервера — на имена PLATFORM_TLS_HOSTNAMES, срок и запас — из стендовых параметров; доверенный TLS — корень УЦ из файла; TLS передан в buildServer", () => {
+    const text = code();
+    expect(text).toMatch(/ca\.issueServerCertificate\(tlsHostnames, new Date\(\), params\.agent_cert_ttl_days, params\.cert_not_before_backdate_sec\)/);
+    expect(text).toMatch(/certificateDer: serverCert\.certificateDer, caDer: ca\.certificateDer \}/);
+    expect(text).toMatch(/buildServer\(\{[\s\S]*?\.\.\.\(tls \? \{ tls \} : \{\}\)/);
+  });
+
+  it("срок сертификата сервера — в журнал запуска (КТ1 К3.1 № 1: продления без перезапуска нет)", () => {
+    expect(code()).toMatch(/server_cert_not_after: serverCert\?\.notAfter\.toISOString\(\)/);
+  });
+});

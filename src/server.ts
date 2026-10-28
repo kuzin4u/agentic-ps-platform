@@ -1,4 +1,4 @@
-import { X509Certificate, type KeyObject } from "node:crypto";
+import { constants as cryptoConstants, X509Certificate, type KeyObject } from "node:crypto";
 import type { ServerOptions as HttpsServerOptions } from "node:https";
 import { isIP } from "node:net";
 import Fastify, { LogController, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from "fastify";
@@ -15,6 +15,7 @@ import { participantRoutes, type ParticipantDeps } from "./participants/routes.j
 import { paoConfigurationRoutes, paoConfigurationUnavailable, type PaoConfigurationDeps } from "./pao/configuration.js";
 import { paoNotFound, paoRoutes, type PaoDeps } from "./pao/routes.js";
 import { errFields, frameworkErrors, paoUnavailable } from "./pao/transport.js";
+import { isServerName } from "./registry/ca/ca.js";
 
 // Среды — SPEC §8, ARCHITECTURE «Среды». dev работает в памяти, без PostgreSQL.
 export const ENVIRONMENTS = ["dev", "sandbox"] as const;
@@ -82,9 +83,15 @@ export interface ServerTls {
 /** Только TLS 1.3 (В3, решение владельца 28.10): повторного согласования нет — сертификат клиента на соединении не меняется. */
 export const TLS_MIN_VERSION = "TLSv1.3";
 
-/** HTTPS-опции Fastify (РП66 п. 3): requestCert, без обрыва рукопожатия, доверенный — только УЦ песочницы. */
+/**
+ * HTTPS-опции Fastify (РП66 п. 3): requestCert, без обрыва рукопожатия, доверенный — только УЦ песочницы. Возобновления
+ * сессии нет (развилка № 8 (А), решение владельца 28.10): SSL_OP_NO_TICKET — без билетов сессии, а кэша сессий у сервера
+ * Node нет без обработчиков newSession / resumeSession; каждое подключение — полное рукопожатие с сертификатом клиента.
+ * Пересмотр — по нагрузочному тесту этапа 6 (тогда — короткий срок, не 300 с).
+ */
 function httpsOptions(t: ServerTls): HttpsServerOptions {
   return {
+    secureOptions: cryptoConstants.SSL_OP_NO_TICKET,
     key: t.key.export({ format: "pem", type: "pkcs8" }),
     cert: new X509Certificate(t.certificateDer).toString(),
     ca: [new X509Certificate(t.caDer).toString()],
@@ -140,6 +147,20 @@ export function parseTrustedProxies(value: string | undefined): string[] {
         `PAO_TRUSTED_PROXIES: «${item}» — не адрес и не CIDR или префикс шире IPv4 /16, IPv6 /32; доверять всем нельзя (РП32 п. 5)`,
       );
     }
+  }
+  return items;
+}
+
+/**
+ * PLATFORM_TLS_HOSTNAMES — имена DNS и адреса IP сертификата сервера через запятую (РП66 п. 4; настройка развёртывания, а не
+ * стендовый параметр). Нет, пусто или имя не по правилу (isServerName, в том числе последняя метка из цифр — КТ1 К3.2 № 7) —
+ * отказ запуска STARTUP_PARAMS_INVALID: сертификат не на те имена клиент отверг бы, догадки нет.
+ */
+export function parseTlsHostnames(value: string | undefined): string[] {
+  const items = (value ?? "").split(",").map((s) => s.trim()).filter((s) => s !== "");
+  if (items.length === 0) throw new Error("PLATFORM_TLS_HOSTNAMES: не задан или пуст (РП66 п. 4)");
+  for (const item of items) {
+    if (!isServerName(item)) throw new Error(`PLATFORM_TLS_HOSTNAMES: «${item}» — не имя DNS в нижнем регистре и не адрес IP (РП66 п. 4)`);
   }
   return items;
 }
