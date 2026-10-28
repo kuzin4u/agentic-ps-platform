@@ -92,6 +92,8 @@ describe("стендовые параметры", () => {
     ["sandbox_ca_ttl_days", 90, /sandbox_ca_ttl_days не больше agent_cert_ttl_days/],
     ["sandbox_ca_ttl_days", 0, /sandbox_ca_ttl_days: ожидается целое 1…36500/],
     ["sandbox_ca_ttl_days", 36_501, /sandbox_ca_ttl_days: ожидается целое 1…36500/],
+    ["cert_not_before_backdate_sec", -1, /cert_not_before_backdate_sec: ожидается целое 0…3600/],
+    ["cert_not_before_backdate_sec", 3601, /cert_not_before_backdate_sec: ожидается целое 0…3600/],
     ["protocol_overlap_days", 0, /protocol_overlap_days: ожидается целое 1/],
     ["event_retry_max", 0, /event_retry_max: ожидается целое 1/],
   ])("перекрёстное правило и граница: %s = %j — отказ (РП20)", (k, v, msg) => {
@@ -206,6 +208,7 @@ describe("стендовые параметры", () => {
       "pao_agent_rate_limit_per_min_l3",
       "agent_cert_ttl_days",
       "sandbox_ca_ttl_days",
+      "cert_not_before_backdate_sec",
     ]);
     const ints = Object.entries(stand())
       .filter(([k, v]) => Number.isInteger(v) && !special.has(k))
@@ -222,6 +225,7 @@ describe("стендовые параметры", () => {
       "`adp_timeout_ms` > `adp_p99_ms`",
       "`key_overlap_days` < `key_ttl_days`",
       "`agent_cert_ttl_days` — целое 1…397; `sandbox_ca_ttl_days` — целое 1…36 500, > `agent_cert_ttl_days`",
+      "`cert_not_before_backdate_sec` — целое 0…3 600",
       "`participant_notify_horizon_sec` ≥ 2 × `participant_notify_max_delay_sec`",
       "`operation_outcome_every_ms` < `operation_outcome_max_delay_sec` × 1000",
       "`operation_outcome_horizon_sec` ≥ 2 × `operation_outcome_max_delay_sec`",

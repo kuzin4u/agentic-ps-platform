@@ -62,6 +62,8 @@ export interface Params {
   readonly agent_cert_ttl_days: number;
   /** Срок корневого сертификата УЦ песочницы, дней; больше agent_cert_ttl_days (РП65 п. 5). */
   readonly sandbox_ca_ttl_days: number;
+  /** Запас notBefore в прошлое у сертификатов агента и сервера, с; 0…3 600 — чужие часы клиента отстают (РП66 п. 5). */
+  readonly cert_not_before_backdate_sec: number;
   readonly qualified_signature_above_kop: number;
   readonly qualified_signature_above_days: number;
   readonly restore_budget_on_refund: boolean;
@@ -193,6 +195,7 @@ const RULES: Record<keyof Params, Rule> = {
   key_overlap_days: int(0),
   agent_cert_ttl_days: int(1, 397),
   sandbox_ca_ttl_days: int(1, 36500),
+  cert_not_before_backdate_sec: int(0, 3600),
   qualified_signature_above_kop: int(1),
   qualified_signature_above_days: int(1),
   restore_budget_on_refund: bool,

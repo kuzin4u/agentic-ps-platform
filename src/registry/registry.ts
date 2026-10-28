@@ -32,6 +32,8 @@ export interface RegistryCertificates {
   readonly ca: SandboxCa;
   /** agent_cert_ttl_days (РП65 п. 5). */
   readonly ttlDays: number;
+  /** cert_not_before_backdate_sec (РП66 п. 5). */
+  readonly backdateSec: number;
   /** Песочница с mTLS — CSR обязателен (нет — APPLICATION_INCOMPLETE); стенд dev — нет (РП65 п. 1). */
   readonly required: boolean;
   /** Вид причины отказа CSR — для журнала процесса; оператору — только KEY_INVALID (РП65 п. 1, РП31 п. 2). */
@@ -242,7 +244,7 @@ export class AgentRegistry {
     // Сертификат — по коду из записи, не из CSR (инвариант 5); CSR уже разобран выше, отказ здесь — нарушение порядка.
     let certificate: AgentCertificateRecord | undefined;
     if (certs && csr !== undefined) {
-      const issued = certs.ca.issueAgentCertificate(csr, record.agent_code, now, certs.ttlDays);
+      const issued = certs.ca.issueAgentCertificate(csr, record.agent_code, now, certs.ttlDays, certs.backdateSec);
       if (!issued.ok) throw new Error(`CSR прошёл разбор, но не выпуск: ${issued.reason}`);
       certificate = { ...issued.certificate, agent_code: record.agent_code, revoked_at: null };
     }

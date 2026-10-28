@@ -1,3 +1,5 @@
+import { X509Certificate, type KeyObject } from "node:crypto";
+import type { ServerOptions as HttpsServerOptions } from "node:https";
 import { isIP } from "node:net";
 import Fastify, { LogController, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from "fastify";
 import { adpRoutes, type AdpDeps } from "./adp/routes.js";
@@ -61,6 +63,45 @@ export interface ServerOptions {
    * в режим — запись «тревога». В main.ts — вместе с маршрутом ADP (SEC-1, доп. РП43 п. 21–22).
    */
   bypassOnly?: BypassOnly;
+  /**
+   * TLS песочницы (РП66 п. 3): завершается процессом Платформы, сертификат клиента запрашивается, но рукопожатие без него не
+   * обрывается — решение принимает ступень 0. Только вместе со ступенью 0 у шлюза ПАО (В1, решение владельца 28.10).
+   */
+  tls?: ServerTls;
+}
+
+export interface ServerTls {
+  /** Закрытый ключ сертификата сервера — только в памяти процесса (РП66 п. 4). */
+  readonly key: KeyObject;
+  /** Сертификат сервера, DER — от УЦ песочницы. */
+  readonly certificateDer: Buffer;
+  /** Корневой сертификат УЦ песочницы, DER — единственный доверенный для сертификатов клиентов. */
+  readonly caDer: Buffer;
+}
+
+/** Только TLS 1.3 (В3, решение владельца 28.10): повторного согласования нет — сертификат клиента на соединении не меняется. */
+export const TLS_MIN_VERSION = "TLSv1.3";
+
+/** HTTPS-опции Fastify (РП66 п. 3): requestCert, без обрыва рукопожатия, доверенный — только УЦ песочницы. */
+function httpsOptions(t: ServerTls): HttpsServerOptions {
+  return {
+    key: t.key.export({ format: "pem", type: "pkcs8" }),
+    cert: new X509Certificate(t.certificateDer).toString(),
+    ca: [new X509Certificate(t.caDer).toString()],
+    requestCert: true,
+    rejectUnauthorized: false,
+    minVersion: TLS_MIN_VERSION,
+  };
+}
+
+/**
+ * TLS и ступень 0 — только вместе (В1, дополнение к РП66): TLS без ступени 0 принимал бы обращения по любому каналу (обход
+ * нормы A2 п. 5.1), ступень 0 без TLS отвечала бы AGENT_UNKNOWN на всё. Несогласованность — отказ запуска.
+ */
+function assertTlsMatchesMtls(opts: ServerOptions): void {
+  const mtls = opts.pao?.verifier.mtls === true;
+  if (opts.tls && opts.pao && !mtls) throw new Error("TLS без ступени 0 у шлюза ПАО — запуск запрещён (РП66, В1)");
+  if (mtls && !opts.tls) throw new Error("ступень 0 без TLS — запуск запрещён (РП66, В1)");
 }
 
 export interface BypassOnly {
@@ -241,8 +282,11 @@ function withRequestSerializer(logger: ServerOptions["logger"]): FastifyServerOp
 }
 
 export function buildServer(opts: ServerOptions): FastifyInstance {
+  assertTlsMatchesMtls(opts);
   const proxies = opts.trustedProxies ?? [];
-  const app = Fastify({
+  // Экземпляр с https — тот же FastifyInstance по API маршрутов; тип сервера Node у него https.Server.
+  const app = (Fastify as unknown as (o: FastifyServerOptions & { https?: HttpsServerOptions }) => FastifyInstance)({
+    ...(opts.tls ? { https: httpsOptions(opts.tls) } : {}),
     logger: withRequestSerializer(opts.logger),
     // Экземпляр берётся как есть: опции сервера disableRequestLogging и requestIdLogLabel он не наследует — задавать здесь.
     logController: new PathlessLogController(),

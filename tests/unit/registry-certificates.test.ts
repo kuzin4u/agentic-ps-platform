@@ -61,7 +61,7 @@ describe.each(variants)("сертификат mTLS при допуске: %s (Р
     const registry = new AgentRegistry(store, {
       keys: { key_ttl_days: 90, key_overlap_days: 7 },
       now: () => clock,
-      certificates: { ca, ttlDays: 90, required: false, onRejected: (r) => rejected.push(r), ...over },
+      certificates: { ca, ttlDays: 90, backdateSec: 300, required: false, onRejected: (r) => rejected.push(r), ...over },
     });
     return { store, ca, registry, rejected, setClock: (d: Date) => (clock = d) };
   };
@@ -140,7 +140,7 @@ describe.each(variants)("сертификат mTLS при допуске: %s (Р
       keys: { key_ttl_days: 90, key_overlap_days: 7 },
       now: () => NOW,
       algorithms: { ...DEFAULT_KEY_ALGORITHMS, operator: [ED25519] },
-      certificates: { ca: SandboxCa.generate({ now: NOW, ttlDays: 3650 }), ttlDays: 90, required: true, onRejected: (r) => rejected.push(r) },
+      certificates: { ca: SandboxCa.generate({ now: NOW, ttlDays: 3650 }), ttlDays: 90, backdateSec: 300, required: true, onRejected: (r) => rejected.push(r) },
     });
     const d = await registry.admit(application(uid(), { csr: "мусор", conformance_run_ref: "run-1" }), {
       contour: "operator",
@@ -211,7 +211,7 @@ describe("хранилище в памяти: повтор серийного н
     const registry = new AgentRegistry(store, {
       keys: { key_ttl_days: 90, key_overlap_days: 7 },
       now: () => NOW,
-      certificates: { ca: SandboxCa.generate({ now: NOW, ttlDays: 3650 }), ttlDays: 90, required: false },
+      certificates: { ca: SandboxCa.generate({ now: NOW, ttlDays: 3650 }), ttlDays: 90, backdateSec: 300, required: false },
     });
     const d = await registry.admit(application(uid(), { csr: newCsr().csr }), { contour: "sandbox", operator: OPERATOR });
     if (!d.admitted || !d.certificate) throw new Error("сертификата нет");
@@ -232,7 +232,7 @@ describe.skipIf(!DATABASE_URL)("схема agent_certificates на PostgreSQL (�
     const registry = new AgentRegistry(store, {
       keys: { key_ttl_days: 90, key_overlap_days: 7 },
       now: () => NOW,
-      certificates: { ca: SandboxCa.generate({ now: NOW, ttlDays: 3650 }), ttlDays: 90, required: false },
+      certificates: { ca: SandboxCa.generate({ now: NOW, ttlDays: 3650 }), ttlDays: 90, backdateSec: 300, required: false },
     });
     const d = await registry.admit(application(uid(), { csr: newCsr().csr }), { contour: "sandbox", operator: OPERATOR });
     if (!d.admitted || !d.certificate) throw new Error("сертификата нет");

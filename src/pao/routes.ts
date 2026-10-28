@@ -1,6 +1,8 @@
-// П9 Маршруты ПАО (AGENT-PROTOCOL.md §3). Каждое обращение проверяется до обработчика: агент → подпись → статус (РП23 п. 6).
+// П9 Маршруты ПАО (AGENT-PROTOCOL.md §3). Каждое обращение проверяется до обработчика: [сертификат канала — РП66] → агент →
+// подпись → статус (РП23 п. 6).
 // Изменяющий метод затем: Idempotency-Key → тело по схеме (REQUEST_INVALID) → захват ключа → обработчик (РП30 п. 3, РП31).
 // /revoke — PS-05б ч. 1 (РП60); POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
+import { TLSSocket } from "node:tls";
 import rateLimit, { normalizeIP, type CreateRateLimitOptions } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -35,7 +37,8 @@ import {
 import { PAO_DB_TIMEOUT_MS } from "./stores.js";
 import { errFields, logTransportReject, PAO_BODY_LIMIT_BYTES, paoTransportError } from "./transport.js";
 import { checkSubscriptionUrl, resolveGlobal, STAND_PORT, systemResolver, withTimeout, type HostResolver } from "./subscription.js";
-import { SIGNED_HEADERS, type PaoAuthResult, type PaoRequestVerifier } from "./verify.js";
+import type { ClientCertificate } from "./channel.js";
+import { SIGNED_HEADERS, type ChannelTicket, type PaoAuthResult, type PaoRequestVerifier } from "./verify.js";
 
 export interface PaoDeps {
   readonly verifier: PaoRequestVerifier;
@@ -149,6 +152,10 @@ declare module "fastify" {
     paoAgent?: AgentRecord;
     /** Ключ, которым подписано обращение (РП23): в запись отказа агента от полномочий (РП38 п. 3). */
     paoKid?: string;
+    /** Сертификат клиента — прочитан из сокета один раз в onRequest (КТ1 № 5); null — прочитан, сертификата нет. */
+    paoClientCertificate?: ClientCertificate | null;
+    /** Отметка предпроверки ступени 0 — только на этом объекте запроса (В2, нюанс 7 РП66). */
+    paoChannelTicket?: ChannelTicket;
   }
 }
 
@@ -174,6 +181,25 @@ function verifyHeaders(req: FastifyRequest): Record<string, string | readonly st
     if (all.length > 1) headers[name] = all;
   }
   return headers;
+}
+
+/**
+ * Сертификат клиента из TLS-соединения (ступень 0, РП66 п. 1): только сокет Платформы — из заголовка прокси не берётся
+ * (п. 3). Без TLS, без сертификата, у закрытого соединения и возобновлённой сессии без сертификата — нет: отказ ступени 0,
+ * а не исключение (КТ1 № 5; getPeerCertificate у закрытого соединения отдаёт null). authorized — итог проверки цепочки TLS.
+ */
+export function clientCertificate(req: Pick<FastifyRequest, "raw">): ClientCertificate | undefined {
+  const socket = req.raw.socket;
+  if (!(socket instanceof TLSSocket)) return undefined;
+  const cert = socket.getPeerX509Certificate();
+  const der = cert?.raw;
+  return der && der.length > 0 ? { der, authorized: socket.authorized === true } : undefined;
+}
+
+/** Сертификат запроса — из сокета один раз за обращение (КТ1 № 5): onRequest и preHandler видят одно и то же. */
+function requestCertificate(req: FastifyRequest): ClientCertificate | undefined {
+  if (req.paoClientCertificate === undefined) req.paoClientCertificate = clientCertificate(req) ?? null;
+  return req.paoClientCertificate ?? undefined;
 }
 
 /** У метода без тела пришло тело — Content-Length не 0 или Transfer-Encoding (РП62 п. 7). */
@@ -304,6 +330,8 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   const authFail = (req: FastifyRequest, reply: FastifyReply, r: Extract<PaoAuthResult, { ok: false }>): FastifyReply => {
     // Исключение — только имя, код, стек (РП62 доп. 2): detail и where PostgreSQL могут нести значения запроса.
     if (r.cause !== undefined) req.log.error({ err: errFields(r.cause) }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
+    // Вид причины ступени 0 — только сюда; агенту — AGENT_UNKNOWN (РП66 п. 2, РП31 п. 2).
+    if (r.channel !== undefined) req.log.info({ pao_channel: r.channel }, "ПАО: сертификат канала не принят (ступень 0)");
     return send(reply, paoError(r.code, r.norm));
   };
 
@@ -323,8 +351,20 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     // Кодирование в пути ПАО не нужно ни одному идентификатору, а маршрутизатор путь декодирует: /pao/v1/%61gent вёл бы в
     // /pao/v1/agent по подписи над другим путём (РП62 п. 8).
     if (path.includes("%")) return send(reply, paoError("REQUEST_INVALID"));
-    const r = await deps.verifier.precheck({ method: req.method, path, query, headers: verifyHeaders(req), unexpectedBody: unexpectedBody(req) });
-    return r ? authFail(req, reply, r) : undefined;
+    const r = await deps.verifier.precheck({
+      method: req.method,
+      path,
+      query,
+      headers: verifyHeaders(req),
+      unexpectedBody: unexpectedBody(req),
+      clientCertificate: requestCertificate(req),
+    });
+    if (r === undefined) return undefined;
+    if (r.ok) {
+      req.paoChannelTicket = r.channelTicket;
+      return undefined;
+    }
+    return authFail(req, reply, r);
   };
   app.addHook("onRoute", (route) => {
     const own = route.onRequest === undefined ? [] : Array.isArray(route.onRequest) ? route.onRequest : [route.onRequest];
@@ -341,6 +381,8 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       headers: verifyHeaders(req),
       body,
       unexpectedBody: unexpectedBody(req),
+      clientCertificate: requestCertificate(req),
+      ...(req.paoChannelTicket ? { channelTicket: req.paoChannelTicket } : {}),
     });
     if (!r.ok) return authFail(req, reply, r);
     req.paoAgent = r.agent;

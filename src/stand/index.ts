@@ -263,6 +263,7 @@ export function createStand(opts: StandOptions = {}): Stand {
     certificates: {
       ca,
       ttlDays: params.agent_cert_ttl_days,
+      backdateSec: params.cert_not_before_backdate_sec,
       required: false,
       // Вид причины — только в журнал процесса, оператору — KEY_INVALID (РП65 п. 1). app создаётся ниже; допуск — после.
       onRejected: (reason) => app.log.info({ reason }, "П1: CSR заявления отклонён — KEY_INVALID"),
