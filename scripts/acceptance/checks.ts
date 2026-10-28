@@ -40,6 +40,12 @@ export interface AcceptanceOptions {
 
 export const normFingerprint = (f: string): string => f.replace(/:/g, "").trim().toLowerCase();
 
+/** Коды OpenSSL отказа по версии протокола (alert protocol_version с любой стороны). */
+const PROTOCOL_REFUSAL = /PROTOCOL_VERSION|UNSUPPORTED_PROTOCOL|NO_PROTOCOLS_AVAILABLE/;
+
+/** Полный набор проверок приёмки: итог «принято» — только когда есть все и все пройдены (КТ1 № 7). */
+export const CHECK_IDS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "13.1", "13.5", "13.12"] as const;
+
 const errCode = (e: unknown): string => {
   const x = e as { code?: unknown; name?: unknown } | undefined;
   return typeof x?.code === "string" ? x.code : typeof x?.name === "string" ? x.name : "UNKNOWN";
@@ -197,20 +203,30 @@ export async function runAcceptance(t: Target, op: OperatorPort, o: AcceptanceOp
     }
   };
 
-  const serverCert = (id: string) =>
-    check(id, "сертификат сервера по корню и имени", `проверен по корню, имя ${t.host}, отпечаток корня = ожидаемому`, async () => {
-      const rootFp = normFingerprint(new X509Certificate(t.caPem).fingerprint256);
-      const s = await handshake(tlsBase(t, timeoutMs), timeoutMs);
-      const authorized = s.authorized;
-      const peer = s.getPeerX509Certificate();
-      const protocol = s.getProtocol();
-      s.destroy();
-      const fpOk = rootFp === expectedFp;
-      return {
-        ok: authorized && fpOk && peer !== undefined,
-        actual: `${authorized ? "проверен" : "не проверен"}, ${protocol ?? "?"}, до ${peer ? new Date(peer.validTo).toISOString() : "?"}; корень ${fpOk ? "=" : "≠"} ожидаемому`,
-      };
-    });
+  /** Сертификат сервера, увиденный проверкой 1 и повтором 13.1: журнал сверяется с ним (КТ1 № 11), перезапуск — по смене (№ 4). */
+  const seen = new Map<string, X509Certificate>();
+  const serverCert = (id: string, before?: X509Certificate) =>
+    check(
+      id,
+      "сертификат сервера по корню и имени",
+      `TLSv1.3, проверен по корню, имя ${t.host}, отпечаток корня = ожидаемому${before ? ", сертификат новый" : ""}`,
+      async () => {
+        const rootFp = normFingerprint(new X509Certificate(t.caPem).fingerprint256);
+        const s = await handshake(tlsBase(t, timeoutMs), timeoutMs);
+        const authorized = s.authorized;
+        const peer = s.getPeerX509Certificate();
+        const protocol = s.getProtocol();
+        s.destroy();
+        if (peer) seen.set(id, peer);
+        const fpOk = rootFp === expectedFp;
+        // main.ts выпускает сертификат сервера при каждом запуске: прежний серийный — перезапуска не было.
+        const fresh = before === undefined || (peer !== undefined && peer.serialNumber !== before.serialNumber);
+        return {
+          ok: authorized && protocol === "TLSv1.3" && fpOk && peer !== undefined && fresh,
+          actual: `${authorized ? "проверен" : "не проверен"}, ${protocol ?? "?"}, до ${peer ? new Date(peer.validTo).toISOString() : "?"}; корень ${fpOk ? "=" : "≠"} ожидаемому${before ? `; сертификат ${fresh ? "новый" : "прежний"}` : ""}`,
+        };
+      },
+    );
 
   const openPaths = (id: string) =>
     check(id, "/health и /.well-known/… без сертификата", "200 у каждого", async () => {
@@ -219,15 +235,19 @@ export async function runAcceptance(t: Target, op: OperatorPort, o: AcceptanceOp
       return { ok: got.every((r) => r.status === 200), actual: got.map((r, i) => `${paths[i]} ${r.status}`).join("; ") };
     });
 
-  const journalCheck = (id: string) =>
-    check(id, "журнал запуска", "ca_fingerprint = ожидаемому, есть server_cert_not_after", async () => {
+  // Срок — с точностью до секунды: в сертификате X.509 долей секунды нет.
+  const sec = (d: string): number => Math.floor(Date.parse(d) / 1000);
+  const journalCheck = (id: string, cert: X509Certificate | undefined) =>
+    check(id, "журнал запуска", "ca_fingerprint = ожидаемому, server_cert_not_after = сроку сертификата сервера", async () => {
       const e = startupEntry(await op.journal());
       if (!e) return { ok: false, actual: "строки «УЦ песочницы загружен» нет" };
       const fp = typeof e.ca_fingerprint === "string" ? normFingerprint(e.ca_fingerprint) : "";
       const notAfter = typeof e.server_cert_not_after === "string" ? e.server_cert_not_after : "";
+      // Журнал другого экземпляра с тем же УЦ не проходит: срок — тот, что у сертификата, полученного по TLS.
+      const same = cert !== undefined && notAfter !== "" && sec(notAfter) === sec(cert.validTo);
       return {
-        ok: fp === expectedFp && notAfter !== "",
-        actual: `ca_fingerprint ${fp === expectedFp ? "=" : "≠"} ожидаемому; server_cert_not_after ${notAfter || "нет"}`,
+        ok: fp === expectedFp && same,
+        actual: `ca_fingerprint ${fp === expectedFp ? "=" : "≠"} ожидаемому; server_cert_not_after ${notAfter || "нет"} ${same ? "=" : "≠"} сроку сертификата сервера`,
       };
     });
 
@@ -241,13 +261,17 @@ export async function runAcceptance(t: Target, op: OperatorPort, o: AcceptanceOp
         s.destroy();
         return { ok: false, actual: `соединение установлено (${p ?? "?"})` };
       } catch (e) {
-        return { ok: true, actual: `отказ: ${errCode(e)}` };
+        // Засчитывается только отказ по версии протокола: обрыв сети, таймаут или сбой сертификата TLS 1.2 не проверяют (КТ1 № 2).
+        const code = errCode(e);
+        return { ok: PROTOCOL_REFUSAL.test(code), actual: `отказ: ${code}` };
       }
     });
 
     await check("3", "сохранённая сессия", "полное рукопожатие", async () => {
       const first = await handshake(tlsBase(t, timeoutMs), timeoutMs);
-      // TLS 1.3: билет приходит после рукопожатия; сервер без билетов (SSL_OP_NO_TICKET) его не присылает.
+      // TLS 1.3: билет приходит после рукопожатия. Сервер Платформы с SSL_OP_NO_TICKET выдаёт билет с состоянием на
+      // сервере, но кэша сессий у него нет — повтор с билетом идёт полным рукопожатием (К2.2). Сервер с возобновлением
+      // эта проверка ловит (контрольный тест — tests/unit/acceptance-checks.test.ts).
       const session = await new Promise<Buffer | undefined>((resolve) => {
         const timer = setTimeout(() => resolve(undefined), o.ticketWaitMs ?? 1000);
         first.once("session", (s: Buffer) => {
@@ -282,11 +306,8 @@ export async function runAcceptance(t: Target, op: OperatorPort, o: AcceptanceOp
 
     await openPaths("5");
 
-    await check("6", "/pao/v1/agent без сертификата", "401 AGENT_UNKNOWN", async () => {
-      const r = await call(t, timeoutMs, "/pao/v1/agent");
-      return { ok: r.status === 401 && bodyCode(r) === "AGENT_UNKNOWN", actual: show(r) };
-    });
-
+    // Проверка 6 — после допуска (проверка 7): без кода агента 401 AGENT_UNKNOWN отвечают и без ступени 0 (КТ1 № 1),
+    // поэтому запрос подписан допущенным агентом с действующим сертификатом, а сертификата в канале нет.
     const a = newAgent();
     let cert: { der: Buffer; serial: string } | undefined;
     await check("7", "допуск с CSR → /pao/v1/agent с сертификатом", "допущен, 200, свой agent_code", async () => {
@@ -301,6 +322,12 @@ export async function runAcceptance(t: Target, op: OperatorPort, o: AcceptanceOp
         // не JSON — пусто
       }
       return { ok: r.status === 200 && code === a.code, actual: `допущен, серийный ${cert.serial}; ${show(r)}${code === a.code ? ", agent_code свой" : ""}` };
+    });
+
+    await check("6", "/pao/v1/agent без сертификата, подпись допущенного агента", "401 AGENT_UNKNOWN", async () => {
+      if (!cert) return { ok: false, actual: "агент не допущен (проверка 7)" };
+      const r = await call(t, timeoutMs, "/pao/v1/agent", { sign: a });
+      return { ok: r.status === 401 && bodyCode(r) === "AGENT_UNKNOWN", actual: show(r) };
     });
 
     await check("8", "допуск без CSR", "APPLICATION_INCOMPLETE", async () => {
@@ -333,7 +360,7 @@ export async function runAcceptance(t: Target, op: OperatorPort, o: AcceptanceOp
       return { ok: r.status === 401 && bodyCode(r) === "SIGNATURE_INVALID", actual: show(r) };
     });
 
-    await journalCheck("12");
+    await journalCheck("12", seen.get("1"));
 
     let restarted = false;
     await check("13", "перезапуск", "/health — 200 после перезапуска", async () => {
@@ -350,20 +377,26 @@ export async function runAcceptance(t: Target, op: OperatorPort, o: AcceptanceOp
       return { ok: false, actual: "/health не ответил 200 за отведённое время" };
     });
     if (restarted) {
-      await serverCert("13.1");
+      // Без сертификата из проверки 1 повтор 13.1 не докажет перезапуск — «не пройдена» (fail-closed).
+      const before = seen.get("1");
+      if (before) await serverCert("13.1", before);
+      else results.push({ id: "13.1", name: "сертификат сервера после перезапуска", expected: "сертификат новый", actual: "сертификата из проверки 1 нет", ok: false });
       await openPaths("13.5");
-      await journalCheck("13.12");
+      await journalCheck("13.12", seen.get("13.1"));
     } else {
       for (const id of ["13.1", "13.5", "13.12"]) results.push({ id, name: "повтор после перезапуска", expected: "как до перезапуска", actual: "не выполнялся", ok: false });
     }
   } finally {
     await op.close().catch(() => {});
   }
-  return results;
+  // Порядок таблицы — по номерам проверок, а не по порядку выполнения (6 выполняется после 7).
+  const order = (id: string): number => (CHECK_IDS as readonly string[]).indexOf(id);
+  return results.sort((x, y) => order(x.id) - order(y.id));
 }
 
-/** Принято — только если все проверки пройдены; пустой список — не принято. */
-export const accepted = (results: readonly CheckResult[]): boolean => results.length > 0 && results.every((r) => r.ok);
+/** Принято — только если есть весь набор CHECK_IDS и все пройдены; неполный или пустой набор — не принято. */
+export const accepted = (results: readonly CheckResult[]): boolean =>
+  CHECK_IDS.every((id) => results.some((r) => r.id === id)) && results.every((r) => r.ok);
 
 /** Таблица «проверка → ожидание → факт» и итог. */
 export function report(results: readonly CheckResult[]): string {

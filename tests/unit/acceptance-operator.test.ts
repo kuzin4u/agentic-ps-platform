@@ -69,6 +69,9 @@ describe("sshOperator — удалённые команды", () => {
     ["envFile", "/etc/env$(id)", "UNSAFE_ENV_FILE"],
     ["unit", "a`b`", "UNSAFE_UNIT"],
     ["user", "agentic&&x", "UNSAFE_USER"],
+    ["target", "-F/tmp/evil_config", "UNSAFE_TARGET"],
+    ["unit", "-Hroot@other", "UNSAFE_UNIT"],
+    ["unit", "../etc/x", "UNSAFE_UNIT"],
   ])("небезопасный %s — отказ до ssh", (k, v, code) => {
     const { calls, exec } = fakeSsh(() => ok());
     expect(() => sshOperator({ ...opts, [k]: v, exec })).toThrow(new OperatorError("params", code));

@@ -3,10 +3,11 @@
 // запуска как у main.ts, перезапуск — новый сервер на том же порту (новый сертификат сервера). Процесс main.ts на
 // PostgreSQL и operator.mjs — в tests/unit/acceptance.test.ts (CI).
 import { X509Certificate } from "node:crypto";
+import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
-import { accepted, normFingerprint, report, runAcceptance, startupEntry, type CheckResult } from "../../scripts/acceptance/checks.js";
+import { accepted, CHECK_IDS, normFingerprint, report, runAcceptance, startupEntry, type CheckResult } from "../../scripts/acceptance/checks.js";
 import type { OperatorPort } from "../../scripts/acceptance/operator.js";
 import { ConsentJournal } from "../../src/consent/journal.js";
 import { MemoryConsentStore } from "../../src/consent/store.js";
@@ -116,14 +117,32 @@ describe("runAcceptance против песочницы в процессе", ()
     expect(accepted(rs)).toBe(true);
     expect(report(rs)).toContain("Итог: принято (16 из 16)");
     const r = byId(rs);
-    expect(r["2"]?.actual).toMatch(/^отказ: /);
+    expect(r["1"]?.actual).toMatch(/^проверен, TLSv1\.3, /);
+    expect(r["2"]?.actual).toMatch(/^отказ: .*PROTOCOL_VERSION/);
     // TLS 1.3 с SSL_OP_NO_TICKET: OpenSSL выдаёт билет с состоянием на сервере, а кэша сессий у сервера Node нет —
     // повтор с билетом идёт полным рукопожатием (К2.2): проверка действительно пробует возобновление.
     expect(r["3"]?.actual).toBe("билет выдан, но полное рукопожатие");
     expect(r["6"]?.actual).toBe("401 AGENT_UNKNOWN");
     expect(r["8"]?.actual).toBe("отказ: APPLICATION_INCOMPLETE");
     expect(r["11"]?.actual).toBe("401 SIGNATURE_INVALID");
+    expect(r["12"]?.actual).toContain("= сроку сертификата сервера");
+    expect(r["13.1"]?.actual).toContain("сертификат новый");
     expect(s.calls).toEqual(["admit", "admit", "revoke", "journal", "restart", "journal", "close"]);
+  }, 60_000);
+
+  it("перезапуска не было (restart ничего не сделал) — 13.1 не пройдена: сертификат сервера прежний (КТ1 № 4)", async () => {
+    const s = await sandbox();
+    const rs = await runAcceptance({ host: HOST, port: s.port, caPem: s.rootPem, fingerprint: s.ca.fingerprint }, { ...s.op, restart: async () => {} }, { ticketWaitMs: 100 });
+    expect(rs.filter((r) => !r.ok).map((r) => r.id)).toEqual(["13.1"]);
+    expect(byId(rs)["13.1"]?.actual).toContain("сертификат прежний");
+  }, 60_000);
+
+  it("журнал другого экземпляра с тем же УЦ — 12 и 13.12 не пройдены: срок не равен сертификату по TLS (КТ1 № 11)", async () => {
+    const s = await sandbox();
+    const other = `${JSON.stringify({ msg: "УЦ песочницы загружен", ca_fingerprint: s.ca.fingerprint, server_cert_not_after: "2030-01-01T00:00:00.000Z" })}\n`;
+    const rs = await runAcceptance({ host: HOST, port: s.port, caPem: s.rootPem, fingerprint: s.ca.fingerprint }, { ...s.op, journal: async () => other }, { ticketWaitMs: 100 });
+    expect(rs.filter((r) => !r.ok).map((r) => r.id)).toEqual(["12", "13.12"]);
+    expect(byId(rs)["12"]?.actual).toContain("≠ сроку сертификата сервера");
   }, 60_000);
 
   it("ожидаемый отпечаток не тот (отпечаток с двоеточиями в верхнем регистре) — 1, 12 и повторы не пройдены, итог «не принято»", async () => {
@@ -146,16 +165,100 @@ describe("runAcceptance против песочницы в процессе", ()
     );
     const r = byId(rs);
     expect(r["1"]?.ok).toBe(false);
-    expect(r["2"]?.ok, "отказ TLS 1.2 из-за корня — тоже отказ").toBe(true);
+    expect(r["2"]?.ok, "сервер отказывает по версии раньше проверки корня клиентом").toBe(true);
     expect(r["5"]?.actual).toMatch(/^ошибка: /);
     expect(r["12"]?.actual).toBe("ошибка: INVOCATION_UNKNOWN");
     expect(r["13"]?.ok).toBe(false);
     expect(r["13.1"]?.actual).toBe("не выполнялся");
     expect(accepted(rs)).toBe(false);
   }, 60_000);
+
+  it("порт закрыт — TLS 1.2 не засчитан: ECONNREFUSED — не отказ по версии (КТ1 № 2)", async () => {
+    const s = await sandbox();
+    await app?.close();
+    app = undefined;
+    const rs = await runAcceptance({ host: HOST, port: s.port, caPem: s.rootPem, fingerprint: s.ca.fingerprint }, s.op, {
+      ticketWaitMs: 100,
+      readyTimeoutMs: 1_000,
+    });
+    expect(byId(rs)["2"]).toMatchObject({ ok: false, actual: "отказ: ECONNREFUSED" });
+    expect(accepted(rs)).toBe(false);
+  }, 60_000);
+});
+
+// Контрольный сервер (КТ1 № 1–3): обычный https.createServer от того же УЦ — TLS 1.2 принимает, сессии возобновляет
+// (билеты по умолчанию), сертификат клиента не обязателен: /pao/v1/agent с кодом агента — 200, без кода — 401 AGENT_UNKNOWN.
+// Проверки 2, 3 и 6 должны это поймать.
+async function control(maxVersion: "TLSv1.2" | "TLSv1.3"): Promise<CheckResult[]> {
+  const ca = SandboxCa.generate({ now: new Date(Date.now() - 60_000), ttlDays: 1 });
+  const cert = ca.issueServerCertificate([HOST], new Date(), 1, 300);
+  const server = createHttpsServer(
+    {
+      key: cert.privateKey.export({ format: "pem", type: "pkcs8" }),
+      cert: new X509Certificate(cert.certificateDer).toString(),
+      ca: new X509Certificate(ca.certificateDer).toString(),
+      requestCert: true,
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.2",
+      maxVersion,
+    },
+    (req, res) => {
+      const code = req.headers["x-agent-code"];
+      res.setHeader("content-type", "application/json");
+      if (req.url === "/pao/v1/agent" && typeof code === "string") res.end(JSON.stringify({ agent_code: code }));
+      else if (req.url === "/pao/v1/agent") res.writeHead(401).end(JSON.stringify({ code: "AGENT_UNKNOWN" }));
+      else res.end("{}");
+    },
+  );
+  await new Promise<void>((resolve) => server.listen(0, HOST, resolve));
+  const port = (server.address() as AddressInfo).port;
+  // Допуск — выпуск сертификата тем же УЦ по CSR заявления, как реестр.
+  const op: OperatorPort = {
+    admit: async (application) => {
+      if (typeof application.csr !== "string") return { admitted: false, reasons: ["APPLICATION_INCOMPLETE"] };
+      const issued = ca.issueAgentCertificate(application.csr, String(application.agent_code), new Date(), 1, 300);
+      if (!issued.ok) return { admitted: false, reasons: ["KEY_INVALID"] };
+      return { admitted: true, agent_code: String(application.agent_code), certificate: { serial: issued.certificate.serial, der: issued.certificate.der, not_after: issued.certificate.not_after } };
+    },
+    revoke: async () => true,
+    journal: async () => "",
+    restart: async () => {},
+    close: async () => {},
+  };
+  try {
+    return await runAcceptance({ host: HOST, port, caPem: new X509Certificate(ca.certificateDer).toString(), fingerprint: ca.fingerprint }, op, {
+      ticketWaitMs: 1_000,
+      readyTimeoutMs: 1_000,
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+describe("контрольный сервер: проверки умеют провалиться", () => {
+  it("TLS 1.2 принят — 2; сессия возобновлена — 3; подписанный запрос без сертификата — 200 — 6", async () => {
+    const rs = await control("TLSv1.3");
+    const r = byId(rs);
+    expect(r["2"]).toMatchObject({ ok: false, actual: "соединение установлено (TLSv1.2)" });
+    expect(r["3"]).toMatchObject({ ok: false, actual: "сессия возобновлена" });
+    expect(r["6"]).toMatchObject({ ok: false, actual: "200" });
+    expect(accepted(rs)).toBe(false);
+  }, 60_000);
+
+  it("сервер только с TLS 1.2 — 1 не пройдена, хотя сертификат проверен по корню (КТ1 № 2)", async () => {
+    const r = byId(await control("TLSv1.2"));
+    expect(r["1"]?.ok).toBe(false);
+    expect(r["1"]?.actual).toMatch(/^проверен, TLSv1\.2, /);
+  }, 60_000);
 });
 
 describe("разбор и итог", () => {
+  it("неполный набор при всех пройденных — «не принято» (КТ1 № 7)", () => {
+    const all: CheckResult[] = CHECK_IDS.map((id) => ({ id, name: id, expected: "", actual: "", ok: true }));
+    expect(accepted(all)).toBe(true);
+    expect(accepted(all.filter((r) => r.id !== "13.5"))).toBe(false);
+  });
+
   it("startupEntry — последняя строка «УЦ песочницы загружен», не JSON — пропуск; отпечаток — без двоеточий и регистра", () => {
     const j = ['{"msg":"УЦ песочницы загружен","ca_fingerprint":"a"}', "{oops", '{"msg":"УЦ песочницы загружен","ca_fingerprint":"b"}', ""].join("\n");
     expect(startupEntry(j)?.ca_fingerprint).toBe("b");

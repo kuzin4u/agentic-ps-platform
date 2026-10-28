@@ -89,10 +89,11 @@ export interface SshOperatorOptions {
   readonly program?: string;
 }
 
-// Части удалённой команды — только из безопасных символов: ssh склеивает аргументы в строку оболочки VPS.
+// Части удалённой команды — только из безопасных символов: ssh склеивает аргументы в строку оболочки VPS. Ведущий «-»
+// запрещён: значение стало бы ключом ssh или systemctl (КТ1 № 5); в имени unit нет и «/».
 const SAFE = /^[A-Za-z0-9._/@:-]+$/;
 const safe = (name: string, v: string): string => {
-  if (!SAFE.test(v)) throw new OperatorError("params", `UNSAFE_${name}`);
+  if (!SAFE.test(v) || v.startsWith("-") || (name === "UNIT" && v.includes("/"))) throw new OperatorError("params", `UNSAFE_${name}`);
   return v;
 };
 
