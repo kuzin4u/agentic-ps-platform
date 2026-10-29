@@ -170,6 +170,26 @@ describe.skipIf(!DATABASE_URL)("приёмка песочницы на PostgreSQ
     }
   }, 60_000);
 
+  it("operator.mjs на неразмеченной схеме — SCHEMA_NOT_READY, а не код PostgreSQL 42P01 (сессия 57 К4.2)", async () => {
+    // Схема без миграций — как база до первого запуска сервиса.
+    const empty = `${schema}_empty`;
+    await admin.query(`CREATE SCHEMA ${empty}`);
+    try {
+      const u = new URL(DATABASE_URL as string);
+      u.searchParams.set("options", `-c search_path=${empty}`);
+      const file = join(dir, "env-empty");
+      writeFileSync(file, `PLATFORM_ENV=sandbox\nDATABASE_URL=${u.toString()}\nPLATFORM_CA_KEY_PATH=${caPath}\nPARAMS_PATH=${paramsPath}\n`);
+      const application = { ...buyerApplication(`nspk:agent:accpg-e${Date.now().toString(36)}:v1`, newAgentSide()), csr: newCsr().csr };
+      for (const request of [{ cmd: "admit", application }, { cmd: "revoke", serial: "0a1b" }]) {
+        const { raw } = await operator(request.cmd, request, file);
+        expect(raw.code, request.cmd).toBe(1);
+        expect(raw.stdout.trim(), request.cmd).toBe('{"error":"SCHEMA_NOT_READY"}');
+      }
+    } finally {
+      await admin.query(`DROP SCHEMA IF EXISTS ${empty} CASCADE`);
+    }
+  }, 60_000);
+
   it("runAcceptance против процесса main.ts sandbox на PG — 16 из 16: сертификат от operator.mjs принят ступенью 0, перезапуск — новый сертификат сервера", async () => {
     const port = await freePort();
     let out = "";

@@ -89,5 +89,7 @@ try {
   }
 } catch (e) {
   await pool?.end().catch(() => {});
-  fail(String(errCode(e)));
+  // 42P01 (таблицы нет) — схема не размечена: сервис ещё ни разу не запускался, миграции применяет он при запуске
+  // (SANDBOX-ACC К2.1а; сессия 57 К4.2). Понятный код вместо кода PostgreSQL; прочие коды — как есть.
+  fail(e?.code === "42P01" ? "SCHEMA_NOT_READY" : String(errCode(e)));
 }
