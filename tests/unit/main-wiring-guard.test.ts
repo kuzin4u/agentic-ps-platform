@@ -37,7 +37,7 @@ describe("страж: src/main.ts sandbox — TLS, ступень 0, обяза�
     expect(text).toMatch(/if \(env !== "sandbox"\) return "skip";\s*ca = loadCaFile\(process\.env\.PLATFORM_CA_KEY_PATH/);
     expect(text).toMatch(/\.\.\.\(ca\s*\?\s*\{\s*certificates:/);
     expect(text).toMatch(/\.\.\.\(ca\s*\?\s*\{\s*mtls:/);
-    expect(text).toMatch(/ca && tlsHostnames\s*\?/);
+    expect(text).toMatch(/ca && serverCert\s*\?/);
   });
 
   it("реестр sandbox — CSR обязателен (required: true), вид причины CSR — в журнал через onRejected", () => {
@@ -55,9 +55,16 @@ describe("страж: src/main.ts sandbox — TLS, ступень 0, обяза�
 
   it("сертификат сервера — на имена PLATFORM_TLS_HOSTNAMES, срок и запас — из стендовых параметров; доверенный TLS — корень УЦ из файла; TLS передан в buildServer", () => {
     const text = code();
-    expect(text).toMatch(/ca\.issueServerCertificate\(tlsHostnames, new Date\(\), params\.agent_cert_ttl_days, params\.cert_not_before_backdate_sec\)/);
+    // Выпуск — в проверке ca.key, сразу после загрузки УЦ: сбой — STARTUP_CA_KEY_INVALID до отчёта (КТ1 К3.1 № 4).
+    expect(text).toMatch(
+      /ca = loadCaFile\([^;]*\);\s*serverCert = ca\.issueServerCertificate\(tlsHostnames \?\? \[\], new Date\(\), params\.agent_cert_ttl_days, params\.cert_not_before_backdate_sec\);/,
+    );
     expect(text).toMatch(/certificateDer: serverCert\.certificateDer, caDer: ca\.certificateDer \}/);
     expect(text).toMatch(/buildServer\(\{[\s\S]*?\.\.\.\(tls \? \{ tls \} : \{\}\)/);
+  });
+
+  it("sandbox без TLS — исключение до buildServer (КТ1 К3.1 № 5)", () => {
+    expect(code()).toMatch(/if \(env === "sandbox" && !tls\) throw new Error\(".*?"\);[\s\S]*?buildServer\(\{/);
   });
 
   it("срок сертификата сервера — в журнал запуска (КТ1 К3.1 № 1: продления без перезапуска нет)", () => {

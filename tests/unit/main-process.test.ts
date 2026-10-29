@@ -112,6 +112,17 @@ describe("рабочая сборка src/main.ts (sandbox): ключ УЦ — S
     expect(open.out).not.toContain(p);
   }, 60_000);
 
+  it("годный ключ УЦ и имена — ca.key проходит: сертификат сервера выпущен в самой проверке (КТ1 К3.1 № 4)", () => {
+    const p = join(mkdtempSync(join(tmpdir(), "main-ca-")), "ca.pem");
+    writeFileSync(p, SandboxCa.generate({ now: new Date(), ttlDays: 3650 }).exportPem(), { mode: 0o600 });
+    chmodSync(p, 0o600);
+    // Без базы — свой отказ db.storage; ca.key среди отказов нет: загрузка и выпуск прошли.
+    const r = failures({ PLATFORM_CA_KEY_PATH: p, PLATFORM_TLS_HOSTNAMES: "localhost,127.0.0.1" });
+    expect(r.code, r.out).toBe(1);
+    expect(r.failures.map((f) => f.check)).toContain("db.storage");
+    expect(r.failures.map((f) => f.check)).not.toContain("ca.key");
+  }, 60_000);
+
   it("PLATFORM_TLS_HOSTNAMES (РП66 п. 4; № 7): нет или 256.1.1.1 — STARTUP_PARAMS_INVALID; localhost,127.0.0.1 — params проходит", () => {
     const params = { check: "params", code: "STARTUP_PARAMS_INVALID", error: "Error" };
     expect(failures({}).failures).toContainEqual(params);

@@ -60,6 +60,8 @@ let trusted: TrustedParticipants;
 let ca: SandboxCa | undefined;
 /** Имена и адреса сертификата сервера из PLATFORM_TLS_HOSTNAMES — только sandbox (РП66 п. 4). */
 let tlsHostnames: string[] | undefined;
+/** Сертификат сервера (РП66 п. 4) — выпускается проверкой ca.key: сбой выпуска — отказ запуска с кодом (КТ1 К3.1 № 4). */
+let serverCert: ReturnType<SandboxCa["issueServerCertificate"]> | undefined;
 
 const checks: StartupCheck[] = [
   {
@@ -80,13 +82,14 @@ const checks: StartupCheck[] = [
   {
     // Доверенные прокси (РП32 п. 5): неверный список — отказ запуска. sandbox всегда с TLS в процессе (без файла УЦ не
     // запускается — РП66 п. 6): прокси перед ним только L4, X-Forwarded-For — от клиента, и непустой список дал бы агенту
-    // обойти грубый лимит подстановкой адреса — отказ запуска (РП67 п. 1). dev — без изменений (п. 3).
+    // обойти грубый лимит подстановкой адреса — отказ запуска (РП67 п. 1). dev — без изменений (п. 3); любая другая
+    // среда — запрет по умолчанию (п. 7).
     check: "proxies",
     fail: "STARTUP_PROXIES_INVALID",
     reasons: PROXIES_REASONS,
     run: () => {
       trustedProxies = parseTrustedProxies(process.env.PAO_TRUSTED_PROXIES);
-      if (env === "sandbox" && trustedProxies.length > 0) {
+      if (env !== "dev" && trustedProxies.length > 0) {
         throw new ProxiesError("TLS_IN_PROCESS", "PAO_TRUSTED_PROXIES в sandbox: TLS в процессе, прокси только L4 (РП67 п. 1)");
       }
       return "ok";
@@ -146,12 +149,16 @@ const checks: StartupCheck[] = [
   {
     // Ключ УЦ песочницы (РП66 п. 6): только sandbox; файл создаёт только npm run ca:init — здесь лишь чтение. dev файл не
     // читает (п. 7). Вид причины — в журнал отказа из закрытого перечня, текста исключения нет (РП42 доп. п. 12).
+    // Сертификат сервера (РП66 п. 4) — здесь же, до отчёта: сбой выпуска — STARTUP_CA_KEY_INVALID с классом ошибки, без
+    // вида причины (КТ1 К3.1 № 4). Ключ — только в памяти, новый при каждом запуске; срок — agent_cert_ttl_days от запуска
+    // (продление — перезапуском). Возобновления сессии нет (К2.2).
     check: "ca.key",
     fail: "STARTUP_CA_KEY_INVALID",
     reasons: CA_KEY_REASONS,
     run: () => {
       if (env !== "sandbox") return "skip";
       ca = loadCaFile(process.env.PLATFORM_CA_KEY_PATH, new Date());
+      serverCert = ca.issueServerCertificate(tlsHostnames ?? [], new Date(), params.agent_cert_ttl_days, params.cert_not_before_backdate_sec);
       return "ok";
     },
   },
@@ -202,6 +209,7 @@ async function serve(): Promise<void> {
             ttlDays: params.agent_cert_ttl_days,
             backdateSec: params.cert_not_before_backdate_sec,
             required: true,
+            // app — только после buildServer (ниже); admit до него не вызывать: обращение к app здесь — ReferenceError.
             onRejected: (reason: CsrRejection) => app.log.info({ reason }, "П1: CSR заявления отклонён — KEY_INVALID"),
           },
         }
@@ -226,14 +234,11 @@ async function serve(): Promise<void> {
         : {}),
     },
   );
-  // Сертификат сервера (РП66 п. 4): от УЦ из файла на имена PLATFORM_TLS_HOSTNAMES; ключ — только в памяти, новый при
-  // каждом запуске; срок — agent_cert_ttl_days от запуска (продление — перезапуском). Возобновления сессии нет (К2.2).
-  const serverCert =
-    ca && tlsHostnames
-      ? ca.issueServerCertificate(tlsHostnames, new Date(), params.agent_cert_ttl_days, params.cert_not_before_backdate_sec)
-      : undefined;
+  // Сертификат сервера выпущен проверкой ca.key (РП66 п. 4, КТ1 К3.1 № 4).
   const tls: ServerTls | undefined =
     ca && serverCert ? { key: serverCert.privateKey, certificateDer: serverCert.certificateDer, caDer: ca.certificateDer } : undefined;
+  // sandbox — только с TLS (РП66 п. 3, КТ1 К3.1 № 5): самопроверка без УЦ его не пропускает, а здесь — явно, до buildServer.
+  if (env === "sandbox" && !tls) throw new Error("sandbox без TLS — запуск запрещён (РП66 п. 3)");
 
   // Журнал согласий (П2): PostgreSQL при DATABASE_URL, иначе (dev) — память ядра. Порядок отзыва — из записи участника (РП37).
   // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6); agent.suspended — и
