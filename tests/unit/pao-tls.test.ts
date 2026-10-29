@@ -205,6 +205,8 @@ describe("TLS песочницы: рукопожатие и ступень 0 (Р
     expect(res.status).toBe(401);
     expect(JSON.parse(res.body)).toMatchObject({ code: "AGENT_UNKNOWN" });
     expect(channelLogs(r).map((l) => l.pao_channel)).toEqual(["TLS_NOT_AUTHORIZED"]);
+    // Код OpenSSL из сокета — рядом (КТ1 К3.2 № 9): цепочка к чужому корню не строится.
+    expect(channelLogs(r)[0]?.pao_tls_error).toMatch(/^(UNABLE_TO_GET_ISSUER_CERT|UNABLE_TO_GET_ISSUER_CERT_LOCALLY|UNABLE_TO_VERIFY_LEAF_SIGNATURE)$/);
   });
 
   it("без сертификата — 401 AGENT_UNKNOWN / NO_CERTIFICATE: рукопожатие не оборвано, решение — в приложении", async () => {
@@ -390,6 +392,34 @@ describe("TLS и ступень 0 — только вместе (В1, допол
     const on = buildServer({ env: "sandbox", pao: d.pao, tls: d.tls });
     opened.push(off, on);
     expect((await off.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
+  });
+
+  it("TLS без шлюза ПАО — запуск: условие «TLS без ступени 0» — только при шлюзе ПАО (РП66 нюанс К3 п. 1; КТ1 К3.2 № 5)", async () => {
+    const app = buildServer({ env: "sandbox", tls: deps(false).tls });
+    opened.push(app);
+    expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
+  });
+
+  it("TLS и непустой trustedProxies — отказ запуска при любом месте вызова, адресов в тексте нет (РП67 п. 6)", () => {
+    const d = deps(true);
+    const err = (o: Parameters<typeof buildServer>[0]) => {
+      try {
+        opened.push(buildServer(o));
+      } catch (e) {
+        return (e as Error).message;
+      }
+      return undefined;
+    };
+    for (const o of [
+      { env: "sandbox" as const, pao: d.pao, tls: d.tls, trustedProxies: ["10.0.0.1"] },
+      { env: "dev" as const, tls: d.tls, trustedProxies: ["10.0.0.1"] },
+    ]) {
+      const m = err(o);
+      expect(m, o.env).toMatch(/TLS в процессе и доверенные прокси/);
+      expect(m, o.env).not.toContain("10.0.0.1");
+    }
+    // Пустой список — запуск (как без поля).
+    expect(err({ env: "sandbox", pao: d.pao, tls: d.tls, trustedProxies: [] })).toBeUndefined();
   });
 });
 

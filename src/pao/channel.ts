@@ -37,11 +37,19 @@ export interface ChannelOptions {
 export interface ClientCertificate {
   readonly der: Buffer;
   readonly authorized: boolean;
+  /**
+   * Код OpenSSL из socket.authorizationError (CERT_HAS_EXPIRED, UNABLE_TO_GET_ISSUER_CERT…) при authorized: false — только
+   * вида TLS_ERROR_CODE (КТ1 К3.2 № 9): TLS_NOT_AUTHORIZED стоит раньше своих шагов и скрывает причину — она в журнал рядом.
+   */
+  readonly authorizationError?: string;
 }
+
+/** Код OpenSSL — заглавные буквы, цифры, «_»; иное (текст, объект) в журнал не пишется. */
+export const TLS_ERROR_CODE = /^[A-Z0-9_]{1,64}$/;
 
 export type ChannelResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reject: ChannelReject }
+  | { readonly ok: false; readonly reject: ChannelReject; readonly tlsError?: string }
   | { readonly ok: false; readonly cause: unknown };
 
 /** SAN сертификата агента — ровно один URI urn:<код агента песочницы> (РП65 п. 2, нюанс 3); иначе undefined. */
@@ -64,7 +72,10 @@ export async function checkChannel(
   opts: ChannelOptions,
 ): Promise<ChannelResult> {
   if (client === undefined || client.der.length === 0) return { ok: false, reject: "NO_CERTIFICATE" };
-  if (client.authorized !== true) return { ok: false, reject: "TLS_NOT_AUTHORIZED" };
+  if (client.authorized !== true) {
+    const e = client.authorizationError;
+    return { ok: false, reject: "TLS_NOT_AUTHORIZED", ...(e !== undefined && TLS_ERROR_CODE.test(e) ? { tlsError: e } : {}) };
+  }
   const der = client.der;
 
   let cert: X509Certificate;

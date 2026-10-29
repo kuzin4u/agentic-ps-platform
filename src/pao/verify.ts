@@ -60,6 +60,8 @@ export type PaoAuthResult =
       readonly cause?: unknown;
       /** Вид причины отказа ступени 0 — для журнала процесса; агенту — только AGENT_UNKNOWN (РП66 п. 2). */
       readonly channel?: ChannelReject;
+      /** Код OpenSSL при TLS_NOT_AUTHORIZED — только в журнал процесса (КТ1 К3.2 № 9). */
+      readonly channelTlsError?: string;
     };
 
 /** Итог предпроверки: отказ; пройдена с отметкой ступени 0 (mtls); пройдена — undefined. */
@@ -186,7 +188,11 @@ export class PaoRequestVerifier {
         // Исключение проверки (не чтения реестра — то UPSTREAM внутри checkChannel) — отказ по §6, а не 500 (КТ1 № 4).
         ch = { ok: false, reject: "CHECK_FAILED" };
       }
-      if (!ch.ok) return "cause" in ch ? upstreamFail(ch.cause) : { ok: false, code: "AGENT_UNKNOWN", norm: "A2 п. 5.1", channel: ch.reject };
+      if (!ch.ok) {
+        if ("cause" in ch) return upstreamFail(ch.cause);
+        const tls = ch.tlsError !== undefined ? { channelTlsError: ch.tlsError } : {};
+        return { ok: false, code: "AGENT_UNKNOWN", norm: "A2 п. 5.1", channel: ch.reject, ...tls };
+      }
     }
 
     // Повтор заголовка — неоднозначность, не догадка (инвариант 3).

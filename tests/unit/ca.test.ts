@@ -156,6 +156,24 @@ describe("УЦ песочницы: сертификат сервера Плат�
     expect(s.certificateDer.includes(Buffer.concat([Buffer.from("301f0603551d23041830168014", "hex"), c.keyId]))).toBe(true);
   });
 
+  it("IPv6 в SAN — байтами по RFC 4291: «::» в конце, в середине и отдельно, восемь групп, хвост IPv4 (КТ1 К3.2 № 6)", () => {
+    const c = ca();
+    // [запись в PLATFORM_TLS_HOSTNAMES, та же адресная запись в другой форме, соседний адрес]
+    const cases: [string, string, string][] = [
+      ["2001:db8::", "2001:db8:0:0:0:0:0:0", "2001:db8::1"],
+      ["2001:db8::1:0:0:1", "2001:db8:0:0:1:0:0:1", "2001:db8::1:0:0:2"],
+      ["2001:db8:1:2:3:4:5:6", "2001:db8:1:2:3:4:5:6", "2001:db8:1:2:3:4:5:7"],
+      ["::", "0:0:0:0:0:0:0:0", "::1"],
+      ["1::1.2.3.4", "1::102:304", "1::1.2.3.5"],
+    ];
+    for (const [ip, same, near] of cases) {
+      const cert = new X509Certificate(c.issueServerCertificate([ip], NOW, 90, 300).certificateDer);
+      expect(cert.checkIP(ip), ip).toBe(ip);
+      expect(cert.checkIP(same), `${ip} = ${same}`).toBe(same);
+      expect(cert.checkIP(near), `${ip} ≠ ${near}`).toBeUndefined();
+    }
+  });
+
   it("по шаблону: пустой субъект, SAN критичное — DNS и IP, serverAuth, digitalSignature, CA:false, SKI / AKI, подпись УЦ", () => {
     const c = ca();
     const later = new Date(NOW.getTime() + DAY);

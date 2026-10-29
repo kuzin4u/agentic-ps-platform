@@ -90,9 +90,9 @@ describe("рабочая сборка src/main.ts (sandbox): ключ УЦ — S
     const rec = out
       .split("\n")
       .filter((l) => l.startsWith("{"))
-      .map((l) => JSON.parse(l) as { level?: string; failures?: Record<string, unknown>[] })
+      .map((l) => JSON.parse(l) as { level?: string; failures?: Record<string, unknown>[]; selfcheck?: { checks?: Record<string, unknown>[] } })
       .find((e) => e.level === "error" && e.failures);
-    return { code: r.status, out, failures: rec?.failures ?? [] };
+    return { code: r.status, out, failures: rec?.failures ?? [], checks: rec?.selfcheck?.checks ?? [] };
   };
 
   it("пути нет — отказ запуска, вид причины NO_PATH; файл с правами 0644 — MODE_TOO_OPEN, ключа в журнале нет", () => {
@@ -110,6 +110,32 @@ describe("рабочая сборка src/main.ts (sandbox): ключ УЦ — S
     expect(open.out).not.toContain(["PRIVATE", "KEY"].join(" "));
     expect(open.out).not.toContain(pem.split("\n")[1]);
     expect(open.out).not.toContain(p);
+  }, 60_000);
+
+  it("годный ключ УЦ и имена — ca.key проходит: сертификат сервера выпущен в самой проверке (КТ1 К3.1 № 4)", () => {
+    const p = join(mkdtempSync(join(tmpdir(), "main-ca-")), "ca.pem");
+    writeFileSync(p, SandboxCa.generate({ now: new Date(), ttlDays: 3650 }).exportPem(), { mode: 0o600 });
+    chmodSync(p, 0o600);
+    // Без базы — свой отказ db.storage; ca.key среди отказов нет: загрузка и выпуск прошли.
+    const r = failures({ PLATFORM_CA_KEY_PATH: p, PLATFORM_TLS_HOSTNAMES: "localhost,127.0.0.1" });
+    expect(r.code, r.out).toBe(1);
+    expect(r.failures.map((f) => f.check)).toContain("db.storage");
+    expect(r.failures.map((f) => f.check)).not.toContain("ca.key");
+  }, 60_000);
+
+  it("годный ключ УЦ, неверные имена или PORT — отказ только params, ca.key без лишнего отказа (КТ1 сессии 57 № 1)", () => {
+    const p = join(mkdtempSync(join(tmpdir(), "main-ca-")), "ca.pem");
+    writeFileSync(p, SandboxCa.generate({ now: new Date(), ttlDays: 3650 }).exportPem(), { mode: 0o600 });
+    chmodSync(p, 0o600);
+    for (const extra of [
+      { PLATFORM_TLS_HOSTNAMES: "localhost,256.1.1.1" },
+      { PLATFORM_TLS_HOSTNAMES: "localhost", PORT: "0" },
+    ]) {
+      const r = failures({ PLATFORM_CA_KEY_PATH: p, ...extra });
+      expect(r.code, r.out).toBe(1);
+      expect(r.failures.map((f) => f.check), JSON.stringify(extra)).toContain("params");
+      expect(r.failures.map((f) => f.check), JSON.stringify(extra)).not.toContain("ca.key");
+    }
   }, 60_000);
 
   it("PLATFORM_TLS_HOSTNAMES (РП66 п. 4; № 7): нет или 256.1.1.1 — STARTUP_PARAMS_INVALID; localhost,127.0.0.1 — params проходит", () => {
@@ -140,5 +166,8 @@ describe("рабочая сборка src/main.ts (sandbox): ключ УЦ — S
     expect(dev.code, dev.out).toBe(1);
     expect(dev.failures.map((f) => f.check)).toContain("params");
     expect(dev.failures.map((f) => f.check)).not.toContain("proxies");
+    // Среда действительно dev, а не «не разобрана» (КТ1 К1.1 № 3): только dev без базы даёт db.storage — warn
+    // STARTUP_DB_MEMORY; sandbox без базы — отказ, неразобранная среда — skip.
+    expect(dev.checks).toContainEqual({ check: "db.storage", status: "warn", code: "STARTUP_DB_MEMORY" });
   }, 60_000);
 });
