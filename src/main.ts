@@ -240,8 +240,9 @@ async function serve(): Promise<void> {
   // Сертификат сервера выпущен проверкой ca.key (РП66 п. 4, КТ1 К3.1 № 4).
   const tls: ServerTls | undefined =
     ca && serverCert ? { key: serverCert.privateKey, certificateDer: serverCert.certificateDer, caDer: ca.certificateDer } : undefined;
-  // sandbox — только с TLS (РП66 п. 3, КТ1 К3.1 № 5): самопроверка без УЦ его не пропускает, а здесь — явно, до buildServer.
-  if (env === "sandbox" && !tls) throw new Error("sandbox без TLS — запуск запрещён (РП66 п. 3)");
+  // Вне dev — только с TLS (РП66 п. 3, РП67 п. 8; КТ1 К3.1 № 5): самопроверка без УЦ sandbox не пропускает, а здесь — явно,
+  // до buildServer; будущая среда без отдельного решения не запустится (граница — как у прокси, РП67 п. 7).
+  if (env !== "dev" && !tls) throw new Error("среда вне dev без TLS — запуск запрещён (РП66 п. 3, РП67 п. 8)");
 
   // Журнал согласий (П2): PostgreSQL при DATABASE_URL, иначе (dev) — память ядра. Порядок отзыва — из записи участника (РП37).
   // Push по событию — только ACTIVE-агенту, подписанному на тип, на момент записи (РП40 п. 5–6); agent.suspended — и

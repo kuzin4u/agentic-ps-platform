@@ -64,8 +64,8 @@ describe("страж: src/main.ts sandbox — TLS, ступень 0, обяза�
     expect(text).toMatch(/buildServer\(\{[\s\S]*?\.\.\.\(tls \? \{ tls \} : \{\}\)/);
   });
 
-  it("sandbox без TLS — исключение до buildServer (КТ1 К3.1 № 5)", () => {
-    expect(code()).toMatch(/if \(env === "sandbox" && !tls\) throw new Error\(".*?"\);[\s\S]*?buildServer\(\{/);
+  it("вне dev без TLS — исключение до buildServer (КТ1 К3.1 № 5, РП67 п. 8)", () => {
+    expect(code()).toMatch(/if \(env !== "dev" && !tls\) throw new Error\(".*?"\);[\s\S]*?buildServer\(\{/);
   });
 
   it("срок сертификата сервера — в журнал запуска (КТ1 К3.1 № 1: продления без перезапуска нет)", () => {
