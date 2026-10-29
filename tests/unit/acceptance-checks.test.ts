@@ -187,8 +187,8 @@ describe("runAcceptance против песочницы в процессе", ()
 });
 
 // Контрольный сервер (КТ1 № 1–3): обычный https.createServer от того же УЦ — TLS 1.2 принимает, сессии возобновляет
-// (билеты по умолчанию), сертификат клиента не обязателен: /pao/v1/agent с кодом агента — 200, без кода — 401 AGENT_UNKNOWN.
-// Проверки 2, 3 и 6 должны это поймать.
+// (билеты по умолчанию), сертификат клиента не запрашивает (requestCert: false — без отключения проверки, CodeQL; К2.0):
+// /pao/v1/agent с кодом агента — 200, без кода — 401 AGENT_UNKNOWN. Проверки 2, 3, 6 и 9 должны это поймать.
 async function control(maxVersion: "TLSv1.2" | "TLSv1.3"): Promise<CheckResult[]> {
   const ca = SandboxCa.generate({ now: new Date(Date.now() - 60_000), ttlDays: 1 });
   const cert = ca.issueServerCertificate([HOST], new Date(), 1, 300);
@@ -196,9 +196,7 @@ async function control(maxVersion: "TLSv1.2" | "TLSv1.3"): Promise<CheckResult[]
     {
       key: cert.privateKey.export({ format: "pem", type: "pkcs8" }),
       cert: new X509Certificate(cert.certificateDer).toString(),
-      ca: new X509Certificate(ca.certificateDer).toString(),
-      requestCert: true,
-      rejectUnauthorized: false,
+      requestCert: false,
       minVersion: "TLSv1.2",
       maxVersion,
     },
@@ -236,12 +234,13 @@ async function control(maxVersion: "TLSv1.2" | "TLSv1.3"): Promise<CheckResult[]
 }
 
 describe("контрольный сервер: проверки умеют провалиться", () => {
-  it("TLS 1.2 принят — 2; сессия возобновлена — 3; подписанный запрос без сертификата — 200 — 6", async () => {
+  it("TLS 1.2 принят — 2; сессия возобновлена — 3; подписанный запрос без сертификата — 200 — 6; чужой УЦ — 200 — 9", async () => {
     const rs = await control("TLSv1.3");
     const r = byId(rs);
     expect(r["2"]).toMatchObject({ ok: false, actual: "соединение установлено (TLSv1.2)" });
     expect(r["3"]).toMatchObject({ ok: false, actual: "сессия возобновлена" });
     expect(r["6"]).toMatchObject({ ok: false, actual: "200" });
+    expect(r["9"]).toMatchObject({ ok: false, actual: "200" });
     expect(accepted(rs)).toBe(false);
   }, 60_000);
 
