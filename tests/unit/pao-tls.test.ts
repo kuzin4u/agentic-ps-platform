@@ -205,6 +205,8 @@ describe("TLS песочницы: рукопожатие и ступень 0 (Р
     expect(res.status).toBe(401);
     expect(JSON.parse(res.body)).toMatchObject({ code: "AGENT_UNKNOWN" });
     expect(channelLogs(r).map((l) => l.pao_channel)).toEqual(["TLS_NOT_AUTHORIZED"]);
+    // Код OpenSSL из сокета — рядом (КТ1 К3.2 № 9): цепочка к чужому корню не строится.
+    expect(channelLogs(r)[0]?.pao_tls_error).toMatch(/^(UNABLE_TO_GET_ISSUER_CERT|UNABLE_TO_GET_ISSUER_CERT_LOCALLY|UNABLE_TO_VERIFY_LEAF_SIGNATURE)$/);
   });
 
   it("без сертификата — 401 AGENT_UNKNOWN / NO_CERTIFICATE: рукопожатие не оборвано, решение — в приложении", async () => {

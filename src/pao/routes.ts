@@ -193,7 +193,10 @@ export function clientCertificate(req: Pick<FastifyRequest, "raw">): ClientCerti
   if (!(socket instanceof TLSSocket)) return undefined;
   const cert = socket.getPeerX509Certificate();
   const der = cert?.raw;
-  return der && der.length > 0 ? { der, authorized: socket.authorized === true } : undefined;
+  if (!der || der.length === 0) return undefined;
+  // authorizationError у Node — строка с кодом OpenSSL (тип @types/node — Error); вид проверяет checkChannel.
+  const e: unknown = socket.authorizationError;
+  return { der, authorized: socket.authorized === true, ...(typeof e === "string" ? { authorizationError: e } : {}) };
 }
 
 /** Сертификат запроса — из сокета один раз за обращение (КТ1 № 5): onRequest и preHandler видят одно и то же. */
@@ -331,7 +334,11 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     // Исключение — только имя, код, стек (РП62 доп. 2): detail и where PostgreSQL могут нести значения запроса.
     if (r.cause !== undefined) req.log.error({ err: errFields(r.cause) }, "ПАО: сбой источника (реестр, ключи, хранилище nonce) при проверке обращения");
     // Вид причины ступени 0 — только сюда; агенту — AGENT_UNKNOWN (РП66 п. 2, РП31 п. 2).
-    if (r.channel !== undefined) req.log.info({ pao_channel: r.channel }, "ПАО: сертификат канала не принят (ступень 0)");
+    // Код OpenSSL — рядом с TLS_NOT_AUTHORIZED: истёкший по системным часам и чужой УЦ различимы (КТ1 К3.2 № 9).
+    if (r.channel !== undefined) {
+      const tls = r.channelTlsError !== undefined ? { pao_tls_error: r.channelTlsError } : {};
+      req.log.info({ pao_channel: r.channel, ...tls }, "ПАО: сертификат канала не принят (ступень 0)");
+    }
     return send(reply, paoError(r.code, r.norm));
   };
 

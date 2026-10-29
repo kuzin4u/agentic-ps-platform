@@ -156,6 +156,23 @@ describe.each(variants)("ступень 0 — сертификат канала:
     expect(outcome(await s.verifier.precheck(signed(a.signer, a.code, a.cert, NOW, false)))).toBe("AGENT_UNKNOWN/TLS_NOT_AUTHORIZED");
   });
 
+  it("TLS_NOT_AUTHORIZED — код OpenSSL рядом, только вида [A-Z0-9_]; текст и пустое — не передаются (КТ1 К3.2 № 9)", async () => {
+    const s = stand();
+    const a = await s.admit();
+    const withError = (authorizationError: string): PaoRequest => {
+      const r = signed(a.signer, a.code, a.cert, NOW, false);
+      return { ...r, clientCertificate: { der: a.cert, authorized: false, authorizationError } };
+    };
+    const tlsError = (r: PaoAuthResult | PaoPrecheckResult) => (r && !r.ok ? r.channelTlsError : "ok");
+    expect(tlsError(await s.verifier.verify(withError("CERT_HAS_EXPIRED")))).toBe("CERT_HAS_EXPIRED");
+    expect(tlsError(await s.verifier.precheck(withError("UNABLE_TO_GET_ISSUER_CERT")))).toBe("UNABLE_TO_GET_ISSUER_CERT");
+    for (const bad of ["certificate has expired", "", "A".repeat(65), "CERT\nHAS"]) {
+      expect(tlsError(await s.verifier.verify(withError(bad))), JSON.stringify(bad)).toBeUndefined();
+    }
+    // Без authorizationError — как прежде: вид причины есть, кода нет.
+    expect(tlsError(await s.verifier.verify(signed(a.signer, a.code, a.cert, NOW, false)))).toBeUndefined();
+  });
+
   it("шаг 2: чужой УЦ или не сертификат — AGENT_UNKNOWN / NOT_ISSUED_BY_CA", async () => {
     const s = stand();
     const a = await s.admit();
