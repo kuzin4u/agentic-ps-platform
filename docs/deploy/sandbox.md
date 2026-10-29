@@ -13,6 +13,7 @@
 | Файл ключа УЦ | `/var/lib/agentic-platform/sandbox-ca` |
 | Порт | `8443` |
 | ssh-пользователь владельца | `owner` (подставьте свой) |
+| Адрес песочницы (пример) | `sandbox.agentic-comm.ru` — VPS в Yandex Cloud |
 
 ## 0. Почему VPS, а не Render
 
@@ -20,7 +21,13 @@ TLS завершается в самом процессе Платформы: т
 
 ## 1. VPS и порт
 
-- Ubuntu 22.04 или 24.04, публичный IP; DNS-имя — по желанию.
+- Ubuntu 24.04 LTS — инструкция написана под неё (пути sudoers — `/usr/bin/node`, `secure_path`, `/usr/bin/sh` — по документации Ubuntu и NodeSource); на живой ВМ команды ещё не запускались, проверка — при установке ≈ 02.11. Публичный IP; DNS-имя — по желанию.
+- **Yandex Cloud** (схема создания ВМ, решение владельца 29.10):
+  - группа безопасности ВМ: входящие — только 22/tcp и 8443/tcp; исходящие — любые (нужны для `npm ci` и обновлений). `ufw` ниже — второй слой, группа безопасности его не заменяет;
+  - статический IP — в той же зоне доступности, что ВМ (адрес зональный);
+  - ВМ не прерываемая: прерываемую облако останавливает, и песочница пропадает;
+  - гарантированная доля vCPU — 100 % (2 vCPU, 4 ГБ). При меньшей доле приёмка ловит ложные тайм-ауты;
+  - образ Ubuntu 24.04 LTS, вход по SSH-ключу (не OS Login), логин — не root.
 - Открыты только порты 22 (ssh) и 8443 (Платформа):
   ```
   sudo ufw allow 22/tcp && sudo ufw allow 8443/tcp && sudo ufw enable
@@ -100,7 +107,7 @@ PAO_TRUSTED_PROXIES=
 - **Все переменные — только здесь, не в строках `Environment=` unit.** Программа допуска читает именно этот файл. Если переменная задана в unit, сервис и приёмка увидят разное окружение.
 - Пути — абсолютные. Относительный `PARAMS_PATH` программа допуска считала бы от другого каталога; без `PARAMS_PATH` используются стендовые параметры установки.
 - Формат файла — простой `KEY=VALUE`. Комментарии `#` и кавычки вокруг значения допустимы, экранирование systemd (`\`, `$`) — нет.
-- `PLATFORM_TLS_HOSTNAMES` — имена и адреса сертификата сервера. В `--host` приёмки указывайте одно из них.
+- `PLATFORM_TLS_HOSTNAMES` — имена и адреса сертификата сервера. В `--host` приёмки указывайте одно из них. Пример: `PLATFORM_TLS_HOSTNAMES=sandbox.agentic-comm.ru,<публичный IP>`.
 - `PARTICIPANT_KEYS_PATH` — доверенные ключи банков и эквайрера. Пока участников нет — пустой список:
   ```
   echo '{"participants": []}' | sudo tee /etc/agentic-platform/participants.json && sudo chmod 0644 /etc/agentic-platform/participants.json
@@ -192,6 +199,13 @@ ssh -o BatchMode=yes owner@<vps> 'd=$(sudo -n -u agentic /usr/bin/mktemp -d) && 
 cd ~/repos/agentic-ps-platform && npm ci
 npm run acceptance -- --host <имя из PLATFORM_TLS_HOSTNAMES> --port 8443 \
   --ca ~/sandbox/ca-root.crt --fingerprint <64 hex из ca:init> --ssh owner@<vps>
+```
+
+Пример для `sandbox.agentic-comm.ru`:
+
+```
+npm run acceptance -- --host sandbox.agentic-comm.ru --port 8443 \
+  --ca ~/sandbox/ca-root.crt --fingerprint <64 hex из ca:init> --ssh owner@sandbox.agentic-comm.ru
 ```
 
 - Вывод — таблица «№ | Проверка | Ожидание | Факт | Пройдена» по 16 строкам (проверки 1–13 и повторы 13.1, 13.5, 13.12 после перезапуска) и итог «принято» или «не принято».
