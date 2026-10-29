@@ -1,6 +1,6 @@
 {
   "name": "agentic-ps-platform",
-  "version": "0.32.1",
+  "version": "0.32.2",
   "private": true,
   "description": "Агентная платформа платёжной системы: ADP, журнал согласий, ПАО, эмуляторы окружения",
   "type": "module",
