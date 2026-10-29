@@ -17,6 +17,7 @@ import { accepted, CHECK_IDS, report, runAcceptance } from "../../scripts/accept
 import { OPERATOR_PROGRAM, parseReply, spawnExec, sshOperator, type Exec, type OperatorPort } from "../../scripts/acceptance/operator.js";
 import { initCaFile } from "../../src/registry/index.js";
 import { loadParams } from "../../src/shared/config.js";
+import { applyPlatformMigrations } from "../../src/shared/migrations.js";
 import { buyerApplication, newAgentSide } from "../support/agent.js";
 import { newCsr } from "../support/csr.js";
 import { DATABASE_URL } from "../support/pg.js";
@@ -91,6 +92,8 @@ describe.skipIf(!DATABASE_URL)("приёмка песочницы на PostgreSQ
     u.searchParams.set("options", `-c search_path=${schema}`);
     url = u.toString();
     pool = new pg.Pool({ connectionString: url, max: 2 });
+    // Схема размечена до operator.mjs, как на VPS: миграции применяет сервис при запуске, программа допуска их не применяет.
+    await applyPlatformMigrations(pool);
 
     const params = loadParams();
     writeFileSync(paramsPath, JSON.stringify({ ...JSON.parse(readFileSync(join(ROOT, "config/params.stand.json"), "utf8")), agent_cert_ttl_days: TTL_DAYS }));
