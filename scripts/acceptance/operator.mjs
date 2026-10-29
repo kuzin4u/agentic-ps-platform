@@ -66,7 +66,7 @@ try {
       ca: loadCaFile(process.env.PLATFORM_CA_KEY_PATH, new Date()),
       ttlDays: params.agent_cert_ttl_days,
       backdateSec: params.cert_not_before_backdate_sec,
-      required: true,
+      required: false,
     },
   });
 
