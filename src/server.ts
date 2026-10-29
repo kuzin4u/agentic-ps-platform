@@ -331,9 +331,7 @@ function withRequestSerializer(logger: ServerOptions["logger"]): FastifyServerOp
 export function buildServer(opts: ServerOptions): FastifyInstance {
   assertTlsMatchesMtls(opts);
   const proxies = opts.trustedProxies ?? [];
-  // Экземпляр с https — тот же FastifyInstance по API маршрутов; тип сервера Node у него https.Server.
-  const app = (Fastify as unknown as (o: FastifyServerOptions & { https?: HttpsServerOptions }) => FastifyInstance)({
-    ...(opts.tls ? { https: httpsOptions(opts.tls) } : {}),
+  const common = {
     logger: withRequestSerializer(opts.logger),
     // Экземпляр берётся как есть: опции сервера disableRequestLogging и requestIdLogLabel он не наследует — задавать здесь.
     logController: new PathlessLogController(),
@@ -341,7 +339,10 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     routerOptions: { maxParamLength: MAX_PATH_PARAM_LENGTH },
     // 414 и 400 bad url — до маршрутизации, одним обработчиком на сервер: тело без пути и запись отказа (РП62 п. 1, 3, 5).
     frameworkErrors: frameworkErrors(opts.pao?.params.unavailable_retry_after_sec ?? BYPASS_RETRY_AFTER_SEC),
-  });
+  };
+  // С TLS — перегрузка Fastify для https.Server: опции https проверяет тип Fastify (КТ1 К3.2 № 10). FastifyInstance с
+  // https.Server совместим с возвращаемым FastifyInstance по API маршрутов — приведения нет.
+  const app: FastifyInstance = opts.tls ? Fastify({ ...common, https: httpsOptions(opts.tls) }) : Fastify(common);
 
   const bypass = opts.bypassOnly;
   if (bypass) {
