@@ -85,8 +85,10 @@ export const TLS_MIN_VERSION = "TLSv1.3";
 
 /**
  * HTTPS-опции Fastify (РП66 п. 3): requestCert, без обрыва рукопожатия, доверенный — только УЦ песочницы. Возобновления
- * сессии нет (развилка № 8 (А), решение владельца 28.10): SSL_OP_NO_TICKET — без билетов сессии, а кэша сессий у сервера
- * Node нет без обработчиков newSession / resumeSession; каждое подключение — полное рукопожатие с сертификатом клиента.
+ * сессии нет (развилка № 8 (А), решение владельца 28.10). SSL_OP_NO_TICKET в TLS 1.3 не убирает билет совсем: OpenSSL
+ * выдаёт билет с состоянием на сервере (stateful) вместо билета-блоба. Возобновления нет потому, что состояния на сервере
+ * нет: кэша сессий у сервера Node нет без обработчиков newSession / resumeSession, и билет предъявить некуда (CI —
+ * isSessionReused() === false). Каждое подключение — полное рукопожатие с сертификатом клиента.
  * Пересмотр — по нагрузочному тесту этапа 6 (тогда — короткий срок, не 300 с).
  */
 function httpsOptions(t: ServerTls): HttpsServerOptions {
@@ -104,11 +106,15 @@ function httpsOptions(t: ServerTls): HttpsServerOptions {
 /**
  * TLS и ступень 0 — только вместе (В1, дополнение к РП66): TLS без ступени 0 принимал бы обращения по любому каналу (обход
  * нормы A2 п. 5.1), ступень 0 без TLS отвечала бы AGENT_UNKNOWN на всё. Несогласованность — отказ запуска.
+ * Запасной запрет РП67 п. 6: TLS в процессе — прокси перед ним только L4, X-Forwarded-For приходит от клиента внутри TLS;
+ * непустой trustedProxies дал бы агенту подставить адрес (Ш12) — отказ при любом месте вызова, не только в main.ts.
  */
 function assertTlsMatchesMtls(opts: ServerOptions): void {
   const mtls = opts.pao?.verifier.mtls === true;
   if (opts.tls && opts.pao && !mtls) throw new Error("TLS без ступени 0 у шлюза ПАО — запуск запрещён (РП66, В1)");
   if (mtls && !opts.tls) throw new Error("ступень 0 без TLS — запуск запрещён (РП66, В1)");
+  // Адресов списка в тексте нет: текст исключения может попасть в журнал.
+  if (opts.tls && (opts.trustedProxies?.length ?? 0) > 0) throw new Error("TLS в процессе и доверенные прокси — запуск запрещён (РП67 п. 6)");
 }
 
 export interface BypassOnly {

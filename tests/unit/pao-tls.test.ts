@@ -391,6 +391,34 @@ describe("TLS и ступень 0 — только вместе (В1, допол
     opened.push(off, on);
     expect((await off.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
   });
+
+  it("TLS без шлюза ПАО — запуск: условие «TLS без ступени 0» — только при шлюзе ПАО (РП66 нюанс К3 п. 1; КТ1 К3.2 № 5)", async () => {
+    const app = buildServer({ env: "sandbox", tls: deps(false).tls });
+    opened.push(app);
+    expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
+  });
+
+  it("TLS и непустой trustedProxies — отказ запуска при любом месте вызова, адресов в тексте нет (РП67 п. 6)", () => {
+    const d = deps(true);
+    const err = (o: Parameters<typeof buildServer>[0]) => {
+      try {
+        opened.push(buildServer(o));
+      } catch (e) {
+        return (e as Error).message;
+      }
+      return undefined;
+    };
+    for (const o of [
+      { env: "sandbox" as const, pao: d.pao, tls: d.tls, trustedProxies: ["10.0.0.1"] },
+      { env: "dev" as const, tls: d.tls, trustedProxies: ["10.0.0.1"] },
+    ]) {
+      const m = err(o);
+      expect(m, o.env).toMatch(/TLS в процессе и доверенные прокси/);
+      expect(m, o.env).not.toContain("10.0.0.1");
+    }
+    // Пустой список — запуск (как без поля).
+    expect(err({ env: "sandbox", pao: d.pao, tls: d.tls, trustedProxies: [] })).toBeUndefined();
+  });
 });
 
 describe("PLATFORM_TLS_HOSTNAMES — имена сертификата сервера (РП66 п. 4; КТ1 К3.2 № 7)", () => {
