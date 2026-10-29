@@ -90,6 +90,24 @@ describe.skipIf(!hasOpenssl)("перекрёстная проверка УЦ и 
     expect(t.stdout).toMatch(/X509v3 Extended Key Usage:\s+TLS Web Server Authentication\s/);
   });
 
+  it("openssl -verify_ip: IPv6 — «::» в конце, в середине и отдельно, восемь групп, хвост IPv4; соседний адрес — отказ (КТ1 К3.2 № 6)", () => {
+    const ca = SandboxCa.generate({ now: NOW, ttlDays: 3650 });
+    const caFile = file("ip6-ca.crt", pem(ca.certificateDer));
+    const cases: [string, string][] = [
+      ["2001:db8::", "2001:db8::1"],
+      ["2001:db8::1:0:0:1", "2001:db8::1:0:0:2"],
+      ["2001:db8:1:2:3:4:5:6", "2001:db8:1:2:3:4:5:7"],
+      ["::", "::1"],
+      ["1::1.2.3.4", "1::1.2.3.5"],
+    ];
+    cases.forEach(([ip, near], i) => {
+      const srv = file(`ip6-${i}.crt`, pem(ca.issueServerCertificate([ip], NOW, 90, 300).certificateDer));
+      const ok = openssl("verify", "-x509_strict", "-CAfile", caFile, "-purpose", "sslserver", "-verify_ip", ip, srv);
+      expect(ok.status, `${ip}: ${ok.stdout}${ok.stderr}`).toBe(0);
+      expect(openssl("verify", "-CAfile", caFile, "-purpose", "sslserver", "-verify_ip", near, srv).status, near).not.toBe(0);
+    });
+  });
+
   it("расширения из CSR не переносятся: чужой SAN и CA:TRUE в запросе → SAN из реестра и CA:FALSE (инвариант 5, КТ1 № 2)", () => {
     const key = join(dir, "ext.key");
     expect(openssl("ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", key).status).toBe(0);
