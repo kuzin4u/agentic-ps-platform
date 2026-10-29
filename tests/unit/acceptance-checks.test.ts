@@ -5,6 +5,7 @@
 import { X509Certificate } from "node:crypto";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
+import type { TLSSocket } from "node:tls";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { accepted, CHECK_IDS, normFingerprint, report, runAcceptance, startupEntry, type CheckResult } from "../../scripts/acceptance/checks.js";
@@ -232,6 +233,63 @@ async function control(maxVersion: "TLSv1.2" | "TLSv1.3"): Promise<CheckResult[]
     await new Promise((resolve) => server.close(resolve));
   }
 }
+
+// Второй контрольный сервер (сессия 57 К4.1, вариант (А) владельца): сертификат клиента проверяется честно
+// (requestCert: true, rejectUnauthorized: true), но доверенный корень — чужой УЦ проверки 9 (foreignCa). Проверка 9 должна
+// провалиться потому, что принят сертификат чужого УЦ, а не потому, что сертификат не нужен (как у первого сервера).
+async function controlForeign(): Promise<{ rs: CheckResult[]; authorized: boolean[] }> {
+  const own = SandboxCa.generate({ now: new Date(Date.now() - 60_000), ttlDays: 1 });
+  const foreign = SandboxCa.generate({ now: new Date(Date.now() - 60_000), ttlDays: 1 });
+  const cert = own.issueServerCertificate([HOST], new Date(), 1, 300);
+  const authorized: boolean[] = [];
+  const server = createHttpsServer(
+    {
+      key: cert.privateKey.export({ format: "pem", type: "pkcs8" }),
+      cert: new X509Certificate(cert.certificateDer).toString(),
+      ca: [new X509Certificate(foreign.certificateDer).toString()],
+      requestCert: true,
+      rejectUnauthorized: true,
+      minVersion: "TLSv1.3",
+    },
+    (req, res) => {
+      const code = req.headers["x-agent-code"];
+      res.setHeader("content-type", "application/json");
+      if (req.url === "/pao/v1/agent" && typeof code === "string") {
+        authorized.push((req.socket as TLSSocket).authorized);
+        res.end(JSON.stringify({ agent_code: code }));
+      } else res.writeHead(401).end(JSON.stringify({ code: "AGENT_UNKNOWN" }));
+    },
+  );
+  await new Promise<void>((resolve) => server.listen(0, HOST, resolve));
+  const port = (server.address() as AddressInfo).port;
+  const op: OperatorPort = {
+    admit: async () => ({ admitted: false, reasons: ["APPLICATION_INCOMPLETE"] }),
+    revoke: async () => true,
+    journal: async () => "",
+    restart: async () => {},
+    close: async () => {},
+  };
+  try {
+    const rs = await runAcceptance({ host: HOST, port, caPem: new X509Certificate(own.certificateDer).toString(), fingerprint: own.fingerprint }, op, {
+      ticketWaitMs: 100,
+      readyTimeoutMs: 1_000,
+      foreignCa: foreign,
+    });
+    return { rs, authorized };
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+describe("второй контрольный сервер: чужой УЦ в доверенных (сессия 57 К4.1)", () => {
+  it("сертификат клиента проверен честно (authorized), но корень — чужой УЦ: проверка 9 — 200, не пройдена", async () => {
+    const { rs, authorized } = await controlForeign();
+    expect(byId(rs)["9"]).toMatchObject({ ok: false, actual: "200" });
+    // Принят именно проверенный сертификат чужого УЦ — не обход проверки сертификата.
+    expect(authorized).toEqual([true]);
+    expect(accepted(rs)).toBe(false);
+  }, 60_000);
+});
 
 describe("контрольный сервер: проверки умеют провалиться", () => {
   it("TLS 1.2 принят — 2; сессия возобновлена — 3; подписанный запрос без сертификата — 200 — 6; чужой УЦ — 200 — 9", async () => {

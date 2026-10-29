@@ -36,6 +36,12 @@ export interface AcceptanceOptions {
   readonly readyTimeoutMs?: number;
   /** Ожидание билета сессии после рукопожатия (проверка 3). */
   readonly ticketWaitMs?: number;
+  /**
+   * Чужой УЦ проверки 9 — только для тестов: контрольный сервер, который честно проверяет сертификат клиента, но доверяет
+   * этому УЦ, должен провалить проверку 9 именно поэтому (SANDBOX-ACC К2.0, сессия 57 К4.1). CLI его не задаёт; без него —
+   * новый УЦ на каждый запуск.
+   */
+  readonly foreignCa?: SandboxCa;
 }
 
 export const normFingerprint = (f: string): string => f.replace(/:/g, "").trim().toLowerCase();
@@ -339,7 +345,7 @@ export async function runAcceptance(t: Target, op: OperatorPort, o: AcceptanceOp
     });
 
     await check("9", "сертификат чужого УЦ", "401 AGENT_UNKNOWN", async () => {
-      const foreign = SandboxCa.generate({ now: new Date(Date.now() - 60_000), ttlDays: 1 });
+      const foreign = o.foreignCa ?? SandboxCa.generate({ now: new Date(Date.now() - 60_000), ttlDays: 1 });
       const fcsr = newCsr("foreign");
       const issued = foreign.issueAgentCertificate(fcsr.csr, a.code, new Date(), 1, 300);
       if (!issued.ok) return { ok: false, actual: "выпуск чужим УЦ не прошёл" };
