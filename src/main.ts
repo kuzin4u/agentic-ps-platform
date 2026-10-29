@@ -161,7 +161,7 @@ const checks: StartupCheck[] = [
       if (env !== "sandbox") return "skip";
       ca = loadCaFile(process.env.PLATFORM_CA_KEY_PATH, new Date());
       if (tlsHostnames === undefined) return "skip";
-      serverCert = ca.issueServerCertificate(tlsHostnames.filter((h) => h !== "127.0.0.1"), new Date(), params.agent_cert_ttl_days, params.cert_not_before_backdate_sec);
+      serverCert = ca.issueServerCertificate(tlsHostnames, new Date(), params.agent_cert_ttl_days, params.cert_not_before_backdate_sec);
       return "ok";
     },
   },
