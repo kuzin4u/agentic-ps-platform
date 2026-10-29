@@ -339,7 +339,8 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     routerOptions: { maxParamLength: MAX_PATH_PARAM_LENGTH },
     // 414 и 400 bad url — до маршрутизации, одним обработчиком на сервер: тело без пути и запись отказа (РП62 п. 1, 3, 5).
     frameworkErrors: frameworkErrors(opts.pao?.params.unavailable_retry_after_sec ?? BYPASS_RETRY_AFTER_SEC),
-  };
+    // satisfies — опечатку в имени опции ловит tsc: через spread лишние свойства не проверяются (КТ1 сессии 57 № 3).
+  } satisfies FastifyServerOptions;
   // С TLS — перегрузка Fastify для https.Server: опции https проверяет тип Fastify (КТ1 К3.2 № 10). FastifyInstance с
   // https.Server совместим с возвращаемым FastifyInstance по API маршрутов — приведения нет.
   const app: FastifyInstance = opts.tls ? Fastify({ ...common, https: httpsOptions(opts.tls) }) : Fastify(common);

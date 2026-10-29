@@ -90,7 +90,7 @@ const checks: StartupCheck[] = [
     run: () => {
       trustedProxies = parseTrustedProxies(process.env.PAO_TRUSTED_PROXIES);
       if (env !== "dev" && trustedProxies.length > 0) {
-        throw new ProxiesError("TLS_IN_PROCESS", "PAO_TRUSTED_PROXIES в sandbox: TLS в процессе, прокси только L4 (РП67 п. 1)");
+        throw new ProxiesError("TLS_IN_PROCESS", "PAO_TRUSTED_PROXIES вне dev: TLS в процессе, прокси только L4 (РП67 п. 1, 7)");
       }
       return "ok";
     },
@@ -151,14 +151,17 @@ const checks: StartupCheck[] = [
     // читает (п. 7). Вид причины — в журнал отказа из закрытого перечня, текста исключения нет (РП42 доп. п. 12).
     // Сертификат сервера (РП66 п. 4) — здесь же, до отчёта: сбой выпуска — STARTUP_CA_KEY_INVALID с классом ошибки, без
     // вида причины (КТ1 К3.1 № 4). Ключ — только в памяти, новый при каждом запуске; срок — agent_cert_ttl_days от запуска
-    // (продление — перезапуском). Возобновления сессии нет (К2.2).
+    // (продление — перезапуском). Возобновления сессии нет (К2.2). Имён нет — проверка params уже отказала (неверные
+    // PORT, параметры или PLATFORM_TLS_HOSTNAMES): файл УЦ проверен, выпуск — skip, а не второй отказ с кодом ключа УЦ,
+    // который вёл бы оператора к ca:init (КТ1 сессии 57 № 1; РП66 «Нюансы хвостов» п. 2).
     check: "ca.key",
     fail: "STARTUP_CA_KEY_INVALID",
     reasons: CA_KEY_REASONS,
     run: () => {
       if (env !== "sandbox") return "skip";
       ca = loadCaFile(process.env.PLATFORM_CA_KEY_PATH, new Date());
-      serverCert = ca.issueServerCertificate(tlsHostnames ?? [], new Date(), params.agent_cert_ttl_days, params.cert_not_before_backdate_sec);
+      if (tlsHostnames === undefined) return "skip";
+      serverCert = ca.issueServerCertificate(tlsHostnames, new Date(), params.agent_cert_ttl_days, params.cert_not_before_backdate_sec);
       return "ok";
     },
   },

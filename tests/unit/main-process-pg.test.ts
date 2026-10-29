@@ -28,6 +28,12 @@ const freePort = (): Promise<number> =>
     });
   });
 
+/** Код ошибки попытки готовности: свой code (ERR_TLS_…, ECONNREFUSED), у fetch — cause.code, иначе имя класса. */
+const readyError = (e: unknown): string => {
+  const x = e as { code?: unknown; cause?: { code?: unknown }; name?: unknown } | null;
+  return String(x?.code ?? x?.cause?.code ?? x?.name ?? typeof e);
+};
+
 const stop = (child: ChildProcess): Promise<number | null> =>
   new Promise((resolve) => {
     if (child.exitCode !== null || child.signalCode !== null) return resolve(child.exitCode);
@@ -70,12 +76,16 @@ describe.skipIf(!DATABASE_URL)("рабочая сборка src/main.ts на Pos
     const base = `http://127.0.0.1:${port}`;
 
     let ready = false;
+    let last = "";
     for (let i = 0; i < 150 && !ready; i++) {
       expect(proc.exitCode, out).toBeNull();
-      ready = await fetch(`${base}/health`).then((r) => r.status === 200, () => false);
+      ready = await fetch(`${base}/health`).then(
+        (r) => ((last = `HTTP ${r.status}`), r.status === 200),
+        (e: unknown) => ((last = readyError(e)), false),
+      );
       if (!ready) await new Promise((r) => setTimeout(r, 200));
     }
-    expect(ready, out).toBe(true);
+    expect(ready, `последняя ошибка готовности: ${last}\n${out}`).toBe(true);
 
     // Миграции — в этой схеме, включая реестр агентов (sql/120).
     const applied = (await pool.query<{ name: string }>("SELECT name FROM core_migrations")).rows.map((r) => r.name);
@@ -198,12 +208,17 @@ describe.skipIf(!DATABASE_URL)("рабочая сборка src/main.ts sandbox 
 
     // Готовность — /health по TLS с проверкой сертификата сервера по корню и адресу 127.0.0.1.
     let ready = false;
+    let last = "";
     for (let i = 0; i < 150 && !ready; i++) {
       expect(proc.exitCode, out).toBeNull();
-      ready = await tlsCall(port, root, { path: "/health" }).then((r) => r.status === 200, () => false);
+      ready = await tlsCall(port, root, { path: "/health" }).then(
+        (r) => ((last = `HTTP ${r.status}`), r.status === 200),
+        (e: unknown) => ((last = readyError(e)), false),
+      );
       if (!ready) await new Promise((r) => setTimeout(r, 200));
     }
-    expect(ready, out).toBe(true);
+    // Красный тест сам называет причину (ERR_TLS_CERT_ALTNAME_INVALID и т. п.), а не только «expected false» (КТ1 К3.1).
+    expect(ready, `последняя ошибка готовности: ${last}\n${out}`).toBe(true);
 
     // Имя localhost — тоже из PLATFORM_TLS_HOSTNAMES; обнаружение ПАО и каталог ключей — без сертификата клиента.
     expect((await tlsCall(port, root, { path: "/health", host: "localhost" })).status).toBe(200);

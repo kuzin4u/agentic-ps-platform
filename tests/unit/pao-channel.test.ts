@@ -166,7 +166,9 @@ describe.each(variants)("ступень 0 — сертификат канала:
     const tlsError = (r: PaoAuthResult | PaoPrecheckResult) => (r && !r.ok ? r.channelTlsError : "ok");
     expect(tlsError(await s.verifier.verify(withError("CERT_HAS_EXPIRED")))).toBe("CERT_HAS_EXPIRED");
     expect(tlsError(await s.verifier.precheck(withError("UNABLE_TO_GET_ISSUER_CERT")))).toBe("UNABLE_TO_GET_ISSUER_CERT");
-    for (const bad of ["certificate has expired", "", "A".repeat(65), "CERT\nHAS"]) {
+    // Граница вида — ровно 64 знака проходят (КТ1 сессии 57 № 5).
+    expect(tlsError(await s.verifier.verify(withError("A".repeat(64))))).toBe("A".repeat(64));
+    for (const bad of ["certificate has expired", "cert_has_expired", "", "A".repeat(65), "CERT\nHAS"]) {
       expect(tlsError(await s.verifier.verify(withError(bad))), JSON.stringify(bad)).toBeUndefined();
     }
     // Без authorizationError — как прежде: вид причины есть, кода нет.

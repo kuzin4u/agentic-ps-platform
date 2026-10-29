@@ -55,9 +55,10 @@ describe("страж: src/main.ts sandbox — TLS, ступень 0, обяза�
 
   it("сертификат сервера — на имена PLATFORM_TLS_HOSTNAMES, срок и запас — из стендовых параметров; доверенный TLS — корень УЦ из файла; TLS передан в buildServer", () => {
     const text = code();
-    // Выпуск — в проверке ca.key, сразу после загрузки УЦ: сбой — STARTUP_CA_KEY_INVALID до отчёта (КТ1 К3.1 № 4).
+    // Выпуск — в проверке ca.key, сразу после загрузки УЦ: сбой — STARTUP_CA_KEY_INVALID до отчёта (КТ1 К3.1 № 4);
+    // без имён (params отказала) — skip, а не второй отказ (КТ1 сессии 57 № 1).
     expect(text).toMatch(
-      /ca = loadCaFile\([^;]*\);\s*serverCert = ca\.issueServerCertificate\(tlsHostnames \?\? \[\], new Date\(\), params\.agent_cert_ttl_days, params\.cert_not_before_backdate_sec\);/,
+      /ca = loadCaFile\([^;]*\);\s*if \(tlsHostnames === undefined\) return "skip";\s*serverCert = ca\.issueServerCertificate\(tlsHostnames, new Date\(\), params\.agent_cert_ttl_days, params\.cert_not_before_backdate_sec\);/,
     );
     expect(text).toMatch(/certificateDer: serverCert\.certificateDer, caDer: ca\.certificateDer \}/);
     expect(text).toMatch(/buildServer\(\{[\s\S]*?\.\.\.\(tls \? \{ tls \} : \{\}\)/);
