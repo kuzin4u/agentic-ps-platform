@@ -2,17 +2,19 @@
 // Текст внутри heredoc — данные, а не команда: описание PR или комментарий с «git push origin main» не блокируется.
 // Настоящий push в main блокируется и рядом с heredoc. Тело heredoc с незакавыченным ограничителем, где есть
 // подстановка команды $(…) или `…`, исполняется оболочкой — его хук проверяет как команду.
+// С1 (РП68 п. 1): полный прогон — только при нагрузке < 10 и без чужого vitest; нагрузку и pgrep тест подменяет
+// переменными GUARD_TEST_LOADAVG и GUARD_TEST_VITEST. GUARD_PATH — путь к проверяемой копии стража (поломки, РП68 п. 5).
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const GUARD = join(process.cwd(), ".claude/hooks/guard.py");
+const GUARD = process.env.GUARD_PATH ?? join(process.cwd(), ".claude/hooks/guard.py");
 
-function guard(command: string): { status: number | null; stderr: string } {
+function guard(command: string, env: Record<string, string> = {}): { status: number | null; stderr: string } {
   const r = spawnSync("python3", [GUARD], {
     input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }),
     encoding: "utf8",
-    env: { ...process.env, CLAUDE_PROJECT_DIR: process.cwd() },
+    env: { ...process.env, CLAUDE_PROJECT_DIR: process.cwd(), ...env },
   });
   return { status: r.status, stderr: r.stderr };
 }
@@ -55,5 +57,69 @@ describe("guard.py: push только в task/*, heredoc — данные", () =
     const r = guard(command);
     expect(r.stderr).toContain("БЛОК guard.py");
     expect(r.status).toBe(2);
+  });
+});
+
+const CALM = { GUARD_TEST_LOADAVG: "2.5", GUARD_TEST_VITEST: "0" };
+const BUSY = { GUARD_TEST_LOADAVG: "17.3", GUARD_TEST_VITEST: "0" };
+
+const FULL_RUNS: [string, string][] = [
+  ["npm test", "npm test"],
+  ["npm run test", "npm run test"],
+  ["npm t", "npm t"],
+  ["npm test с флагом", "npm test -- --reporter=dot"],
+  ["npm test с выводом в файл", "npm test > /tmp/test.log 2>&1"],
+  ["npx vitest run", "npx vitest run"],
+  ["npx vitest без run", "npx vitest"],
+  ["vitest из node_modules/.bin", "node_modules/.bin/vitest run"],
+  ["с присваиванием перед командой", "CI=1 npm test"],
+  ["после &&", "uptime && npm test"],
+  ["в подстановке $(…)", 'x="$(npm test)"'],
+  ["фильтр по имени, а не путь", "npx vitest run guard"],
+];
+
+const FILE_RUNS: [string, string][] = [
+  ["npx vitest run файл", "npx vitest run tests/unit/guard.test.ts"],
+  ["npm test -- файл", "npm test -- tests/unit/guard.test.ts"],
+  ["каталог", "npx vitest run tests/unit/"],
+  ["другой скрипт npm", "npm run test:install -- --pack"],
+  ["упоминание в сообщении коммита", 'git commit -m "К1.1: npm test зелёный"'],
+  ["в теле heredoc", "cat > /tmp/pr.md <<'EOF'\nnpm test\nEOF"],
+];
+
+describe("guard.py С1: полный прогон — нагрузка < 10 и без чужого vitest", () => {
+  it.each(FULL_RUNS)("пропускает при нагрузке < 10: %s", (_name, command) => {
+    const r = guard(command, CALM);
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+  });
+
+  it.each(FULL_RUNS)("блокирует при нагрузке ≥ 10: %s", (_name, command) => {
+    const r = guard(command, BUSY);
+    expect(r.stderr).toContain("БЛОК guard.py");
+    expect(r.stderr).toContain("по файлам");
+    expect(r.status).toBe(2);
+  });
+
+  it.each(FILE_RUNS)("не ограничивает прогон по файлам: %s", (_name, command) => {
+    const r = guard(command, { GUARD_TEST_LOADAVG: "17.3", GUARD_TEST_VITEST: "1" });
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+  });
+
+  it("нагрузка ровно 10 — блок", () => {
+    const r = guard("npm test", { GUARD_TEST_LOADAVG: "10", GUARD_TEST_VITEST: "0" });
+    expect(r.status).toBe(2);
+  });
+
+  it("чужой vitest при малой нагрузке — блок", () => {
+    const r = guard("npm test", { GUARD_TEST_LOADAVG: "2.5", GUARD_TEST_VITEST: "1" });
+    expect(r.stderr).toContain("vitest/vitest.mjs");
+    expect(r.status).toBe(2);
+  });
+
+  it("сбой проверки — блок (fail-closed)", () => {
+    expect(guard("npm test", { GUARD_TEST_LOADAVG: "2.5", GUARD_TEST_VITEST: "error" }).status).toBe(2);
+    expect(guard("npm test", { GUARD_TEST_LOADAVG: "нет", GUARD_TEST_VITEST: "0" }).status).toBe(2);
   });
 });

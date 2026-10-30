@@ -10,6 +10,8 @@
   3. Содержимое с ключом API (sk-ant-), приватным ключом PEM или номером карты (проверка Луна).
   4. git push — только в ветки task/* (без --force, --tags, удаления); создание PR разрешено; слияние PR — владелец.
      Тело heredoc — данные, не команда; подстановка $(…) и `…` проверяется как команда (К2.1, 14.10.2026).
+  5. С1 — полный прогон тестов (npm test, npm run test, vitest без путей к файлам) — только при нагрузке
+     за 1 мин < 10 и без чужого vitest (pgrep -f 'vitest/vitest.mjs'); сбой проверки — блок (РП68 п. 1).
 """
 import json, re, shlex, sys, os
 
@@ -234,6 +236,92 @@ def check_git_push(cmd: str):
     return None
 
 
+# --- С1: полный прогон только при нагрузке < 10 и без чужого vitest (РП68 п. 1, Р-806, Р-832) ---
+LOAD_MAX = 10.0
+VITEST_PROC = "vitest/vitest.mjs"
+ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+REDIRECT = re.compile(r"^(\d*|&)[<>]")
+
+
+def test_file_arg(a: str) -> bool:
+    """Аргумент — путь к файлу или каталогу тестов, а не имя скрипта или значение флага."""
+    return "/" in a or ".test." in a or a.endswith((".ts", ".mts", ".js", ".mjs"))
+
+
+def is_full_test_run(segment: str) -> bool:
+    segment = re.sub(r"[)`]", " ", segment)  # хвост подстановки $(…) или `…` — не часть аргумента
+    try:
+        tok = shlex.split(segment, posix=True)
+    except ValueError:
+        tok = segment.split()
+    # перенаправления (> файл, 2>&1) и присваивания перед командой — не аргументы
+    clean, skip = [], False
+    for t in tok:
+        if skip:
+            skip = False
+            continue
+        if REDIRECT.match(t):
+            skip = re.fullmatch(r"(\d*|&)[<>]+", t) is not None
+            continue
+        clean.append(t)
+    while clean and ENV_ASSIGN.match(clean[0]):
+        clean = clean[1:]
+    if not clean:
+        return False
+    if clean[0] == "npm":
+        rest = clean[1:]
+        if rest[:1] in (["test"], ["t"]):
+            args = rest[1:]
+        elif rest[:2] == ["run", "test"]:
+            args = rest[2:]
+        else:
+            return False
+    elif clean[0] == "npx" and clean[1:2] == ["vitest"]:
+        args = clean[2:]
+    elif os.path.basename(clean[0]) == "vitest":
+        args = clean[1:]
+    else:
+        return False
+    return not any(test_file_arg(a) for a in args if not a.startswith("-"))
+
+
+def load_1min() -> float:
+    forced = os.environ.get("GUARD_TEST_LOADAVG")  # только для тестов стража
+    if forced is not None:
+        return float(forced)
+    return os.getloadavg()[0]
+
+
+def vitest_running() -> bool:
+    forced = os.environ.get("GUARD_TEST_VITEST")  # только для тестов стража: 0, 1 или error
+    if forced is not None:
+        if forced == "error":
+            raise OSError("pgrep")
+        return forced == "1"
+    import subprocess
+    r = subprocess.run(["pgrep", "-f", VITEST_PROC], capture_output=True, text=True, timeout=5)
+    if r.returncode not in (0, 1):
+        raise OSError("pgrep")
+    return r.returncode == 0
+
+
+def check_full_test_run(cmd: str):
+    """None — прогон разрешён; иначе текст причины отказа."""
+    if not any(is_full_test_run(s) for s in command_segments(cmd)):
+        return None
+    hint = "запустите по файлам (npx vitest run tests/…) или проверьте зелёный CI на голове PR"
+    try:
+        load = load_1min()
+        busy = vitest_running()
+    except Exception:
+        return f"полный прогон: не удалось проверить нагрузку или чужой vitest — {hint}."
+    if load >= LOAD_MAX:
+        return f"полный прогон при нагрузке {load:.2f} (нужно < {LOAD_MAX:.0f}) — {hint}."
+    if busy:
+        return f"полный прогон при запущенном vitest ({VITEST_PROC}) — {hint}."
+    return None
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -261,6 +349,9 @@ def main():
         if re.search(r"\bgh\s+pr\s+merge\b", cmd):
             block("Слияние PR делает владелец.")
         err = check_git_push(cmd)
+        if err:
+            block(err)
+        err = check_full_test_run(cmd)
         if err:
             block(err)
         for t in bash_write_targets(cmd):
