@@ -120,6 +120,30 @@ describe("notBefore с запасом в прошлое (РП66 п. 5)", () => {
     expect(s.notBefore.toISOString()).toBe(c.notBefore.toISOString());
   });
 
+  it("корень с запасом (Р-918): notBefore = часы − запас, notAfter = часы + срок; лист в ту же секунду — без обрезки", () => {
+    const c = SandboxCa.generate({ now: NOW, ttlDays: 3650, backdateSec: 300 });
+    expect(c.notBefore.toISOString()).toBe(new Date(SEC0 - 300_000).toISOString());
+    expect(c.notAfter.toISOString()).toBe(new Date(SEC0 + 3650 * DAY).toISOString());
+    const root = new X509Certificate(c.certificateDer);
+    expect(Date.parse(root.validFrom)).toBe(SEC0 - 300_000);
+    expect(Date.parse(root.validTo)).toBe(SEC0 + 3650 * DAY);
+    // Сразу после ca:init запас листа — полный, а не обрезанный до notBefore корня.
+    const r = c.issueAgentCertificate(newCsr().csr, CODE, NOW, 90, 300);
+    expect(r.ok && r.certificate.not_before).toBe(new Date(SEC0 - 300_000).toISOString());
+    expect(c.issueServerCertificate(["localhost"], NOW, 90, 300).notBefore.toISOString()).toBe(new Date(SEC0 - 300_000).toISOString());
+    // Клиент, отстающий на запас, — в сроке корня и листа.
+    expect(r.ok && x509(r.certificate.der).checkIssued(root)).toBe(true);
+  });
+
+  it("корень: запас по умолчанию 0 — прежнее поведение; 0 и 3 600 — принят; вне 0…3 600 и не целое — исключение", () => {
+    expect(ca().notBefore.toISOString()).toBe(new Date(SEC0).toISOString());
+    expect(SandboxCa.generate({ now: NOW, ttlDays: 1, backdateSec: 0 }).notBefore.toISOString()).toBe(new Date(SEC0).toISOString());
+    expect(SandboxCa.generate({ now: NOW, ttlDays: 1, backdateSec: 3600 }).notBefore.toISOString()).toBe(new Date(SEC0 - 3_600_000).toISOString());
+    for (const bad of [-1, 3601, 1.5, Number.NaN]) {
+      expect(() => SandboxCa.generate({ now: NOW, ttlDays: 1, backdateSec: bad }), String(bad)).toThrow(/запас notBefore/);
+    }
+  });
+
   it("запас 0 и 3 600 — принят; вне 0…3 600 и не целое — исключение", () => {
     const c = ca();
     const later = new Date(NOW.getTime() + DAY);

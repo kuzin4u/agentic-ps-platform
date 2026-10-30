@@ -10,7 +10,9 @@ if (path === undefined || path === "") {
   process.exit(1);
 }
 try {
-  const ca = initCaFile(path, { now: new Date(), ttlDays: loadParams().sandbox_ca_ttl_days });
+  // Корень — с тем же запасом notBefore, что у сертификатов агента и сервера (РП66 нюанс Р-918).
+  const params = loadParams();
+  const ca = initCaFile(path, { now: new Date(), ttlDays: params.sandbox_ca_ttl_days, backdateSec: params.cert_not_before_backdate_sec });
   console.log(`ca:init: УЦ песочницы создан: ${path} (0600)`);
   console.log(`ca:init: отпечаток SHA-256 корневого сертификата: ${ca.fingerprint}`);
   console.log(`ca:init: срок: ${ca.notBefore.toISOString()} — ${ca.notAfter.toISOString()}`);
