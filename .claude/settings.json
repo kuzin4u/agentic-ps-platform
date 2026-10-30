@@ -1,10 +1,20 @@
 {
+  "disableAutoMode": "disable",
   "permissions": {
     "allow": [
-      "Bash(git push:*)",
-      "Bash(gh pr create:*)",
+      "Bash(git status)",
+      "Bash(git status:*)",
+      "Bash(git log)",
+      "Bash(git log:*)",
+      "Bash(git diff)",
+      "Bash(git diff:*)",
+      "Bash(git show)",
+      "Bash(git show:*)",
+      "Bash(gh pr checks:*)",
       "Bash(gh pr view:*)",
-      "Bash(gh pr checks:*)"
+      "Bash(npm test)",
+      "Bash(npm test:*)",
+      "Bash(npx vitest run:*)"
     ],
     "deny": [
       "Bash(gh pr merge:*)",
@@ -20,6 +30,13 @@
     ],
     "ask": [
       "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git revert:*)",
+      "Bash(gh pr create:*)",
+      "Bash(git checkout:*)",
+      "Bash(git restore:*)",
+      "Bash(git reset:*)",
+      "Bash(git pull:*)",
       "Bash(npm install:*)",
       "Bash(npm i:*)",
       "Bash(curl:*)",
