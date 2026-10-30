@@ -183,6 +183,7 @@ describe("npm run ca:init — процесс (решения владельца 
 
   it("путь из PLATFORM_CA_KEY_PATH: файл 0600; вывод — отпечаток и открытый корневой PEM, закрытого ключа нет; повтор — EEXIST, файл прежний", () => {
     const p = join(dir(), "ca.pem");
+    const started = Math.floor(Date.now() / 1000) * 1000;
     const first = run(p);
     expect(first.code, first.out).toBe(0);
     expect(statSync(p).mode & 0o777).toBe(0o600);
@@ -191,8 +192,11 @@ describe("npm run ca:init — процесс (решения владельца 
     expect(first.stdout).toContain(loaded.certificatePem);
     expect(first.out).not.toContain(KEY_LABEL);
     expect(first.out).not.toContain(keyBody(readFileSync(p, "utf8")).slice(0, 40));
-    // Срок — sandbox_ca_ttl_days стенда (3 650 дней).
-    expect(loaded.notAfter.getTime() - loaded.notBefore.getTime()).toBe(3650 * DAY);
+    // Срок — sandbox_ca_ttl_days стенда (3 650 дней) от часов; notBefore — с запасом cert_not_before_backdate_sec (300 с,
+    // РП66 нюанс Р-918): длительность — срок + запас, notBefore не позже начала запуска − запас.
+    expect(loaded.notAfter.getTime() - loaded.notBefore.getTime()).toBe(3650 * DAY + 300_000);
+    expect(loaded.notBefore.getTime()).toBeGreaterThanOrEqual(started - 300_000);
+    expect(loaded.notBefore.getTime()).toBeLessThanOrEqual(Date.now() - 300_000);
 
     const before = sha256(p);
     const again = run(p);

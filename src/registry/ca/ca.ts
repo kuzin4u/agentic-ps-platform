@@ -124,6 +124,11 @@ export interface SandboxCaOptions {
   readonly now: Date;
   /** Срок корневого сертификата — sandbox_ca_ttl_days (РП65 п. 5). */
   readonly ttlDays: number;
+  /**
+   * Запас notBefore корневого в прошлое, с — cert_not_before_backdate_sec (РП66 нюанс Р-918): корень не позже выдаваемых,
+   * иначе max(notBefore УЦ, часы − запас) обрезает их запас, а клиент с отстающими часами отвергает сам корень. По умолчанию 0.
+   */
+  readonly backdateSec?: number;
 }
 
 /** Корневой сертификат, прочитанный из файла: DER и срок из него же. */
@@ -177,8 +182,14 @@ export class SandboxCa {
       return;
     }
     if (!Number.isInteger(root.ttlDays) || root.ttlDays < 1) throw new Error("срок УЦ: целое ≥ 1");
-    this.notBefore = toSecond(root.now);
-    this.notAfter = new Date(this.notBefore.getTime() + root.ttlDays * DAY_MS);
+    const backdateSec = root.backdateSec ?? 0;
+    if (!Number.isInteger(backdateSec) || backdateSec < 0 || backdateSec > BACKDATE_MAX_SEC) {
+      throw new Error(`запас notBefore: целое 0…${BACKDATE_MAX_SEC}`);
+    }
+    // notAfter — от часов, как у выдаваемых (РП65 п. 2): длительность корня — срок + запас, срок не сокращается.
+    const created = toSecond(root.now).getTime();
+    this.notBefore = new Date(created - backdateSec * 1000);
+    this.notAfter = new Date(created + root.ttlDays * DAY_MS);
     const extensions = [
       extension(OID_BASIC_CONSTRAINTS, true, seq(BOOLEAN_TRUE, uint(Buffer.from([0])))),
       extension(OID_KEY_USAGE, true, KU_KEY_CERT_SIGN),
