@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.28.2** (PS-05в ч. 2а: граница перехвата журнала, схема реестра агентов на PostgreSQL — миграция 120, хранилище без подключения к серверу; ответы агенту не меняются; ПАО — по-прежнему 1.4.0; РП64). Подробности —
+Текущая версия — **v0.33.0** (журнал обращений стенда `stand.calls()` и `stand.issuedCredentials()` — STAND-69; корень УЦ с запасом `notBefore` в `ca:init`; ответы агенту не меняются; ПАО — по-прежнему 1.4.0; РП25, РП66). Подробности —
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.28.2"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.33.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —
