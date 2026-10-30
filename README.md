@@ -33,4 +33,6 @@ npm run dev                  # то же с перезапуском при из
 npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.28.2"
 ```
 
-`createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`.
+`createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —
+`stand.calls()` (`source` `network` / `inject`, без тел), выданные пары реквизита для теста утечки — `stand.issuedCredentials()`
+(РП25, дополнение STAND-69).

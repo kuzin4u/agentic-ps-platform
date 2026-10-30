@@ -52,7 +52,16 @@ import {
 import { buildServer } from "../server.js";
 import { loadParams, type Params } from "../shared/config.js";
 import { holdLedger, StateService } from "../state/index.js";
+import { attachCallJournal, type StandCall } from "./calls.js";
 import { createStandDns, type StandDns } from "./dns.js";
+
+export type { StandCall } from "./calls.js";
+
+/** Выданная стендом пара реквизита — только для доказательного теста утечки (инвариант 1). */
+export interface IssuedCredential {
+  readonly token_ref: string;
+  readonly cryptogram: string;
+}
 
 /** Решение клиента в приложении банка стенда; по умолчанию — подпись простой ЭП с согласием на токен (РП12). */
 export interface IssuerSignOptions {
@@ -220,6 +229,16 @@ export interface Stand {
   readonly confirmations: Pick<ConfirmationStore, "get" | "byKey">;
   /** Эмулятор токен-сервиса (ПИ-4, РП47): выпущенные токены и проверка криптограммы — для тестов. */
   readonly tsp: Pick<TokenServiceEmulator, "issued" | "verify">;
+  /**
+   * Журнал обращений к приложению стенда (РП25 дополнение STAND-69): метод, путь без строки запроса, статус, code при
+   * 4xx / 5xx, kid, x-nonce, Idempotency-Key, source network / inject. Тел нет. Копия — по порядку завершения обращений.
+   */
+  calls(): readonly StandCall[];
+  /**
+   * Выданные пары token_ref и cryptogram по порядку выпуска, без повторов — только в стенде, для теста утечки реквизита
+   * (инвариант 1): в журнал обращений они не пишутся, хранилище П5 криптограмму не хранит.
+   */
+  issuedCredentials(): readonly IssuedCredential[];
   /** Подставляемые часы реестра, ключей и проверки подписи; undefined — системные. */
   setClock(d: Date | undefined): void;
   /** Текущее время стенда — те же часы, что у реестра и эмуляторов. */
@@ -366,6 +385,17 @@ export function createStand(opts: StandOptions = {}): Stand {
   });
   // Агентские реквизиты (П5, РП47): токен-сервис — эмулятор с ключом в памяти, funding_ref — от банка стенда.
   const tsp = createTokenServiceEmulator();
+  // Выданные пары (STAND-69): обёртка токен-сервиса для П5 — криптограмма детерминирована, повтор и пересчёт дают ту же пару.
+  const issuedPairs = new Map<string, IssuedCredential>();
+  const recordingTsp: typeof tsp = {
+    ...tsp,
+    async cryptogram(input) {
+      const cryptogram = await tsp.cryptogram(input);
+      const key = JSON.stringify([input.token_ref, cryptogram]);
+      if (!issuedPairs.has(key)) issuedPairs.set(key, Object.freeze({ token_ref: input.token_ref, cryptogram }));
+      return cryptogram;
+    },
+  };
   const credentialStore = new MemoryCredentialStore();
   // Подтверждение человеком (П6, РП50): запросы ADP и решения банка стенда — одно хранилище в памяти; переходы пишут
   // события confirmation.* в ленту журнала стенда (РП51 п. 1–3), push — по тому же правилу, что у мандатов.
@@ -373,7 +403,7 @@ export function createStand(opts: StandOptions = {}): Stand {
   const credentials = new Credentials({
     mandates: { get: (id, agent_code) => consent.credentialMandate(id, agent_code) },
     store: credentialStore,
-    tsp,
+    tsp: recordingTsp,
     funding: emulator,
     // Справочник продавцов (РП49 (д)): витрины эмулятора, на продавца — MCC витрины.
     merchants: merchantDirectory(),
@@ -468,6 +498,8 @@ export function createStand(opts: StandOptions = {}): Stand {
       },
     },
   });
+  // Журнал обращений (STAND-69) — до первого app.inject (подача знаков ниже): хуки регистрируются до загрузки приложения.
+  const calls = attachCallJournal(app);
   const issuer: StandIssuer = {
     participant_code: emulator.participant_code,
     trustedKey: emulator.trustedKey,
@@ -685,6 +717,8 @@ export function createStand(opts: StandOptions = {}): Stand {
     upk,
     confirmations: { get: (id) => confirmationStore.get(id), byKey: (key) => confirmationStore.byKey(key) },
     tsp,
+    calls,
+    issuedCredentials: () => [...issuedPairs.values()],
     setClock: (d) => (clock = d),
     now,
     caCertificate: ca.certificateDer.toString("base64"),
