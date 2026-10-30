@@ -5,8 +5,9 @@
 // С1 (РП68 п. 1): полный прогон — только при нагрузке < 10 и без чужого vitest; нагрузку и pgrep тест подменяет
 // переменными GUARD_TEST_LOADAVG и GUARD_TEST_VITEST. GUARD_PATH — путь к проверяемой копии стража (поломки, РП68 п. 5).
 // С2 (РП68 п. 2): >>, tee -a, sed -i, perl -i по файлам репозитория и памяти Claude Code — блок; память — под HOME теста.
+// С3 (РП68 п. 3): snap / verify и порядок поломок — во временном каталоге проекта (CLAUDE_PROJECT_DIR теста).
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -194,5 +195,101 @@ describe("guard.py С2: >>, tee -a, sed -i, perl -i по репозиторию 
   it("подсказка: репозиторий — инструментом Edit, переменная — путь буквально", () => {
     expect(guard("printf x >> src/a.ts", { HOME }).stderr).toContain("инструментом Edit");
     expect(guard('echo x >> "$F"', { HOME }).stderr).toContain("путь не вычислить");
+  });
+});
+
+describe("guard.py С3: порядок поломок — снимок, поломка, прогон, откат, сверка", () => {
+  function project() {
+    const dir = mkdtempSync(join(tmpdir(), "guard-c3-"));
+    mkdirSync(join(dir, ".git"));
+    writeFileSync(join(dir, "a.ts"), "const a = 1;\n");
+    writeFileSync(join(dir, "b.ts"), "const b = 2;\n");
+    const env = { CLAUDE_PROJECT_DIR: dir };
+    const cli = (cmd: string, file: string) =>
+      spawnSync("python3", [GUARD, cmd, file], { encoding: "utf8", env: { ...process.env, ...env } });
+    const tool = (tool_name: string, tool_input: Record<string, unknown>) => {
+      const r = spawnSync("python3", [GUARD], {
+        input: JSON.stringify({ tool_name, tool_input }),
+        encoding: "utf8",
+        env: { ...process.env, ...env },
+      });
+      return { status: r.status, stderr: r.stderr };
+    };
+    const edit = (file: string) => tool("Edit", { file_path: join(dir, file), old_string: "1", new_string: "3" });
+    const bash = (command: string) => tool("Bash", { command });
+    return { dir, state: join(dir, ".git/breakage.json"), cli, tool, edit, bash };
+  }
+
+  it("без снимка правки и коммит не ограничены", () => {
+    const p = project();
+    expect(p.edit("b.ts").status).toBe(0);
+    expect(p.bash("git commit -F /tmp/msg.txt").status).toBe(0);
+  });
+
+  it("снимок открыт: другой файл и коммит — блок, снимаемый файл — правится", () => {
+    const p = project();
+    expect(p.cli("snap", join(p.dir, "a.ts")).status).toBe(0);
+    expect(existsSync(p.state)).toBe(true);
+    expect(p.edit("a.ts").status).toBe(0);
+    const other = p.edit("b.ts");
+    expect(other.status).toBe(2);
+    expect(other.stderr).toContain("verify");
+    expect(p.tool("Write", { file_path: join(p.dir, "c.ts"), content: "x" }).status).toBe(2);
+    expect(p.tool("MultiEdit", { file_path: join(p.dir, "b.ts"), edits: [] }).status).toBe(2);
+    expect(p.bash("git commit -F /tmp/msg.txt").stderr).toContain("коммит с непроверенным откатом");
+    expect(p.bash("git add a.ts && git commit -F /tmp/msg.txt").status).toBe(2);
+    expect(p.bash("git status -sb").status).toBe(0);
+    expect(p.bash("cat > /tmp/pr.md <<'EOF'\ngit commit\nEOF").status).toBe(0);
+    expect(p.tool("Read", { file_path: join(p.dir, "b.ts") }).status).toBe(0);
+  });
+
+  it("второй снимок — отказ, пока первый не сверен", () => {
+    const p = project();
+    expect(p.cli("snap", join(p.dir, "a.ts")).status).toBe(0);
+    const again = p.cli("snap", join(p.dir, "b.ts"));
+    expect(again.status).toBe(1);
+    expect(again.stderr).toContain("снимок уже открыт");
+  });
+
+  it("откат не точный — снимок остаётся, точный — закрывается, правки снова открыты", () => {
+    const p = project();
+    const a = join(p.dir, "a.ts");
+    expect(p.cli("snap", a).status).toBe(0);
+    writeFileSync(a, "const a = 0; // поломка\n");
+    const bad = p.cli("verify", a);
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toContain("откат не точный");
+    expect(existsSync(p.state)).toBe(true);
+    expect(p.edit("b.ts").status).toBe(2);
+    writeFileSync(a, "const a = 1;\n");
+    expect(p.cli("verify", join(p.dir, "b.ts")).status).toBe(1);
+    const ok = p.cli("verify", a);
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toContain("откат точный");
+    expect(existsSync(p.state)).toBe(false);
+    expect(p.edit("b.ts").status).toBe(0);
+    expect(p.bash("git commit -F /tmp/msg.txt").status).toBe(0);
+  });
+
+  it("verify без снимка — отказ", () => {
+    const p = project();
+    expect(p.cli("verify", join(p.dir, "a.ts")).status).toBe(1);
+  });
+
+  it("файл состояния не читается — правки, коммит и snap закрыты (fail-closed)", () => {
+    const p = project();
+    writeFileSync(p.state, "{не json");
+    expect(p.edit("a.ts").status).toBe(2);
+    expect(p.bash("git commit -F /tmp/msg.txt").status).toBe(2);
+    expect(p.cli("snap", join(p.dir, "a.ts")).status).toBe(2);
+  });
+
+  it("файл состояния руками не меняется", () => {
+    const p = project();
+    expect(p.cli("snap", join(p.dir, "a.ts")).status).toBe(0);
+    expect(p.bash(`rm ${p.state}`).status).toBe(2);
+    expect(p.bash(`echo '{}' > ${p.state}`).status).toBe(2);
+    const fresh = project();
+    expect(fresh.tool("Write", { file_path: fresh.state, content: "{}" }).status).toBe(2);
   });
 });

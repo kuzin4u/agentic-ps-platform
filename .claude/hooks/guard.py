@@ -15,6 +15,10 @@
   6. С2 — дописывание и правка на месте (>>, tee -a, sed -i, perl -i) в файлы репозитория и памяти Claude Code
      (~/.claude/projects/*/memory): правка — только инструментом Edit; цель через переменную или подстановку,
      относительный путь после cd на невычислимый каталог — блок (РП68 п. 2).
+  7. С3 — порядок поломок «снимок sha256 → поломка → прогон → откат → сверка → следующая» (РП68 п. 3):
+     python3 .claude/hooks/guard.py snap <файл> | verify <файл>; состояние — .git/breakage.json.
+     При открытом снимке — блок Edit/Write другого файла и git commit; второй snap — отказ;
+     verify закрывает снимок только при совпадении sha256; файл состояния руками не меняется.
 """
 import json, re, shlex, sys, os
 
@@ -23,6 +27,7 @@ PROTECTED_WRITE = [
     re.compile(r"(^|/)\.env(\.|$)"),
     re.compile(r"\.(pem|key)$"),
     re.compile(r"(^|/)\.claude/hooks(/|$)"),
+    re.compile(r"(^|/)\.git/breakage\.json$"),  # С3: снимок поломки закрывает только verify
 ]
 ENV_EXAMPLE = re.compile(r"(^|/)\.env\.example$")
 SECRET_READ = [re.compile(r"(^|/)\.env(\.|$)"), re.compile(r"\.(pem|key)$")]
@@ -410,18 +415,105 @@ def check_append_writes(cmd: str, cwd: str):
     return None
 
 
+# --- С3: порядок поломок — снимок sha256 → поломка → прогон → откат → сверка → следующая (РП68 п. 3, Р-860) ---
+class BreakageStateError(Exception):
+    pass
+
+
+def breakage_state_path() -> str:
+    return os.path.join(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()), ".git", "breakage.json")
+
+
+def open_breakage():
+    """Открытый снимок {file, sha256} или None; нечитаемый файл состояния — BreakageStateError."""
+    p = breakage_state_path()
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, encoding="utf8") as f:
+            st = json.load(f)
+        if not isinstance(st.get("file"), str) or not isinstance(st.get("sha256"), str):
+            raise ValueError
+        return st
+    except Exception:
+        raise BreakageStateError(p)
+
+
+def file_sha256(path: str) -> str:
+    import hashlib
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def check_breakage_order(tool: str, ti: dict):
+    """None — разрешено; иначе текст причины отказа."""
+    try:
+        st = open_breakage()
+    except BreakageStateError as e:
+        return f"файл снимка поломки {e} не читается — проверьте его вручную (владелец); до этого правки и коммит закрыты."
+    if st is None:
+        return None
+    tail = f"открыт снимок поломки {st['file']}: сначала откат и python3 .claude/hooks/guard.py verify {st['file']}."
+    if tool in ("Write", "Edit", "MultiEdit"):
+        if os.path.realpath(ti.get("file_path", "")) != st["file"]:
+            return f"правка другого файла — {tail}"
+    elif tool == "Bash":
+        if any(re.search(r"\bgit\b.*\bcommit\b", s) for s in command_segments(ti.get("command", ""))):
+            return f"коммит с непроверенным откатом — {tail}"
+    return None
+
+
+def breakage_cli(cmd: str, target: str) -> int:
+    path = os.path.realpath(target)
+    try:
+        st = open_breakage()
+    except BreakageStateError as e:
+        print(f"файл снимка поломки {e} не читается — проверьте его вручную.", file=sys.stderr)
+        return 2
+    if cmd == "snap":
+        if st is not None:
+            print(f"снимок уже открыт: {st['file']} — сначала откат и verify.", file=sys.stderr)
+            return 1
+        if not os.path.isfile(path):
+            print(f"нет файла {path}.", file=sys.stderr)
+            return 1
+        sha = file_sha256(path)
+        with open(breakage_state_path(), "w", encoding="utf8") as f:
+            json.dump({"file": path, "sha256": sha}, f, ensure_ascii=False)
+        print(f"снимок: {path} {sha}")
+        return 0
+    if st is None:
+        print("открытого снимка нет.", file=sys.stderr)
+        return 1
+    if path != st["file"]:
+        print(f"открыт снимок другого файла: {st['file']}.", file=sys.stderr)
+        return 1
+    sha = file_sha256(path)
+    if sha != st["sha256"]:
+        print(f"откат не точный: снимок {st['sha256']}, сейчас {sha}; снимок остаётся открытым.", file=sys.stderr)
+        return 1
+    os.remove(breakage_state_path())
+    print(f"откат точный: {path} {sha}; снимок закрыт.")
+    return 0
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] in ("snap", "verify"):
+        sys.exit(breakage_cli(sys.argv[1], sys.argv[2]))
     try:
         data = json.load(sys.stdin)
     except Exception:
         sys.exit(0)
     tool = data.get("tool_name", "")
     ti = data.get("tool_input", {}) or {}
+    err = check_breakage_order(tool, ti)
+    if err:
+        block(err)
 
     if tool in ("Write", "Edit", "MultiEdit"):
         path = ti.get("file_path", "")
         if is_protected_write(path):
-            block(f"запись в защищённый путь {rel(path)}. docs/reference — только чтение; .env и ключи — вне репозитория; хуки меняет владелец.")
+            block(f"запись в защищённый путь {rel(path)}. docs/reference — только чтение; .env и ключи — вне репозитория; хуки меняет владелец; снимок поломки закрывает только verify.")
         parts = [ti.get("content", ""), ti.get("new_string", "")]
         for e in ti.get("edits", []) or []:
             parts.append(e.get("new_string", ""))
