@@ -4,15 +4,18 @@
 // подстановка команды $(…) или `…`, исполняется оболочкой — его хук проверяет как команду.
 // С1 (РП68 п. 1): полный прогон — только при нагрузке < 10 и без чужого vitest; нагрузку и pgrep тест подменяет
 // переменными GUARD_TEST_LOADAVG и GUARD_TEST_VITEST. GUARD_PATH — путь к проверяемой копии стража (поломки, РП68 п. 5).
+// С2 (РП68 п. 2): >>, tee -a, sed -i, perl -i по файлам репозитория и памяти Claude Code — блок; память — под HOME теста.
 import { spawnSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const GUARD = process.env.GUARD_PATH ?? join(process.cwd(), ".claude/hooks/guard.py");
 
-function guard(command: string, env: Record<string, string> = {}): { status: number | null; stderr: string } {
+function guard(command: string, env: Record<string, string> = {}, cwd?: string): { status: number | null; stderr: string } {
   const r = spawnSync("python3", [GUARD], {
-    input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }),
+    input: JSON.stringify({ tool_name: "Bash", tool_input: { command }, ...(cwd ? { cwd } : {}) }),
     encoding: "utf8",
     env: { ...process.env, CLAUDE_PROJECT_DIR: process.cwd(), ...env },
   });
@@ -121,5 +124,75 @@ describe("guard.py С1: полный прогон — нагрузка < 10 и �
   it("сбой проверки — блок (fail-closed)", () => {
     expect(guard("npm test", { GUARD_TEST_LOADAVG: "2.5", GUARD_TEST_VITEST: "error" }).status).toBe(2);
     expect(guard("npm test", { GUARD_TEST_LOADAVG: "нет", GUARD_TEST_VITEST: "0" }).status).toBe(2);
+  });
+});
+
+const HOME = mkdtempSync(join(tmpdir(), "guard-home-"));
+const MEMORY = join(HOME, ".claude/projects/-Users-x-repos-p/memory");
+const REPO = process.cwd();
+
+const APPEND_BLOCKED: [string, string][] = [
+  ["printf >> в файл репозитория", "printf 'x\\n' >> tests/unit/a.test.ts"],
+  ["cat >> с heredoc", "cat >> docs/core/STATUS.md <<'EOF'\nтекст\nEOF"],
+  ["echo >>файл слитно", "echo x >>README.md"],
+  ["echo x>>файл без пробелов", "echo x>>README.md"],
+  ["2>> в файл репозитория", "ls 2>> err.log"],
+  ["&>> в файл репозитория", "ls &>> out.log"],
+  ["абсолютный путь в репозитории", `echo x >> ${REPO}/src/a.ts`],
+  ["после &&", "true && printf x >> src/a.ts"],
+  ["tee -a", "echo x | tee -a src/a.ts"],
+  ["tee --append", "echo x | tee --append src/a.ts > /dev/null"],
+  ["sed -i GNU", "sed -i 's/a/b/' src/a.ts"],
+  ["sed -i '' BSD", "sed -i '' 's/a/b/' src/a.ts"],
+  ["sed -i.bak -e", "sed -i.bak -e 's/a/b/' src/a.ts"],
+  ["sed -E -i с абсолютным путём", `sed -E -i 's/a/b/' ${REPO}/src/a.ts`],
+  ["perl -pi -e", "perl -pi -e 's/a/b/' src/a.ts"],
+  ["память: >> через ~", "echo x >> ~/.claude/projects/-Users-x-repos-p/memory/MEMORY.md"],
+  ["память: абсолютный путь", `printf x >> ${MEMORY}/note.md`],
+  ["память: sed -i", `sed -i '' 's/a/b/' ${MEMORY}/MEMORY.md`],
+  ["цель через переменную", 'echo x >> "$F"'],
+  ["цель через $HOME", "sed -i 's/a/b/' $HOME/notes.md"],
+  ["цель через подстановку", "echo x >> $(pwd)/a.md"],
+  ["cd в каталог репозитория", "cd docs && echo x >> core/STATUS.md"],
+  ["cd на переменную", 'cd "$D" && echo x >> f.md'],
+  [">> без цели", "echo x >>"],
+];
+
+const APPEND_ALLOWED: [string, string][] = [
+  [">> во временный каталог", "echo x >> /tmp/guard-test.log"],
+  ["cd /tmp и относительный путь", "cd /tmp && echo x >> a.log"],
+  ["tee -a во временный каталог", "echo x | tee -a /tmp/x.log"],
+  ["sed -i '' во временном каталоге", "sed -i '' 's/a/b/' /tmp/x.txt"],
+  ["sed без -i", "sed -n 's/a/b/p' src/a.ts"],
+  ["перезапись > (не дописывание)", "echo x > /tmp/a.txt"],
+  ["2>&1 и >> во временный каталог", "ls 2>&1 >> /tmp/a.log"],
+  ["прогон с выводом в файл", "npx vitest run tests/unit/guard.test.ts > /tmp/a.log 2>&1"],
+  [">> в кавычках — данные", 'git commit -m "К1.2: echo x >> README.md — блок"'],
+  ["в теле heredoc — данные", "cat > /tmp/pr.md <<'EOF'\nprintf x >> src/a.ts\nEOF"],
+  ["домашний каталог вне памяти", "echo x >> ~/notes.txt"],
+  ["каталог проекта Claude вне memory", "echo x >> ~/.claude/projects/-Users-x-repos-p/other.md"],
+];
+
+describe("guard.py С2: >>, tee -a, sed -i, perl -i по репозиторию и памяти — блок", () => {
+  it.each(APPEND_BLOCKED)("блокирует: %s", (_name, command) => {
+    const r = guard(command, { HOME });
+    expect(r.stderr).toContain("БЛОК guard.py");
+    expect(r.status).toBe(2);
+  });
+
+  it.each(APPEND_ALLOWED)("пропускает: %s", (_name, command) => {
+    const r = guard(command, { HOME });
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+  });
+
+  it("каталог из входа хука: из /tmp относительный путь пропускается, после cd на переменную — блок", () => {
+    expect(guard("echo x >> f.md", { HOME }, "/tmp").status).toBe(0);
+    expect(guard('cd "$D" && echo x >> f.md', { HOME }, "/tmp").status).toBe(2);
+  });
+
+  it("подсказка: репозиторий — инструментом Edit, переменная — путь буквально", () => {
+    expect(guard("printf x >> src/a.ts", { HOME }).stderr).toContain("инструментом Edit");
+    expect(guard('echo x >> "$F"', { HOME }).stderr).toContain("путь не вычислить");
   });
 });

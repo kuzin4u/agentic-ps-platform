@@ -12,6 +12,9 @@
      Тело heredoc — данные, не команда; подстановка $(…) и `…` проверяется как команда (К2.1, 14.10.2026).
   5. С1 — полный прогон тестов (npm test, npm run test, vitest без путей к файлам) — только при нагрузке
      за 1 мин < 10 и без чужого vitest (pgrep -f 'vitest/vitest.mjs'); сбой проверки — блок (РП68 п. 1).
+  6. С2 — дописывание и правка на месте (>>, tee -a, sed -i, perl -i) в файлы репозитория и памяти Claude Code
+     (~/.claude/projects/*/memory): правка — только инструментом Edit; цель через переменную или подстановку,
+     относительный путь после cd на невычислимый каталог — блок (РП68 п. 2).
 """
 import json, re, shlex, sys, os
 
@@ -322,6 +325,91 @@ def check_full_test_run(cmd: str):
     return None
 
 
+# --- С2: >>, tee -a, sed -i, perl -i по файлам репозитория и памяти — блок (РП68 п. 2, Р-651, Р-761) ---
+UNRESOLVED = re.compile(r"[$`*?\[{]")
+MEMORY_REL = re.compile(r"^[^/]+/memory(/|$)")
+
+
+def shell_tokens(segment: str):
+    """Токены с операторами перенаправления отдельно (a>>f → a, >>, f); строка в кавычках — один токен."""
+    lex = shlex.shlex(segment, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    try:
+        return list(lex)
+    except ValueError:
+        return segment.split()
+
+
+def append_targets(tok):
+    """Цели дописывания и правки на месте в одном сегменте команды."""
+    targets, words, i = [], [], 0
+    while i < len(tok):
+        t = tok[i]
+        if re.fullmatch(r"[<>&|]+", t):
+            nxt = tok[i + 1] if i + 1 < len(tok) else None
+            if ">>" in t:
+                targets.append(nxt if nxt is not None else "$")  # цель не видна — fail-closed
+            if words and words[-1].isdigit():
+                words.pop()  # номер дескриптора перед оператором (2>>, 2>)
+            # цель перенаправления (файл, дескриптор в 2>&1) — не аргумент команды; & — фоновый запуск
+            i += 1 if nxt is None or t in ("&", "|", "|&") else 2
+            continue
+        words.append(t)
+        i += 1
+    if not words:
+        return targets
+    head = os.path.basename(words[0])
+    flags = [a for a in words[1:] if a.startswith("-")]
+    args = [a for a in words[1:] if a and not a.startswith("-")]  # '' — суффикс BSD sed -i ''
+    if head == "tee" and any(f in ("-a", "--append") or (re.match(r"^-[a-z]+$", f) and "a" in f) for f in flags):
+        targets += args
+    elif head == "sed" and any(f.startswith("-i") or f.startswith("--in-place") or re.match(r"^-[a-zA-Z]*i", f) for f in flags):
+        # без -e / -f первый аргумент — сценарий sed, остальные — файлы
+        targets += args if any(f in ("-e", "-f") or f.startswith("--expression") for f in flags) else args[1:]
+    elif head == "perl" and any(re.match(r"^-[a-zA-Z]*i", f) for f in flags):
+        targets += args if "-e" in flags or any(re.match(r"^-[a-zA-Z]*e$", f) for f in flags) else args[1:]
+    return targets
+
+
+def protected_append_path(target: str, cwd):
+    """None — путь вне репозитория и памяти; иначе текст причины. cwd=None — каталог не вычислить."""
+    if UNRESOLVED.search(target):
+        return f"цель записи «{target}» через переменную или подстановку — путь не вычислить; укажите путь буквально или правьте инструментом Edit."
+    p = os.path.expanduser(target)
+    if not os.path.isabs(p):
+        if cwd is None:
+            return f"относительная цель «{target}» после cd на невычислимый каталог — укажите абсолютный путь."
+        p = os.path.join(cwd, p)
+    p = os.path.realpath(p)
+    root = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    if p == root or p.startswith(root + os.sep):
+        return f"дописывание или правка на месте в файл репозитория {os.path.relpath(p, root)} — только инструментом Edit (Р-651)."
+    projects = os.path.realpath(os.path.expanduser("~/.claude/projects"))
+    if p.startswith(projects + os.sep) and MEMORY_REL.match(p[len(projects) + 1:]):
+        return f"дописывание или правка на месте в память Claude Code {p} — только инструментом Edit или Write (Р-761)."
+    return None
+
+
+def check_append_writes(cmd: str, cwd: str):
+    """None — разрешено; иначе текст причины отказа."""
+    for segment in command_segments(cmd):
+        tok = shell_tokens(segment)
+        while tok and ENV_ASSIGN.match(tok[0]):
+            tok = tok[1:]
+        if tok and tok[0] == "cd":
+            dest = tok[1] if len(tok) > 1 else "~"
+            if cwd is None or UNRESOLVED.search(dest) or dest == "-":
+                cwd = None
+            else:
+                cwd = os.path.join(cwd, os.path.expanduser(dest))
+            continue
+        for t in append_targets(tok):
+            err = protected_append_path(t, cwd)
+            if err:
+                return err
+    return None
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -352,6 +440,9 @@ def main():
         if err:
             block(err)
         err = check_full_test_run(cmd)
+        if err:
+            block(err)
+        err = check_append_writes(cmd, data.get("cwd") or os.getcwd())
         if err:
             block(err)
         for t in bash_write_targets(cmd):
