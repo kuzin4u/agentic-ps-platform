@@ -45,6 +45,10 @@ export const spawnExec: Exec = (cmd, args, input, env) =>
     p.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
     p.once("error", reject);
     p.once("close", (code) => resolve({ code, stdout, stderr }));
+    // Процесс может выйти, не прочитав ввод (operator.mjs на SCHEMA_NOT_READY): EPIPE — не сбой, итог — код и вывод.
+    p.stdin.on("error", (e: NodeJS.ErrnoException) => {
+      if (e.code !== "EPIPE") reject(e);
+    });
     p.stdin.end(input ?? "");
   });
 

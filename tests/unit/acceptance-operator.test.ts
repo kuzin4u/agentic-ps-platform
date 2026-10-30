@@ -131,6 +131,18 @@ describe("operator.mjs — отказы до базы", () => {
   });
 });
 
+describe("spawnExec — процесс не читает ввод (К1 сессии 59)", () => {
+  // Путь SCHEMA_NOT_READY: operator.mjs выходит, не прочитав stdin; запись в закрытый канал — EPIPE.
+  // Итог — код выхода и вывод процесса, не необработанная ошибка (CI PR #84, d495796).
+  it("выход сразу при большом вводе — результат с кодом процесса", async () => {
+    const big = "x".repeat(8 * 1024 * 1024);
+    for (let i = 0; i < 5; i++) {
+      const r = await spawnExec(process.execPath, ["-e", 'process.stdout.write("ушёл"); process.exit(3)'], big);
+      expect(r).toEqual({ code: 3, stdout: "ушёл", stderr: "" });
+    }
+  });
+});
+
 function parseReplyCode(r: ExecResult): string {
   try {
     parseReply("t", r);
