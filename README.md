@@ -35,4 +35,5 @@ npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —
 `stand.calls()` (`source` `network` / `inject`, без тел), выданные пары реквизита для теста утечки — `stand.issuedCredentials()`
-(РП25, дополнение STAND-69).
+(РП25, дополнение STAND-69). Способы оплаты витрин эмулятора продавцов — `createMerchants(stand, { paymentMethods: { "MER-1042": ["cash"] } })`:
+замена по `merchant_id`, `[]` допустим, неизвестный `merchant_id` — исключение (РП25, дополнение #86).

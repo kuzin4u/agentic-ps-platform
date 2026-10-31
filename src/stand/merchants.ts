@@ -6,10 +6,12 @@ import type { FastifyInstance } from "fastify";
 import { Acquirer, OpkcStub } from "../env/acquirer/index.js";
 import {
   MerchantAgentVerifier,
+  SHOPS,
   buildMerchantsServer,
   type OrderReplyFailure,
   type PackageMetadata,
   type ReconciliationPort,
+  type Shop,
   type ShopListFailure,
 } from "../env/merchants/index.js";
 import type { Stand } from "./index.js";
@@ -23,6 +25,21 @@ export interface MerchantsStandOptions {
   readonly rateLimitPerMin?: number;
   /** Решение заглушки ОПКЦ; по умолчанию одобрение. */
   readonly decide?: ConstructorParameters<typeof OpkcStub>[0];
+  /**
+   * Замена `payment_methods` у витрин фикстуры по `merchant_id` (#86): значения — как есть, `[]` допустим; неизвестный
+   * `merchant_id` — исключение. Знак, справочник продавцов и эквайрер стенда не меняются; способ при оплате эмулятор не
+   * сверяет, зона витрины — по знаку.
+   */
+  readonly paymentMethods?: Readonly<Record<string, readonly string[]>>;
+}
+
+/** Витрины фикстуры с заменой `payment_methods` (#86); `SHOPS` не меняется. */
+function shopsWithMethods(methods: Readonly<Record<string, readonly string[]>>): readonly Shop[] {
+  const known = new Set(SHOPS.map((s) => s.merchant_id));
+  for (const id of Object.keys(methods)) {
+    if (!known.has(id)) throw new Error(`paymentMethods: неизвестный merchant_id ${id}`);
+  }
+  return SHOPS.map((s) => (Object.hasOwn(methods, s.merchant_id) ? { ...s, payment_methods: [...methods[s.merchant_id]!] } : s));
 }
 
 export interface MerchantsStand {
@@ -47,6 +64,7 @@ export interface MerchantsStand {
 }
 
 export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}): MerchantsStand {
+  const shops = opts.paymentMethods ? shopsWithMethods(opts.paymentMethods) : undefined;
   const opkc = new OpkcStub(opts.decide);
   const aoiSupport = opts.aoiSupport ?? true;
   const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport, opkc, now: stand.now });
@@ -82,6 +100,7 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     shopListFailure: () => shopListFailure,
     orderReplyFailure: () => orderReplyFailure,
     now: stand.now,
+    ...(shops ? { shops } : {}),
   });
   return {
     app,
