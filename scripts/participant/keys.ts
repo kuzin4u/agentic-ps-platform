@@ -14,7 +14,12 @@ export type ParticipantToolCode =
   | "KEY_DIR_MISSING"
   | "KEY_PATH_IN_REPO"
   | "KEY_EXISTS"
-  | "REPO_ROOT_UNKNOWN";
+  | "REPO_ROOT_UNKNOWN"
+  | "KEY_INVALID"
+  | "CA_INVALID"
+  | "FINGERPRINT_MISMATCH"
+  | "ARGS_INVALID"
+  | "CONNECT_FAILED";
 
 export class ParticipantToolError extends Error {
   constructor(readonly code: ParticipantToolCode, detail: string) {
