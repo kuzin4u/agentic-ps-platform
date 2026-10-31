@@ -1,9 +1,9 @@
 // Сгенерировано scripts/gen-shared.mjs из docs/core/processing-interface.yaml — не править вручную.
-// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 5414b7cb4bd222d380b718976d5ce5c283ab8fc958e5cbcd976e487745a2f02c
+// Интерфейсы Платформы с процессингом и участниками 1.0.0-draft, sha-256 8b9f0b81cc9381829ab29b07367439cef6e3263ac4bbb7262dfa6e086e38bec3
 // Номера полей и кодов внешних форматов здесь нет: только каноническая модель [альбом] (РП6).
 
 export const PI_VERSION = "1.0.0-draft";
-export const PI_SPEC_SHA256 = "5414b7cb4bd222d380b718976d5ce5c283ab8fc958e5cbcd976e487745a2f02c";
+export const PI_SPEC_SHA256 = "8b9f0b81cc9381829ab29b07367439cef6e3263ac4bbb7262dfa6e086e38bec3";
 
 export interface Instrument {
   kind: "AGENT_TOKEN" | "ACCOUNT_LINK" | "CARD_TOKEN";
@@ -43,6 +43,8 @@ export interface CanonicalMessage {
   order_ref?: string;
   reservation_id?: string | null;
   issuer_approved?: boolean | null;
+  /** Ссылка возврата у процессинга — только у REFUND, необязательная (РП71 п. 1, PS-23 ч. 1): непустая строка, как op_ref (null или пустая — 400); номер поля внешнего формата — [альбом] (РП6). Без неё — один возврат на op_ref (РП55 п. 3); с ней — запись на пару (op_ref, refund_ref). Первый возврат операции задаёт форму: смешение форм по одной операции — 202 и инцидент без записи (нюанс 1). */
+  refund_ref?: string;
   ts?: string;
 }
 
@@ -274,6 +276,10 @@ export const PI_SCHEMAS: Record<string, unknown> = {
       "issuer_approved": {
         "type": "boolean",
         "nullable": true
+      },
+      "refund_ref": {
+        "type": "string",
+        "description": "Ссылка возврата у процессинга — только у REFUND, необязательная (РП71 п. 1, PS-23 ч. 1): непустая строка, как op_ref (null или пустая — 400); номер поля внешнего формата — [альбом] (РП6). Без неё — один возврат на op_ref (РП55 п. 3); с ней — запись на пару (op_ref, refund_ref). Первый возврат операции задаёт форму: смешение форм по одной операции — 202 и инцидент без записи (нюанс 1)."
       },
       "ts": {
         "type": "string",
