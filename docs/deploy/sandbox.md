@@ -112,6 +112,7 @@ PAO_TRUSTED_PROXIES=
   ```
   echo '{"participants": []}' | sudo tee /etc/agentic-platform/participants.json && sudo chmod 0644 /etc/agentic-platform/participants.json
   ```
+  Тестовый банк-участник — раздел 9а: запись из `npm run participant -- keygen`, затем перезапуск.
 - `PAO_TRUSTED_PROXIES` — пустой (раздел 0).
 
 ## 6. Unit systemd
@@ -230,6 +231,72 @@ npm run acceptance -- --host sandbox.agentic-comm.ru --port 8443 \
 | 12 | Журнал запуска | `ca_fingerprint` = ожидаемому, `server_cert_not_after` = сроку сертификата из проверки 1 |
 | 13 | Перезапуск, затем повтор 1, 5, 12 | сертификат сервера новый, остальное как до перезапуска |
 
+## 9а. Тестовый банк-участник с Mac
+
+Подпись и отзыв мандата клиентом в песочнице делает только банк-участник по ПИ-8. Рабочий сервер ключа эмулятора эмитента не принимает. Тестовый банк — инструмент `npm run participant` на Mac (Р-1031, Р-1040). Сервер для этого не меняется: ПИ-8 уже на том же порту, по HTTPS, без клиентского сертификата. Банку доверяют по подписи тела его ключом из `participants.json`.
+
+Нужен Node ≥ 20.19 и копия репозитория (`npm ci`), как для приёмки. `--silent` убирает строку-заголовок npm из вывода.
+
+**1. Ключ банка — один раз, вне клона репозитория:**
+
+```
+mkdir -p ~/sandbox && chmod 0700 ~/sandbox
+cd ~/repos/agentic-ps-platform
+npm run --silent participant -- keygen --code test-bank --key ~/sandbox/test-bank.pem > ~/sandbox/test-bank.json
+```
+
+- Закрытый ключ — PKCS8 PEM с правами 0600. Существующий файл не перезаписывается (`KEY_EXISTS`). Путь внутри клона отклоняется (`KEY_PATH_IN_REPO`; сверка с корнем git по реальным путям). Каталог должен существовать.
+- Вывод — только открытая запись: `participant_code`, `kid`, `alg`, `public_key`, `revocation_order` (`bank:test-bank:revocation:v1`). Запись проверена тем же конструктором, что и в рабочем сервере. Код эмулятора стенда (`stand:…`) или недопустимый код — `CODE_INVALID`, ключ не пишется.
+- Ключ не покидает Mac. На VPS уходит только запись.
+
+**2. Запись в `participants.json` и перезапуск:**
+
+```
+node -e 'const r=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(JSON.stringify({participants:[r]},null,2))' \
+  < ~/sandbox/test-bank.json > ~/sandbox/participants.json
+scp ~/sandbox/participants.json owner@<vps>:/tmp/participants.json
+ssh -t owner@<vps> 'sudo install -m 0644 -o root -g root /tmp/participants.json /etc/agentic-platform/participants.json && rm /tmp/participants.json && sudo systemctl restart agentic-platform'
+```
+
+- Список читается только при запуске, поэтому после правки нужен перезапуск.
+- Ошибка в файле — отказ запуска `STARTUP_PARTICIPANTS_INVALID` (раздел 7). Боевой банк-участник в песочнице допустим только один (`MAX_LIVE_PARTICIPANTS = 1`): второй банк тоже даст отказ запуска.
+
+**3. Подпись мандата.** `id` и `hash` мандата — из ответа агента на `GET /pao/v1/mandates/{id}`. Мандат должен быть в `PENDING_SIGNATURE`. Метода, через который банк сам прочитал бы мандат, в ПИ-8 нет (раздел 10 п. 8).
+
+```
+npm run --silent participant -- sign --host sandbox.agentic-comm.ru --port 8443 \
+  --ca ~/sandbox/ca-root.crt --fingerprint <64 hex из ca:init> \
+  --key ~/sandbox/test-bank.pem --code test-bank \
+  --mandate <id> --hash <hash> [--decision SIGN|REJECT] [--signature-type simple|qualified|gov_id] [--token-consent]
+```
+
+- По умолчанию: `--decision SIGN`, `--signature-type simple`, `token_consent` — `false`. Без `--token-consent` клиент не дал согласия на токен.
+- Ответ: `{"status": 200, "body": {"mandate_id": "…", "status": "ACTIVE"}}` (при `REJECT` — `REJECTED`).
+
+**4. Отзыв мандата клиентом:**
+
+```
+npm run --silent participant -- revoke --host sandbox.agentic-comm.ru --port 8443 \
+  --ca ~/sandbox/ca-root.crt --fingerprint <64 hex из ca:init> \
+  --key ~/sandbox/test-bank.pem --code test-bank --mandate <id> --hash <hash>
+```
+
+Ответ — `REVOKED`. Повтор по уже отозванному мандату — текущий статус без новой записи.
+
+**Коды выхода и отказы:**
+- Коды выхода: 0 — ПИ-8 ответил 200; 1 — отказ инструмента или ПИ-8; 2 — ошибка параметров.
+- До соединения: `FINGERPRINT_MISMATCH` (отпечаток файла `--ca` ≠ `--fingerprint`), `CA_INVALID`, `KEY_INVALID`, `ARGS_INVALID` (`--hash` — 64 hex в нижнем регистре).
+- Рукопожатие: доверие только корню из `--ca`, имя сервера проверяется по сертификату. `CONNECT_FAILED` — с кодом Node, например `ERR_TLS_CERT_ALTNAME_INVALID`, если `--host` нет в `PLATFORM_TLS_HOSTNAMES`.
+- Ответы ПИ-8 (`body.code`):
+
+| HTTP | `code` | Причина |
+|---|---|---|
+| 401 | `SIGNATURE_INVALID` | ключа нет в `participants.json`, не тот `--code`, или CART, корневой INTENT которого подписал не этот банк |
+| 404 | `MANDATE_NOT_FOUND` | неверный `--mandate` |
+| 409 | `MANDATE_HASH_MISMATCH` | `--hash` ≠ `Mandate.hash` |
+| 409 | `MANDATE_NOT_PENDING` | решение уже принято другой подписью |
+| 422 | `QUALIFIED_SIGNATURE_REQUIRED` | выше порога простой подписи (`--signature-type qualified`) |
+
 ## 10. Нюансы и остаточные риски
 
 1. **Тестовые агенты остаются в реестре.** Каждый прогон допускает двух агентов `nspk:agent:acc-…:v1` (оператор `op-acceptance`, контур `sandbox`): с CSR и без (второму в допуске отказано, записи нет). Допущенный агент остаётся ACTIVE с отозванным сертификатом. Удаления из реестра нет, и без действующего сертификата ступень 0 его не пропустит. Если сбой случится между допуском и отзывом, сертификат останется действующим. Закрытый ключ к нему жил только в памяти процесса приёмки и уже потерян, так что воспользоваться сертификатом нельзя.
@@ -238,3 +305,7 @@ npm run acceptance -- --host sandbox.agentic-comm.ru --port 8443 \
 4. **Только порт сервиса.** Проверка 4 не видит HTTP на других портах; сверка — `ss -ltnp` (раздел 1).
 5. **Отзыв проверяется на новом соединении.** Распространение отзыва на открытое keep-alive соединение в пределах `revocation_propagation_max_ms` приёмка не проверяет (STATUS «Открыто»).
 6. **Исключение вне проверки** (например, при генерации ключей) завершает приёмку кодом 1 без таблицы. Это безопасно, но без отчёта (STATUS «Открыто»). По Ctrl+C временный каталог на VPS может остаться; в нём только `operator.mjs`, секретов нет. Удалить: `sudo -u agentic rm -rf /tmp/tmp.*`.
+7. **Время решения и отзыва банка — по часам Mac.** `signed_at` и `revoked_at` ставит инструмент. Сервер с часами Платформы их не сверяет, поэтому в выписке время банка, а не Платформы. Пересмотр — перед пилотом с банком, вместе с п. 8 (STATUS «Открыто»).
+8. **`--hash` — вручную от агента.** Банк подписывает `Mandate.hash` из ответа агента на `GET /pao/v1/mandates/{id}`, не видя содержания мандата: чтения мандата банком в ПИ-8 нет (STATUS «Открыто»). Чужой хэш сервер отклонит (`MANDATE_HASH_MISMATCH`), но что именно подписано, тестовый банк сам не проверяет.
+9. **Сверка отпечатка — общая с приёмкой.** `normFingerprint` инструмент берёт из `scripts/acceptance/checks.ts`. Правка приёмки меняет и сверку у тестового банка; тест `tests/unit/participant-https.test.ts` это ловит.
+10. **Ключ банка — файл на Mac.** Права 0600 инструмент ставит только при создании. Переносить ключ в клон репозитория, в облачную папку или на VPS нельзя. Потеря ключа — новый `keygen` в другой файл (новый `kid`), новая запись в `participants.json` и перезапуск.

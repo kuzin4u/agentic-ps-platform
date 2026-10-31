@@ -1,6 +1,6 @@
 {
   "name": "agentic-ps-platform",
-  "version": "0.34.0",
+  "version": "0.35.0",
   "private": true,
   "description": "Агентная платформа платёжной системы: ADP, журнал согласий, ПАО, эмуляторы окружения",
   "type": "module",
@@ -37,7 +37,8 @@
     "gen:shared": "node scripts/gen-shared.mjs",
     "gen:shared:check": "node scripts/gen-shared.mjs --check",
     "test:install": "node scripts/check-install.mjs",
-    "acceptance": "tsx scripts/acceptance/main.ts"
+    "acceptance": "tsx scripts/acceptance/main.ts",
+    "participant": "tsx scripts/participant/main.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

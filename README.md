@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.34.0** (способы оплаты витрин стенда `createMerchants(stand, { paymentMethods })` — #86; ответы агенту не меняются; ПАО — по-прежнему 1.4.0; РП25). Подробности —
+Текущая версия — **v0.35.0** (тестовый банк-участник песочницы `npm run participant` — keygen, sign / revoke по ПИ-8, `docs/deploy/sandbox.md` §9а; сервер и ответы агенту не меняются; ПАО — по-прежнему 1.4.0; Р-1031). Подробности —
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.34.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.35.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —
