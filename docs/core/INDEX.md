@@ -14,7 +14,7 @@
 | [`PARAMS.md`](PARAMS.md) | Стендовые параметры |
 | [`SECURITY.md`](SECURITY.md) | Модель угроз по компонентам, ключи Платформы, mTLS песочницы, аутентификация операторов агентов, ограничения песочницы |
 | [`../deploy/sandbox.md`](../deploy/sandbox.md) | Песочница на VPS: установка v0.32.1, `ca:init`, переменные, unit systemd, доступ для приёмки (sudoers, журнал), `npm run acceptance` — 13 проверок, нюансы (SANDBOX-ACC) |
-| [`DECISIONS.md`](DECISIONS.md) | РП1–РП69 |
+| [`DECISIONS.md`](DECISIONS.md) | РП1–РП71 (РП70 — за блоком «путь покупки в песочнице») |
 | [`ROADMAP.md`](ROADMAP.md) | Ред. 2: 8 этапов (0–7), 34 сессии, сроки по календарю планов рынков |
 | [`STATUS.md`](STATUS.md) | Состояние и следующая сессия |
 | [`GLOSSARY.md`](GLOSSARY.md) | Термины |
