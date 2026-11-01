@@ -9,6 +9,7 @@ import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent
 import { merchantCall, merchantFetch, signedMerchantRequest } from "../support/merchant-call.js";
 
 const LIMIT = loadParams().merchant_rate_limit_per_min;
+const HOLD = loadParams().order_hold_sec;
 const A = "nspk:agent:shop-a:v1";
 const B = "nspk:agent:shop-b:v1";
 const T0 = new Date("2026-10-13T10:00:00Z");
@@ -67,8 +68,8 @@ describe("К6: список витрин и зоны", () => {
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc });
     const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
     // Одни часы: updated_at карточек — от момента ответа (РП58 п. 6), сравнение — без разницы часов.
-    const one = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT, now: () => T0 });
-    const two = buildMerchantsServer({ verifier, acquirer, shops: flipped, rateLimitPerMin: LIMIT, now: () => T0 });
+    const one = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT, orderHoldSec: HOLD, now: () => T0 });
+    const two = buildMerchantsServer({ verifier, acquirer, shops: flipped, rateLimitPerMin: LIMIT, orderHoldSec: HOLD, now: () => T0 });
     const list = async (app: typeof one) => (await merchantCall(app, { path: "/v1/shops" })).json().shops as { id: string; zone: string }[];
     const [a, b] = [await list(one), await list(two)];
     // Зоны действительно разные (у каждой витрины CONTOUR ↔ OUTSIDE), порядок — один.
@@ -122,7 +123,7 @@ describe("#49 (РП56 п. 6): GET /v1/shops опознаёт агента, ка�
   it("каталог ключей недоступен — 503 UPSTREAM_UNAVAILABLE (инвариант 3)", async () => {
     const { s, a } = await setup();
     const verifier = new MerchantAgentVerifier(() => { throw new Error("каталог недоступен"); }, { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
-    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub(), now: s.now }), rateLimitPerMin: LIMIT });
+    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub(), now: s.now }), rateLimitPerMin: LIMIT, orderHoldSec: HOLD });
     const r = await merchantCall(app, { side: a, agentCode: A, now: s.now(), path });
     expect([r.statusCode, r.json()]).toEqual([503, { code: "UPSTREAM_UNAVAILABLE" }]);
     await app.close();
@@ -207,7 +208,7 @@ describe("SHOP-4401: отказ неопознанным, опознанный �
       },
       { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 },
     );
-    const app = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT });
+    const app = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT, orderHoldSec: HOLD });
     const side = newAgentSide();
     const r = await merchantCall(app, { side, agentCode: A, path });
     expect(r.statusCode).toBe(503);
@@ -224,7 +225,7 @@ describe("РП22 п. 3: перечитывание каталога по неи�
       { maxAgeMs: 3_600_000, refetchMinMs: 60_000, skewSec: 60, now: () => now },
     );
     const side = newAgentSide();
-    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub() }), rateLimitPerMin: LIMIT });
+    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub() }), rateLimitPerMin: LIMIT, orderHoldSec: HOLD });
     const path = "/v1/shops/SHOP-1042/catalog";
     expect((await merchantCall(app, { side, agentCode: A, now, path })).statusCode).toBe(503);
     for (let i = 0; i < 3; i++) expect((await merchantCall(app, { side, agentCode: A, now, path })).json().code).toBe("KEY_UNKNOWN");
@@ -342,7 +343,17 @@ describe("Лимит частоты витрин по адресу (CodeQL js/mi
   it("лимит — целое ≥ 1", () => {
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub() });
     const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
-    for (const v of [0, 1.5, Number.NaN]) expect(() => buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: v })).toThrow();
+    for (const v of [0, 1.5, Number.NaN]) {
+      expect(() => buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: v, orderHoldSec: HOLD })).toThrow(/rateLimitPerMin/);
+    }
+  });
+
+  it("срок удержания order_hold_sec — целое ≥ 1 (РП72 п. 8)", () => {
+    const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub() });
+    const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
+    for (const v of [0, 1.5, Number.NaN]) {
+      expect(() => buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT, orderHoldSec: v })).toThrow(/orderHoldSec/);
+    }
   });
 });
 
@@ -488,7 +499,7 @@ describe("#62 (РП58 п. 1–4): чтение заказа агентом и у
   it("каталог ключей недоступен — 503 UPSTREAM_UNAVAILABLE на обоих адресах чтения (инвариант 3)", async () => {
     const { s, a } = await setup();
     const verifier = new MerchantAgentVerifier(() => { throw new Error("каталог недоступен"); }, { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
-    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub(), now: s.now }), rateLimitPerMin: LIMIT });
+    const app = buildMerchantsServer({ verifier, acquirer: new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc: new OpkcStub(), now: s.now }), rateLimitPerMin: LIMIT, orderHoldSec: HOLD });
     for (const [path, query] of [["/v1/shops/SHOP-1042/orders", "cart_mandate_id=MND-cart-1"], ["/v1/shops/SHOP-1042/orders/ORD-x", ""]] as const) {
       const r = await merchantCall(app, { side: a, agentCode: A, now: s.now(), path, query });
       expect([r.statusCode, r.json()], path).toEqual([503, { code: "UPSTREAM_UNAVAILABLE" }]);
@@ -630,7 +641,7 @@ describe("Заказ и пакет: привязка к агенту", () => {
     };
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc });
     const verifier = new MerchantAgentVerifier(() => s.keys.jwks("sandbox"), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
-    const app = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT });
+    const app = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT, orderHoldSec: HOLD });
     const who = { side: a, agentCode: A, now: s.now() };
     const o = (await order(app, who, "SHOP-1042", "BRD-1042-01")).json();
     const path = `/v1/shops/SHOP-1042/orders/${o.id}/payment`;
@@ -657,5 +668,185 @@ describe("Заказ и пакет: привязка к агенту", () => {
     expect((await merchantCall(app, { ...asA(), path, body: pkg(o.id) })).statusCode).toBe(503);
     down = false;
     expect((await merchantCall(app, { ...asA(), path, body: pkg(o.id) })).json().status).toBe("PAID");
+  });
+});
+
+describe("РП72 ч. 2: ссылка подтверждения к заказу — POST …/orders/{order_id}/confirmation", () => {
+  const OK = "cr_ok"; // ссылка, которую «ADP» заглушки принимает; прочие — снова CONFIRMATION_REQUIRED
+  let down = false; // сбой ОПКЦ на следующих авторизациях
+  // Решение заглушки ОПКЦ вместо ADP: без ссылки и с чужой ссылкой — CONFIRMATION_REQUIRED, со ссылкой OK — одобрение.
+  const decide = (msg: { confirmation_ref?: string | null }) => {
+    if (down) throw new Error("ОПКЦ недоступен");
+    return msg.confirmation_ref === OK ? { approved: true, reason: null } : { approved: false, reason: "CONFIRMATION_REQUIRED" };
+  };
+  afterEach(() => void (down = false));
+
+  /** Заказ в AWAITING_CONFIRMATION при часах стенда T0. */
+  async function awaiting() {
+    const ctx = await setup({ decide });
+    const o = (await order(ctx.app, ctx.asA(), "SHOP-1042", "BRD-1042-01")).json();
+    const paid = await merchantCall(ctx.app, { ...ctx.asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: pkg(o.id) });
+    expect(paid.json().status).toBe("AWAITING_CONFIRMATION");
+    const confirm = (ref: unknown, who: object = ctx.asA()) =>
+      merchantCall(ctx.app, { ...who, path: `/v1/shops/SHOP-1042/orders/${o.id}/confirmation`, body: { confirmation_ref: ref } });
+    const read = async () => (await merchantCall(ctx.app, { ...ctx.asA(), method: "GET", path: `/v1/shops/SHOP-1042/orders/${o.id}` })).json();
+    const at = (ms: number) => ctx.s.setClock(new Date(T0.getTime() + ms));
+    return { ...ctx, o, confirm, read, at };
+  }
+
+  it("ссылка — повтор авторизации новой операцией: ссылка в AUTH_REQUEST, тот же order_ref, новый op_ref; PAID", async () => {
+    const { m, o, confirm } = await awaiting();
+    const r = await confirm(OK);
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ id: o.id, status: "PAID" });
+    expect(r.json().payment).toEqual({ approved: true, confirmation_required: false });
+    const [first, second] = m.opkc.messages;
+    expect(m.opkc.messages).toHaveLength(2);
+    expect(first).not.toHaveProperty("confirmation_ref");
+    expect(second).toMatchObject({ msg_type: "AUTH_REQUEST", confirmation_ref: OK, order_ref: o.id, amount: first!.amount });
+    expect(second!.op_ref).not.toBe(first!.op_ref);
+    // Пакет первой оплаты (реквизит прежний): тот же инструмент и признак.
+    expect(second!.instrument).toEqual(first!.instrument);
+    expect(second!.aoi).toEqual(first!.aoi);
+  });
+
+  it("ревью № 1: повтор той же ссылки после решения — 200 с текущим заказом без новой авторизации; другая — 409", async () => {
+    const { m, confirm } = await awaiting();
+    const done = (await confirm(OK)).json();
+    const again = await confirm(OK);
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toEqual(done);
+    expect(m.opkc.messages).toHaveLength(2);
+    const other = await confirm("cr_other");
+    expect(other.statusCode).toBe(409);
+    expect(other.json().code).toBe("ORDER_NOT_PAYABLE");
+    expect(m.opkc.messages).toHaveLength(2);
+  });
+
+  it("однократность: повторное CONFIRMATION_REQUIRED по ссылке — DECLINED без признака; та же ссылка — 200, другая — 409", async () => {
+    const { m, confirm, read } = await awaiting();
+    const r = await confirm("cr_stale");
+    expect(r.json()).toMatchObject({ status: "DECLINED" });
+    expect(r.json().payment).toEqual({ approved: false, confirmation_required: false });
+    expect(m.opkc.messages).toHaveLength(2);
+    expect((await confirm("cr_stale")).json()).toMatchObject({ status: "DECLINED" });
+    expect((await confirm(OK)).json().code).toBe("ORDER_NOT_PAYABLE");
+    expect(m.opkc.messages).toHaveLength(2);
+    expect((await read()).status).toBe("DECLINED");
+  });
+
+  it("пакет и ссылка — вне вида заказа: в чтениях и ответах нет криптограммы и ссылки", async () => {
+    const { app, asA, read, confirm } = await awaiting();
+    const waiting = JSON.stringify(await read());
+    const done = await confirm(OK);
+    const one = JSON.stringify(await read());
+    const list = (await merchantCall(app, { ...asA(), path: "/v1/shops/SHOP-1042/orders", query: "cart_mandate_id=MND-cart-1" })).body;
+    for (const body of [waiting, done.body, one, list]) expect(body).not.toMatch(/Y3J5cHRvZ3JhbQ|cr_ok|tok_ag_test|CRD-test-1/);
+    expect(JSON.parse(list).orders).toHaveLength(1);
+  });
+
+  it("проверки маршрута: чужой заказ — 404; тело не по форме — 422 PACKAGE_INVALID; 32 знака — принимается", async () => {
+    const { s, b, m, confirm } = await awaiting();
+    expect((await confirm(OK, { side: b, agentCode: B, now: s.now() })).json().code).toBe("ORDER_NOT_FOUND");
+    for (const bad of [undefined, "", 42, "c".repeat(33), null, ["cr_ok"]]) {
+      const r = await confirm(bad);
+      expect(r.statusCode, String(bad)).toBe(422);
+      expect(r.json().code).toBe("PACKAGE_INVALID");
+    }
+    expect(m.opkc.messages).toHaveLength(1);
+    // Формат cr_… продавец не проверяет — 32 знака уходят в авторизацию, решает «ADP».
+    expect((await confirm("c".repeat(32))).json().status).toBe("DECLINED");
+    expect(m.opkc.messages).toHaveLength(2);
+  });
+
+  it("заказ не ждёт — 409 ORDER_NOT_PAYABLE: не оплачивался, оплачен без подтверждения", async () => {
+    const { app, asA, m } = await setup({ decide });
+    const fresh = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    const confirmFresh = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${fresh.id}/confirmation`, body: { confirmation_ref: OK } });
+    expect(confirmFresh.statusCode).toBe(409);
+    expect(confirmFresh.json().code).toBe("ORDER_NOT_PAYABLE");
+    expect(m.opkc.messages).toHaveLength(0);
+    // Заказ, одобренный с первой оплаты (без «ждёт»), — удержания нет, ссылка не принимается.
+    const { app: app2, asA: asA2 } = await setup();
+    const paid = (await order(app2, asA2(), "SHOP-1042", "BRD-1042-01")).json();
+    await merchantCall(app2, { ...asA2(), path: `/v1/shops/SHOP-1042/orders/${paid.id}/payment`, body: pkg(paid.id) });
+    const late = await merchantCall(app2, { ...asA2(), path: `/v1/shops/SHOP-1042/orders/${paid.id}/confirmation`, body: { confirmation_ref: OK } });
+    expect(late.json().code).toBe("ORDER_NOT_PAYABLE");
+  });
+
+  it("ревью № 2: сбой эквайрера — 503, заказ снова ждёт, ссылка не применена; повтор той же ссылки проходит", async () => {
+    const { m, confirm, read } = await awaiting();
+    down = true;
+    const r = await confirm(OK);
+    expect(r.statusCode).toBe(503);
+    expect(r.json().code).toBe("UPSTREAM_UNAVAILABLE");
+    expect((await read()).status).toBe("AWAITING_CONFIRMATION");
+    down = false;
+    expect((await confirm(OK)).json().status).toBe("PAID");
+    expect(m.opkc.messages.filter((x) => x.confirmation_ref === OK)).toHaveLength(2); // сбойная и прошедшая
+  });
+
+  it("срок order_hold_sec: за 1 мс до — принимается; в момент срока — 409 и DECLINED без признака", async () => {
+    const early = await awaiting();
+    early.at(HOLD * 1000 - 1);
+    expect((await early.confirm(OK, early.asA())).json().status).toBe("PAID");
+    const late = await awaiting();
+    late.at(HOLD * 1000);
+    const r = await late.confirm(OK, late.asA());
+    expect(r.statusCode).toBe(409);
+    expect(r.json().code).toBe("ORDER_NOT_PAYABLE");
+    expect(late.m.opkc.messages).toHaveLength(1);
+    const read = await late.read();
+    expect(read.status).toBe("DECLINED");
+    expect(read.payment).toEqual({ approved: false, confirmation_required: false });
+  });
+
+  it("ревью № 3: срок — от первого перехода в «ждёт», возврат после сбоя его не перезапускает", async () => {
+    const { confirm, read, asA, at, m } = await awaiting();
+    at(HOLD * 1000 - 1000);
+    down = true;
+    expect((await confirm(OK, asA())).statusCode).toBe(503);
+    expect((await read()).status).toBe("AWAITING_CONFIRMATION");
+    down = false;
+    at(HOLD * 1000);
+    const r = await confirm(OK, asA());
+    expect(r.json().code).toBe("ORDER_NOT_PAYABLE");
+    expect((await read()).status).toBe("DECLINED");
+    expect(m.opkc.messages).toHaveLength(2); // первая оплата и сбойная попытка
+  });
+
+  it("два одновременных запроса со ссылкой — одна авторизация, второй — 409", async () => {
+    const s = createStand();
+    s.setClock(T0);
+    const a = newAgentSide();
+    expect((await s.admit(buyerApplication(A, a), "op-a")).admitted).toBe(true);
+    let release!: () => void;
+    let gate: Promise<void> = Promise.resolve();
+    const sent: { confirmation_ref?: string | null }[] = [];
+    const opkc = {
+      authorize: async (msg: { confirmation_ref?: string | null }) => {
+        sent.push(msg);
+        if (msg.confirmation_ref === undefined) return { op_ref: `OPKC-T-${sent.length}`, approved: false, reason: "CONFIRMATION_REQUIRED" };
+        await gate;
+        return { op_ref: `OPKC-T-${sent.length}`, approved: true, reason: null };
+      },
+      reverse: async () => {},
+    };
+    const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: true, opkc, now: s.now });
+    const verifier = new MerchantAgentVerifier(() => s.keys.jwks("sandbox"), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60, now: s.now });
+    const app = buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT, orderHoldSec: HOLD, now: s.now });
+    const who = () => ({ side: a, agentCode: A, now: s.now() });
+    const o = (await order(app, who(), "SHOP-1042", "BRD-1042-01")).json();
+    expect((await merchantCall(app, { ...who(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: pkg(o.id) })).json().status).toBe("AWAITING_CONFIRMATION");
+    gate = new Promise<void>((r) => (release = r));
+    const path = `/v1/shops/SHOP-1042/orders/${o.id}/confirmation`;
+    const first = merchantCall(app, { ...who(), path, body: { confirmation_ref: OK } });
+    while (sent.length < 2) await new Promise((r) => setTimeout(r, 1));
+    const second = await merchantCall(app, { ...who(), path, body: { confirmation_ref: OK } });
+    release();
+    expect(second.statusCode).toBe(409);
+    expect(second.json().code).toBe("ORDER_NOT_PAYABLE");
+    expect((await first).json().status).toBe("PAID");
+    expect(sent).toHaveLength(2);
   });
 });

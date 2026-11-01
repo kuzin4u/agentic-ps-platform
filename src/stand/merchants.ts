@@ -97,6 +97,7 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     acquirer,
     reconciliation,
     rateLimitPerMin: opts.rateLimitPerMin ?? stand.params.merchant_rate_limit_per_min,
+    orderHoldSec: stand.params.order_hold_sec,
     shopListFailure: () => shopListFailure,
     orderReplyFailure: () => orderReplyFailure,
     now: stand.now,
