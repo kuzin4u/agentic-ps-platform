@@ -150,7 +150,6 @@ export class PgRefundStore implements RefundStore {
         await tx.query("BEGIN");
         await tx.query("SELECT set_config('lock_timeout', $1, true)", [`${this.lockTimeoutMs}ms`]);
         await this.hooks.beforeLock?.(r.op_ref);
-        await tx.query("SELECT pg_advisory_xact_lock($1::bigint)", [refundLockKey(r.op_ref)]);
         // Чтение — после блокировки: снимок READ COMMITTED берётся на каждый оператор, видны все зафиксированные возвраты.
         const rows = await readRefunds(tx, r.op_ref);
         const decided = classifyRefund(rows, r);
