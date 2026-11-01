@@ -20,6 +20,11 @@ export type AuthorizeInput = {
   readonly amount: number;
   readonly currency: string;
   readonly order_ref: string;
+  /**
+   * Ссылка подтверждения человеком (РП72 п. 9): повтор авторизации после CONFIRMATION_REQUIRED — новой операцией с новым
+   * op_ref (РП50 «Дополнения» п. 7). Переносится как получена, без разбора; проверяет её ADP (РП50 п. 7–8).
+   */
+  readonly confirmation_ref?: string;
 } & (
   | { readonly package: PaymentPackage; readonly instrument?: undefined }
   | { readonly package?: undefined; readonly instrument: Instrument & { readonly kind: "CARD_TOKEN" } }
@@ -53,6 +58,7 @@ export class Acquirer {
       instrument,
       // Признак переносится как сформирован (A1 п. 4.3); без поддержки — не переносится вовсе.
       ...(pkg && this.aoiSupport ? { aoi: structuredClone(pkg.aoi) } : {}),
+      ...(input.confirmation_ref !== undefined ? { confirmation_ref: input.confirmation_ref } : {}),
       order_ref: input.order_ref,
       ts: this.now().toISOString(),
     };

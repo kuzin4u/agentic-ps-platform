@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.36.0** (несколько возвратов по операции: `refund_ref` в `REFUND` ПИ-3, миграция `sql/122` — PostgreSQL ≥ 15; ответы агенту не меняются; ПАО — по-прежнему 1.4.0; РП71). Подробности —
+Текущая версия — **v0.37.0** (подтверждение человеком через продавца на стенде: заказ `AWAITING_CONFIRMATION`, `payment.confirmation_required`, `POST /v1/shops/{id}/orders/{order_id}/confirmation`, асинхронное решение заглушки ОПКЦ; агенту — со сменой стенда; ПАО — по-прежнему 1.4.0; РП72). Подробности —
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.36.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.37.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —

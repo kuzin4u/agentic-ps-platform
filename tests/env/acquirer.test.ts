@@ -8,6 +8,7 @@ import { buyerApplication, newAgentSide } from "../support/agent.js";
 import { merchantCall } from "../support/merchant-call.js";
 
 const LIMIT = loadParams().merchant_rate_limit_per_min;
+const HOLD = loadParams().order_hold_sec;
 const CODE = "nspk:agent:acq-a:v1";
 const merchant = { id: "MER-1042", mcc: "5462", name: "Масса Мадре" };
 
@@ -63,6 +64,15 @@ describe("ПИ-2: перенос признака", () => {
     expect(rev!.instrument).toEqual(auth!.instrument);
   });
 
+  it("РП72 п. 9: confirmation_ref переносится в AUTH_REQUEST как получена, без разбора; без неё — поля нет; op_ref новый", async () => {
+    const { opkc, acquirer } = acq(true);
+    const first = await acquirer.authorize({ merchant, amount: 340000, currency: "RUB", order_ref: "ORD-1", package: card() });
+    const retry = await acquirer.authorize({ merchant, amount: 340000, currency: "RUB", order_ref: "ORD-1", package: card(), confirmation_ref: "not-cr-format" });
+    expect(opkc.messages[0]).not.toHaveProperty("confirmation_ref");
+    expect(opkc.messages[1]).toMatchObject({ msg_type: "AUTH_REQUEST", confirmation_ref: "not-cr-format", order_ref: "ORD-1" });
+    expect(retry.op_ref).not.toBe(first.op_ref);
+  });
+
   it("сумма — только целые копейки > 0", async () => {
     const { acquirer } = acq(true);
     for (const amount of [0, -1, 1.5]) {
@@ -111,7 +121,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
         throw new Error("API для продавцов недоступен");
       },
     };
-    const app = buildMerchantsServer({ verifier, acquirer, reconciliation, rateLimitPerMin: LIMIT });
+    const app = buildMerchantsServer({ verifier, acquirer, reconciliation, rateLimitPerMin: LIMIT, orderHoldSec: HOLD });
     const who = { side, agentCode: CODE };
     const o = (await merchantCall(app, { ...who, path: "/v1/shops/SHOP-1042/orders", body: { items: [{ sku: "BRD-1042-01", qty: 1 }], cart_mandate_id: "MND-1" } })).json();
     const r = await merchantCall(app, { ...who, path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: { ...card(), order_ref: o.id } });
@@ -122,7 +132,7 @@ describe("РП22 п. 6: эквайрер без поддержки aoi", () => {
   it("эквайрер без aoi без порта сверки — ошибка сборки витрин", () => {
     const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport: false, opkc: new OpkcStub() });
     const verifier = new MerchantAgentVerifier(() => ({ keys: [] }), { maxAgeMs: 0, refetchMinMs: 0, skewSec: 60 });
-    expect(() => buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT })).toThrow(/порт сверки/);
+    expect(() => buildMerchantsServer({ verifier, acquirer, rateLimitPerMin: LIMIT, orderHoldSec: HOLD })).toThrow(/порт сверки/);
   });
 
   it("с поддержкой aoi локального списка нет, метаданные с aoi эквайрер присылает Платформе (РП57 п. 7)", async () => {

@@ -23,7 +23,10 @@ export interface MerchantsStandOptions {
   readonly jwksRefetchMinMs?: number;
   /** Лимит обращений с адреса в минуту; по умолчанию — `merchant_rate_limit_per_min` стенда. */
   readonly rateLimitPerMin?: number;
-  /** Решение заглушки ОПКЦ; по умолчанию одобрение. */
+  /**
+   * Решение заглушки ОПКЦ; по умолчанию одобрение. Может быть асинхронным (РП72 п. 10): тест передаёт сообщение в ADP
+   * стенда (`POST /adp/v1/decide`) — путь «витрина → ADP → подтверждение → витрина» без подмены до PS-11.
+   */
   readonly decide?: ConstructorParameters<typeof OpkcStub>[0];
   /**
    * Замена `payment_methods` у витрин фикстуры по `merchant_id` (#86): значения — как есть, `[]` допустим; неизвестный
@@ -97,6 +100,7 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     acquirer,
     reconciliation,
     rateLimitPerMin: opts.rateLimitPerMin ?? stand.params.merchant_rate_limit_per_min,
+    orderHoldSec: stand.params.order_hold_sec,
     shopListFailure: () => shopListFailure,
     orderReplyFailure: () => orderReplyFailure,
     now: stand.now,

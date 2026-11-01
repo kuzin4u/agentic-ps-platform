@@ -1,6 +1,7 @@
 // Эмулятор продавцов: форма API — К6 пула (GET /v1/shops, GET /v1/shops/{id}/catalog, POST /v1/shops/{id}/orders),
 // плюс приём пакета агентской оплаты (POST /v1/shops/{id}/orders/{order_id}/payment, РП22 п. 5) и чтение заказа агентом
-// для сверки после потерянного ответа (GET /v1/shops/{id}/orders?cart_mandate_id, GET …/orders/{order_id}; РП58).
+// для сверки после потерянного ответа (GET /v1/shops/{id}/orders?cart_mandate_id, GET …/orders/{order_id}; РП58);
+// подтверждение человеком через продавца — заказ AWAITING_CONFIRMATION и POST …/orders/{order_id}/confirmation (РП72).
 // Эмулятор, а не контракт Платформы: публичный контракт для агентов — только ПАО (инвариант 10).
 // Сумму заказа считает продавец по своей цене; в авторизацию её переносит эквайрер (инвариант 5).
 import { randomUUID } from "node:crypto";
@@ -37,6 +38,8 @@ export interface MerchantsOptions {
   readonly shops?: readonly Shop[];
   /** Лимит обращений к витринам с одного адреса в минуту — на все маршруты /v1 (стендовый параметр). */
   readonly rateLimitPerMin: number;
+  /** Срок удержания заказа в AWAITING_CONFIRMATION — order_hold_sec (A7 п. 7.2, РП72 п. 8); целое ≥ 1. */
+  readonly orderHoldSec: number;
   /** Управляемый отказ списка витрин из теста (#49, РП56 п. 6); null — список отдаётся. Читается при каждом обращении. */
   readonly shopListFailure?: () => ShopListFailure | null;
   /** Управляемый обрыв ответа на POST …/orders после записи заказа (#62, РП58 п. 4); null — ответ отдаётся. */
@@ -54,8 +57,12 @@ export interface ShopListFailure {
   readonly retryAfterSec: number;
 }
 
-/** PAYING — оплата в процессе: ставится до первого обращения к эквайреру, повторная оплата невозможна. */
-export const ORDER_STATUSES = ["CREATED", "PAYING", "PAID", "DECLINED", "REJECTED"] as const;
+/**
+ * PAYING — оплата в процессе: ставится до первого обращения к эквайреру, повторная оплата невозможна.
+ * AWAITING_CONFIRMATION — эквайрер получил отказ с кодом CONFIRMATION_REQUIRED: заказ удерживается до подтверждения
+ * человеком, однократно и на срок (A7 п. 7.2, РП72 п. 2).
+ */
+export const ORDER_STATUSES = ["CREATED", "PAYING", "AWAITING_CONFIRMATION", "PAID", "DECLINED", "REJECTED"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export interface OrderLine {
@@ -76,13 +83,29 @@ export interface Order {
   readonly agent_code: string;
   readonly status: OrderStatus;
   /**
-   * Итог авторизации по ответу эквайрера — только «одобрено / отклонено». op_ref и код решения продавцу не раскрываются:
-   * op_ref — результат сверки Платформы (РП22 п. 6), о решении агент узнаёт событием Платформы (РП2, инвариант 5).
+   * Итог авторизации по ответу эквайрера — «одобрено / отклонено» и признак «нужно подтверждение человеком» (РП72 п. 3).
+   * op_ref и прочие коды решения агенту не раскрываются: op_ref — результат сверки Платформы (РП22 п. 6), о решении агент
+   * узнаёт событием Платформы (РП2, инвариант 5); confirmation_id у продавца нет — он в событии и GET Платформы.
    */
-  readonly payment: { readonly approved: boolean } | null;
+  readonly payment: { readonly approved: boolean; readonly confirmation_required: boolean } | null;
   /** Отказ продавца в исполнении после оплаты; оплата возвращена реверсалом (Д06). */
   readonly fulfilment_refused: boolean;
 }
+
+/**
+ * Удержание заказа после CONFIRMATION_REQUIRED (РП72 п. 6–8) — у продавца, вне вида заказа: пакет первой оплаты
+ * (криптограмма) и ссылка агенту в чтениях заказа не возвращаются.
+ */
+interface Hold {
+  readonly pkg: PaymentPackage;
+  /** Момент первого перехода в AWAITING_CONFIRMATION по часам продавца, мс; возврат в «ждёт» после сбоя его не меняет. */
+  readonly since: number;
+  /** Ссылка, с которой авторизация по заказу дошла до решения; null — такой ещё не было (однократность, п. 7). */
+  readonly applied: string | null;
+}
+
+/** Длина поля ссылки подтверждения в ПИ-1 (каноническая модель). */
+const CONFIRMATION_REF_MAX = 32;
 
 const fail = (reply: FastifyReply, code: MerchantErrorCode): FastifyReply =>
   reply.code(MERCHANT_ERROR_HTTP[code]).send({ code });
@@ -112,6 +135,10 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
   if (!Number.isSafeInteger(opts.rateLimitPerMin) || opts.rateLimitPerMin < 1) {
     throw new Error("rateLimitPerMin — целое ≥ 1");
   }
+  if (!Number.isSafeInteger(opts.orderHoldSec) || opts.orderHoldSec < 1) {
+    throw new Error("orderHoldSec — целое ≥ 1");
+  }
+  const holdMs = opts.orderHoldSec * 1000;
   // Лимит по адресу — до опознания агента и до чтения каталога ключей: неподписанный поток тоже ограничен.
   // Превышение — 429 RATE_LIMITED с Retry-After. Тот же механизм возьмёт шлюз ПАО (PS-05).
   void root.register(rateLimit, {
@@ -130,7 +157,20 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
   const shops = [...(opts.shops ?? SHOPS)].sort(byShopId);
   const byId = new Map(shops.map((s) => [s.id, s]));
   const orders = new Map<string, Order>();
+  const holds = new Map<string, Hold>();
   const now = opts.now ?? (() => new Date());
+
+  /**
+   * Ленивое истечение удержания (РП72 п. 8, как РП50 остаточный риск 4): AWAITING_CONFIRMATION дольше order_hold_sec от
+   * первого перехода — при обращении DECLINED, признак снимается (заказ больше не ждёт). Граница — уже истёк.
+   */
+  const current = (o: Order): Order => {
+    const hold = holds.get(o.id);
+    if (o.status !== "AWAITING_CONFIRMATION" || !hold || now().getTime() - hold.since < holdMs) return o;
+    const expired: Order = { ...o, status: "DECLINED", payment: { approved: false, confirmation_required: false } };
+    orders.set(o.id, expired);
+    return expired;
+  };
   if (!opts.acquirer.aoiSupport && !opts.reconciliation) {
     throw new Error("Эквайрер без поддержки aoi: нужен порт сверки (РП22 п. 6)");
   }
@@ -289,7 +329,7 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
         const found = [...orders.values()].filter(
           (o) => o.shop_id === shop.id && o.agent_code === agent && o.cart_mandate_id === cart_mandate_id,
         );
-        return { orders: found };
+        return { orders: found.map(current) };
       },
     );
 
@@ -300,7 +340,7 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
       if (!agent) return reply;
       const order = orders.get(req.params.order_id);
       if (!order || order.shop_id !== shop.id || order.agent_code !== agent) return fail(reply, "ORDER_NOT_FOUND");
-      return order;
+      return current(order);
     });
 
     app.post<{ Params: { id: string; order_id: string } }>(
@@ -322,53 +362,105 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
           return fail(reply, "PACKAGE_MISMATCH");
         }
 
-        // Статус меняется до первого await: параллельная вторая оплата получит ORDER_NOT_PAYABLE, авторизация уйдёт одна.
-        orders.set(order.id, { ...order, status: "PAYING" });
-        // Метаданные — после авторизации, через эквайрера (РП57 п. 5, 7): только для сверки и отчётности, решение ADP от
-        // них не зависит; сбой порта сверки ответ продавцу не меняет, расхождение найдёт сверка.
-        const submitMetadata = async () => {
-          if (!opts.reconciliation) return;
-          try {
-            await opts.reconciliation.submit({
-              merchant_id: shop.merchant_id,
-              credential_ref: pkg.credential_ref,
-              order_ref: order.id,
-              aoi: structuredClone(pkg.aoi),
-            });
-          } catch (e) {
-            req.log.error({ err: e }, "витрина: метаданные пакета для сверки не переданы");
-          }
-        };
-        let auth;
-        try {
-          auth = await opts.acquirer.authorize({
-            merchant: { id: shop.merchant_id, mcc: shop.mcc, name: shop.name },
-            amount: order.total,
-            currency: order.currency,
-            order_ref: order.id,
-            package: pkg,
-          });
-        } catch {
-          // Авторизация не ушла — заказ снова можно оплатить.
-          orders.set(order.id, order);
-          await submitMetadata();
-          return fail(reply, "UPSTREAM_UNAVAILABLE");
-        }
-        await submitMetadata();
-        let next: Order = { ...order, payment: { approved: auth.approved }, status: auth.approved ? "PAID" : "DECLINED" };
-        if (auth.approved && shop.behaviour === "REJECTS_FULFILMENT") {
-          try {
-            await opts.acquirer.reverse(auth.op_ref);
-          } catch {
-            orders.set(order.id, next);
-            return fail(reply, "UPSTREAM_UNAVAILABLE");
-          }
-          next = { ...next, status: "REJECTED", fulfilment_refused: true };
-        }
-        orders.set(order.id, next);
-        return next;
+        return authorizeOrder(req, reply, shop, order, pkg);
       },
     );
+
+    // Ссылка подтверждения человеком к заказу, который ждёт (РП72 п. 4–8): повтор авторизации новой операцией с пакетом
+    // первой оплаты. Проверки — по порядку п. 5; формат и действительность ссылки проверяет ADP, не продавец.
+    app.post<{ Params: { id: string; order_id: string } }>(
+      "/v1/shops/:id/orders/:order_id/confirmation",
+      async (req, reply) => {
+        const shop = byId.get(req.params.id);
+        if (!shop) return fail(reply, "SHOP_NOT_FOUND");
+        const agent = await requireAgent(req, reply);
+        if (!agent) return reply;
+        const stored = orders.get(req.params.order_id);
+        if (!stored || stored.shop_id !== shop.id || stored.agent_code !== agent) return fail(reply, "ORDER_NOT_FOUND");
+        const ref = (json(req) as { confirmation_ref?: unknown } | undefined)?.confirmation_ref;
+        if (typeof ref !== "string" || ref === "" || ref.length > CONFIRMATION_REF_MAX) return fail(reply, "PACKAGE_INVALID");
+        const order = current(stored);
+        const hold = holds.get(order.id);
+        // Авторизация со ссылкой уже дошла до решения: та же ссылка — текущий заказ без новой авторизации (ответ мог
+        // потеряться), другая — отказ (однократность, п. 7).
+        if (hold?.applied != null) {
+          return hold.applied === ref && order.status !== "PAYING" ? order : fail(reply, "ORDER_NOT_PAYABLE");
+        }
+        // Не ждёт (не было CONFIRMATION_REQUIRED, срок удержания вышел, авторизация в процессе) — отказ.
+        if (!hold || order.status !== "AWAITING_CONFIRMATION") return fail(reply, "ORDER_NOT_PAYABLE");
+        return authorizeOrder(req, reply, shop, order, hold.pkg, ref);
+      },
+    );
+
+    /**
+     * Авторизация заказа через эквайрера — первая оплата (`confirmation_ref` нет) или повтор со ссылкой (РП72 п. 6).
+     * `order` — состояние до авторизации: при сбое эквайрера заказ возвращается в него (CREATED или «ждёт»).
+     */
+    async function authorizeOrder(
+      req: FastifyRequest,
+      reply: FastifyReply,
+      shop: Shop,
+      order: Order,
+      pkg: PaymentPackage,
+      confirmation_ref?: string,
+    ): Promise<Order | FastifyReply> {
+      // Статус меняется до первого await: параллельный второй запрос получит ORDER_NOT_PAYABLE, авторизация уйдёт одна.
+      orders.set(order.id, { ...order, status: "PAYING" });
+      // Метаданные — после каждой авторизации, через эквайрера (РП57 п. 5, 7): только для сверки и отчётности, решение ADP
+      // от них не зависит; сбой порта сверки ответ продавцу не меняет, расхождение найдёт сверка.
+      const submitMetadata = async () => {
+        if (!opts.reconciliation) return;
+        try {
+          await opts.reconciliation.submit({
+            merchant_id: shop.merchant_id,
+            credential_ref: pkg.credential_ref,
+            order_ref: order.id,
+            aoi: structuredClone(pkg.aoi),
+          });
+        } catch (e) {
+          req.log.error({ err: e }, "витрина: метаданные пакета для сверки не переданы");
+        }
+      };
+      let auth;
+      try {
+        auth = await opts.acquirer.authorize({
+          merchant: { id: shop.merchant_id, mcc: shop.mcc, name: shop.name },
+          amount: order.total,
+          currency: order.currency,
+          order_ref: order.id,
+          ...(confirmation_ref !== undefined ? { confirmation_ref } : {}),
+          package: pkg,
+        });
+      } catch {
+        // Авторизация не ушла — прежнее состояние: заказ снова можно оплатить или передать ссылку (срок — прежний, п. 8).
+        orders.set(order.id, order);
+        await submitMetadata();
+        return fail(reply, "UPSTREAM_UNAVAILABLE");
+      }
+      await submitMetadata();
+      // Отказ с кодом CONFIRMATION_REQUIRED на первой оплате — заказ ждёт подтверждения человеком (РП72 п. 2–3); на
+      // повторе со ссылкой — DECLINED: ссылка не подействовала, нового запроса на тот же ключ не будет (п. 7).
+      const confirmation_required =
+        confirmation_ref === undefined && !auth.approved && auth.reason === "CONFIRMATION_REQUIRED";
+      if (confirmation_required) holds.set(order.id, { pkg: structuredClone(pkg), since: now().getTime(), applied: null });
+      else if (confirmation_ref !== undefined) holds.set(order.id, { ...holds.get(order.id)!, applied: confirmation_ref });
+      let next: Order = {
+        ...order,
+        payment: { approved: auth.approved, confirmation_required },
+        status: auth.approved ? "PAID" : confirmation_required ? "AWAITING_CONFIRMATION" : "DECLINED",
+      };
+      if (auth.approved && shop.behaviour === "REJECTS_FULFILMENT") {
+        try {
+          await opts.acquirer.reverse(auth.op_ref);
+        } catch {
+          orders.set(order.id, next);
+          return fail(reply, "UPSTREAM_UNAVAILABLE");
+        }
+        next = { ...next, status: "REJECTED", fulfilment_refused: true };
+      }
+      orders.set(order.id, next);
+      return next;
+    }
   });
 
   return root;
