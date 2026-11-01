@@ -584,8 +584,34 @@ describe("Заказ и пакет: привязка к агенту", () => {
     const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
     const r = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: pkg(o.id) });
     expect(r.json()).toMatchObject({ status: "DECLINED", payment: { approved: false } });
-    expect(r.json().payment).toEqual({ approved: false });
+    // Прочий отказ — не «ждёт подтверждения» (РП72 п. 2–3): признак false, код решения не раскрывается.
+    expect(r.json().payment).toEqual({ approved: false, confirmation_required: false });
     expect(r.body).not.toMatch(/OPKC|LIMIT_EXCEEDED/);
+  });
+
+  it("РП72 ч. 1: отказ CONFIRMATION_REQUIRED — заказ AWAITING_CONFIRMATION и признак; op_ref и confirmation_id не раскрываются", async () => {
+    const { app, m, asA } = await setup({ decide: () => ({ approved: false, reason: "CONFIRMATION_REQUIRED" }) });
+    const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    const r = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: pkg(o.id) });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ status: "AWAITING_CONFIRMATION", payment: { approved: false, confirmation_required: true } });
+    expect(r.json().payment).toEqual({ approved: false, confirmation_required: true });
+    expect(r.body).not.toMatch(/OPKC|cnf_|op_ref|confirmation_id/);
+    // Авторизация ушла одна; чтение заказа агентом — тот же статус и признак.
+    expect(m.opkc.messages).toHaveLength(1);
+    const read = await merchantCall(app, { ...asA(), method: "GET", path: `/v1/shops/SHOP-1042/orders/${o.id}` });
+    expect(read.json()).toMatchObject({ status: "AWAITING_CONFIRMATION", payment: { approved: false, confirmation_required: true } });
+    // Повторная оплата тем же путём невозможна: ссылка — только маршрутом подтверждения (РП72 п. 4, ч. 2).
+    expect((await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: pkg(o.id) })).json().code).toBe("ORDER_NOT_PAYABLE");
+    expect(m.opkc.messages).toHaveLength(1);
+  });
+
+  it("РП72 ч. 1: одобрение — PAID и confirmation_required: false", async () => {
+    const { app, asA } = await setup();
+    const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    const r = await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: pkg(o.id) });
+    expect(r.json()).toMatchObject({ status: "PAID" });
+    expect(r.json().payment).toEqual({ approved: true, confirmation_required: false });
   });
 
   it("две одновременные оплаты заказа — одна авторизация, вторая ORDER_NOT_PAYABLE", async () => {

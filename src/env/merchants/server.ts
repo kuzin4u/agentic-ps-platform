@@ -54,8 +54,12 @@ export interface ShopListFailure {
   readonly retryAfterSec: number;
 }
 
-/** PAYING — оплата в процессе: ставится до первого обращения к эквайреру, повторная оплата невозможна. */
-export const ORDER_STATUSES = ["CREATED", "PAYING", "PAID", "DECLINED", "REJECTED"] as const;
+/**
+ * PAYING — оплата в процессе: ставится до первого обращения к эквайреру, повторная оплата невозможна.
+ * AWAITING_CONFIRMATION — эквайрер получил отказ с кодом CONFIRMATION_REQUIRED: заказ удерживается до подтверждения
+ * человеком, однократно и на срок (A7 п. 7.2, РП72 п. 2).
+ */
+export const ORDER_STATUSES = ["CREATED", "PAYING", "AWAITING_CONFIRMATION", "PAID", "DECLINED", "REJECTED"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export interface OrderLine {
@@ -76,10 +80,11 @@ export interface Order {
   readonly agent_code: string;
   readonly status: OrderStatus;
   /**
-   * Итог авторизации по ответу эквайрера — только «одобрено / отклонено». op_ref и код решения продавцу не раскрываются:
-   * op_ref — результат сверки Платформы (РП22 п. 6), о решении агент узнаёт событием Платформы (РП2, инвариант 5).
+   * Итог авторизации по ответу эквайрера — «одобрено / отклонено» и признак «нужно подтверждение человеком» (РП72 п. 3).
+   * op_ref и прочие коды решения агенту не раскрываются: op_ref — результат сверки Платформы (РП22 п. 6), о решении агент
+   * узнаёт событием Платформы (РП2, инвариант 5); confirmation_id у продавца нет — он в событии и GET Платформы.
    */
-  readonly payment: { readonly approved: boolean } | null;
+  readonly payment: { readonly approved: boolean; readonly confirmation_required: boolean } | null;
   /** Отказ продавца в исполнении после оплаты; оплата возвращена реверсалом (Д06). */
   readonly fulfilment_refused: boolean;
 }
@@ -355,7 +360,13 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
           return fail(reply, "UPSTREAM_UNAVAILABLE");
         }
         await submitMetadata();
-        let next: Order = { ...order, payment: { approved: auth.approved }, status: auth.approved ? "PAID" : "DECLINED" };
+        // Отказ с кодом CONFIRMATION_REQUIRED — заказ ждёт подтверждения человеком (РП72 п. 2–3); прочие отказы — DECLINED.
+        const confirmation_required = !auth.approved && auth.reason === "CONFIRMATION_REQUIRED";
+        let next: Order = {
+          ...order,
+          payment: { approved: auth.approved, confirmation_required },
+          status: auth.approved ? "PAID" : confirmation_required ? "AWAITING_CONFIRMATION" : "DECLINED",
+        };
         if (auth.approved && shop.behaviour === "REJECTS_FULFILMENT") {
           try {
             await opts.acquirer.reverse(auth.op_ref);
