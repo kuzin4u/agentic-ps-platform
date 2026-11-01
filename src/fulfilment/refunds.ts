@@ -218,12 +218,14 @@ export interface RefundDeps {
 
 const isUnits = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 1;
 const CURRENCY = /^[A-Z]{3}$/;
+/** refund_ref — до 128 знаков (processing-interface.yaml, maxLength): длиннее не помещается в строку индекса sql/122 (КТ1). */
+export const REFUND_REF_MAX = 128;
 
 /**
  * ПИ-3 REFUND (РП55 п. 3, РП71): после записи об исполнении — запись возврата и operation.refunded при первом возврате
  * операции; бюджет не меняется. Без клиринга — 503 (перестановка, п. 5); по операции без одобрения — 202 и инцидент;
  * после реверсала — по записи об исполнении, как без него (КТ1 п. 3); валюта ≠ операции — 400 и инцидент; refund_ref есть,
- * но не непустая строка — 400. Без refund_ref — один возврат на op_ref, с ним — на пару (op_ref, refund_ref); повтор —
+ * но не непустая строка до 128 знаков — 400. Без refund_ref — один возврат на op_ref, с ним — на пару (op_ref, refund_ref); повтор —
  * 202; тот же ключ с другой суммой или валютой — 202 и инцидент, запись прежняя; смешение форм — 202 и инцидент без
  * записи (нюанс 1); сумма всех возвратов операции больше суммы клиринга — запись и инцидент (п. 4).
  */
@@ -234,8 +236,9 @@ export async function acceptRefund(deps: RefundDeps, msg: Readonly<Record<string
   const currency = msg.currency;
   const refund_ref = Object.hasOwn(msg, "refund_ref") ? msg.refund_ref : null;
   if (!isUnits(amount) || typeof currency !== "string" || !CURRENCY.test(currency)) return 400;
-  // Есть, но не непустая строка (в том числе null) — не по форме (РП71 п. 1).
-  if (Object.hasOwn(msg, "refund_ref") && (typeof refund_ref !== "string" || refund_ref === "")) return 400;
+  // Есть, но не непустая строка до REFUND_REF_MAX (в том числе null) — не по форме, без записи (РП71 п. 1; КТ1: длинная
+  // строка не помещается в индекс — вставка падала бы, 503 и бесконечный повтор процессинга).
+  if (Object.hasOwn(msg, "refund_ref") && (typeof refund_ref !== "string" || refund_ref === "" || refund_ref.length > REFUND_REF_MAX)) return 400;
   const rec = await deps.operations.get(op_ref);
   if (!rec) return 202;
   if (rec.decision === null) return 503;

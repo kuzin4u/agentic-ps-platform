@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MemoryOperationStore } from "../../src/adp/operations.js";
 import { MemoryOutcomeStore } from "../../src/fulfilment/outcomes.js";
 import { fulfilmentRefFor, MemoryFulfilmentStore, type FulfilmentRecord } from "../../src/fulfilment/records.js";
-import { acceptRefund, classifyRefund, MemoryRefundStore, type RefundRecord } from "../../src/fulfilment/refunds.js";
+import { acceptRefund, classifyRefund, MemoryRefundStore, REFUND_REF_MAX, type RefundRecord } from "../../src/fulfilment/refunds.js";
 import type { CanonicalMessage, Decision } from "../../src/shared/canonical.generated.js";
 import { createStand, type Stand } from "../../src/stand/index.js";
 import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent.js";
@@ -135,10 +135,21 @@ describe("acceptRefund с refund_ref в памяти (РП71)", () => {
     expect(await s.send(1_000, { refund_ref: null })).toBe(400);
     expect(await s.send(1_000, { refund_ref: "" })).toBe(400);
     expect(await s.send(1_000, { refund_ref: 7 })).toBe(400);
+    expect(await s.send(1_000, { refund_ref: "R".repeat(REFUND_REF_MAX + 1) })).toBe(400);
     expect(await s.send(1_000, { refund_ref: "R1" }, "USD")).toBe(400);
     expect(await s.refunds.list(OP)).toEqual([]);
     expect(s.incidents()).toHaveLength(1);
     expect(s.appended).toEqual([]);
+  });
+
+  it("refund_ref ровно 128 знаков — принят и записан; 129 — 400 без записи (КТ1, maxLength)", async () => {
+    const s = await setup();
+    const max = "R".repeat(REFUND_REF_MAX);
+    expect(REFUND_REF_MAX).toBe(128);
+    expect(await s.send(1_000, { refund_ref: max })).toBe(202);
+    expect(await s.send(1_000, { refund_ref: `${max}9` })).toBe(400);
+    expect((await s.refunds.list(OP)).map((x) => x.refund_ref)).toEqual([max]);
+    expect(s.incidents()).toEqual([]);
   });
 });
 

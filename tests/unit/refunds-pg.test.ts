@@ -202,7 +202,8 @@ describe.skipIf(!DATABASE_URL)("возврат и operation.refunded на Postgr
     const pa = storeA.record(a, await refundedEventFor(a));
     await g.passed;
     const pb = storeB.record(b, await refundedEventFor(b));
-    await lockWaiter(op_ref);
+    // B встал в очередь на блокировку — иначе гонка не воспроизведена и тест прошёл бы вхолостую (КТ1, замечание 2).
+    expect(await lockWaiter(op_ref)).toBe(true);
     g.open();
     return Promise.all([pa, pb]);
   };
@@ -255,7 +256,10 @@ describe.skipIf(!DATABASE_URL)("возврат и operation.refunded на Postgr
     });
     const pa = holder.record(a, undefined);
     await g.passed;
-    expect(await code(new PgRefundStore(pool2, { lockTimeoutMs: 50 }).record(record("OP-ref-timeout", { refund_ref: "R2" }), undefined))).toBe("55P03");
+    // Предел 1 с, а не 50 мс: lockWaiter (опрос pg_locks раз в 20 мс) должен успеть увидеть B в очереди до отказа (КТ1, замечание 2).
+    const pb = code(new PgRefundStore(pool2, { lockTimeoutMs: 1_000 }).record(record("OP-ref-timeout", { refund_ref: "R2" }), undefined));
+    expect(await lockWaiter("OP-ref-timeout")).toBe(true);
+    expect(await pb).toBe("55P03");
     g.open();
     expect(await pa).toEqual({ kind: "inserted", all: [a] });
     expect(await rows("OP-ref-timeout")).toEqual([["R1", 60_000]]);
