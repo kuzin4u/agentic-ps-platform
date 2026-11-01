@@ -186,7 +186,16 @@ describe.skipIf(!DATABASE_URL)("возврат и operation.refunded на Postgr
     }
     return false;
   };
-  /** A вставил и держит транзакцию (точка inserted); B стартует и ждёт блокировку; A фиксируется; исходы обоих. */
+  /** Исход или исключение: ворота уже открыты, ничего не висит (РП71 нюанс 5). */
+  const settledValue = <T>(s: PromiseSettledResult<T>): T => {
+    if (s.status === "rejected") throw s.reason;
+    return s.value;
+  };
+  /**
+   * A вставил и держит транзакцию (точка inserted); B стартует и ждёт блокировку; A фиксируется; исходы обоих. Проверки,
+   * которые могут упасть, — только после открытия ворот и allSettled (РП71 нюанс 5, Р-1064): иначе A держит транзакцию,
+   * а прогон висит до таймаута хука.
+   */
   const race = async (op_ref: string, a: RefundRecord, b: RefundRecord): Promise<[RefundOutcome, RefundOutcome]> => {
     const g = gate();
     const storeA = new PgRefundStore(db.pool, {
@@ -202,10 +211,12 @@ describe.skipIf(!DATABASE_URL)("возврат и operation.refunded на Postgr
     const pa = storeA.record(a, await refundedEventFor(a));
     await g.passed;
     const pb = storeB.record(b, await refundedEventFor(b));
-    // B встал в очередь на блокировку — иначе гонка не воспроизведена и тест прошёл бы вхолостую (КТ1, замечание 2).
-    expect(await lockWaiter(op_ref)).toBe(true);
+    const queued = await lockWaiter(op_ref);
     g.open();
-    return Promise.all([pa, pb]);
+    const [sa, sb] = await Promise.allSettled([pa, pb]);
+    // B встал в очередь на блокировку — иначе гонка не воспроизведена и тест прошёл бы вхолостую (КТ1, замечание 2).
+    expect(queued).toBe(true);
+    return [settledValue(sa), settledValue(sb)];
   };
 
   it("гонка одной пары с двух соединений — одна вставка, второй — повтор (нюанс 2)", async () => {
@@ -258,10 +269,14 @@ describe.skipIf(!DATABASE_URL)("возврат и operation.refunded на Postgr
     await g.passed;
     // Предел 1 с, а не 50 мс: lockWaiter (опрос pg_locks раз в 20 мс) должен успеть увидеть B в очереди до отказа (КТ1, замечание 2).
     const pb = code(new PgRefundStore(pool2, { lockTimeoutMs: 1_000 }).record(record("OP-ref-timeout", { refund_ref: "R2" }), undefined));
-    expect(await lockWaiter("OP-ref-timeout")).toBe(true);
-    expect(await pb).toBe("55P03");
+    const queued = await lockWaiter("OP-ref-timeout");
+    const c = await pb;
     g.open();
-    expect(await pa).toEqual({ kind: "inserted", all: [a] });
+    const [sa] = await Promise.allSettled([pa]);
+    // Проверки — после открытия ворот (РП71 нюанс 5, Р-1064).
+    expect(queued).toBe(true);
+    expect(c).toBe("55P03");
+    expect(settledValue(sa)).toEqual({ kind: "inserted", all: [a] });
     expect(await rows("OP-ref-timeout")).toEqual([["R1", 60_000]]);
     expect(() => new PgRefundStore(db.pool, { lockTimeoutMs: 0 })).toThrow(/lockTimeoutMs/);
     expect(() => new PgRefundStore(db.pool, { lockTimeoutMs: 1.5 })).toThrow(/lockTimeoutMs/);
