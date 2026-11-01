@@ -76,7 +76,7 @@ async function setup(over: Partial<ConfirmationStore> = {}): Promise<Ctx> {
   await participantRoutes(app, {
     trusted: new TrustedParticipants([emu.trustedKey, live.key, upk.trustedKey], { stand: true }),
     consent,
-    params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 },
+    params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, participant_rate_limit_per_30s: 6_000 },
     now: () => new Date(t),
     confirmations: { store: wrapped, skewSec: SKEW_SEC },
   });

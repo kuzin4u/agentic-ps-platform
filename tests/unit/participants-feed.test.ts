@@ -29,7 +29,7 @@ function server(pageMax = 100) {
     participants: {
       trusted,
       consent: new ConsentJournal(new MemoryConsentStore(), { revocationOrder: () => "bank:test:revocation:v1" }),
-      params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, event_page_max: pageMax },
+      params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, participant_rate_limit_per_30s: 6_000, event_page_max: pageMax },
       requests: new ParticipantRequestVerifier(trusted, { skewSec: 300, now: () => T }),
       notifications,
     },
@@ -128,7 +128,7 @@ describe("ПИ-8 GET /participants/v1/notifications (РП46 (б) п. 3, (в))", 
       participants: {
         trusted,
         consent: new ConsentJournal(new MemoryConsentStore(), { revocationOrder: () => "bank:test:revocation:v1" }),
-        params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 },
+        params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, participant_rate_limit_per_30s: 6_000 },
         requests: new ParticipantRequestVerifier(trusted, { skewSec: 300, now: () => T }),
       },
     });

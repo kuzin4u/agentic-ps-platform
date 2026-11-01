@@ -376,6 +376,33 @@ components:
         type: string
         minLength: 1
         maxLength: 128
+  responses:
+    RateLimited:
+      description: "`RATE_LIMITED` — грубый лимит шлюза участников по адресу обращения (РП73): `participant_rate_limit_per_30s` за окно 30 с, до чтения тела и проверки подписи; повтор той же записью после Retry-After (≤ 30 с)"
+      headers:
+        Retry-After:
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 30
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+            - no-store
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - code
+            properties:
+              code:
+                type: string
+                enum:
+                - RATE_LIMITED
 paths:
   /adp/v1/decide:
     post:
@@ -445,6 +472,8 @@ paths:
           description: "`LIMITS_UNSUPPORTED` — неизвестное поле limits или period"
         '503':
           description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
     get:
       summary: ПИ-8 Действующая запись лимитов клиента (эмитент, РП46 (в))
       description: "Подпись HTTP-запроса участника по профилю ПАО §2 (RFC 9421): Signature-Input ровно (\"@method\" \"@path\" \"@query\" \"content-digest\" \"x-participant-code\" \"x-timestamp\" \"x-nonce\"), alg ed25519, ключ — из доверенных ключей участников, окно — signature_skew_sec, nonce однократный. Участник — из проверенной подписи: банк читает только своих клиентов, пара другого банка — 404, как нет записи. Ответ — действующая запись (наибольшая версия) как прислал банк, с его подписью и received_at."
@@ -499,6 +528,8 @@ paths:
           description: "`LIMITS_NOT_FOUND` — у этого банка записи для клиента нет (в том числе клиент другого банка)"
         '503':
           description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/instruments/{funding_ref}/limits:
     put:
       summary: ПИ-8 Ограничения инструмента (эмитент; PS-14 — funding_ref из записи реквизита)
@@ -521,6 +552,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Limits'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     get:
       summary: Ограничения
       parameters:
@@ -536,6 +569,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Limits'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/mandates/{id}/sign:
     post:
       summary: ПИ-8 Подпись мандата клиентом
@@ -630,6 +665,8 @@ paths:
           description: "`QUALIFIED_SIGNATURE_REQUIRED` — A7 п. 3.2: сумма или срок выше порогов `qualified_signature_above_*` или валюта не RUB, а подпись простая"
         '503':
           description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/mandates/{id}/revoke:
     post:
       summary: ПИ-8 Отзыв мандата клиентом (РП38)
@@ -702,6 +739,8 @@ paths:
           description: "`MANDATE_HASH_MISMATCH` — хэш не равен Mandate.hash"
         '503':
           description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/principals/{ref}/revoke-all:
     post:
       summary: ПИ-8 Прекращение всех полномочий клиента одним действием (PS-20 ч. 2, РП45 п. 4, РП46 (а))
@@ -770,6 +809,8 @@ paths:
           description: "`SIGNATURE_INVALID` — подпись не проверена (в том числе метка отзыва одного мандата)"
         '503':
           description: "`STATE_UNAVAILABLE` / `UPSTREAM_UNAVAILABLE`, Retry-After: сбой посередине — метка уже действует, банк повторяет тот же revocation_ref"
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/notifications:
     get:
       summary: ПИ-8 Лента уведомлений клиента через банк (эмитент, РП46 (б), доп. п. 7, 9, 10; A3 п. 5.3)
@@ -863,6 +904,8 @@ paths:
           description: "`SIGNATURE_INVALID` — нет подписи, неизвестный участник или ключ, состав не по профилю, вне окна, повтор nonce"
         '503':
           description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/confirmations/{id}:
     post:
       summary: ПИ-8/ПИ-6 Результат подтверждения
@@ -950,6 +993,8 @@ paths:
           description: "`CONFIRMATION_TOTALS_MISMATCH`; `CONFIRMATION_NOT_PENDING` с текущим `status` — другое решение, ссылка использована, срок вышел (`EXPIRED`)"
         '503':
           description: "`STATE_UNAVAILABLE`, Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/state/reserve:
     post:
       summary: 'Режим «сам эмитент»: резерв'
@@ -962,6 +1007,8 @@ paths:
       responses:
         '200':
           description: OK
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/state/commit:
     post:
       summary: Закрепление
@@ -974,6 +1021,8 @@ paths:
       responses:
         '200':
           description: OK
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/state/release:
     post:
       summary: Освобождение
@@ -986,6 +1035,8 @@ paths:
       responses:
         '200':
           description: OK
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/agents/{code}/status:
     get:
       summary: ПИ-8 Статус агента для эквайрера (РП57 п. 6)
@@ -1032,6 +1083,8 @@ paths:
           description: "`AGENT_UNKNOWN` — неизвестный, не по форме или из другого контура"
         '503':
           description: "`UPSTREAM_UNAVAILABLE`, Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/merchants/{id}/readiness:
     post:
       summary: ПИ-8 Знак готовности продавца (эквайрер, A5 п. 5, РП57 п. 2)
@@ -1090,6 +1143,8 @@ paths:
           description: "`READINESS_CONFLICT` — тот же `readiness_ref` с другой записью; `READINESS_SUSPENDED` — знак приостановлен оператором"
         '503':
           description: "`STATE_UNAVAILABLE`, Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
     get:
       summary: ПИ-8 Статус знака своего продавца (эквайрер, РП57 п. 3)
       description: "Подпись HTTP-запроса участника роли ACQUIRER — профиль как у `GET …/limits` (РП46 (в)). Только свои продавцы: чужой — 404, как нет записи (намеренно, в отличие от 403 у `POST`: чужие перечни не раскрываются). С причиной приостановления."
@@ -1126,6 +1181,8 @@ paths:
           description: "`MERCHANT_NOT_FOUND` — продавца нет в перечне этого эквайрера"
         '503':
           description: "`STATE_UNAVAILABLE` — сбой хранилища знака; `UPSTREAM_UNAVAILABLE` — сбой хранилища nonce при проверке подписи запроса; Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/merchants/{id}/payments:
     post:
       summary: ПИ-8 Метаданные пакета и сверка credential_ref → op_ref (эквайрер, РП22 п. 6, РП57 п. 5)
@@ -1200,6 +1257,8 @@ paths:
           description: "`METADATA_CONFLICT` — тот же `metadata_ref` с другой записью"
         '503':
           description: "`STATE_UNAVAILABLE`, Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participants/v1/merchants/{id}/payments/{credential_ref}:
     get:
       summary: ПИ-8 Сверка по реквизиту (эквайрер, РП57 п. 5)
@@ -1232,6 +1291,8 @@ paths:
           description: "`CREDENTIAL_NOT_FOUND`"
         '503':
           description: "`STATE_UNAVAILABLE` — сбой хранилища; `UPSTREAM_UNAVAILABLE` — сбой хранилища nonce при проверке подписи запроса; Retry-After"
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /disputes/v1/scope-check:
     post:
       summary: ПИ-7/П7 Вычисление in_scope по op_ref

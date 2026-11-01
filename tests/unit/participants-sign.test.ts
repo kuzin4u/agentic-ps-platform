@@ -33,7 +33,7 @@ import { signDirect } from "../support/consent-sign.js";
 
 const A = "nspk:agent:sign-a:v1";
 const T0 = new Date("2026-10-18T10:00:00Z");
-const POLICY = { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 };
+const POLICY = { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, participant_rate_limit_per_30s: 6_000 };
 const key = (): string => createHash("sha256").update(randomUUID()).digest("hex");
 
 const intent = (over: Partial<MandateRequest> = {}): MandateRequest => ({

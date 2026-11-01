@@ -32,7 +32,7 @@ import { jwkThumbprint } from "../../src/registry/keys.js";
 import { buildServer } from "../../src/server.js";
 
 const T = new Date("2026-10-22T10:00:00Z");
-const POLICY = { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, event_page_max: 100 };
+const POLICY = { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, event_page_max: 100, participant_rate_limit_per_30s: 6_000 };
 
 /** Участник теста с закрытым ключом: подписывает любые записи, чтобы проверить отказ по роли, а не по подписи. */
 function participant(code: string, extra: Partial<TrustedParticipantKey>) {

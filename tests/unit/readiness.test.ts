@@ -41,7 +41,7 @@ import { signedInject } from "../support/signed-inject.js";
 
 const params = loadParams();
 const T = new Date("2026-10-24T10:00:00Z");
-const POLICY = { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, event_page_max: 100 };
+const POLICY = { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, event_page_max: 100, participant_rate_limit_per_30s: 6_000 };
 const readinessPath = (id: string) => `/participants/v1/merchants/${encodeURIComponent(id)}/readiness`;
 
 /** Участник теста с закрытым ключом: подписывает любые записи, чтобы проверить отказ по роли, а не по подписи. */

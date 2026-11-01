@@ -3,7 +3,7 @@
 // Изменяющий метод затем: Idempotency-Key → тело по схеме (REQUEST_INVALID) → захват ключа → обработчик (РП30 п. 3, РП31).
 // /revoke — PS-05б ч. 1 (РП60); POST /pao/v1/mandates — PS-06 К1.3 (РП33); GET /pao/v1/mandates/{id} — К2.2.
 import { TLSSocket } from "node:tls";
-import rateLimit, { normalizeIP, type CreateRateLimitOptions } from "@fastify/rate-limit";
+import rateLimit, { type CreateRateLimitOptions } from "@fastify/rate-limit";
 import { IdempotencyConflict, IdempotencyInProgress } from "@kuzin4u/agentic-core";
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentExcludedError, AgentNotActiveError, KeyInvalidError, KeyNotFoundError, type AgentKeys } from "../registry/agent-keys.js";
@@ -12,6 +12,7 @@ import type { ConsentJournal } from "../consent/journal.js";
 import { MANDATE_ID } from "../consent/model.js";
 import type { AgentRecord, AgentSubscription } from "../registry/model.js";
 import { agentRateLimitProblems, type Params } from "../shared/config.js";
+import { ADDRESS_RATE_IPV6_SUBNET, ADDRESS_RATE_WINDOW_MS, rateLimitKey, retryAfterSec } from "../shared/rate-limit.js";
 import type { AgentSelf, Credential } from "../shared/pao.js";
 import { CONFIRMATION_ID, type ConfirmationRecord } from "../confirm/model.js";
 import type { ConfirmationStore } from "../confirm/store.js";
@@ -107,24 +108,16 @@ interface MutatingOpts<T> {
   readonly replay?: (agent: AgentRecord, input: T, stored: PaoReply) => Promise<PaoReply>;
 }
 
-/** Окно грубого лимита (РП32 п. 2, 4): 30 с — Retry-After не больше maxRetryAfterSec клиента ядра (РП24). */
-export const PAO_RATE_WINDOW_MS = 30_000;
+/** Окно грубого лимита (РП32 п. 2, 4) — общее с открытыми адресами (РП73, src/shared/rate-limit.ts). */
+export const PAO_RATE_WINDOW_MS = ADDRESS_RATE_WINDOW_MS;
 
-/** Ключ лимита для IPv6 — подсеть /64 (РП32, дополнение п. 1): иначе клиент меняет адрес внутри своей /64 на каждом обращении. */
-export const PAO_RATE_IPV6_SUBNET = 64;
+/** Ключ лимита для IPv6 — подсеть /64 (РП32, дополнение п. 1) — общий с открытыми адресами (РП73). */
+export const PAO_RATE_IPV6_SUBNET = ADDRESS_RATE_IPV6_SUBNET;
 
-/** Граница Retry-After у 429 (РП24, РП32 дополнение п. 3): и при переводе часов назад. */
-const MAX_RETRY_AFTER_SEC = 30;
-
-/** Ключ лимита: IPv4 — как есть, IPv6 — начало своей /64, IPv4 в IPv6 — как IPv4. */
-export const rateLimitKey = (ip: string): string => normalizeIP(ip, PAO_RATE_IPV6_SUBNET);
+export { rateLimitKey };
 
 /** Метка превышения лимита: errorResponseBuilder выбрасывает её, обработчик ошибок области отвечает телом ПАО §6. */
 const RATE_LIMITED = Object.freeze({ statusCode: 429, code: "RATE_LIMITED" });
-
-/** Остаток окна в секундах для Retry-After: не больше границы РП24 и при переводе часов назад (РП32, дополнение п. 3). */
-const retryAfterSec = (computed: number): number =>
-  Number.isFinite(computed) ? Math.min(Math.max(computed, 0), MAX_RETRY_AFTER_SEC) : MAX_RETRY_AFTER_SEC;
 
 /** Параметры второго слоя по уровням агента (РП63 п. 4). */
 const AGENT_RATE_PARAMS = Object.freeze({
