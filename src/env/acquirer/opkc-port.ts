@@ -18,23 +18,24 @@ export interface OpkcPort {
   reverse(msg: CanonicalMessage): Promise<void>;
 }
 
+/** Решение заглушки ОПКЦ по сообщению: синхронно или асинхронно (РП72 п. 10 — тест передаёт сообщение в ADP стенда). */
+export type OpkcStubDecide = (
+  msg: CanonicalMessage,
+) => { approved: boolean; reason: string | null } | Promise<{ approved: boolean; reason: string | null }>;
+
 /** Заглушка ОПКЦ до PS-11: записывает сообщения, решение — из функции теста (по умолчанию одобрение). */
 export class OpkcStub implements OpkcPort {
   readonly messages: CanonicalMessage[] = [];
   #seq = 0;
 
-  constructor(
-    private readonly decide: (msg: CanonicalMessage) => { approved: boolean; reason: string | null } = () => ({
-      approved: true,
-      reason: null,
-    }),
-  ) {}
+  constructor(private readonly decide: OpkcStubDecide = () => ({ approved: true, reason: null })) {}
 
   async authorize(msg: AcquirerMessage): Promise<OpkcAuthResult> {
     const op_ref = `OPKC-STUB-${String(++this.#seq).padStart(6, "0")}`;
     const full: CanonicalMessage = { op_ref, ...structuredClone(msg) };
     this.messages.push(full);
-    const d = this.decide(full);
+    // Сбой или отказ промиса решения — как сбой ОПКЦ: эквайрер получает исключение, продавец — UPSTREAM_UNAVAILABLE.
+    const d = await this.decide(full);
     return { op_ref, approved: d.approved, reason: d.approved ? null : d.reason };
   }
 
