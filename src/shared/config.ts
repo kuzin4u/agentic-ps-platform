@@ -47,6 +47,10 @@ export interface Params {
   readonly merchant_jwks_refetch_min_sec: number;
   /** Срок кэша статуса знака готовности у продавца, с: Cache-Control max-age у GET /merchants/v1/merchants/{id}/readiness (РП57 п. 3). */
   readonly merchant_readiness_max_age_sec: number;
+  /** Грубый лимит API для продавцов: обращений с одного адреса за окно 30 с (РП73 п. 4). */
+  readonly merchant_api_rate_limit_per_30s: number;
+  /** Грубый лимит шлюза участников ПИ-8: обращений с одного адреса за окно 30 с (РП73 п. 4). */
+  readonly participant_rate_limit_per_30s: number;
   /** Срок хранения результата идемпотентности ПАО, с; ≥ 60 — не меньше аренды захвата ядра (РП30 п. 3). */
   readonly idempotency_ttl_sec: number;
   readonly pao_rate_limit_per_30s: number;
@@ -186,6 +190,8 @@ const RULES: Record<keyof Params, Rule> = {
   merchant_jwks_max_age_sec: int(1),
   merchant_jwks_refetch_min_sec: int(1),
   merchant_readiness_max_age_sec: int(1),
+  merchant_api_rate_limit_per_30s: int(1),
+  participant_rate_limit_per_30s: int(1),
   idempotency_ttl_sec: int(60),
   pao_rate_limit_per_30s: int(1),
   pao_agent_rate_limit_per_min_l1: evenInt(2),

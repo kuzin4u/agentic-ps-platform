@@ -12,7 +12,7 @@ import { buildServer } from "../../src/server.js";
 import { DATABASE_URL, openTestDb, type TestDb } from "../support/pg.js";
 
 const T = new Date("2026-10-24T10:00:00Z");
-const POLICY = { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 };
+const POLICY = { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, participant_rate_limit_per_30s: 6_000 };
 
 const row = (merchant_id: string, ref: string, status: "ACTIVE" | "WITHDRAWN", issued_at = T): StoredAcquirerReadiness => ({
   participant_code: "acq:pg",

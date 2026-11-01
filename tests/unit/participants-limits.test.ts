@@ -276,7 +276,7 @@ describe("ПИ-8 GET /participants/v1/principals/{ref}/limits с подпись�
       participants: {
         trusted,
         consent: new ConsentJournal(new MemoryConsentStore(), { revocationOrder: () => "bank:test:revocation:v1" }),
-        params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 },
+        params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, participant_rate_limit_per_30s: 6_000 },
         limits: store,
         requests: new ParticipantRequestVerifier(trusted, { skewSec: 300, now: () => T }),
       },

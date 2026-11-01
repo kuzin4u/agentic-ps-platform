@@ -14,7 +14,7 @@ import { StateService } from "../../src/state/index.js";
 
 export const A = "nspk:agent:state-a:v1";
 export const T0 = new Date("2026-10-19T10:00:00Z");
-const POLICY = { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 };
+const POLICY = { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, participant_rate_limit_per_30s: 6_000 };
 const key = (): string => createHash("sha256").update(randomUUID()).digest("hex");
 
 export const intent = (over: Partial<MandateRequest> = {}): MandateRequest => ({

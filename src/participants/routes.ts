@@ -14,6 +14,7 @@ import {
 } from "../consent/model.js";
 import { isOpaquePrincipalRef } from "../consent/terms.js";
 import type { Params } from "../shared/config.js";
+import { ADDRESS_RATE_LIMITED, addressLimitedReply, addressRateLimit } from "../shared/rate-limit.js";
 import {
   CONFIRMATION_ID,
   newConfirmationRef,
@@ -34,7 +35,9 @@ import type { ParticipantRequestVerifier } from "./verify.js";
 export interface ParticipantDeps {
   readonly trusted: TrustedParticipants;
   readonly consent: ConsentJournal;
-  readonly params: SignaturePolicy & Pick<Params, "unavailable_retry_after_sec"> & Partial<Pick<Params, "event_page_max">>;
+  readonly params: SignaturePolicy &
+    Pick<Params, "unavailable_retry_after_sec" | "participant_rate_limit_per_30s"> &
+    Partial<Pick<Params, "event_page_max">>;
   /** П3: счёт бюджета открывается после MANDATE_SIGNED (РП41 п. 3); без П3 или при сбое — первым резервом. */
   readonly state?: Pick<StateService, "open">;
   /** Лимиты клиента от банка (РП45 п. 1); без хранилища маршрута лимитов нет. */
@@ -177,8 +180,13 @@ function revokeAllBody(principal_ref: string, v: unknown): PrincipalRevocationPa
 }
 
 export async function participantRoutes(app: FastifyInstance, deps: ParticipantDeps): Promise<void> {
-  // Неразборный JSON и иные отказы Fastify до обработчика — тело ПИ-8 `{code}`, а не тело Fastify (как в ПАО).
+  // Грубый лимит по адресу (РП73 п. 1–2): свой счётчик контекста, до маршрутов — тело и подпись участника до него не
+  // читаются; предел больше, чем у API продавцов (банки за NAT, пачки; Р-1086).
+  await addressRateLimit(app, deps.params.participant_rate_limit_per_30s, "participant_rate_limit_per_30s");
+  // Неразборный JSON и иные отказы Fastify до обработчика — тело ПИ-8 `{code}`, а не тело Fastify (как в ПАО);
+  // превышение лимита — 429 до разбора 4xx (РП73 п. 3).
   app.setErrorHandler((err: { statusCode?: number }, _req, reply) => {
+    if (err === ADDRESS_RATE_LIMITED) return addressLimitedReply(reply);
     const http = err.statusCode ?? 500;
     if (http === 413) return reply.code(413).send({ code: "REQUEST_INVALID" });
     if (http >= 400 && http < 500) return reply.code(400).send({ code: "REQUEST_INVALID" });

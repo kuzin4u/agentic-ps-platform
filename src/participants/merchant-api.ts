@@ -7,6 +7,7 @@ import type { AgentJwks } from "../registry/jwks.js";
 import type { AgentRecord, Contour } from "../registry/model.js";
 import { isAgentCode } from "../registry/code.js";
 import type { Params } from "../shared/config.js";
+import { ADDRESS_RATE_LIMITED, addressLimitedReply, addressRateLimit } from "../shared/rate-limit.js";
 import { publicReadiness, type ReadinessStore } from "./readiness.js";
 import { isMerchantId } from "./trusted.js";
 
@@ -15,7 +16,10 @@ export interface MerchantApiDeps {
   readonly keys: { jwks(contour: Contour): Promise<AgentJwks> };
   /** Контур ключей сервера: среды dev и sandbox — sandbox (РП56 п. 2). */
   readonly contour: Contour;
-  readonly params: Pick<Params, "merchant_jwks_max_age_sec" | "merchant_readiness_max_age_sec" | "unavailable_retry_after_sec">;
+  readonly params: Pick<
+    Params,
+    "merchant_jwks_max_age_sec" | "merchant_readiness_max_age_sec" | "unavailable_retry_after_sec" | "merchant_api_rate_limit_per_30s"
+  >;
   /** Знак готовности (РП57 п. 3); без хранилища адреса знака нет. */
   readonly readiness?: Pick<ReadinessStore, "current">;
 }
@@ -60,10 +64,13 @@ export async function agentStatusView(
 }
 
 export async function merchantApiRoutes(app: FastifyInstance, deps: MerchantApiDeps): Promise<void> {
+  // Грубый лимит по адресу (РП73 п. 1–2; С3б — перебор кодов агентов): свой счётчик контекста, до маршрутов.
+  await addressRateLimit(app, deps.params.merchant_api_rate_limit_per_30s, "merchant_api_rate_limit_per_30s");
   const unavailable = (reply: FastifyReply) =>
     reply.code(503).header("retry-after", String(deps.params.unavailable_retry_after_sec)).send({ code: "UPSTREAM_UNAVAILABLE" });
-  // Отказы Fastify до обработчика — тело `{code}`, как у ПИ-8.
+  // Отказы Fastify до обработчика — тело `{code}`, как у ПИ-8; превышение лимита — 429 до разбора 4xx (РП73 п. 3).
   app.setErrorHandler((err: { statusCode?: number }, _req, reply) => {
+    if (err === ADDRESS_RATE_LIMITED) return addressLimitedReply(reply);
     const http = err.statusCode ?? 500;
     if (http >= 400 && http < 500) return reply.code(400).send({ code: "REQUEST_INVALID" });
     return unavailable(reply);

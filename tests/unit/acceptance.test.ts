@@ -244,10 +244,13 @@ describe.skipIf(!DATABASE_URL)("приёмка песочницы на PostgreSQ
   it("sshOperator через настоящий sh -c без ssh: mktemp, копия, запуск, удаление; после close() каталога нет", async () => {
     const dirs: string[] = [];
     // Как ssh: удалённая строка уходит в оболочку целиком; sudo -n -u <пользователь> снят — пользователь тот же.
+    // Строка — позиционным аргументом под постоянным `eval "$1"`, а не текстом после -c: разбор тот же, что у оболочки
+    // VPS, а команда не собирается из путей теста (CodeQL #87, SEC-2 ч. 1 К1.2). Защита рабочего пути — safe() в
+    // sshOperator (acceptance-operator.test.ts, «небезопасные части»).
     const exec: Exec = async (cmd, args, input) => {
       expect(cmd).toBe("ssh");
       const remote = (args[args.length - 1] as string).replace(/^sudo -n -u agentic /, "");
-      const r = await spawnExec("sh", ["-c", remote], input, bareEnv());
+      const r = await spawnExec("sh", ["-c", 'eval "$1"', "sh", remote], input, bareEnv());
       if (remote === "mktemp -d") dirs.push(r.stdout.trim());
       transcript += `${r.stdout}\n${r.stderr}\n`;
       return r;

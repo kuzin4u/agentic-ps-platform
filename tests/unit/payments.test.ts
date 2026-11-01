@@ -241,7 +241,7 @@ describe("Попытка по неизвестному или чужому ре�
     await participantRoutes(app, {
       trusted,
       consent: new ConsentJournal(new MemoryConsentStore(), { revocationOrder: () => "bank:test:revocation:v1" }),
-      params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1 },
+      params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, participant_rate_limit_per_30s: 6_000 },
       payments: {
         store,
         reconcile: { credentials: { credentialForMerchant: async () => undefined }, mandateStatus: async () => "ACTIVE", suspendedAt: async () => null, now: () => new Date() },
