@@ -26,7 +26,7 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 
     await db?.close();
   });
 
-  it("применены 001–004, 100_consent, 101_events, 102_event_deliveries, 103_adp_operations, 104_adp_split_window, 105_participant_limits, 106_principal_order, 107_participant_notifications, 108_agent_credentials, 109_limit_source_instrument, 110_agent_tokens_merchant_mcc, 111_confirmations, 112_confirmation_events, 113_confirmation_instrument, 114_operation_outcomes, 115_fulfilments, 116_agent_status_events, 117_operation_reversals_refunds, 118_merchant_readiness, 119_payment_metadata, 120_agent_registry и 121_agent_certificates, таблицы nonce, идемпотентности и согласий есть; повторный запуск ничего не применяет", async () => {
+  it("применены 001–004, 100_consent, 101_events, 102_event_deliveries, 103_adp_operations, 104_adp_split_window, 105_participant_limits, 106_principal_order, 107_participant_notifications, 108_agent_credentials, 109_limit_source_instrument, 110_agent_tokens_merchant_mcc, 111_confirmations, 112_confirmation_events, 113_confirmation_instrument, 114_operation_outcomes, 115_fulfilments, 116_agent_status_events, 117_operation_reversals_refunds, 118_merchant_readiness, 119_payment_metadata, 120_agent_registry, 121_agent_certificates и 122_operation_refunds_ref, таблицы nonce, идемпотентности и согласий есть; повторный запуск ничего не применяет", async () => {
     const applied = (await db.pool.query<{ name: string }>("SELECT name FROM core_migrations ORDER BY name")).rows;
     expect(applied.map((r) => r.name)).toEqual([
       "001_journal.sql",
@@ -55,6 +55,7 @@ describe.skipIf(!DATABASE_URL)("PostgreSQL: миграции ядра 001–004 
       "119_payment_metadata.sql",
       "120_agent_registry.sql",
       "121_agent_certificates.sql",
+      "122_operation_refunds_ref.sql",
     ]);
     const tables = (
       await db.pool.query<{ t: string }>(
