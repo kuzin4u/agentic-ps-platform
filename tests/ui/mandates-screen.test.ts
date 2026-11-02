@@ -4,6 +4,7 @@
 // процесса; подключение к стенду (`stand.bankApp`).
 import { afterAll, describe, expect, it } from "vitest";
 import { createMandatesScreen, type MandatesScreenDeps } from "../../src/ui/mandates/index.js";
+import type { MandatesScreenPort } from "../../src/ui/mandates/port.js";
 import { SESSION_COOKIE } from "../../src/ui/mandates/session.js";
 import { UI_CSP, type UiSettings } from "../../src/ui/shared/index.js";
 import { createStand } from "../../src/stand/index.js";
@@ -12,9 +13,15 @@ const T0 = Date.parse("2026-11-02T10:00:00.000Z");
 const TTL = { login_ttl_sec: 120, session_ttl_sec: 900 };
 const PRINCIPAL = "cl_screen_k11";
 
+const EMPTY_PORT: MandatesScreenPort = {
+  mandates: async () => [],
+  mandate: async () => undefined,
+  decide: async () => ({ kind: "NOT_FOUND" }),
+};
+
 function setup(over: Partial<MandatesScreenDeps> = {}) {
   let t = T0;
-  const screen = createMandatesScreen({ ttl: TTL, now: () => new Date(t), ...over });
+  const screen = createMandatesScreen({ port: EMPTY_PORT, ttl: TTL, now: () => new Date(t), ...over });
   return { screen, app: screen.app, tick: (sec: number) => (t += sec * 1000) };
 }
 

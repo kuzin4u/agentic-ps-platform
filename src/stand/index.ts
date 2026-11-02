@@ -640,7 +640,13 @@ export function createStand(opts: StandOptions = {}): Stand {
     },
   };
   // Экран мандатов банка стенда (UI-К2): вход по одноразовой ссылке, сроки — стенда.
-  const bankScreen = createIssuerScreen({ now, ...(opts.bankApp ? { settings: opts.bankApp } : {}) });
+  const bankScreen = createIssuerScreen({
+    now,
+    mandateIds: () => consentStore.mandateIds(),
+    signingView: (id) => consent.signingView(id),
+    sign: (id, decision) => issuer.sign(id, { decision }),
+    ...(opts.bankApp ? { settings: opts.bankApp } : {}),
+  });
   const bankApp: StandBankApp = {
     app: bankScreen.app,
     async listen() {
