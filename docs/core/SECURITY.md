@@ -180,7 +180,7 @@
 | Ж1 | закрыто | `tests/unit/consent-journal.test.ts` (UPDATE, DELETE, TRUNCATE отвергаются; подмена в обход — `ConsentIntegrityError`), `tests/unit/mandate-verify-evidence.test.ts` |
 | Ж2 | закрыто | `tests/unit/pao-mandates.test.ts`, `tests/unit/participants-sign.test.ts` |
 | Ж3 | частично | `tests/unit/mandate-verify-evidence.test.ts` (`verify` без предмета, выписка — только своему агенту); остаток — выписка сторонам спора (PS-22) |
-| Ж4 | закрыто (стенд) | `tests/unit/journal-scan.test.ts`; остаточный риск — §3.3 Ж4 (белый список полей — PS-33; сканер по `main.ts` — РП70) |
+| Ж4 | закрыто (стенд) | `tests/unit/journal-scan.test.ts`; остаточный риск — §3.3 Ж4 (белый список полей — PS-33; сканер по `main.ts` — РП70). **Экран мандатов банка (UI-К2) — своё приложение Fastify, `journal-scan` его не видит:** журнал экрана (токен ссылки входа, cookie сессии, CSRF, `principal_ref` — нет; шаблон маршрута — есть) проверяет `tests/ui/mandates-screen.test.ts` (DECISIONS РП36 «Нюанс UI-К2 ч. 1» п. 5) |
 | Э1 | закрыто | `tests/unit/participants-sign.test.ts`, `tests/unit/participant-https.test.ts` |
 | Э2 | закрыто | `tests/unit/participants-sign.test.ts` (A7 п. 3.2) |
 | Э3 | частично | `tests/unit/participants-confirm.test.ts`, `tests/unit/participant-https.test.ts`; остаток — контур оператора (средства оператора) |

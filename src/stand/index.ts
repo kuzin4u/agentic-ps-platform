@@ -13,6 +13,8 @@ import { createIssuerEmulator } from "../env/issuer/index.js";
 import { createUpkEmulator } from "../env/upk/index.js";
 import { UpkCodes } from "../env/upk/codes.js";
 import { createUpkPage, type UpkPageSettings } from "../env/upk/page.js";
+import { createIssuerScreen } from "../env/issuer/screen.js";
+import type { UiSettings } from "../ui/shared/index.js";
 import { createTokenServiceEmulator, type TokenServiceEmulator } from "../env/tsp/index.js";
 import { merchantDirectory, SHOPS } from "../env/merchants/shops.js";
 import { createAcquirerParticipant } from "../env/acquirer/participant.js";
@@ -162,9 +164,20 @@ export interface StandUpk {
   listen(): Promise<string>;
 }
 
+/** Экран мандатов в приложении банка стенда (UI-К2): эталонный модуль `src/ui/mandates/`. */
+export interface StandBankApp {
+  readonly app: FastifyInstance;
+  /** Запуск на 127.0.0.1 и свободном порту; базовый адрес экрана. */
+  listen(): Promise<string>;
+  /** Одноразовая ссылка входа (путь `/login/{token}`) для клиента банка стенда — банк его уже опознал. */
+  session(principal_ref: string): string;
+}
+
 export interface StandOptions {
   /** Язык и бренд страницы УПК (правило совместимости 3); по умолчанию — ru и бренд стенда. */
   readonly upk?: UpkPageSettings;
+  /** Язык и бренд экрана мандатов банка стенда (правило совместимости 3); по умолчанию — ru и бренд банка стенда. */
+  readonly bankApp?: UiSettings;
 }
 
 export interface IssuerConfirmOptions {
@@ -222,6 +235,8 @@ export interface Stand {
   readonly issuer: StandIssuer;
   /** Страница УПК (РП51 п. 15–16): оператор УПК — участник ПИ-8 с ролью UPK, ключ в памяти. */
   readonly upk: StandUpk;
+  /** Экран мандатов в приложении банка стенда (UI-К2). */
+  readonly bankApp: StandBankApp;
   /**
    * Запросы подтверждения П6 только для чтения (РП50): найти запрос по заказу до GET /pao/v1/confirmations/{id} (PS-19
    * ч. 2). Записи нет — решение только через приложение банка (issuer.confirm), инвариант 7.
@@ -624,6 +639,18 @@ export function createStand(opts: StandOptions = {}): Stand {
       return `http://127.0.0.1:${addr.port}`;
     },
   };
+  // Экран мандатов банка стенда (UI-К2): вход по одноразовой ссылке, сроки — стенда.
+  const bankScreen = createIssuerScreen({ now, ...(opts.bankApp ? { settings: opts.bankApp } : {}) });
+  const bankApp: StandBankApp = {
+    app: bankScreen.app,
+    async listen() {
+      await bankScreen.app.listen({ host: "127.0.0.1", port: 0 });
+      const addr = bankScreen.app.server.address();
+      if (!addr || typeof addr === "string") throw new Error("нет адреса экрана мандатов");
+      return `http://127.0.0.1:${addr.port}`;
+    },
+    session: (principal_ref) => bankScreen.loginPath(principal_ref),
+  };
   // Подача знака эквайрером — тем же POST ПИ-8; начальная подача стенда вызывает её напрямую, публичный метод — после неё.
   const submitReadiness: StandAcquirer["submitReadiness"] = async (merchant_id, status, opts = {}) => {
     const record = {
@@ -715,6 +742,7 @@ export function createStand(opts: StandOptions = {}): Stand {
     issuerWebhook,
     issuer,
     upk,
+    bankApp,
     confirmations: { get: (id) => confirmationStore.get(id), byKey: (key) => confirmationStore.byKey(key) },
     tsp,
     calls,
@@ -744,6 +772,7 @@ export function createStand(opts: StandOptions = {}): Stand {
     },
     async close() {
       await upkApp.close();
+      await bankScreen.app.close();
       await app.close();
     },
   };
