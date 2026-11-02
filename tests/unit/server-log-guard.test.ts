@@ -1,12 +1,11 @@
 // РП63 п. 12–13 (PS-05в ч. 1, решения владельца 26.10, PR #74): журнал без текста исключения и сырого адреса —
 // перехват hooks.logMethod; уровень журнала не ниже info — отказ запуска; уровень маршрута и смена уровня в коде — страж.
 import { randomUUID } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildServer, pathlessLogArgs } from "../../src/server.js";
 import { errFields as errFieldsOf } from "../../src/pao/transport.js";
+import { calls, LOG_CALL, srcFiles } from "../support/log-calls.js";
 
 const mark = `mark${randomUUID().replaceAll("-", "")}`;
 
@@ -276,26 +275,3 @@ describe("уровень журнала не ниже info (РП63 п. 13)", () 
   });
 });
 
-/** Начало вызова журнала: log(…), log?.(…), log.warn(…), log[level](…), logger.info(…). */
-const LOG_CALL = /\b(?:log|logger)(?:\?\.)?(?:\.(?:trace|debug|info|warn|error|fatal)|\[[^\]\n]+\])?(?:\?\.)?\(/g;
-
-function srcFiles(): [string, string][] {
-  const root = join(import.meta.dirname, "../../src");
-  const files = readdirSync(root, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".ts"));
-  expect(files.length).toBeGreaterThan(50);
-  return files.map((f) => [f, readFileSync(join(root, f), "utf8")]);
-}
-
-/** Вызовы по началу start: текст начала и аргументы до парной скобки (скобки внутри аргументов учитываются). */
-function* calls(text: string, start: RegExp): Generator<[string, string]> {
-  for (const m of text.matchAll(start)) {
-    const from = m.index + m[0].length;
-    let depth = 1;
-    let i = from;
-    for (; i < text.length && depth > 0; i++) {
-      if (text[i] === "(") depth++;
-      else if (text[i] === ")") depth--;
-    }
-    yield [m[0], text.slice(from, i - 1)];
-  }
-}

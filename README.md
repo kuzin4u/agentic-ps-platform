@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.37.0** (подтверждение человеком через продавца на стенде: заказ `AWAITING_CONFIRMATION`, `payment.confirmation_required`, `POST /v1/shops/{id}/orders/{order_id}/confirmation`, асинхронное решение заглушки ОПКЦ; агенту — со сменой стенда; ПАО — по-прежнему 1.4.0; РП72). Подробности —
+Текущая версия — **v0.38.0** (SEC-2 «Проверка безопасности перед пилотом»: лимит частоты у API для продавцов и ПИ-8 — 429 `RATE_LIMITED`, отчёт «готовность к пилоту», сканер журналов; агенту обязательного нет; ПАО — по-прежнему 1.4.0; РП73). Подробности —
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.37.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.38.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —

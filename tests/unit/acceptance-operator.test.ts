@@ -115,19 +115,21 @@ describe("parseReply", () => {
 });
 
 describe("operator.mjs — отказы до базы", () => {
-  // Окружение — только заданное: PLATFORM_ENV и DATABASE_URL окна не протекают.
-  const run = (args: string[], env: NodeJS.ProcessEnv) => spawnExec(process.execPath, [OPERATOR_PROGRAM, ...args], "{}", { PATH: process.env.PATH, ...env });
+  // Окружение — только заданное: PLATFORM_ENV, DATABASE_URL и PATH окна не протекают (process.execPath — абсолютный путь).
+  // Корень — ".": до отказов USAGE, ENV_*, DATABASE_URL_MISSING operator.mjs его не читает. Без process.cwd() и PATH —
+  // источников «uncontrolled absolute path» CodeQL #87 нет (SEC-2 ч. 2, К1; склейка мест вызова spawnExec — РП73 нюанс).
+  const run = (args: string[], env: NodeJS.ProcessEnv) => spawnExec(process.execPath, [OPERATOR_PROGRAM, ...args], "{}", env);
 
   it("без аргументов — USAGE; не sandbox — ENV_NOT_SANDBOX; нет файла окружения — ENV_FILE_ENOENT", async () => {
     expect(parseReplyCode(await run([], {}))).toBe("USAGE");
-    expect(parseReplyCode(await run([process.cwd(), "-"], { PLATFORM_ENV: "dev" }))).toBe("ENV_NOT_SANDBOX");
-    expect(parseReplyCode(await run([process.cwd(), "/nonexistent/env"], {}))).toBe("ENV_FILE_ENOENT");
+    expect(parseReplyCode(await run([".", "-"], { PLATFORM_ENV: "dev" }))).toBe("ENV_NOT_SANDBOX");
+    expect(parseReplyCode(await run([".", "/nonexistent/env"], {}))).toBe("ENV_FILE_ENOENT");
   });
 
   it("EnvironmentFile: sandbox из файла (кавычки снимаются), без DATABASE_URL — DATABASE_URL_MISSING", async () => {
     const f = join(mkdtempSync(join(tmpdir(), "acc-env-")), "env");
     writeFileSync(f, '# комментарий\nPLATFORM_ENV="sandbox"\nPORT=8443\n');
-    expect(parseReplyCode(await run([process.cwd(), f], {}))).toBe("DATABASE_URL_MISSING");
+    expect(parseReplyCode(await run([".", f], {}))).toBe("DATABASE_URL_MISSING");
   });
 });
 
