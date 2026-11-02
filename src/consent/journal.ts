@@ -72,6 +72,11 @@ export interface MandateSigningView {
   readonly id: string;
   readonly hash: string;
   readonly status: MandateStatus;
+  /** Агент, тип, родитель и продавцы — из той же записи MANDATE_REQUESTED (экран банка, UI-К2 ч. 1). */
+  readonly agent_code: string;
+  readonly type: MandateRequestedPayload["type"];
+  readonly parent_id: string | null;
+  readonly merchant_scope: readonly string[];
   readonly principal_ref: string;
   readonly amount_limit: number;
   readonly currency: string;
@@ -514,6 +519,10 @@ export class ConsentJournal {
       id,
       hash: m.head.hash,
       status: m.status,
+      agent_code: t.agent_code,
+      type: t.type,
+      parent_id: t.parent_id ?? null,
+      merchant_scope: t.merchant_scope,
       principal_ref: t.principal_ref,
       amount_limit: t.amount_limit,
       currency: t.currency,

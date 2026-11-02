@@ -207,6 +207,13 @@ export class MemoryConsentStore implements ConsentStore, AgentStatusEventStore {
   async getMandate(id: string): Promise<MandateIndexRow | undefined> {
     return this.mandates.get(id);
   }
+  /**
+   * id всех мандатов по порядку записи — только стенд в памяти (экран банка, DECISIONS РП36 «Нюанс UI-К2 ч. 1» п. 2): не
+   * в интерфейсе ConsentStore, на PostgreSQL и в main.ts нет; для настоящего банка — чтения ПИ-8 (STATUS «Открыто»).
+   */
+  mandateIds(): readonly string[] {
+    return [...this.mandates.keys()];
+  }
   async insertSubject(row: MandateSubjectRow): Promise<void> {
     if (!this.mandates.has(row.mandate_id)) throw new Error(`CONSENT_SUBJECT_ORPHAN: ${row.mandate_id}`);
     if (this.subjects.has(row.mandate_id)) throw new ConsentRowConflict(row.mandate_id);

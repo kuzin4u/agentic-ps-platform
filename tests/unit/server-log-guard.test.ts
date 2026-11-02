@@ -246,8 +246,8 @@ describe("уровень журнала не ниже info (РП63 п. 13)", () 
     const found: string[] = [];
     for (const [f, text] of srcFiles()) {
       const res = [/\blogLevel\b/, /\.level\s*=(?!=)/, /\[\s*["'`]level["'`]\s*\]\s*=(?!=)/, /\bchildLoggerFactory\b/];
-      // levelComparison — только в проверке уровня при старте (assertLogLevel).
-      if (f !== "server.ts") res.push(/\blevelComparison\b/);
+      // levelComparison — только в проверке уровня при старте (assertLogLevel; с UI-К2 ч. 1 — в http/request-log.ts).
+      if (f !== "http/request-log.ts") res.push(/\blevelComparison\b/);
       for (const re of res) if (re.test(text)) found.push(`${f}: ${String(re)}`);
       for (const [call, args] of calls(text, /\.child\(|\bObject\.assign\(/g)) if (/\blevel\b/.test(args)) found.push(`${f}: ${call}${args}`);
     }
