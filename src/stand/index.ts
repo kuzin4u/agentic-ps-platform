@@ -644,7 +644,9 @@ export function createStand(opts: StandOptions = {}): Stand {
     now,
     mandateIds: () => consentStore.mandateIds(),
     signingView: (id) => consent.signingView(id),
-    sign: (id, decision) => issuer.sign(id, { decision }),
+    sign: (id, o) => issuer.sign(id, o),
+    revoke: (id) => issuer.revoke(id),
+    revokeAll: (principal_ref, revocation_ref) => issuer.revokeAll(principal_ref, revocation_ref),
     ...(opts.bankApp ? { settings: opts.bankApp } : {}),
   });
   const bankApp: StandBankApp = {

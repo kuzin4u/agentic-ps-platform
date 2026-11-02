@@ -57,6 +57,16 @@ function fake(list: ScreenMandate[], opts: { fail?: boolean; decide?: DecideResu
       if (opts.fail) throw new Error("порт недоступен");
       return opts.decide ?? { kind: "DONE", status: decision === "SIGN" ? "ACTIVE" : "REJECTED" };
     },
+    async revoke(principal, id) {
+      calls.push({ op: "revoke", principal, id });
+      if (opts.fail) throw new Error("порт недоступен");
+      return { kind: "DONE", status: "REVOKED" };
+    },
+    async revokeAll(principal, ref) {
+      calls.push({ op: "revokeAll", principal, id: ref });
+      if (opts.fail) throw new Error("порт недоступен");
+      return { revoked: 0 };
+    },
   };
   return { port, calls };
 }

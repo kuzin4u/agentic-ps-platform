@@ -40,11 +40,24 @@ export type DecideResult =
   | { readonly kind: "NOT_PENDING"; readonly status?: string }
   | { readonly kind: "NOT_FOUND" };
 
+/** Отзыв мандата: текущий статус после отзыва (`REVOKED` — отозван сейчас; иное — полномочий уже не было). */
+export type RevokeResult = { readonly kind: "DONE"; readonly status: string } | { readonly kind: "NOT_FOUND" };
+
 export interface MandatesScreenPort {
   /** Мандаты клиента. */
   mandates(principal_ref: string): Promise<readonly ScreenMandate[]>;
   /** Мандат клиента; чужой и неизвестный — undefined. */
   mandate(principal_ref: string, id: string): Promise<ScreenMandate | undefined>;
-  /** Решение клиента по мандату в ожидании подписи: банк подписывает и шлёт ПИ-8. */
+  /**
+   * Решение клиента по мандату в ожидании подписи: банк подписывает и шлёт ПИ-8. Подпись и согласие на токен — одно
+   * действие (РП12): `SIGN` — с согласием, `REJECT` — без (правка по `/audit` К1.2, решение владельца 02.11).
+   */
   decide(principal_ref: string, id: string, decision: MandateDecision): Promise<DecideResult>;
+  /** Отзыв мандата клиентом (ПИ-8 `revoke`, РП38): авторизованное до отзыва исполняется (инвариант 8). */
+  revoke(principal_ref: string, id: string): Promise<RevokeResult>;
+  /**
+   * Отзыв всех полномочий клиента одним действием (ПИ-8 `revoke-all`, РП45 п. 4): `revocation_ref` — от экрана, повтор после
+   * сбоя — тем же; ответ — число отозванных мандатов.
+   */
+  revokeAll(principal_ref: string, revocation_ref: string): Promise<{ readonly revoked: number }>;
 }

@@ -21,8 +21,14 @@ export interface IssuerScreenDeps {
   /** Экран мандата журнала (ConsentJournal.signingView). */
   readonly signingView: (id: string) => Promise<MandateSigningView | undefined>;
   /** Решение клиента — запись, подписанная банком стенда, по ПИ-8 (stand.issuer.sign). */
-  readonly sign: (id: string, decision: MandateDecision) => Promise<{ readonly statusCode: number; readonly body: unknown }>;
+  readonly sign: (id: string, opts: { readonly decision: MandateDecision; readonly token_consent: boolean }) => Promise<Reply>;
+  /** Отзыв мандата клиентом по ПИ-8 (stand.issuer.revoke). */
+  readonly revoke: (id: string) => Promise<Reply>;
+  /** Отзыв всех полномочий клиента по ПИ-8 (stand.issuer.revokeAll). */
+  readonly revokeAll: (principal_ref: string, revocation_ref: string) => Promise<Reply>;
 }
+
+type Reply = { readonly statusCode: number; readonly body: unknown };
 
 const toScreen = (v: MandateSigningView): ScreenMandate => ({
   id: v.id,
@@ -59,7 +65,8 @@ export function issuerScreenPort(deps: IssuerScreenDeps): MandatesScreenPort {
     },
     async decide(principal_ref, id, decision): Promise<DecideResult> {
       if (!(await own(principal_ref, id))) return { kind: "NOT_FOUND" };
-      const res = await deps.sign(id, decision);
+      // Подпись и согласие на токен — одно действие (РП12); отказ — без согласия (правка по /audit К1.2).
+      const res = await deps.sign(id, { decision, token_consent: decision === "SIGN" });
       const body = (res.body ?? {}) as { status?: unknown; code?: unknown };
       const status = typeof body.status === "string" ? body.status : undefined;
       if (res.statusCode === 200 && status) return { kind: "DONE", status };
@@ -72,6 +79,21 @@ export function issuerScreenPort(deps: IssuerScreenDeps): MandatesScreenPort {
       if (res.statusCode === 404) return { kind: "NOT_FOUND" };
       // Прочее (401 подписи банка, 503 Платформы, неожиданный ответ) — сбой: экран отвечает 503 (fail-closed).
       throw new Error(`экран мандатов: ПИ-8 sign ответил ${res.statusCode}`);
+    },
+    async revoke(principal_ref, id) {
+      if (!(await own(principal_ref, id))) return { kind: "NOT_FOUND" };
+      const res = await deps.revoke(id);
+      const status = (res.body as { status?: unknown } | null)?.status;
+      if (res.statusCode === 200 && typeof status === "string") return { kind: "DONE", status };
+      if (res.statusCode === 404) return { kind: "NOT_FOUND" };
+      throw new Error(`экран мандатов: ПИ-8 revoke ответил ${res.statusCode}`);
+    },
+    async revokeAll(principal_ref, revocation_ref) {
+      const res = await deps.revokeAll(principal_ref, revocation_ref);
+      const revoked = (res.body as { revoked?: unknown } | null)?.revoked;
+      if (res.statusCode === 200 && Number.isSafeInteger(revoked) && (revoked as number) >= 0) return { revoked: revoked as number };
+      // 503 — повтор тем же revocation_ref (ПИ-8); прочее — сбой.
+      throw new Error(`экран мандатов: ПИ-8 revoke-all ответил ${res.statusCode}`);
     },
   };
 }

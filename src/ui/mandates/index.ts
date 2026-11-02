@@ -4,6 +4,7 @@
 // (`src/env/issuer/screen.ts`). Экран сам ничего не решает и не пишет: данные и действия — через порт банка, действия
 // банк подписывает своим ключом и шлёт по ПИ-8 (инвариант 6). Язык и бренд — настройка экрана (правило совместимости 3);
 // номера карты нет (инвариант 1).
+import { randomBytes } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from "fastify";
 import { withRequestSerializer } from "../../http/request-log.js";
 import { MANDATE_ID } from "../../consent/model.js";
@@ -88,9 +89,14 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
     const cur = session(req);
     if (!cur) return message(reply, 401, lang, t.signIn);
     let rows: string;
+    let revokeAllLink = "";
     try {
       const list = await port.mandates(cur.s.principal_ref);
       const sorted = [...list.filter(pending), ...list.filter((m) => !pending(m))];
+      // Отзыв всех полномочий — когда есть что отзывать: действующий мандат (ПИ-8 revoke-all отзывает ACTIVE).
+      if (list.some((m) => m.status === "ACTIVE")) {
+        revokeAllLink = `<p><a href="/revoke-all?lang=${lang}" data-revoke-all>${esc(t.revokeAll)}</a></p>`;
+      }
       rows =
         sorted.length === 0
           ? `<p data-empty>${esc(t.empty)}</p>`
@@ -104,7 +110,7 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
     } catch {
       return message(reply, 503, lang, t.unavailable);
     }
-    return page(reply, 200, lang, t.title, rows + logoutForm(lang, cur.s.csrf));
+    return page(reply, 200, lang, t.title, rows + revokeAllLink + logoutForm(lang, cur.s.csrf));
   });
 
   // Мандат: значения из записи Платформы, кнопки — только у ждущего подписи.
@@ -124,6 +130,8 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
           `<input type="hidden" name="csrf" value="${esc(cur.s.csrf)}">` +
           `<button name="decision" value="SIGN" data-sign>${esc(t.sign)}</button><button name="decision" value="REJECT" data-reject>${esc(t.reject)}</button></form>`;
       }
+      // Отзыв — только у действующего (ровно ACTIVE); сначала страница подтверждения, не сразу запись.
+      if (m.status === "ACTIVE") body += `<p><a href="/m/${esc(m.id)}/revoke?lang=${lang}" data-revoke>${esc(t.revoke)}</a></p>`;
     } catch {
       return message(reply, 503, lang, t.unavailable, backLink(lang));
     }
@@ -158,6 +166,97 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
       case "NOT_FOUND":
         return message(reply, 404, lang, t.notFound, backLink(lang));
     }
+  });
+
+  /** Форма шага подтверждения: CSRF, язык, confirm=yes и скрытые поля; «Отмена» — ссылка назад. */
+  const confirmForm = (action: string, lang: UiLang, csrf: string, yes: string, cancelHref: string, hidden: Record<string, string> = {}) =>
+    `<form method="post" action="${esc(action)}"><input type="hidden" name="lang" value="${lang}"><input type="hidden" name="csrf" value="${esc(csrf)}">` +
+    `<input type="hidden" name="confirm" value="yes">` +
+    Object.entries(hidden).map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join("") +
+    `<button data-confirm>${esc(yes)}</button> <a href="${esc(cancelHref)}" data-cancel>${esc(TEXT[lang].cancel)}</a></form>`;
+
+  // Отзыв мандата, шаг 1 — подтверждение (только действующий мандат клиента).
+  app.get<{ Params: { id: string } }>("/m/:id/revoke", async (req, reply) => {
+    const lang = queryLang(req);
+    const t = TEXT[lang];
+    const cur = session(req);
+    if (!cur) return message(reply, 401, lang, t.signIn);
+    const id = req.params.id;
+    let m: ScreenMandate | undefined;
+    try {
+      m = MANDATE_ID.test(id) ? await port.mandate(cur.s.principal_ref, id) : undefined;
+    } catch {
+      return message(reply, 503, lang, t.unavailable, backLink(lang));
+    }
+    if (!m) return message(reply, 404, lang, t.notFound, backLink(lang));
+    if (m.status !== "ACTIVE") {
+      return message(reply, 409, lang, t.revokedAlready, `<p>${esc(t.status)}: <span data-status>${esc(statusText(t, m.status))}</span></p>` + backLink(lang));
+    }
+    return page(
+      reply,
+      200,
+      lang,
+      t.revokeTitle,
+      `<p data-ask>${esc(t.revokeAsk)}</p>` + confirmForm(`/m/${m.id}/revoke`, lang, cur.s.csrf, t.revokeYes, `/m/${m.id}?lang=${lang}`),
+    );
+  });
+
+  // Отзыв мандата, шаг 2 — запись: сессия → CSRF → confirm=yes → id → порт (ПИ-8 revoke).
+  app.post<{ Params: { id: string } }>("/m/:id/revoke", async (req, reply) => {
+    const form = (req.body ?? {}) as Record<string, unknown>;
+    const lang = langOf(form.lang, settings.lang);
+    const t = TEXT[lang];
+    const cur = session(req);
+    if (!cur) return message(reply, 401, lang, t.signIn);
+    if (!ScreenSessions.csrfOk(cur.s, form.csrf)) return message(reply, 403, lang, t.formExpired, backLink(lang));
+    if (form.confirm !== "yes") return message(reply, 400, lang, t.badForm, backLink(lang));
+    if (!MANDATE_ID.test(req.params.id)) return message(reply, 404, lang, t.notFound, backLink(lang));
+    let r: Awaited<ReturnType<MandatesScreenPort["revoke"]>>;
+    try {
+      r = await port.revoke(cur.s.principal_ref, req.params.id);
+    } catch {
+      return message(reply, 503, lang, t.unavailable, backLink(lang));
+    }
+    if (r.kind === "NOT_FOUND") return message(reply, 404, lang, t.notFound, backLink(lang));
+    const status = `<p>${esc(t.status)}: <span data-status>${esc(statusText(t, r.status))}</span></p>`;
+    // ПИ-8: уже отозван, отклонён или истёк — 200 с текущим статусом без записи; человеку — «уже не действует».
+    if (r.status !== "REVOKED") return message(reply, 409, lang, t.revokedAlready, status + backLink(lang));
+    return message(reply, 200, lang, t.revoked, status + backLink(lang));
+  });
+
+  // Отзыв всех полномочий, шаг 1 — подтверждение; revocation_ref — новый на каждую страницу, повтор после сбоя — тем же.
+  app.get("/revoke-all", async (req, reply) => {
+    const lang = queryLang(req);
+    const t = TEXT[lang];
+    const cur = session(req);
+    if (!cur) return message(reply, 401, lang, t.signIn);
+    return page(
+      reply,
+      200,
+      lang,
+      t.revokeAllTitle,
+      `<p data-ask>${esc(t.revokeAllAsk)}</p>` + confirmForm("/revoke-all", lang, cur.s.csrf, t.revokeAllYes, `/?lang=${lang}`, { ref: newRevocationRef() }),
+    );
+  });
+
+  // Отзыв всех полномочий, шаг 2 — запись: сессия → CSRF → confirm=yes → ref по форме → порт (ПИ-8 revoke-all).
+  app.post("/revoke-all", async (req, reply) => {
+    const form = (req.body ?? {}) as Record<string, unknown>;
+    const lang = langOf(form.lang, settings.lang);
+    const t = TEXT[lang];
+    const cur = session(req);
+    if (!cur) return message(reply, 401, lang, t.signIn);
+    if (!ScreenSessions.csrfOk(cur.s, form.csrf)) return message(reply, 403, lang, t.formExpired, backLink(lang));
+    const ref = form.ref;
+    if (form.confirm !== "yes" || typeof ref !== "string" || !REVOCATION_REF.test(ref)) return message(reply, 400, lang, t.badForm, backLink(lang));
+    let r: { readonly revoked: number };
+    try {
+      r = await port.revokeAll(cur.s.principal_ref, ref);
+    } catch {
+      // Сбой посередине: часть мандатов могла быть отозвана — повтор тем же revocation_ref (ПИ-8, РП46 (а)).
+      return page(reply, 503, lang, t.revokeAllTitle, `<p data-result>${esc(t.retry)}</p>` + confirmForm("/revoke-all", lang, cur.s.csrf, t.revokeAllYes, `/?lang=${lang}`, { ref }));
+    }
+    return message(reply, 200, lang, `${t.revokedAll} ${r.revoked}`, backLink(lang));
   });
 
   app.post("/logout", async (req, reply) => {
@@ -202,6 +301,13 @@ function mandateHtml(
       (m.cart.total !== undefined ? `<p data-total>${esc(t.total)}: ${esc(sum(m.cart.total, m.currency, lang))}</p>` : "");
   }
   return `<dl>${dl}</dl>${cart}<p><small>${esc(t.hash)}: <code data-hash>${esc(m.hash)}</code></small></p>`;
+}
+
+/** revocation_ref отзыва всех полномочий: `rva_` + 24 буквы — без цифр (правило непрозрачной ссылки ПИ-8 — не больше 6 цифр подряд). */
+const REVOCATION_REF = /^rva_[a-z]{24}$/;
+
+function newRevocationRef(): string {
+  return `rva_${[...randomBytes(24)].map((b) => String.fromCharCode(97 + (b % 26))).join("")}`;
 }
 
 function logoutForm(lang: UiLang, csrf: string): string {

@@ -17,6 +17,8 @@ const EMPTY_PORT: MandatesScreenPort = {
   mandates: async () => [],
   mandate: async () => undefined,
   decide: async () => ({ kind: "NOT_FOUND" }),
+  revoke: async () => ({ kind: "NOT_FOUND" }),
+  revokeAll: async () => ({ revoked: 0 }),
 };
 
 function setup(over: Partial<MandatesScreenDeps> = {}) {
