@@ -64,7 +64,7 @@ async function open(list: ScreenMandate[], opts: FakeOpts = {}) {
       return { revoked: a };
     },
   };
-  const screen = createMandatesScreen({ port, ttl: TTL, now: () => new Date(T0) });
+  const screen = createMandatesScreen({ port, ttl: TTL, rate_limit_per_30s: 600, now: () => new Date(T0) });
   const login = await screen.app.inject({ method: "GET", url: screen.loginPath(P) });
   const cookie = cookieOf(login.headers["set-cookie"]);
   const get = (url: string) => screen.app.inject({ method: "GET", url, headers: { cookie } });

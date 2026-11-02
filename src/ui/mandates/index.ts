@@ -4,9 +4,10 @@
 // (`src/env/issuer/screen.ts`). Экран сам ничего не решает и не пишет: данные и действия — через порт банка, действия
 // банк подписывает своим ключом и шлёт по ПИ-8 (инвариант 6). Язык и бренд — настройка экрана (правило совместимости 3);
 // номера карты нет (инвариант 1).
-import { randomBytes } from "node:crypto";
+import { randomInt } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from "fastify";
 import { withRequestSerializer } from "../../http/request-log.js";
+import { ADDRESS_RATE_LIMITED, addressRateLimit, retryAfterSec } from "../../shared/rate-limit.js";
 import { MANDATE_ID } from "../../consent/model.js";
 import { checkUiSettings, esc, formParser, htmlHeaders, langOf, money, pageHtml, type UiLang, type UiSettings } from "../shared/index.js";
 import type { MandatesScreenPort, ScreenMandate } from "./port.js";
@@ -21,6 +22,11 @@ export interface MandatesScreenDeps {
   readonly port: MandatesScreenPort;
   readonly settings?: UiSettings;
   readonly ttl: ScreenSessionTtl;
+  /**
+   * Грубый лимит частоты по адресу на всё приложение экрана, обращений за 30 с (CodeQL #88, К1.4; как РП73): целое ≥ 1.
+   * Величину задаёт банк: в приложении банка многие клиенты могут выходить с одного адреса (NAT оператора связи). Стенд — 600.
+   */
+  readonly rate_limit_per_30s: number;
   readonly now: () => Date;
   /**
    * Журнал процесса (как у сервера Платформы, РП61 п. 3, РП63 п. 13): запрос — метод и шаблон маршрута, без пути, токена
@@ -45,6 +51,19 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
   const sessions = new ScreenSessions(deps.ttl, deps.now);
   const port = deps.port;
   const app = Fastify({ logger: withRequestSerializer(deps.logger ?? false) });
+  // Предел проверяется сразу (отказ запуска), лимит регистрируется в плагине маршрутов ниже — до их объявления.
+  if (!Number.isSafeInteger(deps.rate_limit_per_30s) || deps.rate_limit_per_30s < 1) throw new Error("экран мандатов: rate_limit_per_30s — целое ≥ 1");
+  app.setErrorHandler((err, req, reply) => {
+    const lang = queryLang(req);
+    if (err === ADDRESS_RATE_LIMITED) {
+      // 429 — страница для человека; Retry-After ≤ 30 (как у открытых адресов, РП73 п. 3).
+      return htmlHeaders(reply, 429)
+        .header("retry-after", String(retryAfterSec(Number(reply.getHeader("retry-after")))))
+        .send(pageHtml({ lang, title: TEXT[lang].title, brand: settings.brand, body: `<p data-result>${esc(TEXT[lang].tooMany)}</p>` }));
+    }
+    const code = (err as { statusCode?: number }).statusCode ?? 500;
+    return message(reply, code >= 400 && code < 500 ? 400 : 503, lang, code >= 400 && code < 500 ? TEXT[lang].formExpired : TEXT[lang].unavailable);
+  });
   formParser(app);
 
   const page = (reply: FastifyReply, code: number, lang: UiLang, title: string, body: string) =>
@@ -74,6 +93,11 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
   const pending = (m: ScreenMandate) => m.status === "PENDING_SIGNATURE" && deps.now().toISOString() < m.valid_to;
 
   const statusText = (t: Text, s: string) => t.statuses[s] ?? s;
+
+  // Маршруты — в своём плагине после лимита (как API продавцов, РП73): хук onRequest лимита ставится маршрутам, объявленным
+  // после его регистрации, — до разбора формы, сессии и порта; счётчик — один на все маршруты экрана.
+  void app.register(async (app) => {
+  await addressRateLimit(app, deps.rate_limit_per_30s, "rate_limit_per_30s");
 
   app.get<{ Params: { token: string } }>("/login/:token", async (req, reply) => {
     const lang = queryLang(req);
@@ -269,6 +293,7 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
     reply.header("set-cookie", CLEAR_COOKIE);
     return message(reply, 200, lang, TEXT[lang].signedOut);
   });
+  });
 
   return { app, loginPath: (principal_ref) => `/login/${sessions.issueLogin(principal_ref)}` };
 }
@@ -306,8 +331,9 @@ function mandateHtml(
 /** revocation_ref отзыва всех полномочий: `rva_` + 24 буквы — без цифр (правило непрозрачной ссылки ПИ-8 — не больше 6 цифр подряд). */
 const REVOCATION_REF = /^rva_[a-z]{24}$/;
 
-function newRevocationRef(): string {
-  return `rva_${[...randomBytes(24)].map((b) => String.fromCharCode(97 + (b % 26))).join("")}`;
+/** Равномерный выбор буквы (`randomInt` — без смещения остатка от деления; CodeQL #89, К1.4). */
+export function newRevocationRef(): string {
+  return `rva_${Array.from({ length: 24 }, () => String.fromCharCode(97 + randomInt(26))).join("")}`;
 }
 
 function logoutForm(lang: UiLang, csrf: string): string {

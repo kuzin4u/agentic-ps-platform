@@ -23,7 +23,7 @@ const EMPTY_PORT: MandatesScreenPort = {
 
 function setup(over: Partial<MandatesScreenDeps> = {}) {
   let t = T0;
-  const screen = createMandatesScreen({ port: EMPTY_PORT, ttl: TTL, now: () => new Date(t), ...over });
+  const screen = createMandatesScreen({ port: EMPTY_PORT, ttl: TTL, rate_limit_per_30s: 600, now: () => new Date(t), ...over });
   return { screen, app: screen.app, tick: (sec: number) => (t += sec * 1000) };
 }
 

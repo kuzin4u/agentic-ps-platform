@@ -73,7 +73,7 @@ function fake(list: ScreenMandate[], opts: { fail?: boolean; decide?: DecideResu
 
 async function open(list: ScreenMandate[], opts: Parameters<typeof fake>[1] = {}) {
   const { port, calls } = fake(list, opts);
-  const screen = createMandatesScreen({ port, ttl: TTL, now: () => new Date(T0) });
+  const screen = createMandatesScreen({ port, ttl: TTL, rate_limit_per_30s: 600, now: () => new Date(T0) });
   const res = await screen.app.inject({ method: "GET", url: screen.loginPath(P) });
   const cookie = cookieOf(res.headers["set-cookie"]);
   const get = (url: string) => screen.app.inject({ method: "GET", url, headers: { cookie } });
@@ -163,7 +163,7 @@ describe("экран мандатов: список и экран мандата
 
   it("без сессии — 401 на списке, мандате и решении; порт не вызывается", async () => {
     const { port, calls } = fake([mandate(1, { status: "PENDING_SIGNATURE" })]);
-    const screen = createMandatesScreen({ port, ttl: TTL, now: () => new Date(T0) });
+    const screen = createMandatesScreen({ port, ttl: TTL, rate_limit_per_30s: 600, now: () => new Date(T0) });
     expect((await screen.app.inject({ method: "GET", url: "/" })).statusCode).toBe(401);
     expect((await screen.app.inject({ method: "GET", url: `/m/${ID(1)}` })).statusCode).toBe(401);
     expect((await screen.app.inject({ method: "POST", url: `/m/${ID(1)}/decision`, headers: FORM, payload: "decision=SIGN" })).statusCode).toBe(401);
@@ -216,7 +216,7 @@ describe("экран мандатов: решение клиента (модул
     const { port } = fake(pendingList());
     const screen = createMandatesScreen({
       port: { ...port, decide: async () => Promise.reject(new Error("ПИ-8 недоступна")) },
-      ttl: TTL,
+      ttl: TTL, rate_limit_per_30s: 600,
       now: () => new Date(T0),
     });
     const login = await screen.app.inject({ method: "GET", url: screen.loginPath(P) });

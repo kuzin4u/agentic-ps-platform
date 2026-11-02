@@ -13,6 +13,9 @@ import type { UiSettings } from "../../ui/shared/index.js";
 /** Сроки входа на стенде (решение владельца 02.11: ссылка одноразовая и с коротким сроком). */
 export const STAND_SCREEN_TTL: ScreenSessionTtl = { login_ttl_sec: 120, session_ttl_sec: 900 };
 
+/** Лимит частоты экрана на стенде — обращений за 30 с с адреса (решение владельца 02.11, CodeQL #88). Банк задаёт свой. */
+export const STAND_SCREEN_RATE_LIMIT_PER_30S = 600;
+
 export interface IssuerScreenDeps {
   readonly now: () => Date;
   readonly settings?: UiSettings;
@@ -102,6 +105,7 @@ export function createIssuerScreen(deps: IssuerScreenDeps): MandatesScreen {
   return createMandatesScreen({
     port: issuerScreenPort(deps),
     ttl: STAND_SCREEN_TTL,
+    rate_limit_per_30s: STAND_SCREEN_RATE_LIMIT_PER_30S,
     now: deps.now,
     ...(deps.settings ? { settings: deps.settings } : {}),
   });
