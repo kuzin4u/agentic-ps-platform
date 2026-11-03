@@ -1,6 +1,7 @@
 // Экран мандатов — эталонный модуль банка (UI-К2; план «Россия» ред. 4, ROADMAP В1): клиент банка видит и подписывает
 // мандаты агентов, отзывает их и все полномочия одним действием, подтверждает покупку выше порога (ч. 2, К2.1; ПС11);
-// видит своих агентов и подсказку о приостановленном (ч. 2, К2.2; РП54); дальше — история (ч. 3).
+// видит своих агентов и подсказку о приостановленном (ч. 2, К2.2; РП54); историю мандата, уведомления и место для споров
+// (ч. 3, К3.2).
 // Встраивается в приложение банка как веб-вид (WebView верхнего уровня); в песочнице — интерфейс эмулятора эмитента
 // (`src/env/issuer/screen.ts`). Экран сам ничего не решает и не пишет: данные и действия — через порт банка, действия
 // банк подписывает своим ключом и шлёт по ПИ-8 (инвариант 6). Язык и бренд — настройка экрана (правило совместимости 3);
@@ -177,7 +178,55 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
       return message(reply, 503, lang, t.unavailable);
     }
     const agentsLink = `<p><a href="/agents?lang=${lang}" data-agents-link>${esc(t.agents)}</a></p>`;
-    return page(reply, 200, lang, t.title, purchases + rows + revokeAllLink + agentsLink + logoutForm(lang, cur.s.csrf));
+    const notificationsLink = `<p><a href="/notifications?lang=${lang}" data-notifications-link>${esc(t.notifications)}</a></p>`;
+    return page(reply, 200, lang, t.title, purchases + rows + revokeAllLink + agentsLink + notificationsLink + logoutForm(lang, cur.s.csrf));
+  });
+
+  // Уведомления клиента (ПИ-8 лента участника, отбор по principal_ref — порт банка; РП46 (б), A3 п. 5.3): только коды из
+  // словаря, неизвестный тип — кодом; сбой — 503 (инвариант 3).
+  app.get("/notifications", async (req, reply) => {
+    const lang = queryLang(req);
+    const t = TEXT[lang];
+    const cur = session(req);
+    if (!cur) return message(reply, 401, lang, t.signIn);
+    let list: Awaited<ReturnType<MandatesScreenPort["notifications"]>>;
+    try {
+      list = await port.notifications(cur.s.principal_ref);
+    } catch {
+      return message(reply, 503, lang, t.unavailable, backLink(lang));
+    }
+    const rows = list.map((n) => {
+      const what = esc(t.notificationTypes[n.type] ?? n.type) + (n.reason ? ` (${esc(t.limitSources[n.reason] ?? n.reason)})` : "");
+      const ref =
+        (n.mandate_id && MANDATE_ID.test(n.mandate_id) ? ` · <a href="/m/${esc(n.mandate_id)}?lang=${lang}">${esc(n.mandate_id)}</a>` : "") +
+        (n.agent_code ? ` · ${esc(n.agent_code)}` : "");
+      return `<li data-notification="${esc(n.type)}"><time>${esc(n.at)}</time> — ${what}${ref}</li>`;
+    });
+    const body = rows.length === 0 ? `<p data-empty>${esc(t.notificationsEmpty)}</p>` : `<ul data-notifications>${rows.join("")}</ul>`;
+    return page(reply, 200, lang, t.notifications, body + backLink(lang));
+  });
+
+  // История мандата клиента: записи журнала по порядку (только чтение, инвариант 6); чужой — 404, сбой — 503.
+  app.get<{ Params: { id: string } }>("/m/:id/history", async (req, reply) => {
+    const lang = queryLang(req);
+    const t = TEXT[lang];
+    const cur = session(req);
+    if (!cur) return message(reply, 401, lang, t.signIn);
+    const id = req.params.id;
+    let body: string;
+    try {
+      const list = MANDATE_ID.test(id) ? await port.history(cur.s.principal_ref, id) : undefined;
+      if (!list) return message(reply, 404, lang, t.notFound, backLink(lang));
+      const rows = list.map((e) => {
+        const limit = e.amount_limit !== undefined && e.currency !== undefined ? ` · ${esc(sum(e.amount_limit, e.currency, lang))}` : "";
+        const other = e.mandate_id !== id ? ` · ${esc(t.historyOther)} ${esc(e.mandate_id)}` : "";
+        return `<li data-entry="${esc(e.kind)}"><time>${esc(e.at)}</time> — ${esc(t.kinds[e.kind] ?? e.kind)}${limit}${other}</li>`;
+      });
+      body = rows.length === 0 ? `<p data-empty>${esc(t.historyEmpty)}</p>` : `<ol data-history>${rows.join("")}</ol>`;
+    } catch {
+      return message(reply, 503, lang, t.unavailable, backLink(lang));
+    }
+    return page(reply, 200, lang, t.history, body + `<p><a href="/m/${esc(id)}?lang=${lang}" data-mandate-link>${esc(t.mandate)}</a></p>` + backLink(lang));
   });
 
   // Агенты клиента — по agent_code его мандатов (в порядке мандатов), класс и статус — из реестра. Мандаты не прочитаны —
@@ -299,6 +348,9 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
       }
       // Отзыв — только у действующего (ровно ACTIVE); сначала страница подтверждения, не сразу запись.
       if (m.status === "ACTIVE") body += `<p><a href="/m/${esc(m.id)}/revoke?lang=${lang}" data-revoke>${esc(t.revoke)}</a></p>`;
+      body += `<p><a href="/m/${esc(m.id)}/history?lang=${lang}" data-history-link>${esc(t.history)}</a></p>`;
+      // Место для споров (PS-22, перед пилотом с банком): только надпись, без действий и без обращений к порту.
+      body += `<section data-disputes><h2>${esc(t.disputes)}</h2><p>${esc(t.disputesSoon)}</p></section>`;
     } catch {
       return message(reply, 503, lang, t.unavailable, backLink(lang));
     }

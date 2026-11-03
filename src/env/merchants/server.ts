@@ -358,7 +358,9 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
         // Пакет подписан агентом: подпись обращения покрывает тело через content-digest (RFC 9421, РП22 п. 5).
         const pkg = parsePaymentPackage(json(req));
         if (!pkg) return fail(reply, "PACKAGE_INVALID");
-        if (pkg.order_ref !== order.id || pkg.aoi.agent_code !== agent || pkg.cart_mandate_id !== order.cart_mandate_id) {
+        // Реквизит другого агента — свой код и первым, до сверки заказа и корзины (тот же смысл, что К25 ядра; PR #101).
+        if (pkg.aoi.agent_code !== agent) return fail(reply, "PACKAGE_AGENT_MISMATCH");
+        if (pkg.order_ref !== order.id || pkg.cart_mandate_id !== order.cart_mandate_id) {
           return fail(reply, "PACKAGE_MISMATCH");
         }
 

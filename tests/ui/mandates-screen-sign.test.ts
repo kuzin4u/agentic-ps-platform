@@ -72,6 +72,9 @@ function fake(list: ScreenMandate[], opts: { fail?: boolean; decide?: DecideResu
     confirmation: async () => undefined,
     confirm: async () => ({ kind: "NOT_FOUND" }),
     agent: async () => undefined,
+    // История и уведомления (ч. 3, К3.2) — tests/ui/mandates-screen-history.test.ts.
+    history: async () => undefined,
+    notifications: async () => [],
   };
   return { port, calls };
 }
