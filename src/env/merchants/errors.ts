@@ -14,6 +14,7 @@ export type MerchantErrorCode =
   | "QUERY_INVALID"
   | "PACKAGE_INVALID"
   | "PACKAGE_MISMATCH"
+  | "PACKAGE_AGENT_MISMATCH"
   | "ORDER_NOT_PAYABLE"
   | "UPSTREAM_UNAVAILABLE"
   | "RATE_LIMITED";
@@ -33,6 +34,9 @@ export const MERCHANT_ERROR_HTTP: Readonly<Record<MerchantErrorCode, number>> = 
   QUERY_INVALID: 422,
   PACKAGE_INVALID: 422,
   PACKAGE_MISMATCH: 409,
+  // aoi.agent_code пакета ≠ агенту, подписавшему обращение: агент передаёт реквизит другого агента (К25 ядра v0.13.0;
+  // решение владельца 03.11, PR #101). Проверяется первым — до сверки заказа и корзины.
+  PACKAGE_AGENT_MISMATCH: 409,
   ORDER_NOT_PAYABLE: 409,
   UPSTREAM_UNAVAILABLE: 503,
   RATE_LIMITED: 429,

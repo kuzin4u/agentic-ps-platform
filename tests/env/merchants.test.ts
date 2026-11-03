@@ -571,15 +571,27 @@ describe("Заказ и пакет: привязка к агенту", () => {
     expect(r.statusCode).toBe(403);
   });
 
-  it("чужой заказ — ORDER_NOT_FOUND; пакет на другой заказ или другого агента — PACKAGE_MISMATCH; неполный — PACKAGE_INVALID", async () => {
+  it("чужой заказ — ORDER_NOT_FOUND; пакет на другой заказ или корзину — PACKAGE_MISMATCH; неполный — PACKAGE_INVALID", async () => {
     const { app, s, b, asA } = await setup();
     const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
     const path = `/v1/shops/SHOP-1042/orders/${o.id}/payment`;
     expect((await merchantCall(app, { side: b, agentCode: B, now: s.now(), path, body: pkg(o.id, "MND-cart-1", B) })).json().code).toBe("ORDER_NOT_FOUND");
     expect((await merchantCall(app, { ...asA(), path, body: pkg("ORD-other") })).json().code).toBe("PACKAGE_MISMATCH");
-    expect((await merchantCall(app, { ...asA(), path, body: pkg(o.id, "MND-cart-1", B) })).json().code).toBe("PACKAGE_MISMATCH");
     expect((await merchantCall(app, { ...asA(), path, body: { ...pkg(o.id), cart_mandate_id: "MND-other" } })).json().code).toBe("PACKAGE_MISMATCH");
     expect((await merchantCall(app, { ...asA(), path, body: { ...pkg(o.id), kind: "CASH" } })).json().code).toBe("PACKAGE_INVALID");
+  });
+
+  it("aoi.agent_code ≠ подписавшему агенту — 409 PACKAGE_AGENT_MISMATCH первым, до сверки заказа и корзины (К25 ядра, PR #101)", async () => {
+    const { app, asA } = await setup();
+    const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    const path = `/v1/shops/SHOP-1042/orders/${o.id}/payment`;
+    const own = await merchantCall(app, { ...asA(), path, body: pkg(o.id, "MND-cart-1", B) });
+    expect([own.statusCode, own.json()]).toEqual([409, { code: "PACKAGE_AGENT_MISMATCH" }]);
+    // Порядок: и заказ, и корзина чужие — всё равно код агента, не PACKAGE_MISMATCH.
+    const all = await merchantCall(app, { ...asA(), path, body: { ...pkg("ORD-other", "MND-cart-1", B), cart_mandate_id: "MND-other" } });
+    expect([all.statusCode, all.json().code]).toEqual([409, "PACKAGE_AGENT_MISMATCH"]);
+    // Отказ не тронул заказ: свой пакет проходит.
+    expect((await merchantCall(app, { ...asA(), path, body: pkg(o.id) })).json().status).toBe("PAID");
   });
 
   it("повторная оплата заказа — ORDER_NOT_PAYABLE", async () => {
