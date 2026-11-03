@@ -1,5 +1,6 @@
 // Экран мандатов — эталонный модуль банка (UI-К2; план «Россия» ред. 4, ROADMAP В1): клиент банка видит и подписывает
-// мандаты агентов, отзывает их и все полномочия одним действием; дальше — подтверждение покупки, агенты, история (ч. 2–3).
+// мандаты агентов, отзывает их и все полномочия одним действием, подтверждает покупку выше порога (ч. 2, К2.1; ПС11);
+// видит своих агентов и подсказку о приостановленном (ч. 2, К2.2; РП54); дальше — история (ч. 3).
 // Встраивается в приложение банка как веб-вид (WebView верхнего уровня); в песочнице — интерфейс эмулятора эмитента
 // (`src/env/issuer/screen.ts`). Экран сам ничего не решает и не пишет: данные и действия — через порт банка, действия
 // банк подписывает своим ключом и шлёт по ПИ-8 (инвариант 6). Язык и бренд — настройка экрана (правило совместимости 3);
@@ -9,8 +10,9 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, 
 import { withRequestSerializer } from "../../http/request-log.js";
 import { ADDRESS_RATE_LIMITED, addressRateLimit, retryAfterSec } from "../../shared/rate-limit.js";
 import { MANDATE_ID } from "../../consent/model.js";
+import { CONFIRMATION_ID } from "../../confirm/model.js";
 import { checkUiSettings, esc, formParser, htmlHeaders, langOf, money, pageHtml, type UiLang, type UiSettings } from "../shared/index.js";
-import type { MandatesScreenPort, ScreenMandate } from "./port.js";
+import type { MandatesScreenPort, ScreenConfirmation, ScreenMandate } from "./port.js";
 import { CLEAR_COOKIE, ScreenSessions, sessionCookie, setCookie, type ScreenSession, type ScreenSessionTtl } from "./session.js";
 import { TEXT } from "./text.js";
 
@@ -94,6 +96,32 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
 
   const statusText = (t: Text, s: string) => t.statuses[s] ?? s;
 
+  /** Запрос ждёт решения и не истёк по часам экрана — только тогда есть кнопки (неизвестный статус — без действий). */
+  const awaiting = (c: ScreenConfirmation) => c.status === "PENDING" && deps.now().toISOString() < c.expires_at;
+  /**
+   * Подсказка о статусе агента (РП54; решение владельца 03.11): приостановлен или исключён — «подтверждение не приведёт к
+   * оплате»; кнопка остаётся (скрытие — `/decision` ч. 3). Нет в реестре или сбой чтения — «статус не прочитан», страница
+   * работает: подсказка лишь поясняет, отказ ставит ADP по suspended_at.
+   */
+  const agentHint = async (t: Text, agent_code: string): Promise<string> => {
+    let status: string | undefined;
+    try {
+      status = (await port.agent(agent_code))?.status;
+    } catch {
+      status = undefined;
+    }
+    if (status === "ACTIVE") return "";
+    if (status === "SUSPENDED") return `<p data-agent-hint="SUSPENDED"><strong>${esc(t.agentSuspended)}</strong></p>`;
+    if (status === "EXCLUDED") return `<p data-agent-hint="EXCLUDED"><strong>${esc(t.agentExcluded)}</strong></p>`;
+    return `<p data-agent-hint="UNKNOWN">${esc(t.agentStatusUnknown)}</p>`;
+  };
+
+  /** Статус запроса для человека: PENDING после срока — «срок истёк» (запись истекает при обращении, РП50 п. 5). */
+  const confirmStatusText = (t: Text, c: ScreenConfirmation) => {
+    const s = c.status === "PENDING" && !awaiting(c) ? "EXPIRED" : c.status;
+    return t.confirmStatuses[s] ?? s;
+  };
+
   // Маршруты — в своём плагине после лимита (как API продавцов, РП73): хук onRequest лимита ставится маршрутам, объявленным
   // после его регистрации, — до разбора формы, сессии и порта; счётчик — один на все маршруты экрана.
   void app.register(async (app) => {
@@ -106,15 +134,29 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
     return reply.code(303).header("set-cookie", setCookie(sid, deps.ttl.session_ttl_sec)).header("cache-control", "no-store").header("location", `/?lang=${lang}`).send();
   });
 
-  // Список мандатов клиента: ждущие подписи — первыми.
+  // Главная: покупки, ждущие подтверждения (первыми), затем мандаты клиента — ждущие подписи первыми.
   app.get("/", async (req, reply) => {
     const lang = queryLang(req);
     const t = TEXT[lang];
     const cur = session(req);
     if (!cur) return message(reply, 401, lang, t.signIn);
+    let purchases = "";
     let rows: string;
     let revokeAllLink = "";
     try {
+      const waiting = (await port.confirmations(cur.s.principal_ref)).filter(awaiting);
+      if (waiting.length > 0) {
+        purchases =
+          `<h2>${esc(t.purchases)}</h2><ul data-confirmations>` +
+          waiting
+            .map(
+              (c) =>
+                `<li data-confirmation="${esc(c.id)}"><a href="/c/${esc(c.id)}?lang=${lang}">${esc(c.merchant_id)} · ${esc(sum(c.amount, c.currency, lang))}</a>` +
+                ` — ${esc(c.agent_code)}</li>`,
+            )
+            .join("") +
+          `</ul><h2>${esc(t.mandatesTitle)}</h2>`;
+      }
       const list = await port.mandates(cur.s.principal_ref);
       const sorted = [...list.filter(pending), ...list.filter((m) => !pending(m))];
       // Отзыв всех полномочий — когда есть что отзывать: действующий мандат (ПИ-8 revoke-all отзывает ACTIVE).
@@ -134,7 +176,108 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
     } catch {
       return message(reply, 503, lang, t.unavailable);
     }
-    return page(reply, 200, lang, t.title, rows + revokeAllLink + logoutForm(lang, cur.s.csrf));
+    const agentsLink = `<p><a href="/agents?lang=${lang}" data-agents-link>${esc(t.agents)}</a></p>`;
+    return page(reply, 200, lang, t.title, purchases + rows + revokeAllLink + agentsLink + logoutForm(lang, cur.s.csrf));
+  });
+
+  // Агенты клиента — по agent_code его мандатов (в порядке мандатов), класс и статус — из реестра. Мандаты не прочитаны —
+  // 503; статус агента не прочитан — строка с пометкой, страница работает (решение владельца 03.11).
+  app.get("/agents", async (req, reply) => {
+    const lang = queryLang(req);
+    const t = TEXT[lang];
+    const cur = session(req);
+    if (!cur) return message(reply, 401, lang, t.signIn);
+    let codes: string[];
+    try {
+      codes = [...new Set((await port.mandates(cur.s.principal_ref)).map((m) => m.agent_code))];
+    } catch {
+      return message(reply, 503, lang, t.unavailable, backLink(lang));
+    }
+    const rows: string[] = [];
+    for (const code of codes) {
+      let a: Awaited<ReturnType<MandatesScreenPort["agent"]>>;
+      try {
+        a = await port.agent(code);
+      } catch {
+        a = undefined;
+      }
+      const what = a
+        ? `${esc(t.classes[a.class] ?? a.class)} — <span data-status>${esc(t.agentStatuses[a.status] ?? a.status)}</span>` +
+          (a.status === "SUSPENDED" ? ` <small data-agent-hint="SUSPENDED">${esc(t.agentSuspended)}</small>` : "") +
+          (a.status === "EXCLUDED" ? ` <small data-agent-hint="EXCLUDED">${esc(t.agentExcluded)}</small>` : "")
+        : `<span data-agent-hint="UNKNOWN">${esc(t.agentStatusUnknown)}</span>`;
+      rows.push(`<li data-agent="${esc(code)}">${esc(code)} · ${what}</li>`);
+    }
+    const body = rows.length === 0 ? `<p data-empty>${esc(t.agentsEmpty)}</p>` : `<ul data-agents>${rows.join("")}</ul>`;
+    return page(reply, 200, lang, t.agents, body + backLink(lang));
+  });
+
+  // Запрос подтверждения покупки: итог из записи П6; кнопки — только у ждущего решения, в форме — totals_hash этого итога.
+  app.get<{ Params: { id: string } }>("/c/:id", async (req, reply) => {
+    const lang = queryLang(req);
+    const t = TEXT[lang];
+    const cur = session(req);
+    if (!cur) return message(reply, 401, lang, t.signIn);
+    let body: string;
+    try {
+      const c = CONFIRMATION_ID.test(req.params.id) ? await port.confirmation(cur.s.principal_ref, req.params.id) : undefined;
+      if (!c) return message(reply, 404, lang, t.confirmNotFound, backLink(lang));
+      const row = (name: string, attr: string, value: string) => `<dt>${esc(name)}</dt><dd data-${attr}>${esc(value)}</dd>`;
+      body =
+        `<p data-ask>${esc(t.purchaseAsk)}</p><dl>` +
+        row(t.merchant, "merchant", c.merchant_id) +
+        row(t.amount, "amount", sum(c.amount, c.currency, lang)) +
+        row(t.order, "order", c.order_ref) +
+        row(t.agent, "agent", c.agent_code) +
+        row(t.byMandate, "mandate", c.mandate_id) +
+        row(t.status, "status", confirmStatusText(t, c)) +
+        row(t.decideUntil, "until", c.expires_at) +
+        `</dl>`;
+      if (awaiting(c)) {
+        body += await agentHint(t, c.agent_code);
+        body +=
+          `<form method="post" action="/c/${esc(c.id)}/decision"><input type="hidden" name="lang" value="${lang}">` +
+          `<input type="hidden" name="csrf" value="${esc(cur.s.csrf)}"><input type="hidden" name="totals_hash" value="${esc(c.totals_hash)}">` +
+          `<button name="decision" value="APPROVE" data-approve>${esc(t.approve)}</button>` +
+          `<button name="decision" value="REJECT" data-decline>${esc(t.decline)}</button></form>`;
+      }
+    } catch {
+      return message(reply, 503, lang, t.unavailable, backLink(lang));
+    }
+    return page(reply, 200, lang, t.purchase, body + backLink(lang));
+  });
+
+  // Решение человека: сессия → CSRF → форма (решение, totals_hash) → id → порт (подпись банка и ПИ-8 над хэшем из формы).
+  app.post<{ Params: { id: string } }>("/c/:id/decision", async (req, reply) => {
+    const form = (req.body ?? {}) as Record<string, unknown>;
+    const lang = langOf(form.lang, settings.lang);
+    const t = TEXT[lang];
+    const cur = session(req);
+    if (!cur) return message(reply, 401, lang, t.signIn);
+    if (!ScreenSessions.csrfOk(cur.s, form.csrf)) return message(reply, 403, lang, t.formExpired, backLink(lang));
+    const decision = form.decision;
+    const hash = form.totals_hash;
+    if ((decision !== "APPROVE" && decision !== "REJECT") || typeof hash !== "string" || !TOTALS_HASH.test(hash)) {
+      return message(reply, 400, lang, t.badConfirmForm, backLink(lang));
+    }
+    if (!CONFIRMATION_ID.test(req.params.id)) return message(reply, 404, lang, t.confirmNotFound, backLink(lang));
+    let r: Awaited<ReturnType<MandatesScreenPort["confirm"]>>;
+    try {
+      r = await port.confirm(cur.s.principal_ref, req.params.id, decision, hash);
+    } catch {
+      return message(reply, 503, lang, t.unavailable, backLink(lang));
+    }
+    const status = (s: string | undefined) => (s ? `<p>${esc(t.status)}: <span data-status>${esc(t.confirmStatuses[s] ?? s)}</span></p>` : "");
+    switch (r.kind) {
+      case "DONE":
+        return message(reply, 200, lang, r.status === "REJECTED" ? t.declined : t.approved, status(r.status) + backLink(lang));
+      case "TOTALS_CHANGED":
+        return message(reply, 409, lang, t.totalsChanged, backLink(lang));
+      case "NOT_PENDING":
+        return message(reply, 409, lang, t.confirmNotPending, status(r.status) + backLink(lang));
+      case "NOT_FOUND":
+        return message(reply, 404, lang, t.confirmNotFound, backLink(lang));
+    }
   });
 
   // Мандат: значения из записи Платформы, кнопки — только у ждущего подписи.
@@ -327,6 +470,9 @@ function mandateHtml(
   }
   return `<dl>${dl}</dl>${cart}<p><small>${esc(t.hash)}: <code data-hash>${esc(m.hash)}</code></small></p>`;
 }
+
+/** totals_hash ПИ-8 (РП50 п. 4): 64 строчные hex. */
+const TOTALS_HASH = /^[0-9a-f]{64}$/;
 
 /** revocation_ref отзыва всех полномочий: `rva_` + 24 буквы — без цифр (правило непрозрачной ссылки ПИ-8 — не больше 6 цифр подряд). */
 const REVOCATION_REF = /^rva_[a-z]{24}$/;

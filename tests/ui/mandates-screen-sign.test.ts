@@ -67,6 +67,11 @@ function fake(list: ScreenMandate[], opts: { fail?: boolean; decide?: DecideResu
       if (opts.fail) throw new Error("порт недоступен");
       return { revoked: 0 };
     },
+    // Подтверждение покупки (ч. 2, К2.1) — tests/ui/mandates-screen-confirm.test.ts.
+    confirmations: async () => [],
+    confirmation: async () => undefined,
+    confirm: async () => ({ kind: "NOT_FOUND" }),
+    agent: async () => undefined,
   };
   return { port, calls };
 }

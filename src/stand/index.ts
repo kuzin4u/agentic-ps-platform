@@ -627,6 +627,8 @@ export function createStand(opts: StandOptions = {}): Stand {
       return { statusCode: res.statusCode, body: res.json() };
     },
     sbpEnabled: params.upk_sbp_enabled,
+    // Подсказка о приостановленном агенте (РП54): статус — реестр стенда; для оператора УПК чтения в ПИ-8 нет.
+    agentStatus: async (agent_code) => (await registry.get(agent_code))?.status,
     now,
     ...(opts.upk ? { settings: opts.upk } : {}),
   });
@@ -647,6 +649,14 @@ export function createStand(opts: StandOptions = {}): Stand {
     sign: (id, o) => issuer.sign(id, o),
     revoke: (id) => issuer.revoke(id),
     revokeAll: (principal_ref, revocation_ref) => issuer.revokeAll(principal_ref, revocation_ref),
+    confirmationIds: () => confirmationStore.confirmationIds(),
+    confirmationRecord: (id) => confirmationStore.get(id),
+    confirm: (id, o) => issuer.confirm(id, o),
+    // Класс и статус — из реестра стенда (решение владельца 03.11): у банка чтения статуса агента в ПИ-8 нет.
+    agent: async (agent_code) => {
+      const a = await registry.get(agent_code);
+      return a && { agent_code: a.agent_code, class: a.class, status: a.status };
+    },
     ...(opts.bankApp ? { settings: opts.bankApp } : {}),
   });
   const bankApp: StandBankApp = {

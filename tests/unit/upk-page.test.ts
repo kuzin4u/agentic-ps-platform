@@ -16,7 +16,9 @@ const REF = "cr_abcdefghijklmnopqrstuvwxyz";
 
 type Submit = (id: string, body: Record<string, unknown>) => Promise<{ statusCode: number; body: unknown }>;
 
-function setup(opts: { sbp?: boolean; settings?: UpkPageSettings; failGet?: boolean | (() => boolean); submit?: Submit } = {}) {
+function setup(
+  opts: { sbp?: boolean; settings?: UpkPageSettings; failGet?: boolean | (() => boolean); submit?: Submit; agentStatus?: () => Promise<string | undefined> } = {},
+) {
   let t = T0;
   const store = new MemoryConfirmationStore();
   const codes = new UpkCodes();
@@ -30,6 +32,8 @@ function setup(opts: { sbp?: boolean; settings?: UpkPageSettings; failGet?: bool
       },
     },
     codes,
+    // Статус агента запроса (РП54, К2.2): по умолчанию — действует, подсказки нет.
+    agentStatus: opts.agentStatus ?? (async () => "ACTIVE"),
     async submit(id, body) {
       sent.push({ id, body });
       if (opts.submit) return opts.submit(id, body);
@@ -376,5 +380,45 @@ describe("одноразовый код (РП51 «Дополнения» п. 8, 
     const fresh = codes.issue(ID, EXP);
     if (old !== fresh) expect(codes.redeem(ID, old, AT)).toBe(false);
     expect(codes.redeem(ID, fresh, AT)).toBe(true);
+  });
+});
+
+describe("страница УПК: подсказка о статусе агента (РП54; UI-К2 ч. 2, К2.2; решение владельца 03.11)", () => {
+  const hintOf = (html: string) => /data-agent-hint="([A-Z]+)"/.exec(html)?.[1];
+
+  it("действует — подсказки нет; статус спрошен по агенту запроса", async () => {
+    const asked: string[] = [];
+    const s = setup({ agentStatus: async () => (asked.push("x"), "ACTIVE") });
+    const r = await s.request();
+    const page = await s.get(r.confirmation_id);
+    expect(page.statusCode).toBe(200);
+    expect(hintOf(page.body)).toBeUndefined();
+    expect(asked).toHaveLength(1);
+  });
+
+  it("приостановлен — «пока агент приостановлен, подтверждение не приведёт к оплате», кнопки остаются; исключён — своя подсказка", async () => {
+    const s = setup({ agentStatus: async () => "SUSPENDED" });
+    const page = (await s.get((await s.request()).confirmation_id)).body;
+    expect(hintOf(page)).toBe("SUSPENDED");
+    expect(page).toContain("Пока агент приостановлен, подтверждение не приведёт к оплате.");
+    expect(page).toContain('value="APPROVE"');
+    const en = (await s.get((await s.request({ order_ref: "ORD-en" })).confirmation_id, "?lang=en")).body;
+    expect(en).toContain("While it is suspended, confirming will not lead to payment.");
+
+    const x = setup({ agentStatus: async () => "EXCLUDED" });
+    const ex = (await x.get((await x.request()).confirmation_id)).body;
+    expect(hintOf(ex)).toBe("EXCLUDED");
+    expect(ex).toContain('value="APPROVE"');
+  });
+
+  it("нет в реестре или сбой чтения статуса — «статус агента не прочитан», страница 200 с формой", async () => {
+    for (const agentStatus of [async () => undefined, async () => Promise.reject(new Error("реестр недоступен"))]) {
+      const s = setup({ agentStatus });
+      const page = await s.get((await s.request()).confirmation_id);
+      expect(page.statusCode).toBe(200);
+      expect(hintOf(page.body)).toBe("UNKNOWN");
+      expect(page.body).toContain("Статус агента не прочитан.");
+      expect(page.body).toContain('value="APPROVE"');
+    }
   });
 });

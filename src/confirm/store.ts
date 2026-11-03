@@ -97,6 +97,14 @@ export class MemoryConfirmationStore implements ConfirmationStore {
     return r && structuredClone(r);
   }
 
+  /**
+   * id запросов по порядку записи — только стенд (экран банка, DECISIONS РП36 «Нюанс UI-К2 ч. 2»), как
+   * MemoryConsentStore.mandateIds(); не в интерфейсе ConfirmationStore: настоящему банку — чтения ПИ-8 (STATUS «Открыто»).
+   */
+  confirmationIds(): readonly string[] {
+    return [...this.#rows.keys()];
+  }
+
   async byRef(confirmation_ref: string): Promise<ConfirmationRecord | undefined> {
     const r = [...this.#rows.values()].find((x) => x.confirmation_ref === confirmation_ref);
     return r && structuredClone(r);

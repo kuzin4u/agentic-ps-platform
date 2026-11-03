@@ -1,12 +1,23 @@
 // Экран мандатов в приложении банка стенда (UI-К2; ROADMAP В1): эталонный модуль `src/ui/mandates/` с данными стенда.
 // Эмулятор эмитента — банк: клиент уже опознан (на стенде — тест выдаёт ссылку входа по principal_ref), действия —
 // подписью ключа stand:issuer-emulator по ПИ-8 того же сервера (как stand.issuer). Чтения — хранилища стенда в памяти
-// (DECISIONS РП36 «Нюанс UI-К2 ч. 1» п. 2): список id мандатов и экран мандата журнала; для настоящего банка нужны
+// (DECISIONS РП36 «Нюанс UI-К2 ч. 1» п. 2): список id мандатов и экран мандата журнала, запросы подтверждения П6 (ч. 2,
+// «Нюанс UI-К2 ч. 2»); для настоящего банка нужны
 // чтения ПИ-8 — STATUS «Открыто». Мандат клиента — по principal_ref записи MANDATE_REQUESTED: на стенде один банк
 // (РП36 доп. п. 8), привязка мандата к банку до подписи — с чтениями ПИ-8.
 import type { MandateSigningView } from "../../consent/journal.js";
+import { totalsHash, type ConfirmationRecord } from "../../confirm/model.js";
 import { createMandatesScreen, type MandatesScreen } from "../../ui/mandates/index.js";
-import type { DecideResult, MandateDecision, MandatesScreenPort, ScreenMandate } from "../../ui/mandates/port.js";
+import type {
+  ConfirmDecision,
+  ConfirmResult,
+  DecideResult,
+  MandateDecision,
+  MandatesScreenPort,
+  ScreenAgent,
+  ScreenConfirmation,
+  ScreenMandate,
+} from "../../ui/mandates/port.js";
 import type { ScreenSessionTtl } from "../../ui/mandates/session.js";
 import type { UiSettings } from "../../ui/shared/index.js";
 
@@ -29,6 +40,14 @@ export interface IssuerScreenDeps {
   readonly revoke: (id: string) => Promise<Reply>;
   /** Отзыв всех полномочий клиента по ПИ-8 (stand.issuer.revokeAll). */
   readonly revokeAll: (principal_ref: string, revocation_ref: string) => Promise<Reply>;
+  /** id запросов подтверждения стенда по порядку записи (MemoryConfirmationStore.confirmationIds — только стенд). */
+  readonly confirmationIds: () => readonly string[];
+  /** Запрос подтверждения П6 (ConfirmationStore.get). */
+  readonly confirmationRecord: (id: string) => Promise<ConfirmationRecord | undefined>;
+  /** Решение человека — запись, подписанная банком стенда над totals_hash из формы, по ПИ-8 (stand.issuer.confirm). */
+  readonly confirm: (id: string, opts: { readonly decision: ConfirmDecision; readonly totals_hash: string }) => Promise<Reply>;
+  /** Агент из реестра стенда (registry.get — только стенд, РП36 «Нюанс UI-К2 ч. 2»); нет — undefined, сбой — исключение. */
+  readonly agent: (agent_code: string) => Promise<ScreenAgent | undefined>;
 }
 
 type Reply = { readonly statusCode: number; readonly body: unknown };
@@ -48,12 +67,56 @@ const toScreen = (v: MandateSigningView): ScreenMandate => ({
   hash: v.hash,
 });
 
+const toConfirmation = (r: ConfirmationRecord): ScreenConfirmation => ({
+  id: r.confirmation_id,
+  agent_code: r.agent_code,
+  mandate_id: r.mandate_id,
+  merchant_id: r.merchant_id,
+  amount: r.amount,
+  currency: r.currency,
+  order_ref: r.order_ref,
+  status: r.status,
+  expires_at: r.expires_at,
+  totals_hash: totalsHash(r),
+});
+
 export function issuerScreenPort(deps: IssuerScreenDeps): MandatesScreenPort {
   const own = async (principal_ref: string, id: string): Promise<MandateSigningView | undefined> => {
     const v = await deps.signingView(id);
     return v && v.principal_ref === principal_ref ? v : undefined;
   };
+  // Запрос клиента — по principal_ref мандата запроса (решение владельца 03.11); мандат не найден — как чужой (fail-closed).
+  const ownConfirmation = async (principal_ref: string, id: string): Promise<ConfirmationRecord | undefined> => {
+    const r = await deps.confirmationRecord(id);
+    return r && (await own(principal_ref, r.mandate_id)) ? r : undefined;
+  };
   return {
+    agent: (agent_code) => deps.agent(agent_code),
+    async confirmations(principal_ref) {
+      const out: ScreenConfirmation[] = [];
+      for (const id of deps.confirmationIds()) {
+        const r = await ownConfirmation(principal_ref, id);
+        if (r) out.push(toConfirmation(r));
+      }
+      return out;
+    },
+    async confirmation(principal_ref, id) {
+      const r = await ownConfirmation(principal_ref, id);
+      return r && toConfirmation(r);
+    },
+    async confirm(principal_ref, id, decision, totals_hash): Promise<ConfirmResult> {
+      if (!(await ownConfirmation(principal_ref, id))) return { kind: "NOT_FOUND" };
+      // Хэш — из формы: итог, который видел человек, а не пересчитанный при нажатии (инвариант 7, РП50 п. 4).
+      const res = await deps.confirm(id, { decision, totals_hash });
+      const body = (res.body ?? {}) as { status?: unknown; code?: unknown };
+      const status = typeof body.status === "string" ? body.status : undefined;
+      if (res.statusCode === 200 && status) return { kind: "DONE", status };
+      if (res.statusCode === 409 && body.code === "CONFIRMATION_TOTALS_MISMATCH") return { kind: "TOTALS_CHANGED" };
+      if (res.statusCode === 409 && body.code === "CONFIRMATION_NOT_PENDING") return status ? { kind: "NOT_PENDING", status } : { kind: "NOT_PENDING" };
+      if (res.statusCode === 404) return { kind: "NOT_FOUND" };
+      // Прочее (401 подписи банка, 503 Платформы, неожиданный ответ) — сбой: экран отвечает 503 (fail-closed).
+      throw new Error(`экран мандатов: ПИ-8 confirmations ответил ${res.statusCode}`);
+    },
     async mandates(principal_ref) {
       const out: ScreenMandate[] = [];
       for (const id of deps.mandateIds()) {

@@ -19,6 +19,10 @@ function setup(limit: number) {
     decide: async () => (calls.push("decide"), { kind: "NOT_FOUND" }),
     revoke: async () => (calls.push("revoke"), { kind: "NOT_FOUND" }),
     revokeAll: async () => (calls.push("revokeAll"), { revoked: 0 }),
+    confirmations: async () => (calls.push("confirmations"), []),
+    confirmation: async () => (calls.push("confirmation"), undefined),
+    confirm: async () => (calls.push("confirm"), { kind: "NOT_FOUND" }),
+    agent: async () => (calls.push("agent"), undefined),
   };
   const screen = createMandatesScreen({ port, ttl: TTL, rate_limit_per_30s: limit, now: () => new Date(T0) });
   const from = (ip: string, url: string) => screen.app.inject({ method: "GET", url, remoteAddress: ip });
