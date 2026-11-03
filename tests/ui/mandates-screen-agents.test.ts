@@ -73,6 +73,8 @@ async function open(mandates: ScreenMandate[] | "fail", agents: Record<string, S
       if (a === "fail") throw new Error("реестр недоступен");
       return a;
     },
+    history: async () => undefined,
+    notifications: async () => [],
   };
   const screen = createMandatesScreen({ port, ttl: TTL, rate_limit_per_30s: 600, now: () => new Date(T0) });
   const login = await screen.app.inject({ method: "GET", url: screen.loginPath(P) });

@@ -657,6 +657,9 @@ export function createStand(opts: StandOptions = {}): Stand {
       const a = await registry.get(agent_code);
       return a && { agent_code: a.agent_code, class: a.class, status: a.status };
     },
+    // История — выписка журнала стенда в памяти (у банка чтения в ПИ-8 нет); лента — ПИ-8 с подписью банка стенда.
+    journal: (id, agent_code) => consent.evidence(id, agent_code),
+    notificationsPage: (after) => issuer.getNotifications(after),
     ...(opts.bankApp ? { settings: opts.bankApp } : {}),
   });
   const bankApp: StandBankApp = {

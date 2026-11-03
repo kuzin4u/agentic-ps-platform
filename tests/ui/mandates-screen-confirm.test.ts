@@ -65,6 +65,8 @@ async function open(list: ScreenConfirmation[], opts: { fail?: boolean; confirm?
       return opts.confirm ?? { kind: "DONE", status: decision === "APPROVE" ? "APPROVED" : "REJECTED" };
     },
     agent: async (agent_code) => ({ agent_code, class: "BUYER", status: "ACTIVE" }),
+    history: async () => undefined,
+    notifications: async () => [],
   };
   const screen = createMandatesScreen({ port, ttl: TTL, rate_limit_per_30s: 600, now: () => new Date(T0) });
   const login = await screen.app.inject({ method: "GET", url: screen.loginPath(P) });
@@ -204,6 +206,8 @@ describe("адаптер стенда: «свой» запрос — по princi
       confirmationRecord: async () => rec(mandate_id),
       confirm: async (id, o) => (sent.push({ id, ...o }), { statusCode: 200, body: { status: "APPROVED" } }),
       agent: async () => undefined,
+      journal: async () => undefined,
+      notificationsPage: async () => ({ statusCode: 500, body: {} }),
     });
     return { p, sent };
   }

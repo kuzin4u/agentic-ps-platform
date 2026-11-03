@@ -67,6 +67,8 @@ async function open(list: ScreenMandate[], opts: FakeOpts = {}) {
     confirmation: async () => undefined,
     confirm: async () => ({ kind: "NOT_FOUND" }),
     agent: async () => undefined,
+    history: async () => undefined,
+    notifications: async () => [],
   };
   const screen = createMandatesScreen({ port, ttl: TTL, rate_limit_per_30s: 600, now: () => new Date(T0) });
   const login = await screen.app.inject({ method: "GET", url: screen.loginPath(P) });
@@ -206,6 +208,8 @@ describe("адаптер стенда: согласие на токен — то
       confirmationRecord: async () => undefined,
       confirm: async () => ({ statusCode: 500, body: {} }),
       agent: async () => undefined,
+      journal: async () => undefined,
+      notificationsPage: async () => ({ statusCode: 500, body: {} }),
     });
     await port.decide(P, ID(1), "SIGN");
     await port.decide(P, ID(1), "REJECT");

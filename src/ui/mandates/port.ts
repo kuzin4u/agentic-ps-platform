@@ -1,4 +1,4 @@
-// Порт экрана мандатов (UI-К2 ч. 1, К1.2; подтверждение покупки — ч. 2, К2.1): чтения и действия банка для своего клиента. Банк реализует его своим сервером:
+// Порт экрана мандатов (UI-К2 ч. 1, К1.2; подтверждение покупки — ч. 2, К2.1; история и уведомления — ч. 3, К3.2): чтения и действия банка для своего клиента. Банк реализует его своим сервером:
 // чтения — из ПИ-8 (для настоящего банка их пока нет — STATUS «Открыто», `/decision` в UI-К2 ч. 3), действия — подписанные
 // ключом банка записи ПИ-8 (`POST /participants/v1/mandates/{id}/sign`). На стенде — `src/env/issuer/screen.ts`.
 // Порт всегда получает principal_ref из сессии экрана: чужой мандат — как неизвестный (undefined / NOT_FOUND).
@@ -72,6 +72,31 @@ export interface ScreenAgent {
   readonly status: string;
 }
 
+/**
+ * Запись истории мандата (UI-К2 ч. 3, К3.2) — из журнала согласий (инвариант 6: только чтение). `kind` — код записи журнала
+ * (`MANDATE_REQUESTED`, `MANDATE_SIGNED` …), неизвестный экран показывает кодом; `mandate_id` — мандат записи (у CART в
+ * истории есть и записи родителя INTENT). Предел — только у записи запроса, парой с валютой (правило совместимости 2).
+ */
+export interface ScreenHistoryEntry {
+  readonly at: string;
+  readonly kind: string;
+  readonly mandate_id: string;
+  readonly amount_limit?: number;
+  readonly currency?: string;
+}
+
+/**
+ * Уведомление клиента через банк (ПИ-8 `GET /participants/v1/notifications`, РП46 (б); A3 п. 5.3) — только коды и ссылки
+ * (инвариант 1). `type` — `client.*`, неизвестный экран показывает кодом; `reason` — чей предел у `client.limit_declined`.
+ */
+export interface ScreenNotification {
+  readonly at: string;
+  readonly type: string;
+  readonly mandate_id?: string;
+  readonly agent_code?: string;
+  readonly reason?: string;
+}
+
 export type ConfirmDecision = "APPROVE" | "REJECT";
 
 /** Решение человека: записано; итог не тот, что видел человек; запрос уже не ждёт (текущий статус); неизвестный. */
@@ -113,4 +138,15 @@ export interface MandatesScreenPort {
    * 03.11). Для настоящего банка чтения статуса агента в ПИ-8 нет (маршрут — только эквайреру, РП57 п. 6) — STATUS «Открыто».
    */
   agent(agent_code: string): Promise<ScreenAgent | undefined>;
+  /**
+   * История мандата клиента (UI-К2 ч. 3, К3.2): записи журнала по порядку; чужой и неизвестный — undefined. Сбой и
+   * нарушенная цепочка журнала — исключение: экран отвечает 503 (инвариант 3). Для настоящего банка чтения истории мандата
+   * в ПИ-8 нет — `/decision` UI-К2 ч. 3 (К3.1), STATUS «Открыто»; на стенде — выписка журнала в памяти.
+   */
+  history(principal_ref: string, id: string): Promise<readonly ScreenHistoryEntry[] | undefined>;
+  /**
+   * Уведомления клиента по порядку ленты (UI-К2 ч. 3, К3.2): банк читает свою ленту ПИ-8 `GET /participants/v1/notifications`
+   * и отбирает записи клиента по `principal_ref`. Сбой — исключение (503).
+   */
+  notifications(principal_ref: string): Promise<readonly ScreenNotification[]>;
 }

@@ -16,7 +16,9 @@ import type {
   MandatesScreenPort,
   ScreenAgent,
   ScreenConfirmation,
+  ScreenHistoryEntry,
   ScreenMandate,
+  ScreenNotification,
 } from "../../ui/mandates/port.js";
 import type { ScreenSessionTtl } from "../../ui/mandates/session.js";
 import type { UiSettings } from "../../ui/shared/index.js";
@@ -48,9 +50,35 @@ export interface IssuerScreenDeps {
   readonly confirm: (id: string, opts: { readonly decision: ConfirmDecision; readonly totals_hash: string }) => Promise<Reply>;
   /** Агент из реестра стенда (registry.get — только стенд, РП36 «Нюанс UI-К2 ч. 2»); нет — undefined, сбой — исключение. */
   readonly agent: (agent_code: string) => Promise<ScreenAgent | undefined>;
+  /**
+   * Записи журнала мандата (выписка `ConsentJournal.evidence` по агенту мандата — только стенд, РП36 «Нюанс UI-К2 ч. 3»):
+   * у банка чтения истории в ПИ-8 нет. Неизвестный — undefined, сбой — исключение.
+   */
+  readonly journal: (id: string, agent_code: string) => Promise<StandJournal | undefined>;
+  /** Страница ленты уведомлений банка стенда по ПИ-8 `GET /participants/v1/notifications` (stand.issuer.getNotifications). */
+  readonly notificationsPage: (after?: string) => Promise<Reply>;
+}
+
+/** Выписка журнала мандата: цельность и записи цепочки (у CART — с записями родителя). */
+export interface StandJournal {
+  readonly integrity?: string;
+  readonly records?: readonly { readonly kind: string; readonly ref: string; readonly at: string; readonly payload: Record<string, unknown> }[];
 }
 
 type Reply = { readonly statusCode: number; readonly body: unknown };
+
+/** Предел страниц ленты за одно чтение экрана: дальше — сбой (503), а не бесконечный цикл. */
+const NOTIFICATION_PAGES_MAX = 100;
+
+const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
+
+const toHistory = (r: NonNullable<StandJournal["records"]>[number]): ScreenHistoryEntry => {
+  const amount = r.payload.amount_limit;
+  const currency = r.payload.currency;
+  // Предел — только у записи запроса и только парой с валютой (правило совместимости 2).
+  const limit = r.kind === "MANDATE_REQUESTED" && Number.isSafeInteger(amount) && typeof currency === "string" ? { amount_limit: amount as number, currency } : {};
+  return { at: r.at, kind: r.kind, mandate_id: r.ref, ...limit };
+};
 
 const toScreen = (v: MandateSigningView): ScreenMandate => ({
   id: v.id,
@@ -92,6 +120,39 @@ export function issuerScreenPort(deps: IssuerScreenDeps): MandatesScreenPort {
   };
   return {
     agent: (agent_code) => deps.agent(agent_code),
+    async history(principal_ref, id) {
+      const v = await own(principal_ref, id);
+      if (!v) return undefined;
+      const j = await deps.journal(id, v.agent_code);
+      // Нарушенная цепочка — не история, а сбой (инвариант 3): экран отвечает 503, записи не показываются.
+      if (!j || j.integrity !== "OK" || !j.records) throw new Error("экран мандатов: журнал мандата не прочитан или цепочка нарушена");
+      return j.records.map(toHistory);
+    },
+    async notifications(principal_ref) {
+      // Лента банка — ПИ-8 с подписью запроса банка (как у настоящего банка); клиент — по principal_ref уведомления.
+      const out: ScreenNotification[] = [];
+      let after: string | undefined;
+      for (let i = 0; i < NOTIFICATION_PAGES_MAX; i++) {
+        const res = await deps.notificationsPage(after);
+        const list = (res.body as { notifications?: unknown } | null)?.notifications;
+        if (res.statusCode !== 200 || !Array.isArray(list)) throw new Error(`экран мандатов: ПИ-8 notifications ответил ${res.statusCode}`);
+        if (list.length === 0) return out;
+        for (const n of list as { notification_id?: unknown; type?: unknown; at?: unknown; data?: Record<string, unknown> }[]) {
+          const d = n.data ?? {};
+          if (d.principal_ref !== principal_ref) continue;
+          const type = str(n.type);
+          const at = str(n.at);
+          if (!type || !at) throw new Error("экран мандатов: уведомление не по форме");
+          const mandate_id = str(d.mandate_id);
+          const agent_code = str(d.agent_code);
+          const reason = str(d.reason);
+          out.push({ at, type, ...(mandate_id ? { mandate_id } : {}), ...(agent_code ? { agent_code } : {}), ...(reason ? { reason } : {}) });
+        }
+        after = str((list[list.length - 1] as { notification_id?: unknown }).notification_id);
+        if (!after) throw new Error("экран мандатов: уведомление без notification_id");
+      }
+      throw new Error("экран мандатов: лента уведомлений длиннее предела страниц");
+    },
     async confirmations(principal_ref) {
       const out: ScreenConfirmation[] = [];
       for (const id of deps.confirmationIds()) {
