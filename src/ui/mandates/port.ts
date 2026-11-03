@@ -1,4 +1,4 @@
-// Порт экрана мандатов (UI-К2 ч. 1, К1.2): чтения и действия банка для своего клиента. Банк реализует его своим сервером:
+// Порт экрана мандатов (UI-К2 ч. 1, К1.2; подтверждение покупки — ч. 2, К2.1): чтения и действия банка для своего клиента. Банк реализует его своим сервером:
 // чтения — из ПИ-8 (для настоящего банка их пока нет — STATUS «Открыто», `/decision` в UI-К2 ч. 3), действия — подписанные
 // ключом банка записи ПИ-8 (`POST /participants/v1/mandates/{id}/sign`). На стенде — `src/env/issuer/screen.ts`.
 // Порт всегда получает principal_ref из сессии экрана: чужой мандат — как неизвестный (undefined / NOT_FOUND).
@@ -43,6 +43,35 @@ export type DecideResult =
 /** Отзыв мандата: текущий статус после отзыва (`REVOKED` — отозван сейчас; иное — полномочий уже не было). */
 export type RevokeResult = { readonly kind: "DONE"; readonly status: string } | { readonly kind: "NOT_FOUND" };
 
+/**
+ * Запрос подтверждения покупки (П6, РП50 п. 1) для человека — итоговые значения из записи Платформы (инвариант 5); номера
+ * карты и `confirmation_ref` нет (ссылку видит только агент, РП50 п. 7). Чтения для настоящего банка — STATUS «Открыто».
+ */
+export interface ScreenConfirmation {
+  readonly id: string;
+  readonly agent_code: string;
+  readonly mandate_id: string;
+  readonly merchant_id: string;
+  /** Сумма в минимальных единицах + валюта ISO 4217 (правило совместимости 2). */
+  readonly amount: number;
+  readonly currency: string;
+  readonly order_ref: string;
+  /** Статус П6 (`PENDING`, `APPROVED`, `REJECTED`, `EXPIRED`, `USED`); неизвестный экран показывает без действий. */
+  readonly status: string;
+  readonly expires_at: string;
+  /** `totals_hash` этого итога (РП50 п. 4): форма несёт его, банк подписывает его, а не пересчитанный при нажатии. */
+  readonly totals_hash: string;
+}
+
+export type ConfirmDecision = "APPROVE" | "REJECT";
+
+/** Решение человека: записано; итог не тот, что видел человек; запрос уже не ждёт (текущий статус); неизвестный. */
+export type ConfirmResult =
+  | { readonly kind: "DONE"; readonly status: string }
+  | { readonly kind: "TOTALS_CHANGED" }
+  | { readonly kind: "NOT_PENDING"; readonly status?: string }
+  | { readonly kind: "NOT_FOUND" };
+
 export interface MandatesScreenPort {
   /** Мандаты клиента. */
   mandates(principal_ref: string): Promise<readonly ScreenMandate[]>;
@@ -60,4 +89,13 @@ export interface MandatesScreenPort {
    * сбоя — тем же; ответ — число отозванных мандатов.
    */
   revokeAll(principal_ref: string, revocation_ref: string): Promise<{ readonly revoked: number }>;
+  /** Запросы подтверждения покупки клиента (любого статуса; экран сам отбирает ждущие решения). */
+  confirmations(principal_ref: string): Promise<readonly ScreenConfirmation[]>;
+  /** Запрос клиента; чужой, неизвестный и запрос без найденного мандата — undefined (fail-closed). */
+  confirmation(principal_ref: string, id: string): Promise<ScreenConfirmation | undefined>;
+  /**
+   * Решение человека по запросу (ПИ-8 `POST /participants/v1/confirmations/{id}`, РП50 п. 4–5): банк подписывает запись над
+   * `totals_hash` из формы — итогом, который видел человек; `instrument_chosen` банк не передаёт (РП51 п. 13).
+   */
+  confirm(principal_ref: string, id: string, decision: ConfirmDecision, totals_hash: string): Promise<ConfirmResult>;
 }

@@ -647,6 +647,9 @@ export function createStand(opts: StandOptions = {}): Stand {
     sign: (id, o) => issuer.sign(id, o),
     revoke: (id) => issuer.revoke(id),
     revokeAll: (principal_ref, revocation_ref) => issuer.revokeAll(principal_ref, revocation_ref),
+    confirmationIds: () => confirmationStore.confirmationIds(),
+    confirmationRecord: (id) => confirmationStore.get(id),
+    confirm: (id, o) => issuer.confirm(id, o),
     ...(opts.bankApp ? { settings: opts.bankApp } : {}),
   });
   const bankApp: StandBankApp = {

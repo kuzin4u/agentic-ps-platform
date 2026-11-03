@@ -63,6 +63,9 @@ async function open(list: ScreenMandate[], opts: FakeOpts = {}) {
       if (a === "fail") throw new Error("ПИ-8: сбой посередине");
       return { revoked: a };
     },
+    confirmations: async () => [],
+    confirmation: async () => undefined,
+    confirm: async () => ({ kind: "NOT_FOUND" }),
   };
   const screen = createMandatesScreen({ port, ttl: TTL, rate_limit_per_30s: 600, now: () => new Date(T0) });
   const login = await screen.app.inject({ method: "GET", url: screen.loginPath(P) });
@@ -198,6 +201,9 @@ describe("адаптер стенда: согласие на токен — то
       },
       revoke: async () => ({ statusCode: 500, body: {} }),
       revokeAll: async () => ({ statusCode: 500, body: {} }),
+      confirmationIds: () => [],
+      confirmationRecord: async () => undefined,
+      confirm: async () => ({ statusCode: 500, body: {} }),
     });
     await port.decide(P, ID(1), "SIGN");
     await port.decide(P, ID(1), "REJECT");
