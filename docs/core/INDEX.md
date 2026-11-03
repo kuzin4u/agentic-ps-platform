@@ -16,7 +16,7 @@
 | [`PILOT-READINESS.md`](PILOT-READINESS.md) | Отчёт SEC-2 «готовность к пилоту»: итог, проверки, принятые риски, задачи перед пилотом с банком |
 | [`../deploy/bank-screen.md`](../deploy/bank-screen.md) | Экран мандатов в приложении банка: страницы и ПИ-8, порт банка, вход по одноразовой ссылке и сроки, TLS, CSRF, журнал, `rate_limit_per_30s` и NAT, прокси, язык и бренд, чего экран не делает, как взять модуль (UI-К2 ч. 3, К3.3) |
 | [`../deploy/sandbox.md`](../deploy/sandbox.md) | Песочница на VPS: установка v0.32.1, `ca:init`, переменные, unit systemd, доступ для приёмки (sudoers, журнал), `npm run acceptance` — 13 проверок, нюансы (SANDBOX-ACC) |
-| [`DECISIONS.md`](DECISIONS.md) | РП1–РП73 (РП70 — за блоком «путь покупки в песочнице») |
+| [`DECISIONS.md`](DECISIONS.md) | РП1–РП74 (РП70 — за блоком «путь покупки в песочнице») |
 | [`ROADMAP.md`](ROADMAP.md) | Ред. 2: 8 этапов (0–7), 34 сессии, сроки по календарю планов рынков |
 | [`STATUS.md`](STATUS.md) | Состояние и следующая сессия |
 | [`GLOSSARY.md`](GLOSSARY.md) | Термины |

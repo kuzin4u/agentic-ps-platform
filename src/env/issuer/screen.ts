@@ -3,7 +3,7 @@
 // подписью ключа stand:issuer-emulator по ПИ-8 того же сервера (как stand.issuer). Чтения — хранилища стенда в памяти
 // (DECISIONS РП36 «Нюанс UI-К2 ч. 1» п. 2): список id мандатов и экран мандата журнала, запросы подтверждения П6 (ч. 2,
 // «Нюанс UI-К2 ч. 2»); для настоящего банка нужны
-// чтения ПИ-8 — STATUS «Открыто». Мандат клиента — по principal_ref записи MANDATE_REQUESTED: на стенде один банк
+// чтения ПИ-8 — DECISIONS РП74 (код — «перед пилотом с банком»). Мандат клиента — по principal_ref записи MANDATE_REQUESTED: на стенде один банк
 // (РП36 доп. п. 8), привязка мандата к банку до подписи — с чтениями ПИ-8.
 import type { MandateSigningView } from "../../consent/journal.js";
 import { totalsHash, type ConfirmationRecord } from "../../confirm/model.js";
