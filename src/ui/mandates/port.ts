@@ -63,6 +63,15 @@ export interface ScreenConfirmation {
   readonly totals_hash: string;
 }
 
+/** Агент для человека — класс и статус из реестра (инвариант 5); коды Платформы, текст — словарь экрана. */
+export interface ScreenAgent {
+  readonly agent_code: string;
+  /** Класс реестра (`BUYER`, `SELLER`, `SURFACE`, `SERVICE`); неизвестный экран показывает кодом. */
+  readonly class: string;
+  /** Статус реестра (`ACTIVE`, `SUSPENDED`, `EXCLUDED`); неизвестный экран показывает кодом. */
+  readonly status: string;
+}
+
 export type ConfirmDecision = "APPROVE" | "REJECT";
 
 /** Решение человека: записано; итог не тот, что видел человек; запрос уже не ждёт (текущий статус); неизвестный. */
@@ -98,4 +107,10 @@ export interface MandatesScreenPort {
    * `totals_hash` из формы — итогом, который видел человек; `instrument_chosen` банк не передаёт (РП51 п. 13).
    */
   confirm(principal_ref: string, id: string, decision: ConfirmDecision, totals_hash: string): Promise<ConfirmResult>;
+  /**
+   * Агент из реестра (UI-К2 ч. 2, К2.2): класс и статус; нет в реестре — undefined. Сбой — исключение: экран показывает
+   * «статус агента не прочитан» и работает дальше — подсказка поясняет, отказ ставит ADP по suspended_at (решение владельца
+   * 03.11). Для настоящего банка чтения статуса агента в ПИ-8 нет (маршрут — только эквайреру, РП57 п. 6) — STATUS «Открыто».
+   */
+  agent(agent_code: string): Promise<ScreenAgent | undefined>;
 }

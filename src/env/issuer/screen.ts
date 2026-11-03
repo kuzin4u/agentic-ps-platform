@@ -14,6 +14,7 @@ import type {
   DecideResult,
   MandateDecision,
   MandatesScreenPort,
+  ScreenAgent,
   ScreenConfirmation,
   ScreenMandate,
 } from "../../ui/mandates/port.js";
@@ -45,6 +46,8 @@ export interface IssuerScreenDeps {
   readonly confirmationRecord: (id: string) => Promise<ConfirmationRecord | undefined>;
   /** Решение человека — запись, подписанная банком стенда над totals_hash из формы, по ПИ-8 (stand.issuer.confirm). */
   readonly confirm: (id: string, opts: { readonly decision: ConfirmDecision; readonly totals_hash: string }) => Promise<Reply>;
+  /** Агент из реестра стенда (registry.get — только стенд, РП36 «Нюанс UI-К2 ч. 2»); нет — undefined, сбой — исключение. */
+  readonly agent: (agent_code: string) => Promise<ScreenAgent | undefined>;
 }
 
 type Reply = { readonly statusCode: number; readonly body: unknown };
@@ -88,6 +91,7 @@ export function issuerScreenPort(deps: IssuerScreenDeps): MandatesScreenPort {
     return r && (await own(principal_ref, r.mandate_id)) ? r : undefined;
   };
   return {
+    agent: (agent_code) => deps.agent(agent_code),
     async confirmations(principal_ref) {
       const out: ScreenConfirmation[] = [];
       for (const id of deps.confirmationIds()) {

@@ -1,6 +1,6 @@
 // Экран мандатов — эталонный модуль банка (UI-К2; план «Россия» ред. 4, ROADMAP В1): клиент банка видит и подписывает
 // мандаты агентов, отзывает их и все полномочия одним действием, подтверждает покупку выше порога (ч. 2, К2.1; ПС11);
-// дальше — агенты (ч. 2), история (ч. 3).
+// видит своих агентов и подсказку о приостановленном (ч. 2, К2.2; РП54); дальше — история (ч. 3).
 // Встраивается в приложение банка как веб-вид (WebView верхнего уровня); в песочнице — интерфейс эмулятора эмитента
 // (`src/env/issuer/screen.ts`). Экран сам ничего не решает и не пишет: данные и действия — через порт банка, действия
 // банк подписывает своим ключом и шлёт по ПИ-8 (инвариант 6). Язык и бренд — настройка экрана (правило совместимости 3);
@@ -98,6 +98,24 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
 
   /** Запрос ждёт решения и не истёк по часам экрана — только тогда есть кнопки (неизвестный статус — без действий). */
   const awaiting = (c: ScreenConfirmation) => c.status === "PENDING" && deps.now().toISOString() < c.expires_at;
+  /**
+   * Подсказка о статусе агента (РП54; решение владельца 03.11): приостановлен или исключён — «подтверждение не приведёт к
+   * оплате»; кнопка остаётся (скрытие — `/decision` ч. 3). Нет в реестре или сбой чтения — «статус не прочитан», страница
+   * работает: подсказка лишь поясняет, отказ ставит ADP по suspended_at.
+   */
+  const agentHint = async (t: Text, agent_code: string): Promise<string> => {
+    let status: string | undefined;
+    try {
+      status = (await port.agent(agent_code))?.status;
+    } catch {
+      status = undefined;
+    }
+    if (status === "ACTIVE") return "";
+    if (status === "SUSPENDED") return `<p data-agent-hint="SUSPENDED"><strong>${esc(t.agentSuspended)}</strong></p>`;
+    if (status === "EXCLUDED") return `<p data-agent-hint="EXCLUDED"><strong>${esc(t.agentExcluded)}</strong></p>`;
+    return `<p data-agent-hint="UNKNOWN">${esc(t.agentStatusUnknown)}</p>`;
+  };
+
   /** Статус запроса для человека: PENDING после срока — «срок истёк» (запись истекает при обращении, РП50 п. 5). */
   const confirmStatusText = (t: Text, c: ScreenConfirmation) => {
     const s = c.status === "PENDING" && !awaiting(c) ? "EXPIRED" : c.status;
@@ -158,7 +176,40 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
     } catch {
       return message(reply, 503, lang, t.unavailable);
     }
-    return page(reply, 200, lang, t.title, purchases + rows + revokeAllLink + logoutForm(lang, cur.s.csrf));
+    const agentsLink = `<p><a href="/agents?lang=${lang}" data-agents-link>${esc(t.agents)}</a></p>`;
+    return page(reply, 200, lang, t.title, purchases + rows + revokeAllLink + agentsLink + logoutForm(lang, cur.s.csrf));
+  });
+
+  // Агенты клиента — по agent_code его мандатов (в порядке мандатов), класс и статус — из реестра. Мандаты не прочитаны —
+  // 503; статус агента не прочитан — строка с пометкой, страница работает (решение владельца 03.11).
+  app.get("/agents", async (req, reply) => {
+    const lang = queryLang(req);
+    const t = TEXT[lang];
+    const cur = session(req);
+    if (!cur) return message(reply, 401, lang, t.signIn);
+    let codes: string[];
+    try {
+      codes = [...new Set((await port.mandates(cur.s.principal_ref)).map((m) => m.agent_code))];
+    } catch {
+      return message(reply, 503, lang, t.unavailable, backLink(lang));
+    }
+    const rows: string[] = [];
+    for (const code of codes) {
+      let a: Awaited<ReturnType<MandatesScreenPort["agent"]>>;
+      try {
+        a = await port.agent(code);
+      } catch {
+        a = undefined;
+      }
+      const what = a
+        ? `${esc(t.classes[a.class] ?? a.class)} — <span data-status>${esc(t.agentStatuses[a.status] ?? a.status)}</span>` +
+          (a.status === "SUSPENDED" ? ` <small data-agent-hint="SUSPENDED">${esc(t.agentSuspended)}</small>` : "") +
+          (a.status === "EXCLUDED" ? ` <small data-agent-hint="EXCLUDED">${esc(t.agentExcluded)}</small>` : "")
+        : `<span data-agent-hint="UNKNOWN">${esc(t.agentStatusUnknown)}</span>`;
+      rows.push(`<li data-agent="${esc(code)}">${esc(code)} · ${what}</li>`);
+    }
+    const body = rows.length === 0 ? `<p data-empty>${esc(t.agentsEmpty)}</p>` : `<ul data-agents>${rows.join("")}</ul>`;
+    return page(reply, 200, lang, t.agents, body + backLink(lang));
   });
 
   // Запрос подтверждения покупки: итог из записи П6; кнопки — только у ждущего решения, в форме — totals_hash этого итога.
@@ -183,6 +234,7 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
         row(t.decideUntil, "until", c.expires_at) +
         `</dl>`;
       if (awaiting(c)) {
+        body += await agentHint(t, c.agent_code);
         body +=
           `<form method="post" action="/c/${esc(c.id)}/decision"><input type="hidden" name="lang" value="${lang}">` +
           `<input type="hidden" name="csrf" value="${esc(cur.s.csrf)}"><input type="hidden" name="totals_hash" value="${esc(c.totals_hash)}">` +

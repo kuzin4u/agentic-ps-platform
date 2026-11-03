@@ -22,6 +22,7 @@ const EMPTY_PORT: MandatesScreenPort = {
   confirmations: async () => [],
   confirmation: async () => undefined,
   confirm: async () => ({ kind: "NOT_FOUND" }),
+  agent: async () => undefined,
 };
 
 function setup(over: Partial<MandatesScreenDeps> = {}) {

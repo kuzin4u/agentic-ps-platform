@@ -71,6 +71,7 @@ function fake(list: ScreenMandate[], opts: { fail?: boolean; decide?: DecideResu
     confirmations: async () => [],
     confirmation: async () => undefined,
     confirm: async () => ({ kind: "NOT_FOUND" }),
+    agent: async () => undefined,
   };
   return { port, calls };
 }

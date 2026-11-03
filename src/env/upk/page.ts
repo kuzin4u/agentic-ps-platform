@@ -33,6 +33,12 @@ export interface UpkPageDeps {
   submit(confirmation_id: string, body: Record<string, unknown>): Promise<{ statusCode: number; body: unknown }>;
   /** upk_sbp_enabled (РП51 п. 16): при false — только карта. */
   readonly sbpEnabled: boolean;
+  /**
+   * Статус агента запроса (РП54; UI-К2 ч. 2, К2.2): приостановлен или исключён — подсказка «подтверждение не приведёт к
+   * оплате», кнопки остаются; нет в реестре (undefined) или сбой — «статус агента не прочитан», страница работает (отказ
+   * ставит ADP по suspended_at; решение владельца 03.11). На стенде — реестр; для оператора УПК чтения в ПИ-8 нет.
+   */
+  agentStatus(agent_code: string): Promise<string | undefined>;
   readonly now: () => Date;
   readonly settings?: UpkPageSettings;
 }
@@ -58,6 +64,9 @@ const TEXT = {
     badForm: "Выберите способ оплаты и решение",
     unavailable: "Сервис временно недоступен, попробуйте позже",
     status: "Состояние",
+    agentSuspended: "Агент приостановлен оператором. Пока агент приостановлен, подтверждение не приведёт к оплате.",
+    agentExcluded: "Агент исключён из реестра. Подтверждение не приведёт к оплате.",
+    agentStatusUnknown: "Статус агента не прочитан.",
   },
   en: {
     title: "Purchase confirmation",
@@ -79,6 +88,9 @@ const TEXT = {
     badForm: "Choose a payment method and a decision",
     unavailable: "Service temporarily unavailable, please try again later",
     status: "Status",
+    agentSuspended: "The agent has been suspended by the operator. While it is suspended, confirming will not lead to payment.",
+    agentExcluded: "The agent has been excluded from the registry. Confirming will not lead to payment.",
+    agentStatusUnknown: "The agent status could not be read.",
   },
 } as const;
 
@@ -171,11 +183,26 @@ export function createUpkPage(deps: UpkPageDeps): FastifyInstance {
     const radios = instruments
       .map((i, n) => `<label><input type="radio" name="instrument" value="${i}"${n === 0 ? " checked" : ""}> ${esc(t[i])}</label><br>`)
       .join("");
+    // Подсказка о статусе агента (РП54): поясняет, не решает — кнопки остаются.
+    let agentStatus: string | undefined;
+    try {
+      agentStatus = await deps.agentStatus(r.agent_code);
+    } catch {
+      agentStatus = undefined;
+    }
+    const hint =
+      agentStatus === "ACTIVE"
+        ? ""
+        : agentStatus === "SUSPENDED"
+          ? `<p data-agent-hint="SUSPENDED"><strong>${esc(t.agentSuspended)}</strong></p>`
+          : agentStatus === "EXCLUDED"
+            ? `<p data-agent-hint="EXCLUDED"><strong>${esc(t.agentExcluded)}</strong></p>`
+            : `<p data-agent-hint="UNKNOWN">${esc(t.agentStatusUnknown)}</p>`;
     return page(
       reply,
       200,
       lang,
-      `${summary}<form method="post"><input type="hidden" name="lang" value="${lang}"><fieldset><legend>${esc(t.instrument)}</legend>${radios}</fieldset>` +
+      `${summary}${hint}<form method="post"><input type="hidden" name="lang" value="${lang}"><fieldset><legend>${esc(t.instrument)}</legend>${radios}</fieldset>` +
         `<p><label>${esc(t.code)} <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label></p>` +
         `<button name="decision" value="APPROVE">${esc(t.approve)}</button><button name="decision" value="REJECT">${esc(t.reject)}</button></form>`,
     );

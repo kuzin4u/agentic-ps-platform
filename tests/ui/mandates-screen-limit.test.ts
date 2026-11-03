@@ -22,6 +22,7 @@ function setup(limit: number) {
     confirmations: async () => (calls.push("confirmations"), []),
     confirmation: async () => (calls.push("confirmation"), undefined),
     confirm: async () => (calls.push("confirm"), { kind: "NOT_FOUND" }),
+    agent: async () => (calls.push("agent"), undefined),
   };
   const screen = createMandatesScreen({ port, ttl: TTL, rate_limit_per_30s: limit, now: () => new Date(T0) });
   const from = (ip: string, url: string) => screen.app.inject({ method: "GET", url, remoteAddress: ip });
