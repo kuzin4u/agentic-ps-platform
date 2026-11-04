@@ -110,13 +110,13 @@ describe.skipIf(!DATABASE_URL)("распространение приостан�
       };
     };
     const signedRequest = (): PaoRequest => {
-      const req: HttpLike = {
+      const req = {
         method: "GET",
         path: "/pao/v1/events",
         query: "",
         headers: { "x-agent-code": AGENT, "x-timestamp": new Date().toISOString().slice(0, 19) + "Z", "x-nonce": `prop-${process.pid}-${++n}` },
         body: "",
-      };
+      } satisfies HttpLike;
       const s = signRequest(req, side.signer);
       return { method: s.method, path: s.path, query: s.query ?? "", headers: s.headers, body: s.body ?? "" };
     };

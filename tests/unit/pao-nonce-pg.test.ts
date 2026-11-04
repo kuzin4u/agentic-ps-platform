@@ -49,13 +49,13 @@ async function registry() {
 }
 
 function signed(side: AgentSide, agent_code: string, nonce: string, ts: Date = new Date()): PaoRequest {
-  const req: HttpLike = {
+  const req = {
     method: "GET",
     path: "/pao/v1/agent",
     query: "",
     headers: { "x-agent-code": agent_code, "x-timestamp": ts.toISOString(), "x-nonce": nonce },
     body: "",
-  };
+  } satisfies HttpLike;
   const s = signRequest(req, side.signer);
   return { method: s.method, path: s.path, query: s.query ?? "", headers: s.headers, body: s.body ?? "" };
 }
