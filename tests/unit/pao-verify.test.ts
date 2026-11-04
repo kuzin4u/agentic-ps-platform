@@ -86,7 +86,7 @@ function signed(
   agent_code: string,
   over: { method?: string; path?: string; query?: string; body?: string; nonce?: string; ts?: Date } = {},
 ): PaoRequest {
-  const req: HttpLike = {
+  const req = {
     method: over.method ?? "GET",
     path: over.path ?? "/pao/v1/agent",
     query: over.query ?? "",
@@ -96,7 +96,7 @@ function signed(
       "x-nonce": over.nonce ?? `n-${++nonceSeq}`,
     },
     body: over.body ?? "",
-  };
+  } satisfies HttpLike;
   const s = signRequest(req, signer);
   return { method: s.method, path: s.path, query: s.query ?? "", headers: s.headers, body: s.body ?? "" };
 }

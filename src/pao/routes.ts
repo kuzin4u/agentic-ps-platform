@@ -198,6 +198,12 @@ function requestCertificate(req: FastifyRequest): ClientCertificate | undefined 
   return req.paoClientCertificate ?? undefined;
 }
 
+/** Пустое тело — для обращения без тела (GET, DELETE): digest пустых байтов. */
+const EMPTY_BODY: Buffer = Buffer.alloc(0);
+
+/** Строгий UTF-8 (ядро v0.12.0 К22 п. 4): недопустимая последовательность — исключение, BOM остаётся в строке. */
+const UTF8_STRICT = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
 /** У метода без тела пришло тело — Content-Length не 0 или Transfer-Encoding (РП62 п. 7). */
 function unexpectedBody(req: FastifyRequest): boolean {
   const cl = req.headers["content-length"];
@@ -307,14 +313,19 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
   // п. 8; КТ1 PS-05б ч. 4 № 12). Пар не больше записей реестра: второй слой — после предпроверки, неизвестный агент получает
   // 401 до него. При переполнении множество очищается, и запись появится снова — допустимо.
   const warnedLevels = new Set<string>();
-  // Тело — строкой, как подписано: content-digest считается от байтов, а не от разобранного JSON. Любой тип содержимого —
-  // строкой (UTF-8): тело с чужим типом доходит до проверки обращения и схемы и получает ответ ПАО §6, а не 415 Fastify.
-  // Тело больше PAO_BODY_LIMIT_BYTES (413) и неразборный Content-Type — тоже §6, обработчиком ошибок области (РП62 п. 1, 4).
-  const asString = (_req: FastifyRequest, body: string | Buffer, done: (err: null, body: string) => void) =>
-    done(null, String(body));
-  const parse = { parseAs: "string", bodyLimit: PAO_BODY_LIMIT_BYTES } as const;
-  app.addContentTypeParser("application/json", parse, asString);
-  app.addContentTypeParser("*", parse, asString);
+  // Тело — байтами, как подписано: content-digest считается от присланных байтов (ядро v0.12.0 К22, РП62 п. 9), а не от
+  // строки — String(buffer) подменил бы байты не UTF-8 и дал SIGNATURE_INVALID вместо отказа разбора. Строкой тело
+  // становится в preHandler — строгим декодированием после подписи и второго слоя лимита. Любой тип содержимого — так же:
+  // тело с чужим типом доходит до проверки обращения и схемы и получает ответ ПАО §6, а не 415 Fastify. Тело больше
+  // PAO_BODY_LIMIT_BYTES (413) и неразборный Content-Type — тоже §6, обработчиком ошибок области (РП62 п. 1, 4).
+  const asBytes = (_req: FastifyRequest, body: string | Buffer, done: (err: null, body: Buffer) => void) =>
+    done(null, typeof body === "string" ? Buffer.from(body, "utf8") : body);
+  const parse = { parseAs: "buffer", bodyLimit: PAO_BODY_LIMIT_BYTES } as const;
+  // Встроенные парсеры области снимаются: text/plain Fastify читает строкой мимо «*», и тело дошло бы до проверки не
+  // байтами. Область /pao изолирована (server.ts — register), другие области их сохраняют.
+  app.removeAllContentTypeParsers();
+  app.addContentTypeParser("application/json", parse, asBytes);
+  app.addContentTypeParser("*", parse, asBytes);
 
   const send = (reply: FastifyReply, e: PaoErrorReply): FastifyReply => {
     // ПАО §2: Retry-After и с ответами 503 — из стендовых параметров (РП24).
@@ -373,7 +384,7 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
 
   app.addHook("preHandler", async (req, reply) => {
     const { path, query } = target(req);
-    const body = typeof req.body === "string" ? req.body : "";
+    const body = Buffer.isBuffer(req.body) ? req.body : EMPTY_BODY;
     const r = await deps.verifier.verify({
       method: req.method,
       path,
@@ -400,6 +411,16 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
     if (!limit.isAllowed && limit.isExceeded) {
       void reply.header("retry-after", String(retryAfterSec(limit.ttlInSeconds)));
       return reply.code(429).send(paoError("RATE_LIMITED").body);
+    }
+    // Строгое UTF-8 — после подписи и второго слоя (решение владельца 04.11, PR #103): тело с верной подписью — обращение
+    // агента и тратит его квоту (РП63 п. 1). Не UTF-8 — 400 REQUEST_INVALID, а не догадка с заменой байтов (инвариант 3).
+    // BOM не снимается (как PaoStub ядра): тело с BOM — не JSON, отказ дальше — разбором тела, тем же кодом. Обработчики
+    // получают строку, побайтно равную подписанному телу: хэш идемпотентности — от неё (РП30 п. 3).
+    try {
+      req.body = UTF8_STRICT.decode(body);
+    } catch {
+      req.log.info({ agent_code: r.agent.agent_code }, "ПАО: тело не UTF-8 — отклонено");
+      return send(reply, paoError("REQUEST_INVALID"));
     }
   });
 
