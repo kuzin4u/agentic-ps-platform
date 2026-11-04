@@ -10,13 +10,17 @@ import type { AgentRecord } from "../registry/model.js";
 import { checkChannel, type ChannelOptions, type ChannelReject, type ClientCertificate } from "./channel.js";
 import { paoNonceStore } from "./stores.js";
 
-/** Обращение в том виде, в каком оно пришло: путь и запрос — без декодирования, тело — строкой, без тела — "" (РП16). */
+/**
+ * Обращение в том виде, в каком оно пришло: путь и запрос — без декодирования, без тела — пустое (РП16). Тело — байтами,
+ * как пришло: digest считается от них (ядро v0.12.0 К22, РП62 п. 9); строка — от её UTF-8, так подписывают участники ПИ-8
+ * и витрины эмулятора до перехода на /merchant (#100).
+ */
 export interface PaoRequest {
   readonly method: string;
   readonly path: string;
   readonly query: string;
   readonly headers: Readonly<Record<string, string | readonly string[] | undefined>>;
-  readonly body: string;
+  readonly body: string | Uint8Array;
   /**
    * У метода без тела (GET, DELETE, HEAD) пришло тело — Content-Length не 0 или Transfer-Encoding (РП62 п. 7): подпись
    * проверялась бы по digest пустого тела, а тело другое — SIGNATURE_INVALID.
