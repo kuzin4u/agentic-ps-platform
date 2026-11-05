@@ -16,7 +16,7 @@ import { createUpkPage, type UpkPageSettings } from "../env/upk/page.js";
 import { createIssuerScreen } from "../env/issuer/screen.js";
 import type { UiSettings } from "../ui/shared/index.js";
 import { createTokenServiceEmulator, type TokenServiceEmulator } from "../env/tsp/index.js";
-import { frozenShopSet, merchantDirectory, SHOPS, type Shop } from "../env/merchants/shops.js";
+import { frozenShopSet, merchantDirectory, SHOPS, validateShopSet, type Shop } from "../env/merchants/shops.js";
 import { createAcquirerParticipant } from "../env/acquirer/participant.js";
 import { MemoryReadinessStore, type ReadinessStore, type ReadinessSuspendReason } from "../participants/readiness.js";
 import { MemoryPaymentMetadataStore } from "../participants/payments.js";
@@ -296,8 +296,10 @@ export interface Stand {
 // (инвариант 5). Параметры — только config/params.stand.json Платформы или PARAMS_PATH (РП25 п. 4).
 export function createStand(opts: StandOptions = {}): Stand {
   const params = loadParams();
-  // Один источник витрин стенда (РП25 дополнение #106 п. 2): справочник, эквайрер, знаки и createMerchants.
+  // Один источник витрин стенда (РП25 дополнение #106 п. 2): справочник, эквайрер, знаки и createMerchants. Сверка
+  // (п. 4) — по замороженной копии, той самой, что пойдёт в стенд; неверный набор — исключение, стенд не создаётся.
   const shops = frozenShopSet(opts.shops ?? SHOPS);
+  validateShopSet(shops);
   let clock: Date | undefined;
   const now = (): Date => clock ?? new Date();
   const store = new InMemoryAgentRegistryStore();
