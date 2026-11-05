@@ -305,6 +305,12 @@ export const isOrderable = (item: ShopItem): item is ShopItem & { price: number;
  * Справочник продавцов оператора на стенде (РП49 (д) п. 1): merchant_id → набор допустимых MCC; у витрины — один элемент,
  * её `mcc`. В бою — справочник эквайреров оператора, форма — [альбом] (РП6). Неизвестный продавец — undefined.
  */
+/**
+ * Набор витрин стенда (РП25 дополнение #106 п. 2): глубокая копия, замороженная при создании, — изменение массива или
+ * витрин вызывающим после `createStand` стенд не меняет.
+ */
+export const frozenShopSet = (shops: readonly Shop[]): readonly Shop[] => deepFreeze(structuredClone(shops) as Shop[]);
+
 export function merchantDirectory(shops: readonly Shop[] = SHOPS): MerchantDirectory {
   const map = new Map(shops.map((s) => [s.merchant_id, [s.mcc]] as const));
   return { mccOf: async (merchant_id) => map.get(merchant_id) };

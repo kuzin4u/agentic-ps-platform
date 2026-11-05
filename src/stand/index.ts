@@ -16,7 +16,7 @@ import { createUpkPage, type UpkPageSettings } from "../env/upk/page.js";
 import { createIssuerScreen } from "../env/issuer/screen.js";
 import type { UiSettings } from "../ui/shared/index.js";
 import { createTokenServiceEmulator, type TokenServiceEmulator } from "../env/tsp/index.js";
-import { merchantDirectory, SHOPS } from "../env/merchants/shops.js";
+import { frozenShopSet, merchantDirectory, SHOPS, type Shop } from "../env/merchants/shops.js";
 import { createAcquirerParticipant } from "../env/acquirer/participant.js";
 import { MemoryReadinessStore, type ReadinessStore, type ReadinessSuspendReason } from "../participants/readiness.js";
 import { MemoryPaymentMetadataStore } from "../participants/payments.js";
@@ -58,6 +58,7 @@ import { attachCallJournal, type StandCall } from "./calls.js";
 import { createStandDns, type StandDns } from "./dns.js";
 
 export type { StandCall } from "./calls.js";
+export type { Shop } from "../env/merchants/shops.js";
 
 /** Выданная стендом пара реквизита — только для доказательного теста утечки (инвариант 1). */
 export interface IssuedCredential {
@@ -178,6 +179,11 @@ export interface StandOptions {
   readonly upk?: UpkPageSettings;
   /** Язык и бренд экрана мандатов банка стенда (правило совместимости 3); по умолчанию — ru и бренд банка стенда. */
   readonly bankApp?: UiSettings;
+  /**
+   * Набор витрин стенда (РП25 дополнение #106); по умолчанию — `SHOPS` фикстуры. Заменяет фикстуру целиком: добавить
+   * витрину — `[...SHOPS, своя]`. Из набора строятся справочник продавцов, эквайрер, знаки готовности и `stand.shops`.
+   */
+  readonly shops?: readonly Shop[];
 }
 
 export interface IssuerConfirmOptions {
@@ -270,6 +276,11 @@ export interface Stand {
   /** Эквайрер стенда — участник ПИ-8 (РП57 п. 1): знак готовности витрин. */
   readonly acquirerParticipant: StandAcquirer;
   /**
+   * Витрины стенда (РП25 дополнение #106 п. 2): `StandOptions.shops` или `SHOPS` — копия, глубоко замороженная при
+   * создании; отсюда их берёт `createMerchants`.
+   */
+  readonly shops: readonly Shop[];
+  /**
    * Действие оператора Системы (A5 п. 5.3, РП57 п. 2): приостановление знака готовности с причиной; действует, пока
    * оператор его не снимет, какие бы записи ни присылал эквайрер. HTTP оператора — PS-31.
    */
@@ -285,6 +296,8 @@ export interface Stand {
 // (инвариант 5). Параметры — только config/params.stand.json Платформы или PARAMS_PATH (РП25 п. 4).
 export function createStand(opts: StandOptions = {}): Stand {
   const params = loadParams();
+  // Один источник витрин стенда (РП25 дополнение #106 п. 2): справочник, эквайрер, знаки и createMerchants.
+  const shops = frozenShopSet(opts.shops ?? SHOPS);
   let clock: Date | undefined;
   const now = (): Date => clock ?? new Date();
   const store = new InMemoryAgentRegistryStore();
@@ -317,7 +330,7 @@ export function createStand(opts: StandOptions = {}): Stand {
   // Оператор УПК стенда (РП51 п. 12): роль UPK, только решения по подтверждению; боевой UPK — отказ запуска.
   const upkEmulator = createUpkEmulator();
   // Эквайрер стенда (РП57 п. 1, 7): роль ACQUIRER, продавцы — все витрины эмулятора.
-  const acquirerEmulator = createAcquirerParticipant(SHOPS.map((s) => s.merchant_id));
+  const acquirerEmulator = createAcquirerParticipant(shops.map((s) => s.merchant_id));
   const trusted = new TrustedParticipants(
     [{ ...emulator.trustedKey, notify_url: STAND_ISSUER_NOTIFY_URL }, upkEmulator.trustedKey, acquirerEmulator.trustedKey],
     { stand: true },
@@ -421,7 +434,7 @@ export function createStand(opts: StandOptions = {}): Stand {
     tsp: recordingTsp,
     funding: emulator,
     // Справочник продавцов (РП49 (д)): витрины эмулятора, на продавца — MCC витрины.
-    merchants: merchantDirectory(),
+    merchants: merchantDirectory(shops),
     params,
     now,
   });
@@ -732,7 +745,7 @@ export function createStand(opts: StandOptions = {}): Stand {
   // Знаки витрин стенда (РП57 п. 7): эквайрер подаёт ACTIVE витринам с readiness_mark тем же POST ПИ-8; у MKT-77 — NONE.
   // Сбой подачи — чтения знака продавцом и агентом отвечают 503 (fail-closed), а не «знака нет».
   readinessSeeded = (async () => {
-    for (const shop of SHOPS.filter((s) => s.readiness_mark)) {
+    for (const shop of shops.filter((s) => s.readiness_mark)) {
       const r = await submitReadiness(shop.merchant_id, "ACTIVE", { readiness_ref: `seed-${shop.merchant_id}` });
       if (r.statusCode !== 200) throw new Error(`стенд: знак ${shop.merchant_id} не подан — ${r.statusCode} ${JSON.stringify(r.body)}`);
     }
@@ -775,6 +788,7 @@ export function createStand(opts: StandOptions = {}): Stand {
     suspendAgent: (agent_code, ground) => agentStatus.suspend(agent_code, ground),
     reinstateAgent: (agent_code) => agentStatus.reinstate(agent_code),
     acquirerParticipant,
+    shops,
     async suspendReadiness(merchant_id, reason) {
       await readinessSeeded;
       await readinessStore.putOperator({ merchant_id, action: "SUSPENDED", reason, received_at: now().toISOString() });
