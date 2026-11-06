@@ -19,6 +19,11 @@
      python3 .claude/hooks/guard.py snap <файл> | verify <файл>; состояние — .git/breakage.json.
      При открытом снимке — блок Edit/Write другого файла и git commit; второй snap — отказ;
      verify закрывает снимок только при совпадении sha256; файл состояния руками не меняется.
+  8. git с глобальными опциями (-C, -c, --git-dir, --work-tree, --no-pager …) перед подкомандой из ask
+     settings.json (commit, push, revert, checkout, restore, reset, pull) — блок с подсказкой «без глобальных
+     опций»: правило ask по префиксу их не видит (Р-1020); ответ "ask" хука Claude Code 2.1.319 не применил —
+     запасной вариант Р-1300 п. 3; reset --hard — своя причина (deny). Чтение (git -C … log) — без блока.
+Сегменты команды (С1–С3, push, п. 8) режутся по разделителям вне кавычек: строка в кавычках — данные (#99).
 """
 import json, re, shlex, sys, os
 
@@ -171,9 +176,76 @@ def strip_heredocs(cmd: str) -> str:
 
 
 def command_segments(cmd: str):
-    """Сегменты команды: разделители оболочки, перевод строки и начало подстановки $(…) или `…`."""
-    text = SUBST.sub("\n", strip_heredocs(cmd))
-    return [s for s in re.split(r"&&|\|\||;|\||\n", text) if s.strip()]
+    """Сегменты команды: разделители оболочки (&&, ||, ;, |, перевод строки) вне кавычек и подстановка $(…) или `…`.
+
+    Строка в кавычках — данные: разделитель внутри неё сегмент не режет (#99, Р-1300). Подстановка $(…) и `…`
+    вне одинарных кавычек — отдельная команда и в двойных кавычках; после неё продолжается внешний сегмент.
+    Незакрытая кавычка — остаток команды одним сегментом (разбор токенов дальше — fail-closed).
+    """
+    text = strip_heredocs(cmd)
+    segments, cur = [], []
+    stack = []  # кавычки и подстановки: "'", '"', "$(", "`"
+    i, n = 0, len(text)
+
+    def cut():
+        segments.append("".join(cur))
+        cur.clear()
+
+    while i < n:
+        c = text[i]
+        top = stack[-1] if stack else None
+        if top == "'":
+            if c == "'":
+                stack.pop()
+            cur.append(c)
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            cur.append(text[i:i + 2])
+            i += 2
+            continue
+        if text.startswith("$(", i):
+            stack.append("$(")
+            cut()
+            i += 2
+            continue
+        if c == "`":
+            if top == "`":
+                stack.pop()
+            else:
+                stack.append("`")
+            cut()
+            i += 1
+            continue
+        if top == '"':
+            if c == '"':
+                stack.pop()
+            cur.append(c)
+            i += 1
+            continue
+        # вне кавычек: верх или тело подстановки
+        if c == ")" and top == "$(":
+            stack.pop()
+            cut()
+            i += 1
+            continue
+        if c in ("'", '"'):
+            stack.append(c)
+            cur.append(c)
+            i += 1
+            continue
+        if text.startswith("&&", i) or text.startswith("||", i):
+            cut()
+            i += 2
+            continue
+        if c in (";", "|", "\n"):
+            cut()
+            i += 1
+            continue
+        cur.append(c)
+        i += 1
+    cut()
+    return [s for s in segments if s.strip()]
 
 
 # --- push разрешён только в ветки task/* (решение владельца 09.10.2026) ---
@@ -241,6 +313,51 @@ def check_git_push(cmd: str):
                 dst = current_branch()
             if not TASK_RE.match(dst):
                 return f"git push разрешён только в ветки task/* (цель: {dst}). main, теги и другие ветки — владелец."
+    return None
+
+
+# --- git с глобальными опциями перед подкомандой из ask / deny — блок (Р-1020, Р-1300 п. 3) ---
+# Правила Bash(git commit:*) и т. п. сравнивают начало текста команды: `git -C <путь> commit` их обходит.
+GIT_ASK_SUBCOMMANDS = {"commit", "push", "revert", "checkout", "restore", "reset", "pull"}  # ask в settings.json
+GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path",
+                       "--super-prefix", "--list-cmds", "--attr-source"}
+
+
+def git_global_options(tok):
+    """(глобальные опции, подкоманда, аргументы подкоманды) у вызова git; None — не git."""
+    if not tok or os.path.basename(tok[0]) != "git":
+        return None
+    opts, i = [], 1
+    while i < len(tok) and tok[i].startswith("-"):
+        t = tok[i]
+        step = 2 if t in GIT_OPTS_WITH_VALUE else 1
+        opts.extend(tok[i:i + step])  # опция и её значение (-C <путь>)
+        i += step
+    sub = tok[i] if i < len(tok) else None
+    return opts, sub, tok[i + 1:]
+
+
+def check_git_global_options(cmd: str):
+    """None — правила settings.json видят команду как есть; иначе текст причины блока.
+
+    Ответ permissionDecision "ask" из PreToolUse Claude Code 2.1.319 не применил (две живые проверки, сессия 77) —
+    запасной вариант Р-1300 п. 3: блок с подсказкой «без глобальных опций»; правило ask тогда спросит владельца.
+    """
+    for segment in command_segments(cmd):
+        tok = shell_tokens(segment)
+        while tok and ENV_ASSIGN.match(tok[0]):
+            tok = tok[1:]
+        parsed = git_global_options(tok)
+        if not parsed:
+            continue
+        opts, sub, args = parsed
+        if not opts or sub not in GIT_ASK_SUBCOMMANDS:
+            continue
+        if sub == "reset" and "--hard" in args:
+            return (f"git {' '.join(opts)} reset --hard — обход правила deny Bash(git reset --hard:*) (Р-1020); "
+                    "reset --hard — только владелец.")
+        return (f"git {' '.join(opts)} {sub}: глобальные опции git обходят правило ask Bash(git {sub}:*) (Р-1020) — "
+                f"запустите без глобальных опций из каталога репозитория (git {sub} …): правило ask спросит владельца.")
     return None
 
 
@@ -544,6 +661,9 @@ def main():
             if is_secret_read(t):
                 block(f"команда читает секрет {rel(t)}.")
         check_content(cmd, "команда")
+        err = check_git_global_options(cmd)  # последним: причины push и С1–С3 — первыми
+        if err:
+            block(err)
     sys.exit(0)
 
 
