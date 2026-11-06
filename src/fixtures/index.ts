@@ -4,18 +4,25 @@
 import { MERCHANT_ERROR_HTTP, type MerchantErrorCode } from "../env/merchants/errors.js";
 import {
   SHOPS,
+  SHOP_BEHAVIOURS,
   byShopId,
   catalogView,
   zoneOf,
   type CatalogItemView,
   type DeliveryOption,
+  type Shop,
   type ShopBehaviour,
   type ShopItem,
   type ShopReturns,
   type Zone,
 } from "../env/merchants/shops.js";
 
-export type { CatalogItemView, DeliveryOption, MerchantErrorCode, ShopBehaviour, ShopItem, ShopReturns, Zone };
+export type { CatalogItemView, DeliveryOption, MerchantErrorCode, Shop, ShopBehaviour, ShopItem, ShopReturns, Zone };
+/**
+ * Витрины фикстуры и перечень поведений (РП25 дополнение #106 п. 6): `SHOPS` заморожен — для `createStand({ shops:
+ * [...SHOPS, своя] })`; `SHOP_BEHAVIOURS` — для сборки своей витрины по типу.
+ */
+export { SHOPS, SHOP_BEHAVIOURS };
 
 /**
  * Коды отказа витрин эмулятора с HTTP-статусами (Р26 п. 5 агента; AG-04, AG-09): тело отказа витрины — `{code}`.

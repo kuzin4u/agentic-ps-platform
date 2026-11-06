@@ -30,10 +30,23 @@ npm run dev                  # то же с перезапуском при из
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.38.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.41.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —
 `stand.calls()` (`source` `network` / `inject`, без тел), выданные пары реквизита для теста утечки — `stand.issuedCredentials()`
 (РП25, дополнение STAND-69). Способы оплаты витрин эмулятора продавцов — `createMerchants(stand, { paymentMethods: { "MER-1042": ["cash"] } })`:
 замена по `merchant_id`, `[]` допустим, неизвестный `merchant_id` — исключение (РП25, дополнение #86).
+
+Свой набор витрин — параметром стенда (РП25, дополнение #106): набор заменяет фикстуру целиком, из него строятся справочник
+продавцов, эквайрер, знаки готовности и витрины `createMerchants`; при создании набор сверяется по правилам (а)–(е),
+неверная витрина — исключение, стенд не создаётся.
+
+```ts
+import { SHOPS, type Shop } from "agentic-ps-platform/fixtures";
+import { createMerchants, createStand } from "agentic-ps-platform/stand";
+
+const bakery: Shop = { id: "SHOP-9001", merchant_id: "MER-9001", /* … */ readiness_mark: true, behaviour: "NORMAL", items: [/* … */] };
+const stand = createStand({ shops: [...SHOPS, bakery] }); // только свои витрины — { shops: [bakery] }
+const merchants = createMerchants(stand); // витрины — stand.shops
+```

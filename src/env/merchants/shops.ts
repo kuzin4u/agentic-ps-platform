@@ -1,7 +1,9 @@
 // Витрины эмулятора продавцов (К6 пула, SPEC §9, A5): один источник для эмулятора и фикстур (AG-04, AG-09).
 // ID — по сценариям агента П07–П09, П17, Д01, Д02, Д06; SHOP-5501 — неполное описание (A5 п. 1.1, К6 «заведомо неполным»).
 // Суммы — целые копейки. MCC — общеизвестные значения ISO 18245, иллюстративно; справочник оператора — [альбом] (РП6). Тексты описаний — недоверенные данные продавца, агент их не исполняет.
+import { isGtin, isInn } from "@kuzin4u/agentic-core/catalog";
 import type { MerchantDirectory } from "../../credentials/model.js";
+import { hasPaymentDetails } from "../../pao/body.js";
 
 /** Поведение витрины в сценариях. */
 export const SHOP_BEHAVIOURS = [
@@ -305,6 +307,91 @@ export const isOrderable = (item: ShopItem): item is ShopItem & { price: number;
  * Справочник продавцов оператора на стенде (РП49 (д) п. 1): merchant_id → набор допустимых MCC; у витрины — один элемент,
  * её `mcc`. В бою — справочник эквайреров оператора, форма — [альбом] (РП6). Неизвестный продавец — undefined.
  */
+/**
+ * Набор витрин стенда (РП25 дополнение #106 п. 2): глубокая копия, замороженная при создании, — изменение массива или
+ * витрин вызывающим после `createStand` стенд не меняет.
+ */
+export const frozenShopSet = (shops: readonly Shop[]): readonly Shop[] => deepFreeze(structuredClone(shops) as Shop[]);
+
+const SHOP_REF = /^[A-Za-z0-9_-]{1,64}$/;
+const REGION = /^[A-Z]{2}-[A-Z0-9]{1,3}$/;
+const CURRENCY = /^[A-Z]{3}$/;
+const MCC_FORM = /^\d{4}$/;
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const isAmount = (v: unknown): boolean => Number.isSafeInteger(v) && (v as number) >= 0;
+const isText = (v: unknown): boolean => typeof v === "string" && v.length > 0;
+
+/**
+ * Сверка набора витрин стенда (РП25 дополнение #106 п. 4): закрытый перечень правил (а)–(е), fail-closed — первое
+ * нарушение — исключение «createStand: витрина <id> — правило (x) <что>», стенд не создаётся. Модель каталога К8 сюда не
+ * входит (п. 5): витрины эмулятора нарушают A5 намеренно. Набор по умолчанию (`SHOPS`) проходит ту же сверку.
+ */
+export function validateShopSet(shops: unknown): asserts shops is readonly Shop[] {
+  const fail = (id: unknown, rule: string): never => {
+    const who = typeof id === "string" && SHOP_REF.test(id) ? id : "?";
+    throw new Error(`createStand: витрина ${who} — правило ${rule}`);
+  };
+  if (!Array.isArray(shops) || shops.length === 0) throw new Error("createStand: набор витрин — правило (а) непустой массив");
+  const ids = new Set<string>();
+  const merchants = new Set<string>();
+  for (const s of shops as unknown[]) {
+    if (!isObject(s)) fail(undefined, "(а) витрина — объект");
+    const shop = s as Record<string, unknown>;
+    const id = shop.id;
+    // (а) id и merchant_id — в пути и в ПАО; уникальны в наборе.
+    if (typeof id !== "string" || !SHOP_REF.test(id)) fail(id, "(а) id");
+    if (ids.has(id as string)) fail(id, "(а) id не уникален");
+    ids.add(id as string);
+    const merchant_id = shop.merchant_id;
+    if (typeof merchant_id !== "string" || !SHOP_REF.test(merchant_id)) fail(id, "(а) merchant_id");
+    if (merchants.has(merchant_id as string)) fail(id, "(а) merchant_id не уникален");
+    merchants.add(merchant_id as string);
+    // (б) поведение и знак.
+    if (!(SHOP_BEHAVIOURS as readonly unknown[]).includes(shop.behaviour)) fail(id, "(б) behaviour");
+    if (typeof shop.readiness_mark !== "boolean") fail(id, "(б) readiness_mark");
+    // (в) ИНН — длина и контрольная цифра (ядро); MCC — 4 цифры.
+    if (typeof shop.inn !== "string" || !isInn(shop.inn)) fail(id, "(в) inn");
+    if (typeof shop.mcc !== "string" || !MCC_FORM.test(shop.mcc)) fail(id, "(в) mcc");
+    // (г) способы — как есть, [] допустим (#86); регионы — ISO 3166-2; возврат — если есть.
+    if (!Array.isArray(shop.payment_methods) || !shop.payment_methods.every((m) => typeof m === "string")) fail(id, "(г) payment_methods");
+    if (!Array.isArray(shop.delivery_regions) || !shop.delivery_regions.every((r) => typeof r === "string" && REGION.test(r))) {
+      fail(id, "(г) delivery_regions");
+    }
+    if (shop.returns !== undefined) {
+      const r = shop.returns;
+      if (!isObject(r) || !Number.isSafeInteger(r.days) || (r.days as number) < 0 || !isText(r.text)) fail(id, "(г) returns");
+    }
+    // (д) товары: sku уникален в витрине; суммы — целые ≥ 0 в минимальных единицах, только парой с валютой.
+    if (!Array.isArray(shop.items)) fail(id, "(д) items");
+    const skus = new Set<string>();
+    for (const it of shop.items as unknown[]) {
+      if (!isObject(it) || !isText(it.sku)) fail(id, "(д) sku");
+      const item = it as Record<string, unknown>;
+      if (skus.has(item.sku as string)) fail(id, "(д) sku не уникален");
+      skus.add(item.sku as string);
+      if (item.currency !== undefined && (typeof item.currency !== "string" || !CURRENCY.test(item.currency))) fail(id, "(д) currency");
+      for (const k of ["price", "agent_price"] as const) {
+        if (item[k] === undefined) continue;
+        if (!isAmount(item[k])) fail(id, `(д) ${k}`);
+        if (item.currency === undefined) fail(id, `(д) ${k} без currency`);
+      }
+      if (item.delivery_options !== undefined) {
+        if (!Array.isArray(item.delivery_options)) fail(id, "(д) delivery_options");
+        for (const o of item.delivery_options as unknown[]) {
+          if (!isObject(o) || !isAmount(o.cost)) fail(id, "(д) delivery_options.cost");
+          const opt = o as Record<string, unknown>;
+          if (typeof opt.currency !== "string" || !CURRENCY.test(opt.currency)) fail(id, "(д) delivery_options.currency");
+        }
+      }
+      // (е) GTIN — отдельно, по ядру: EAN-13 может случайно пройти сумму Луна.
+      if (item.gtin !== undefined && item.gtin !== null && (typeof item.gtin !== "string" || !isGtin(item.gtin))) fail(id, "(е) gtin");
+    }
+    // (е) номера карты нет (инвариант 1): витрина целиком — тем же правилом, что тела ПАО; gtin — без него (выше).
+    const items = (shop.items as Record<string, unknown>[]).map((i) => ({ ...i, gtin: null }));
+    if (hasPaymentDetails(JSON.stringify({ ...shop, items }))) fail(id, "(е) реквизиты карты");
+  }
+}
+
 export function merchantDirectory(shops: readonly Shop[] = SHOPS): MerchantDirectory {
   const map = new Map(shops.map((s) => [s.merchant_id, [s.mcc]] as const));
   return { mccOf: async (merchant_id) => map.get(merchant_id) };
