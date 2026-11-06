@@ -30,11 +30,11 @@ npm run dev                  # то же с перезапуском при из
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.41.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.42.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —
-`stand.calls()` (`source` `network` / `inject`, без тел), выданные пары реквизита для теста утечки — `stand.issuedCredentials()`
+`stand.calls()` (`source` `network` / `inject`, `agent_code` — у обращений, допущенных шлюзом ПАО, без тел), выданные пары реквизита для теста утечки — `stand.issuedCredentials()`
 (РП25, дополнение STAND-69). Способы оплаты витрин эмулятора продавцов — `createMerchants(stand, { paymentMethods: { "MER-1042": ["cash"] } })`:
 замена по `merchant_id`, `[]` допустим, неизвестный `merchant_id` — исключение (РП25, дополнение #86).
 
