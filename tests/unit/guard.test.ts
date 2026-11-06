@@ -14,13 +14,17 @@ import { describe, expect, it } from "vitest";
 
 const GUARD = process.env.GUARD_PATH ?? join(process.cwd(), ".claude/hooks/guard.py");
 
-function guard(command: string, env: Record<string, string> = {}, cwd?: string): { status: number | null; stderr: string } {
+function guard(
+  command: string,
+  env: Record<string, string> = {},
+  cwd?: string,
+): { status: number | null; stderr: string; stdout: string } {
   const r = spawnSync("python3", [GUARD], {
     input: JSON.stringify({ tool_name: "Bash", tool_input: { command }, ...(cwd ? { cwd } : {}) }),
     encoding: "utf8",
     env: { ...process.env, CLAUDE_PROJECT_DIR: process.cwd(), ...env },
   });
-  return { status: r.status, stderr: r.stderr };
+  return { status: r.status, stderr: r.stderr, stdout: r.stdout };
 }
 
 const ALLOWED: [string, string][] = [
@@ -195,6 +199,117 @@ describe("guard.py С2: >>, tee -a, sed -i, perl -i по репозиторию 
   it("подсказка: репозиторий — инструментом Edit, переменная — путь буквально", () => {
     expect(guard("printf x >> src/a.ts", { HOME }).stderr).toContain("инструментом Edit");
     expect(guard('echo x >> "$F"', { HOME }).stderr).toContain("путь не вычислить");
+  });
+});
+
+// #99 (передача ядра), Р-1300: разделители оболочки внутри кавычек сегмент не режут — строка в кавычках — данные.
+const QUOTED_ALLOWED: [string, string][] = [
+  ["; в сообщении коммита", 'git commit -m "П0; true >> README.md — блок С2"'],
+  ["| в сообщении коммита", 'git commit -m "a | true >> README.md"'],
+  ["&& в сообщении коммита", 'git commit -m "a && b >> README.md"'],
+  ["|| в одинарных кавычках", "git commit -m 'a || tee -a README.md'"],
+  ["перевод строки в кавычках", 'git commit -m "строка 1\nprintf x >> src/a.ts"'],
+  ["экранированная кавычка", 'git commit -m "say \\"x\\"; sed -i s/a/b/ src/a.ts"'],
+  ["push в main внутри кавычек", 'git commit -m "x; git push origin main"'],
+  ["полный прогон внутри кавычек", 'git commit -m "x && npm test"'],
+];
+
+const QUOTED_BLOCKED: [string, string][] = [
+  [">> после строки в кавычках", 'git commit -m "x; y" && true >> README.md'],
+  [">> после ; вне кавычек", 'echo "a;b" ; echo x >> README.md'],
+  ["push в main после строки с ;", 'git commit -m "x; y" ; git push origin main'],
+  ["$(…) в двойных кавычках — команда", 'echo "$(git push origin main)"'],
+  ["после $(…) в кавычках — внешний сегмент", 'echo "$(date)" && printf x >> src/a.ts'],
+  ["незакрытая кавычка — fail-closed", 'echo "a; printf x >> src/a.ts'],
+];
+
+describe("guard.py: сегменты по разделителям вне кавычек (#99, Р-1300)", () => {
+  it.each(QUOTED_ALLOWED)("пропускает: %s", (_name, command) => {
+    const r = guard(command, { HOME, ...BUSY });
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+  });
+
+  it.each(QUOTED_BLOCKED)("блокирует: %s", (_name, command) => {
+    const r = guard(command, { HOME });
+    expect(r.stderr).toContain("БЛОК guard.py");
+    expect(r.status).toBe(2);
+  });
+
+  it("полный прогон после строки с ; при нагрузке ≥ 10 — блок", () => {
+    expect(guard('git commit -m "x; y" && npm test', BUSY).status).toBe(2);
+  });
+
+  it("коммит с ; в сообщении при открытом снимке — блок С3", () => {
+    const dir = mkdtempSync(join(tmpdir(), "guard-seg-"));
+    mkdirSync(join(dir, ".git"));
+    writeFileSync(join(dir, "a.ts"), "x\n");
+    const env = { ...process.env, CLAUDE_PROJECT_DIR: dir };
+    expect(spawnSync("python3", [GUARD, "snap", join(dir, "a.ts")], { encoding: "utf8", env }).status).toBe(0);
+    const r = spawnSync("python3", [GUARD], {
+      input: JSON.stringify({ tool_name: "Bash", tool_input: { command: 'git commit -m "a; b"' } }),
+      encoding: "utf8",
+      env,
+    });
+    expect(r.status).toBe(2);
+  });
+});
+
+// Р-1020, Р-1300 п. 3: правила ask (Bash(git commit:*) и др.) сравнивают начало текста — глобальные опции git их
+// обходят. Ответ "ask" хука Claude Code 2.1.319 не применил (живая проверка, сессия 77) — блок с подсказкой.
+const GIT_BLOCKED: [string, string][] = [
+  ["git -C commit", "git -C /tmp/x commit -m y"],
+  ["git --git-dir= push", "git --git-dir=.git push origin task/x"],
+  ["git --work-tree checkout", "git --work-tree . checkout main"],
+  ["git -c commit", "git -c user.name=x commit -F /tmp/m.txt"],
+  ["git --no-pager pull", "git --no-pager pull"],
+  ["путь к git и revert", "/usr/bin/git -C . revert HEAD"],
+  ["после &&", "true && git -C . restore src/a.ts"],
+  ["с присваиванием перед git", "GIT_DIR=.git git -C . reset HEAD~1"],
+];
+
+const GIT_NOT_BLOCKED: [string, string][] = [
+  ["git -C rev-parse (CLAUDE.md, смена тега ядра)", "git -C ../agentic-core rev-parse v0.13.0^{commit}"],
+  ["git -C log", "git -C . log --oneline -5"],
+  ["git -C status", "git -C /tmp/x status -sb"],
+  ["git -c diff", "git -c color.ui=never diff"],
+  ["git commit без опций — правило settings.json", "git commit -F /tmp/m.txt"],
+  ["git -C commit в тексте сообщения", 'git commit -m "git -C . push — вопрос"'],
+  ["в теле heredoc", "cat > /tmp/pr.md <<'EOF'\ngit -C . push origin task/x\nEOF"],
+];
+
+describe("guard.py: git с глобальными опциями перед подкомандой из ask — блок (Р-1020, Р-1300 п. 3)", () => {
+  it.each(GIT_BLOCKED)("блокирует: %s", (_name, command) => {
+    const r = guard(command);
+    expect(r.stderr).toContain("БЛОК guard.py");
+    expect(r.stderr).toContain("Р-1020");
+    expect(r.stderr).toContain("без глобальных опций");
+    expect(r.stdout).toBe("");
+    expect(r.status).toBe(2);
+  });
+
+  it.each(GIT_NOT_BLOCKED)("без блока: %s", (_name, command) => {
+    const r = guard(command);
+    expect(r.stderr).toBe("");
+    expect(r.stdout).toBe("");
+    expect(r.status).toBe(0);
+  });
+
+  it("git -C reset --hard — своя причина: обход deny", () => {
+    const r = guard("git -C . reset --hard HEAD");
+    expect(r.stderr).toContain("БЛОК guard.py");
+    expect(r.stderr).toContain("обход правила deny");
+    expect(r.status).toBe(2);
+  });
+
+  it("причина push — первой: git -C push в main — блок push в task/*", () => {
+    const r = guard("git -C . push origin main");
+    expect(r.stderr).toContain("task/*");
+    expect(r.status).toBe(2);
+  });
+
+  it("причина называет опции и путь", () => {
+    expect(guard("git -C /tmp/x commit -m y").stderr).toContain("git -C /tmp/x commit");
   });
 });
 
