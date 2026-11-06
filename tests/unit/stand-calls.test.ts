@@ -1,6 +1,7 @@
 // Журнал обращений стенда и выданные реквизиты (РП25 дополнение STAND-69, передача агента #69): source ставит стенд по
 // типу сокета; kid, x-nonce, Idempotency-Key, code при 4xx / 5xx; тел нет — token_ref и cryptogram в журнале не встречаются
-// (инвариант 1); журнал полон с первого обращения без хука в stand.app после createStand.
+// (инвариант 1); журнал полон с первого обращения без хука в stand.app после createStand; agent_code — только у агента,
+// допущенного шлюзом ПАО (#90).
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MandateRequest } from "../../src/shared/pao.js";
@@ -9,6 +10,8 @@ import { buyerApplication, newAgentSide, type AgentSide } from "../support/agent
 import { signedInject } from "../support/signed-inject.js";
 
 const CODE = "nspk:agent:stand-calls:v1";
+const CODE_2 = "nspk:agent:stand-calls-2:v1";
+const CODE_3 = "nspk:agent:stand-calls-3:v1";
 
 describe("stand.calls() и stand.issuedCredentials() (STAND-69)", () => {
   let stand: Stand;
@@ -64,6 +67,53 @@ describe("stand.calls() и stand.issuedCredentials() (STAND-69)", () => {
     expect(a && "code" in a).toBe(false);
     expect(b).toMatchObject({ method: "POST", path: "/pao/v1/mandates", status: bad.statusCode, code: (bad.json() as { code: string }).code, idempotency_key: key });
     expect(c).toMatchObject({ method: "GET", path: "/pao/v1/nope", status: 404, code: (unknown.json() as { code: string }).code });
+    expect(c && "agent_code" in c).toBe(false);
+  });
+
+  it("agent_code — из реестра после проверки подписи (#90): есть у 200 и 4xx обработчика, два агента различаются", async () => {
+    const other = newAgentSide();
+    expect((await stand.admit(buyerApplication(CODE_2, other), "op")).admitted).toBe(true);
+    const before = stand.calls().length;
+    expect((await call("GET", "/pao/v1/agent")).statusCode).toBe(200);
+    const bad = await call("POST", "/pao/v1/mandates", { type: "НЕТ" }, { "idempotency-key": randomUUID() });
+    expect(bad.statusCode).toBeGreaterThanOrEqual(400);
+    expect(bad.statusCode).toBeLessThan(500);
+    const second = await signedInject(stand.app, other, CODE_2, { now: stand.now() });
+    expect(second.statusCode).toBe(200);
+    const [a, b, c] = stand.calls().slice(before);
+    expect(a).toMatchObject({ path: "/pao/v1/agent", status: 200, agent_code: CODE, kid: side.kid });
+    expect(b).toMatchObject({ path: "/pao/v1/mandates", status: bad.statusCode, agent_code: CODE });
+    expect(c).toMatchObject({ path: "/pao/v1/agent", status: 200, agent_code: CODE_2, kid: other.kid });
+  });
+
+  it("без допуска шлюзом — без agent_code: чужой ключ, неизвестный код — 401; приостановленный — 403 AGENT_SUSPENDED (#90, В1)", async () => {
+    const stranger = newAgentSide();
+    const suspended = newAgentSide();
+    expect((await stand.admit(buyerApplication(CODE_3, suspended), "op")).admitted).toBe(true);
+    await stand.suspendAgent(CODE_3, "KEY_COMPROMISE");
+    const before = stand.calls().length;
+    // x-agent-code — допущенного агента, подпись — чужим ключом: код из заголовка в журнал не попадает.
+    const forged = await signedInject(stand.app, stranger, CODE, { now: stand.now() });
+    expect(forged.statusCode).toBe(401);
+    const unknown = await signedInject(stand.app, side, "nspk:agent:stand-calls-nobody:v1", { now: stand.now() });
+    expect(unknown.statusCode).toBe(401);
+    const paused = await signedInject(stand.app, suspended, CODE_3, {
+      method: "POST",
+      path: "/pao/v1/mandates",
+      body: JSON.stringify({ type: "INTENT" }),
+      headers: { "idempotency-key": randomUUID() },
+      now: stand.now(),
+    });
+    expect(paused.statusCode).toBe(403);
+    expect((paused.json() as { code: string }).code).toBe("AGENT_SUSPENDED");
+    const rows = stand.calls().slice(before);
+    expect(rows.map((r) => r.status)).toEqual([401, 401, 403]);
+    expect(rows.map((r) => r.kid)).toEqual([stranger.kid, side.kid, suspended.kid]);
+    expect(rows.every((r) => !("agent_code" in r))).toBe(true);
+    // Свой статус приостановленному агенту читать разрешено (statusAllows): допущен шлюзом — поле есть.
+    const self = await signedInject(stand.app, suspended, CODE_3, { now: stand.now() });
+    expect(self.statusCode).toBe(200);
+    expect(stand.calls().at(-1)).toMatchObject({ path: "/pao/v1/agent", status: 200, agent_code: CODE_3 });
   });
 
   it("реквизит: пара token_ref и cryptogram — в issuedCredentials, повтор — без новой пары; в журнале их нет (инвариант 1)", async () => {
