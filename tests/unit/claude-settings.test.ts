@@ -41,12 +41,16 @@ const READ_ONLY = [
   "Bash(gh run view:*)",
   "Bash(gh run list:*)",
   "Bash(uptime)",
+  // Р-1319, сессия 78: инструмента Grep в сессии может не быть — поиск по содержимому grep и cut в Bash
+  // (сами файлы не пишут; запись через > — пункт «Открыто» стража).
+  "Bash(grep:*)",
+  "Bash(cut:*)",
 ];
 
-// Р-1317 (б): не разрешать заранее. grep и cut заменяет инструмент Grep. gh api — префикс не ограничивает метод
-// (-X DELETE); sed — команда w пишет файл; awk — print > файл и system(); find — -delete и -exec; base64 — -o;
-// python3 и node — интерпретаторы (STATUS «Открыто», Р-1300 п. 4); echo и printf — запись через >.
-const NOT_ALLOWED = /^Bash\((grep|cut|gh api|sed|awk|find|base64|python3?|node|echo|printf)\b/;
+// Р-1317 (б), Р-1319: не разрешать заранее. gh api — префикс не ограничивает метод (-X DELETE); sed — команда w
+// пишет файл; awk — print > файл и system(); find — -delete и -exec; base64 — -o; python3 и node — интерпретаторы
+// (STATUS «Открыто», Р-1300 п. 4); echo и printf — запись через >.
+const NOT_ALLOWED = /^Bash\((gh api|sed|awk|find|base64|python3?|node|echo|printf)\b/;
 
 const ASK = [
   "Bash(git commit:*)",
@@ -86,7 +90,7 @@ describe(".claude/settings.json: только чтение без вопроса
     expect(allow.filter((r) => !r.startsWith("Bash("))).toEqual([]);
   });
 
-  it("пишущие или неограниченные по методу команды не разрешены заранее (Р-1317 (б))", () => {
+  it("пишущие или неограниченные по методу команды не разрешены заранее (Р-1317 (б), Р-1319)", () => {
     expect(allow.filter((r) => NOT_ALLOWED.test(r))).toEqual([]);
   });
 
