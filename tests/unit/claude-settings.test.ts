@@ -31,7 +31,22 @@ const READ_ONLY = [
   "Bash(npm test)",
   "Bash(npm test:*)",
   "Bash(npx vitest run:*)",
+  // Р-1317 (б), сессия 78: безопасное чтение по Р-1249 — команды не пишут файлы и не меняют состояние.
+  "Bash(git describe:*)",
+  "Bash(git rev-parse:*)",
+  "Bash(gh issue view:*)",
+  "Bash(gh issue list:*)",
+  "Bash(gh label list:*)",
+  "Bash(gh pr diff:*)",
+  "Bash(gh run view:*)",
+  "Bash(gh run list:*)",
+  "Bash(uptime)",
 ];
+
+// Р-1317 (б): не разрешать заранее. grep и cut заменяет инструмент Grep. gh api — префикс не ограничивает метод
+// (-X DELETE); sed — команда w пишет файл; awk — print > файл и system(); find — -delete и -exec; base64 — -o;
+// python3 и node — интерпретаторы (STATUS «Открыто», Р-1300 п. 4); echo и printf — запись через >.
+const NOT_ALLOWED = /^Bash\((grep|cut|gh api|sed|awk|find|base64|python3?|node|echo|printf)\b/;
 
 const ASK = [
   "Bash(git commit:*)",
@@ -69,6 +84,10 @@ describe(".claude/settings.json: только чтение без вопроса
     const changing = /^Bash\((git (commit|push|revert|checkout|restore|reset|pull|add|merge|rebase|tag)|gh pr (create|merge|ready|edit|comment)|npm (install|i|ci))\b/;
     expect(allow.filter((r) => changing.test(r))).toEqual([]);
     expect(allow.filter((r) => !r.startsWith("Bash("))).toEqual([]);
+  });
+
+  it("пишущие или неограниченные по методу команды не разрешены заранее (Р-1317 (б))", () => {
+    expect(allow.filter((r) => NOT_ALLOWED.test(r))).toEqual([]);
   });
 
   it("страж guard.py подключён к PreToolUse для Bash, Write, Edit, MultiEdit, Read", () => {
