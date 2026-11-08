@@ -59,6 +59,11 @@ export interface MerchantFaultPort {
   active(test: MerchantFaultTest, shop: Pick<Shop, "id" | "merchant_id">): boolean;
   /** Сбой изменил поведение витрины — запись в журнале стенда; только идентификаторы (инвариант 1). */
   fired(test: MerchantFaultTest, what: MerchantFaultWhat, ids: { readonly shop_id: string; readonly merchant_id: string; readonly order_id?: string }): void;
+  /**
+   * Продление удержания заказа действием «Напомнить клиенту» демо-стенда (РП75 п. 6), мс сверх order_hold_sec; 0 — не
+   * продлено. Читается при каждом обращении к заказу.
+   */
+  holdExtensionMs(merchant_id: string, order_id: string): number;
 }
 
 /**
@@ -183,11 +188,13 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
 
   /**
    * Ленивое истечение удержания (РП72 п. 8, как РП50 остаточный риск 4): AWAITING_CONFIRMATION дольше order_hold_sec от
-   * первого перехода — при обращении DECLINED, признак снимается (заказ больше не ждёт). Граница — уже истёк.
+   * первого перехода — при обращении DECLINED, признак снимается (заказ больше не ждёт). Граница — уже истёк. На демо-стенде
+   * срок продлевается действием «Напомнить клиенту» (РП75 п. 6) — порт faults.
    */
   const current = (o: Order): Order => {
     const hold = holds.get(o.id);
-    if (o.status !== "AWAITING_CONFIRMATION" || !hold || now().getTime() - hold.since < holdMs) return o;
+    const extra = opts.faults?.holdExtensionMs(o.merchant_id, o.id) ?? 0;
+    if (o.status !== "AWAITING_CONFIRMATION" || !hold || now().getTime() - hold.since < holdMs + extra) return o;
     const expired: Order = { ...o, status: "DECLINED", payment: { approved: false, confirmation_required: false } };
     orders.set(o.id, expired);
     return expired;

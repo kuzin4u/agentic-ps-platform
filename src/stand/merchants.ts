@@ -100,6 +100,8 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
   const faults: MerchantFaultPort | undefined = demo && {
     active: (test, shop) => demo.armedFor(test, shop),
     fired: (test, what, ids) => demo.fired(test, what, ids),
+    // «Напомнить клиенту» (РП75 п. 6) продлевает и удержание заказа у витрины.
+    holdExtensionMs: (merchant_id, order_id) => demo.holdExtensionMs(merchant_id, order_id),
   };
   let shopListFailure: ShopListFailure | null = null;
   let orderReplyFailure: OrderReplyFailure | null = null;

@@ -55,8 +55,30 @@ export const DEMO_LOG_WHAT = [
   "OUTCOME_EVENT_DELAYED",
   "OUTCOME_EVENTS_REORDERED",
   "SECOND_CREDENTIAL_ISSUED",
+  // Действия кнопок реакции (РП75 п. 6): PURCHASE_STOPPED — CART отозван; CONFIRMATION_REJECTED — ожидающий запрос по нему
+  // отклонён банком; CLIENT_REMINDED — срок продлён; REMIND_REPEATED — повтор без продления; MANDATE_REVOKED — отзыв
+  // клиентом; ACTION_REFUSED — шлюз участников отказал (ответ — как есть); SENT_TO_REVIEW — передано на разбор.
+  "PURCHASE_STOPPED",
+  "CONFIRMATION_REJECTED",
+  "CLIENT_REMINDED",
+  "REMIND_REPEATED",
+  "MANDATE_REVOKED",
+  "ACTION_REFUSED",
+  "SENT_TO_REVIEW",
 ] as const;
 export type DemoLogWhat = (typeof DEMO_LOG_WHAT)[number];
+
+/** Кто нарушил — для «Передать на разбор» (РП75 п. 6): закрытый перечень. */
+export const DEMO_VIOLATORS = ["AGENT", "MERCHANT", "BANK", "PLATFORM", "OPERATOR"] as const;
+export type DemoViolator = (typeof DEMO_VIOLATORS)[number];
+
+/** Условие модели пульта — код вида R46. */
+const CONDITION = /^R\d{2,3}$/;
+
+export interface DemoReview {
+  readonly condition: string;
+  readonly violator: DemoViolator;
+}
 
 export interface DemoLogEntry {
   readonly seq: number;
@@ -66,9 +88,40 @@ export interface DemoLogEntry {
   readonly test?: DemoTest;
   readonly what: DemoLogWhat;
   readonly ids: DemoIds;
+  /** Только SENT_TO_REVIEW: условие и кто нарушил. */
+  readonly review?: DemoReview;
 }
 
-export interface StandDemo {
+/** Ответ шлюза участников (ПИ-8) на действие — как есть. */
+export interface DemoGatewayReply {
+  readonly statusCode: number;
+  readonly body: unknown;
+}
+
+/**
+ * Действия кнопок реакции (РП75 п. 6): ответ — результат шлюза участников или исключение; запись в журнале — на каждый
+ * вызов, дошедший до шлюза или стенда. Неверный аргумент (неизвестный мандат или запрос, не CART, не PENDING, поле вне
+ * перечня) — исключение без записи, как у arm.
+ */
+export interface DemoActions {
+  /**
+   * «Остановить покупку»: отзыв CART через банк стенда (ПИ-8 revoke, как клиент в приложении банка); затем каждый
+   * ожидающий запрос подтверждения по CART отклоняется решением банка (REJECT). rejected — их confirmation_id.
+   */
+  stopPurchase(cart_mandate_id: string): Promise<DemoGatewayReply & { readonly rejected: readonly string[] }>;
+  /**
+   * «Напомнить клиенту»: один раз на запрос срок ожидающего запроса подтверждения и удержание заказа у витрины продлеваются
+   * на confirmation_remind_extend_sec; confirmation_ref и итоговые значения не меняются (инвариант 7). Повтор — без
+   * продления (extended: false), с записью.
+   */
+  remindClient(confirmation_id: string): Promise<{ readonly confirmation_id: string; readonly expires_at: string; readonly extended: boolean }>;
+  /** «Отозвать поручение»: отзыв мандата клиентом через банк стенда (РП38, ПИ-8 revoke). */
+  revokeMandate(mandate_id: string): Promise<DemoGatewayReply>;
+  /** «Передать на разбор»: только запись журнала; tx — идентификаторы операции из перечня ids. */
+  sendToReview(r: { readonly tx: DemoIds; readonly condition: string; readonly violator: DemoViolator }): DemoLogEntry;
+}
+
+export interface StandDemo extends DemoActions {
   /** Включить сбой вида «П»; повтор — новые настройки и новая запись. Не «П» или неизвестный код — исключение. */
   arm(test: DemoTest, opts?: DemoFaultOptions): void;
   /** Снять сбой; true — был включён (запись в журнале), false — не был (записи нет). */
@@ -91,6 +144,14 @@ export interface DemoFaults {
    * стенду (вызов метода стенда, витрины эмулятора) — ничего.
    */
   markCall(test: DemoTest): void;
+  /** Продление удержания заказа у витрины действием «Напомнить клиенту» (РП75 п. 6), мс; 0 — не продлено. */
+  holdExtensionMs(merchant_id: string, order_id: string): number;
+}
+
+/** Для действий режима (demo-actions.ts): запись в журнал и продление удержания у витрины. */
+export interface DemoActionSink {
+  acted(what: DemoLogWhat, ids: DemoIds): void;
+  extendHold(merchant_id: string, order_id: string, ms: number): void;
 }
 
 /** Наибольшая задержка события итога Н-12, мс: минута — больше теста пульта не нужно. */
@@ -235,15 +296,33 @@ export function createDemo(
   faults: DemoFaults;
   /** Контекст обращения к приложению стенда (onRequest): пометка сбоя для StandCall.fault; функция — для журнала обращений. */
   attachCalls(app: FastifyInstance): (req: FastifyRequest) => DemoTest | undefined;
+  /** Подключить действия шлюза участников (после сборки банка стенда); до этого действия — исключение. */
+  bindActions(make: (sink: DemoActionSink) => Omit<DemoActions, "sendToReview">): void;
 } {
   const entries: DemoLogEntry[] = [];
   const armed = new Map<DemoTest, DemoFaultOptions>();
+  // Продление удержания заказа у витрины (РП75 п. 6): ключ — продавец и заказ.
+  const holdExtra = new Map<string, number>();
+  const holdKey = (merchant_id: string, order_id: string): string => JSON.stringify([merchant_id, order_id]);
+  let actions: Omit<DemoActions, "sendToReview"> | undefined;
+  const bound = (): Omit<DemoActions, "sendToReview"> => {
+    if (!actions) throw new Error("demo: действия не подключены");
+    return actions;
+  };
   // Контекст на обращение: сбой, сработавший во время обработки, помечает именно его (вложенный app.inject — своё).
   const calls = new AsyncLocalStorage<{ fault?: DemoTest }>();
-  const write = (kind: DemoLogEntry["kind"], test: DemoTest | undefined, what: DemoLogWhat, ids: DemoIds): void => {
-    entries.push(
-      Object.freeze({ seq: entries.length + 1, at: now().toISOString(), kind, ...(test === undefined ? {} : { test }), what, ids }),
-    );
+  const write = (kind: DemoLogEntry["kind"], test: DemoTest | undefined, what: DemoLogWhat, ids: DemoIds, review?: DemoReview): DemoLogEntry => {
+    const e: DemoLogEntry = Object.freeze({
+      seq: entries.length + 1,
+      at: now().toISOString(),
+      kind,
+      ...(test === undefined ? {} : { test }),
+      what,
+      ids,
+      ...(review === undefined ? {} : { review }),
+    });
+    entries.push(e);
+    return e;
   };
   const demo: StandDemo = {
     arm(test, opts) {
@@ -264,6 +343,17 @@ export function createDemo(
       write("fault", t, "MARKED", checkIds(ids));
     },
     log: () => [...entries],
+    stopPurchase: (cart_mandate_id) => bound().stopPurchase(cart_mandate_id),
+    remindClient: (confirmation_id) => bound().remindClient(confirmation_id),
+    revokeMandate: (mandate_id) => bound().revokeMandate(mandate_id),
+    sendToReview(r) {
+      if (r === null || typeof r !== "object") throw new Error("demo: разбор — объект {tx, condition, violator}");
+      const tx = checkIds(r.tx);
+      if (Object.keys(tx).length === 0) throw new Error("demo: tx — хотя бы один идентификатор");
+      if (typeof r.condition !== "string" || !CONDITION.test(r.condition)) throw new Error("demo: condition — код вида R46");
+      if (!(DEMO_VIOLATORS as readonly string[]).includes(r.violator)) throw new Error(`demo: violator ${String(r.violator)} вне перечня`);
+      return write("action", undefined, "SENT_TO_REVIEW", tx, Object.freeze({ condition: r.condition, violator: r.violator }));
+    },
   };
   const faults: DemoFaults = {
     armed: (test) => armed.get(test),
@@ -280,6 +370,7 @@ export function createDemo(
       const ctx = calls.getStore();
       if (ctx) ctx.fault = test;
     },
+    holdExtensionMs: (merchant_id, order_id) => holdExtra.get(holdKey(merchant_id, order_id)) ?? 0,
   };
   INTERNAL.set(demo, faults);
   const attachCalls = (app: FastifyInstance) => {
@@ -291,5 +382,16 @@ export function createDemo(
     });
     return (req: FastifyRequest) => byReq.get(req)?.fault;
   };
-  return { demo, faults, attachCalls };
+  const sink: DemoActionSink = {
+    acted: (what, ids) => void write("action", undefined, what, checkIds(ids)),
+    extendHold(merchant_id, order_id, ms) {
+      const k = holdKey(merchant_id, order_id);
+      holdExtra.set(k, (holdExtra.get(k) ?? 0) + ms);
+    },
+  };
+  const bindActions = (make: (sink: DemoActionSink) => Omit<DemoActions, "sendToReview">): void => {
+    if (actions) throw new Error("demo: действия уже подключены");
+    actions = make(sink);
+  };
+  return { demo, faults, attachCalls, bindActions };
 }

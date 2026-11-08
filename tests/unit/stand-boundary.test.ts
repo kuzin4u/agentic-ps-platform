@@ -3,7 +3,7 @@
 // Fail-closed: всё, что обход не может разрешить однозначно, — нарушение, а не пропуск:
 // самоссылка на пакет (agentic-ps-platform/…), #-импорты, абсолютные пути и file:, импорт или require
 // с нелитеральным аргументом, createRequire.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -108,12 +108,44 @@ describe("РП25: граница «стенд ≠ рабочий сервер»"
   it("обход видит стенд, если он импортирован (контроль самой проверки)", () => {
     expect([...importGraph("tests/support/stand.ts").files].filter(inStand).sort()).toEqual([
       "src/stand/calls.ts",
+      "src/stand/demo-actions.ts",
       "src/stand/demo-credentials.ts",
       "src/stand/demo.ts",
       "src/stand/dns.ts",
       "src/stand/index.ts",
       "src/stand/merchants.ts",
     ]);
+  });
+
+  // РП75 п. 6, Р-1347: продление срока запроса подтверждения — только действие демо-стенда. Метод — только у хранилища П6
+  // в памяти, не в интерфейсе ConfirmationStore и не у PgConfirmationStore; упоминание вне src/stand и определения — нарушение
+  // (fail-closed: комментарий тоже).
+  it("extendPending: определён только в MemoryConfirmationStore, вызывается только из src/stand", () => {
+    const owners: string[] = [];
+    const sf = ts.createSourceFile("store.ts", readFileSync(resolve(ROOT, "src/confirm/store.ts"), "utf8"), ts.ScriptTarget.Latest, true);
+    const visit = (n: ts.Node): void => {
+      if ((ts.isClassDeclaration(n) || ts.isInterfaceDeclaration(n)) && n.name) {
+        const has = (n.members as ts.NodeArray<ts.ClassElement | ts.TypeElement>).some((m) => m.name !== undefined && ts.isIdentifier(m.name) && m.name.text === "extendPending");
+        if (has) owners.push(n.name.text);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    expect(owners).toEqual(["MemoryConfirmationStore"]);
+
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(p);
+        else if (p.endsWith(".ts")) files.push(p);
+      }
+    };
+    walk("src");
+    const users = files.filter((f) => readFileSync(resolve(ROOT, f), "utf8").includes("extendPending"));
+    expect(users.filter((f) => f !== "src/confirm/store.ts" && !inStand(f))).toEqual([]);
+    // Контроль самой проверки: вызов есть, и он в стенде.
+    expect(users).toContain("src/stand/demo-actions.ts");
   });
 
   describe("контроль: обходы границы — нарушение, а не пропуск", () => {

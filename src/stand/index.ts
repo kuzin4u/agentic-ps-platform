@@ -58,16 +58,22 @@ import { holdLedger, StateService } from "../state/index.js";
 import { attachCallJournal, type StandCall } from "./calls.js";
 import { createDemo, delayedFeed, type StandDemo } from "./demo.js";
 import { demoCredentials } from "./demo-credentials.js";
+import { demoActions } from "./demo-actions.js";
 import { createStandDns, type StandDns } from "./dns.js";
 
 export type { StandCall } from "./calls.js";
 export type { Shop } from "../env/merchants/shops.js";
 export {
   DEMO_TESTS,
+  DEMO_VIOLATORS,
+  type DemoActions,
   type DemoFaultOptions,
+  type DemoGatewayReply,
   type DemoIds,
   type DemoLogEntry,
+  type DemoReview,
   type DemoTest,
+  type DemoViolator,
   type StandDemo,
 } from "./demo.js";
 
@@ -679,6 +685,20 @@ export function createStand(opts: StandOptions = {}): Stand {
       return code;
     },
   };
+  // Действия кнопок реакции (РП75 п. 6): отзыв и отказ — банком стенда по ПИ-8, продление — хранилище П6 в памяти.
+  demoMode?.bindActions((sink) =>
+    demoActions(
+      {
+        mandateType: async (id) => (await consent.signingView(id))?.type,
+        revoke: (id) => issuer.revoke(id),
+        reject: (id) => issuer.confirm(id, { decision: "REJECT" }),
+        confirmations: confirmationStore,
+        remindExtendSec: params.confirmation_remind_extend_sec,
+        now,
+      },
+      sink,
+    ),
+  );
   // Страница УПК: итог — из записи П6, решение — ПИ-8 того же сервера (как приложение банка), выбор СБП — по параметру.
   const upkCodes = new UpkCodes();
   const upkApp = createUpkPage({
