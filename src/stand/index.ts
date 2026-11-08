@@ -323,7 +323,9 @@ export function createStand(opts: StandOptions = {}): Stand {
   validateShopSet(shops);
   let clock: Date | undefined;
   const now = (): Date => clock ?? new Date();
-  const demoMode = demoOn ? createDemo(now) : undefined;
+  const demoMode = demoOn
+    ? createDemo(now, { shop_ids: new Set(shops.map((s) => s.id)), merchant_ids: new Set(shops.map((s) => s.merchant_id)) })
+    : undefined;
   const store = new InMemoryAgentRegistryStore();
   // УЦ стенда — в памяти, CSR необязателен (РП65 п. 1): агент на стенде CSR не шлёт. Срок УЦ отсчитывается от часов при
   // создании стенда: допуск с CSR при часах раньше этого — исключение УЦ «вне срока».

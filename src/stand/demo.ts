@@ -27,8 +27,29 @@ export interface DemoFaultOptions {
   readonly reorder?: boolean;
 }
 
-/** Что записано (РП75 п. 4): код из закрытого перечня; коды сбоев и действий добавляют их кирпичи. */
-export const DEMO_LOG_WHAT = ["ARMED", "DISARMED", "MARKED"] as const;
+/** Какие настройки принимает сбой (РП75 п. 3): у сбоев витрин — выбор витрины; без настройки — все витрины стенда. */
+const OPTIONS_BY_TEST: Readonly<Partial<Record<DemoTest, readonly (typeof DEMO_FAULT_OPTION_FIELDS)[number][]>>> = {
+  "Н-02": [],
+  "Н-03": ["merchant_id", "shop_id"],
+  "Н-04": ["merchant_id", "shop_id"],
+  "Н-05": ["merchant_id", "shop_id"],
+  "Н-11": [],
+  "Н-12": ["delay_ms", "reorder"],
+};
+
+/**
+ * Что записано (РП75 п. 4): код из закрытого перечня; коды сбоев и действий добавляют их кирпичи.
+ * PAID_BEFORE_OUTCOME — Н-03, витрина ответила «оплачено», не дождавшись решения; FULFILLED_BEFORE_OUTCOME — Н-04,
+ * витрина исполнила заказ до решения; INSTRUCTION_SERVED — Н-05, каталог отдан с инструкцией агенту в описании товара.
+ */
+export const DEMO_LOG_WHAT = [
+  "ARMED",
+  "DISARMED",
+  "MARKED",
+  "PAID_BEFORE_OUTCOME",
+  "FULFILLED_BEFORE_OUTCOME",
+  "INSTRUCTION_SERVED",
+] as const;
 export type DemoLogWhat = (typeof DEMO_LOG_WHAT)[number];
 
 export interface DemoLogEntry {
@@ -55,8 +76,24 @@ export interface StandDemo {
 /** Для сборки стенда: включён ли сбой и с какими настройками; сбой «один раз» снимается при срабатывании. */
 export interface DemoFaults {
   armed(test: DemoTest): DemoFaultOptions | undefined;
+  /** Сбой витрины включён для этой витрины: без выбора — для всех, с выбором — только для выбранной (РП75 п. 3). */
+  armedFor(test: DemoTest, shop: { readonly id: string; readonly merchant_id: string }): boolean;
   /** Сбой сработал: запись в журнале; сбой «один раз» снимается. */
   fired(test: DemoTest, what: DemoLogWhat, ids: DemoIds): void;
+}
+
+/** Витрины стенда — для проверки выбора витрины в настройках сбоя. */
+export interface DemoShops {
+  readonly shop_ids: ReadonlySet<string>;
+  readonly merchant_ids: ReadonlySet<string>;
+}
+
+// Внутренняя часть режима — только для сборки стенда (createMerchants): наружу из пакета не экспортируется.
+const INTERNAL = new WeakMap<StandDemo, DemoFaults>();
+
+/** Сбои режима этого стенда для его сборки (createMerchants); у чужого объекта — undefined. */
+export function demoFaultsOf(demo: StandDemo | undefined): DemoFaults | undefined {
+  return demo === undefined ? undefined : INTERNAL.get(demo);
 }
 
 const isTest = (t: unknown): t is DemoTest => typeof t === "string" && (DEMO_TESTS as readonly string[]).includes(t);
@@ -77,17 +114,26 @@ function checkIds(ids: unknown): DemoIds {
   return Object.freeze(out);
 }
 
-function checkOptions(opts: unknown): DemoFaultOptions {
+function checkOptions(test: DemoTest, opts: unknown, shops: DemoShops): DemoFaultOptions {
   if (opts === undefined) return Object.freeze({});
   if (opts === null || typeof opts !== "object" || Array.isArray(opts)) throw new Error("demo: настройки сбоя — объект");
-  for (const k of Object.keys(opts)) {
+  const allowed: readonly string[] = OPTIONS_BY_TEST[test] ?? [];
+  const o = opts as Record<string, unknown>;
+  for (const k of Object.keys(o)) {
     if (!(DEMO_FAULT_OPTION_FIELDS as readonly string[]).includes(k)) throw new Error(`demo: настройка ${k} вне перечня`);
+    if (!allowed.includes(k)) throw new Error(`demo: у ${test} нет настройки ${k}`);
   }
-  return Object.freeze({ ...(opts as DemoFaultOptions) });
+  if (o.merchant_id !== undefined && (typeof o.merchant_id !== "string" || !shops.merchant_ids.has(o.merchant_id))) {
+    throw new Error(`demo: merchant_id ${String(o.merchant_id)} — не продавец витрин стенда`);
+  }
+  if (o.shop_id !== undefined && (typeof o.shop_id !== "string" || !shops.shop_ids.has(o.shop_id))) {
+    throw new Error(`demo: shop_id ${String(o.shop_id)} — не витрина стенда`);
+  }
+  return Object.freeze({ ...(o as DemoFaultOptions) });
 }
 
 /** Режим сбоев стенда: публичная часть (stand.demo) и часть для сборки стенда (сбои). */
-export function createDemo(now: () => Date): { demo: StandDemo; faults: DemoFaults } {
+export function createDemo(now: () => Date, shops: DemoShops): { demo: StandDemo; faults: DemoFaults } {
   const entries: DemoLogEntry[] = [];
   const armed = new Map<DemoTest, DemoFaultOptions>();
   const write = (kind: DemoLogEntry["kind"], test: DemoTest | undefined, what: DemoLogWhat, ids: DemoIds): void => {
@@ -99,7 +145,7 @@ export function createDemo(now: () => Date): { demo: StandDemo; faults: DemoFaul
     arm(test, opts) {
       const t = checkTest(test);
       if (!ARMABLE.has(t)) throw new Error(`demo: ${t} — не сбой Платформы (РП75 п. 3)`);
-      armed.set(t, checkOptions(opts));
+      armed.set(t, checkOptions(t, opts, shops));
       write("fault", t, "ARMED", Object.freeze({}));
     },
     disarm(test) {
@@ -117,10 +163,16 @@ export function createDemo(now: () => Date): { demo: StandDemo; faults: DemoFaul
   };
   const faults: DemoFaults = {
     armed: (test) => armed.get(test),
+    armedFor(test, shop) {
+      const o = armed.get(test);
+      if (!o) return false;
+      return (o.merchant_id === undefined || o.merchant_id === shop.merchant_id) && (o.shop_id === undefined || o.shop_id === shop.id);
+    },
     fired(test, what, ids) {
       if (ONCE.has(test)) armed.delete(test);
       write("fault", test, what, checkIds(ids));
     },
   };
+  INTERNAL.set(demo, faults);
   return { demo, faults };
 }
