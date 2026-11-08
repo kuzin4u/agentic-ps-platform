@@ -21,6 +21,7 @@ import { createAcquirerParticipant } from "../env/acquirer/participant.js";
 import { MemoryReadinessStore, type ReadinessStore, type ReadinessSuspendReason } from "../participants/readiness.js";
 import { MemoryPaymentMetadataStore } from "../participants/payments.js";
 import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
+import type { CredentialStore } from "../credentials/store.js";
 import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../confirm/index.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { MemoryOutcomeStore, OperationOutcomeCollector, type CollectorResult } from "../fulfilment/outcomes.js";
@@ -56,6 +57,7 @@ import { loadParams, type Params } from "../shared/config.js";
 import { holdLedger, StateService } from "../state/index.js";
 import { attachCallJournal, type StandCall } from "./calls.js";
 import { createDemo, delayedFeed, type StandDemo } from "./demo.js";
+import { demoCredentials } from "./demo-credentials.js";
 import { createStandDns, type StandDns } from "./dns.js";
 
 export type { StandCall } from "./calls.js";
@@ -463,7 +465,11 @@ export function createStand(opts: StandOptions = {}): Stand {
       return cryptogram;
     },
   };
-  const credentialStore = new MemoryCredentialStore();
+  // Н-02 (РП75 п. 3): в демо-режиме — хранилище П5 с подменой «второй реквизит на повтор»; его видят все читатели
+  // стенда (выдача, ADP, сверка). Вне демо-режима — хранилище в памяти без обёртки.
+  const rawCredentialStore = new MemoryCredentialStore();
+  const demoCreds = demoMode && demoCredentials(rawCredentialStore, demoMode.faults);
+  const credentialStore: CredentialStore = demoCreds ? demoCreds.store : rawCredentialStore;
   // Подтверждение человеком (П6, РП50): запросы ADP и решения банка стенда — одно хранилище в памяти; переходы пишут
   // события confirmation.* в ленту журнала стенда (РП51 п. 1–3), push — по тому же правилу, что у мандатов.
   const confirmationStore = new MemoryConfirmationStore({ events: consentStore, pushFor });
@@ -488,7 +494,7 @@ export function createStand(opts: StandOptions = {}): Stand {
       params,
       consent,
       subscriptions,
-      credentials,
+      credentials: demoCreds ? demoCreds.wrap(credentials) : credentials,
       // Запрос подтверждения агенту (РП51 п. 8–10): то же хранилище П6, часы стенда, link — на страницу УПК.
       confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url },
       // Операция агенту (РП52 п. 10): записи ADP и итоги П8 — те же хранилища в памяти, что у ADP и ПИ-3.
@@ -566,7 +572,8 @@ export function createStand(opts: StandOptions = {}): Stand {
     },
   });
   // Журнал обращений (STAND-69) — до первого app.inject (подача знаков ниже): хуки регистрируются до загрузки приложения.
-  const calls = attachCallJournal(app);
+  // Пометка сбоя у обращения (РП75 п. 5) — только в демо-режиме: контекст обращения ставит режим сбоев.
+  const calls = attachCallJournal(app, demoMode?.attachCalls(app));
   const issuer: StandIssuer = {
     participant_code: emulator.participant_code,
     trustedKey: emulator.trustedKey,

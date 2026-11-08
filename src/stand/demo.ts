@@ -2,6 +2,8 @@
 // stand.demo нет. Рабочий сервер (src/main.ts, buildServer) модуль не импортирует — tests/unit/stand-boundary.test.ts.
 // Журнал — коды, идентификаторы и время по часам стенда; тел, реквизитов, кодов подтверждения и текста для человека нет
 // (инварианты 1, 7; правило совместимости 3).
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 
 /** Тесты пульта (РП75 п. 3): закрытый перечень. */
 export const DEMO_TESTS = ["Н-01", "Н-02", "Н-03", "Н-04", "Н-05", "Н-06", "Н-07", "Н-08", "Н-09", "Н-10", "Н-11", "Н-12"] as const;
@@ -52,6 +54,7 @@ export const DEMO_LOG_WHAT = [
   "UPK_CODE_LEAKED",
   "OUTCOME_EVENT_DELAYED",
   "OUTCOME_EVENTS_REORDERED",
+  "SECOND_CREDENTIAL_ISSUED",
 ] as const;
 export type DemoLogWhat = (typeof DEMO_LOG_WHAT)[number];
 
@@ -83,6 +86,11 @@ export interface DemoFaults {
   armedFor(test: DemoTest, shop: { readonly id: string; readonly merchant_id: string }): boolean;
   /** Сбой сработал: запись в журнале; сбой «один раз» снимается. */
   fired(test: DemoTest, what: DemoLogWhat, ids: DemoIds): void;
+  /**
+   * Сбой изменил ответ идущего обращения к приложению стенда — пометка `StandCall.fault` (РП75 п. 5). Вне обращения к
+   * стенду (вызов метода стенда, витрины эмулятора) — ничего.
+   */
+  markCall(test: DemoTest): void;
 }
 
 /** Наибольшая задержка события итога Н-12, мс: минута — больше теста пульта не нужно. */
@@ -138,12 +146,14 @@ export function delayedFeed<E extends FeedEvent>(
           released.add(first.event_id);
           return page;
         }
+        faults.markCall("Н-12");
         return page.slice(0, i);
       }
       const second = page[j]!;
       released.add(first.event_id);
       released.add(second.event_id);
       once(`${first.event_id}|${second.event_id}`, "OUTCOME_EVENTS_REORDERED", opRefOf(second));
+      faults.markCall("Н-12");
       return [...page.slice(0, i), second, first];
     }
     // Задержка: старше задержки — идёт и больше не держится; первое молодое — обрыв страницы перед ним.
@@ -155,6 +165,7 @@ export function delayedFeed<E extends FeedEvent>(
         continue;
       }
       once(e.event_id, "OUTCOME_EVENT_DELAYED", opRefOf(e));
+      faults.markCall("Н-12");
       return page.slice(0, k);
     }
     return page;
@@ -216,9 +227,19 @@ function checkOptions(test: DemoTest, opts: unknown, shops: DemoShops): DemoFaul
 }
 
 /** Режим сбоев стенда: публичная часть (stand.demo) и часть для сборки стенда (сбои). */
-export function createDemo(now: () => Date, shops: DemoShops): { demo: StandDemo; faults: DemoFaults } {
+export function createDemo(
+  now: () => Date,
+  shops: DemoShops,
+): {
+  demo: StandDemo;
+  faults: DemoFaults;
+  /** Контекст обращения к приложению стенда (onRequest): пометка сбоя для StandCall.fault; функция — для журнала обращений. */
+  attachCalls(app: FastifyInstance): (req: FastifyRequest) => DemoTest | undefined;
+} {
   const entries: DemoLogEntry[] = [];
   const armed = new Map<DemoTest, DemoFaultOptions>();
+  // Контекст на обращение: сбой, сработавший во время обработки, помечает именно его (вложенный app.inject — своё).
+  const calls = new AsyncLocalStorage<{ fault?: DemoTest }>();
   const write = (kind: DemoLogEntry["kind"], test: DemoTest | undefined, what: DemoLogWhat, ids: DemoIds): void => {
     entries.push(
       Object.freeze({ seq: entries.length + 1, at: now().toISOString(), kind, ...(test === undefined ? {} : { test }), what, ids }),
@@ -255,7 +276,20 @@ export function createDemo(now: () => Date, shops: DemoShops): { demo: StandDemo
       if (ONCE.has(test)) armed.delete(test);
       write("fault", test, what, checkIds(ids));
     },
+    markCall(test) {
+      const ctx = calls.getStore();
+      if (ctx) ctx.fault = test;
+    },
   };
   INTERNAL.set(demo, faults);
-  return { demo, faults };
+  const attachCalls = (app: FastifyInstance) => {
+    const byReq = new WeakMap<FastifyRequest, { fault?: DemoTest }>();
+    app.addHook("onRequest", (req, _reply, done) => {
+      const ctx: { fault?: DemoTest } = {};
+      byReq.set(req, ctx);
+      calls.run(ctx, done);
+    });
+    return (req: FastifyRequest) => byReq.get(req)?.fault;
+  };
+  return { demo, faults, attachCalls };
 }
