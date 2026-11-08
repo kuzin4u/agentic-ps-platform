@@ -49,6 +49,9 @@ export const DEMO_LOG_WHAT = [
   "PAID_BEFORE_OUTCOME",
   "FULFILLED_BEFORE_OUTCOME",
   "INSTRUCTION_SERVED",
+  "UPK_CODE_LEAKED",
+  "OUTCOME_EVENT_DELAYED",
+  "OUTCOME_EVENTS_REORDERED",
 ] as const;
 export type DemoLogWhat = (typeof DEMO_LOG_WHAT)[number];
 
@@ -80,6 +83,82 @@ export interface DemoFaults {
   armedFor(test: DemoTest, shop: { readonly id: string; readonly merchant_id: string }): boolean;
   /** Сбой сработал: запись в журнале; сбой «один раз» снимается. */
   fired(test: DemoTest, what: DemoLogWhat, ids: DemoIds): void;
+}
+
+/** Наибольшая задержка события итога Н-12, мс: минута — больше теста пульта не нужно. */
+const DELAY_MAX_MS = 60_000;
+
+/** Событие ленты — то, что нужно сбою Н-12: номер, тип, время записи и ссылки. */
+interface FeedEvent {
+  readonly event_id: string;
+  readonly type: string;
+  readonly at: string;
+  readonly data: unknown;
+}
+
+const isOutcome = (e: FeedEvent): boolean => e.type.startsWith("operation.");
+const opRefOf = (e: FeedEvent): DemoIds => {
+  const op_ref = (e.data as { op_ref?: unknown } | null)?.op_ref;
+  return typeof op_ref === "string" && op_ref !== "" ? { op_ref } : {};
+};
+
+/**
+ * Н-12 (РП75 п. 3): лента агента с поздним событием итога. Событие не теряется (инвариант 9): страница обрывается на первом
+ * задержанном событии — курсор агента его не перешагнёт. reorder — пара итогов отдаётся в обратном порядке; курсор встаёт
+ * на старшее, младшее приходит ещё раз следующим чтением (доставка «не менее одного раза», повтор — по event_id).
+ * delay_ms — по умолчанию defaultDelayMs (event_reorder_window_ms); время — часы стенда.
+ */
+export function delayedFeed<E extends FeedEvent>(
+  list: (agent_code: string, after: string | undefined, limit: number) => Promise<readonly E[]>,
+  faults: DemoFaults,
+  now: () => Date,
+  defaultDelayMs: number,
+): (agent_code: string, after: string | undefined, limit: number) => Promise<readonly E[]> {
+  const logged = new Set<string>();
+  const released = new Set<string>();
+  const once = (id: string, what: DemoLogWhat, ids: DemoIds): void => {
+    if (logged.has(id)) return;
+    logged.add(id);
+    faults.fired("Н-12", what, ids);
+  };
+  return async (agent_code, after, limit) => {
+    const page = await list(agent_code, after, limit);
+    const o = faults.armed("Н-12");
+    if (!o) return page;
+    const delay = o.delay_ms ?? defaultDelayMs;
+    const young = (e: E): boolean => now().getTime() - Date.parse(e.at) < delay;
+    const i = page.findIndex((e) => isOutcome(e) && !released.has(e.event_id));
+    if (i < 0) return page;
+    const first = page[i]!;
+    if (o.reorder === true) {
+      const j = page.findIndex((e, k) => k > i && isOutcome(e) && !released.has(e.event_id));
+      if (j < 0) {
+        // Пары ещё нет: первый итог ждёт второго не дольше задержки, потом идёт как есть.
+        if (!young(first)) {
+          released.add(first.event_id);
+          return page;
+        }
+        return page.slice(0, i);
+      }
+      const second = page[j]!;
+      released.add(first.event_id);
+      released.add(second.event_id);
+      once(`${first.event_id}|${second.event_id}`, "OUTCOME_EVENTS_REORDERED", opRefOf(second));
+      return [...page.slice(0, i), second, first];
+    }
+    // Задержка: старше задержки — идёт и больше не держится; первое молодое — обрыв страницы перед ним.
+    for (let k = i; k < page.length; k++) {
+      const e = page[k]!;
+      if (!isOutcome(e) || released.has(e.event_id)) continue;
+      if (!young(e)) {
+        released.add(e.event_id);
+        continue;
+      }
+      once(e.event_id, "OUTCOME_EVENT_DELAYED", opRefOf(e));
+      return page.slice(0, k);
+    }
+    return page;
+  };
 }
 
 /** Витрины стенда — для проверки выбора витрины в настройках сбоя. */
@@ -129,6 +208,10 @@ function checkOptions(test: DemoTest, opts: unknown, shops: DemoShops): DemoFaul
   if (o.shop_id !== undefined && (typeof o.shop_id !== "string" || !shops.shop_ids.has(o.shop_id))) {
     throw new Error(`demo: shop_id ${String(o.shop_id)} — не витрина стенда`);
   }
+  if (o.delay_ms !== undefined && (!Number.isSafeInteger(o.delay_ms) || (o.delay_ms as number) < 1 || (o.delay_ms as number) > DELAY_MAX_MS)) {
+    throw new Error(`demo: delay_ms — целое 1…${DELAY_MAX_MS}`);
+  }
+  if (o.reorder !== undefined && typeof o.reorder !== "boolean") throw new Error("demo: reorder — булево");
   return Object.freeze({ ...(o as DemoFaultOptions) });
 }
 

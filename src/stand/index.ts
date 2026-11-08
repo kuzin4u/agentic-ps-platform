@@ -55,7 +55,7 @@ import { buildServer } from "../server.js";
 import { loadParams, type Params } from "../shared/config.js";
 import { holdLedger, StateService } from "../state/index.js";
 import { attachCallJournal, type StandCall } from "./calls.js";
-import { createDemo, type StandDemo } from "./demo.js";
+import { createDemo, delayedFeed, type StandDemo } from "./demo.js";
 import { createStandDns, type StandDns } from "./dns.js";
 
 export type { StandCall } from "./calls.js";
@@ -379,7 +379,20 @@ export function createStand(opts: StandOptions = {}): Stand {
   const pushFor = pushForRegistry(registry);
   // Приостановление и снятие — одно действие оператора со событием в ленте стенда (РП54 п. 1–2).
   const agentStatus = new AgentStatusService(registry, { events: consentStore, pushFor });
-  const consent: ConsentJournal = new ConsentJournal(consentStore, {
+  // Н-12 (РП75 п. 3): в демо-режиме журнал согласий читает ленту агента через задержку итогов; остальные читатели
+  // хранилища (доставка, итоги, исполнение) — без неё. Вне демо-режима — то же хранилище без обёртки.
+  // Одна обёртка на стенд: её состояние (отпущенные и записанные события) живёт между чтениями ленты.
+  const demoFeed = demoMode && delayedFeed(consentStore.listEvents.bind(consentStore), demoMode.faults, now, params.event_reorder_window_ms);
+  const journalStore: MemoryConsentStore = demoFeed
+    ? new Proxy(consentStore, {
+        get(target, prop) {
+          if (prop === "listEvents") return demoFeed;
+          const v: unknown = Reflect.get(target, prop, target);
+          return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+        },
+      })
+    : consentStore;
+  const consent: ConsentJournal = new ConsentJournal(journalStore, {
     now,
     revocationOrder: () => trusted.revocationOrder(),
     pushFor,
@@ -652,7 +665,11 @@ export function createStand(opts: StandOptions = {}): Stand {
     },
     async upkCode(confirmationId) {
       const r = await confirmationStore.get(confirmationId);
-      return r ? upkCodes.issue(confirmationId, r.expires_at) : undefined;
+      if (!r) return undefined;
+      const code = upkCodes.issue(confirmationId, r.expires_at);
+      // Н-11 (РП75 п. 3, В3 (б)): банк «утекает» код — в журнал только метка, без значения кода (инвариант 7).
+      if (demoMode?.faults.armed("Н-11")) demoMode.faults.fired("Н-11", "UPK_CODE_LEAKED", { confirmation_id: confirmationId });
+      return code;
     },
   };
   // Страница УПК: итог — из записи П6, решение — ПИ-8 того же сервера (как приложение банка), выбор СБП — по параметру.
