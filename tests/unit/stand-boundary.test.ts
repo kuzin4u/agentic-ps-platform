@@ -97,9 +97,18 @@ describe("РП25: граница «стенд ≠ рабочий сервер»"
     expect([...files].filter((f) => f.startsWith("src/env/") || f.startsWith("src/fixtures/"))).toEqual([]);
   });
 
+  // РП75 п. 1: режим сбоев демо-стенда — только в src/stand/demo.ts; buildServer (src/server.ts) его не видит.
+  it("граф импортов src/server.ts (buildServer) не содержит src/stand, в том числе режим сбоев демо-стенда", () => {
+    const { files, violations } = importGraph("src/server.ts");
+    expect(files).toContain("src/pao/verify.ts");
+    expect(violations).toEqual([]);
+    expect([...files].filter(inStand)).toEqual([]);
+  });
+
   it("обход видит стенд, если он импортирован (контроль самой проверки)", () => {
     expect([...importGraph("tests/support/stand.ts").files].filter(inStand).sort()).toEqual([
       "src/stand/calls.ts",
+      "src/stand/demo.ts",
       "src/stand/dns.ts",
       "src/stand/index.ts",
       "src/stand/merchants.ts",

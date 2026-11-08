@@ -35,6 +35,8 @@ export interface Params {
   readonly order_hold_sec: number;
   /** Только демо-стенд (РП75 п. 6–7): «Напомнить клиенту» продлевает запрос подтверждения и удержание заказа один раз. */
   readonly confirmation_remind_extend_sec: number;
+  /** Только демо-стенд (РП75 п. 7а): срок подтверждения и удержания заказа вместо order_hold_sec. */
+  readonly demo_order_hold_sec: number;
   readonly confirm_above_kop: number;
   readonly split_window_sec: number;
   readonly split_min_ops: number;
@@ -184,6 +186,7 @@ const RULES: Record<keyof Params, Rule> = {
   cryptogram_ttl_sec: int(1),
   order_hold_sec: int(1),
   confirmation_remind_extend_sec: int(1),
+  demo_order_hold_sec: int(1),
   confirm_above_kop: int(1),
   split_window_sec: int(1),
   split_min_ops: int(2),
