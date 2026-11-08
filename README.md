@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.38.0** (SEC-2 «Проверка безопасности перед пилотом»: лимит частоты у API для продавцов и ПИ-8 — 429 `RATE_LIMITED`, отчёт «готовность к пилоту», сканер журналов; агенту обязательного нет; ПАО — по-прежнему 1.4.0; РП73). Подробности —
+Текущая версия — **v0.43.0** (режим сбоев демо-стенда и действия кнопок реакции для пульта DEMO-2 — РП75, #112; только `createStand({ demo: { faults: true } })`, без него стенд как в v0.42.0; агенту и ядру обязательного нет; ПАО — по-прежнему 1.4.0). Подробности —
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.42.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.43.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —
@@ -50,3 +50,9 @@ const bakery: Shop = { id: "SHOP-9001", merchant_id: "MER-9001", /* … */ readi
 const stand = createStand({ shops: [...SHOPS, bakery] }); // только свои витрины — { shops: [bakery] }
 const merchants = createMerchants(stand); // витрины — stand.shops
 ```
+
+Демо-стенд для пульта DEMO-2 (РП75, #112) — режим сбоев и действия кнопок реакции, только в демо-стенде приложения
+(не в песочнице и не в пилоте): `createStand({ demo: { faults: true } })` даёт `stand.demo` — `arm` / `disarm` сбоев
+вида «П» (Н-02…Н-05, Н-11, Н-12), `mark` нарушений вида «ПР», `log()`, действия `stopPurchase`, `remindClient`,
+`revokeMandate`, `sendToReview`; срок подтверждения и удержания заказа — `demo_order_hold_sec` (45 с). Без `demo` поля
+`stand.demo` нет. Подробности и коды — CHANGELOG v0.43.0 и DECISIONS РП75.

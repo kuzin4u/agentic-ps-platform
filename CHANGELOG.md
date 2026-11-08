@@ -7,6 +7,33 @@
 
 ## Не выпущено
 
+## v0.43.0 — 08.11.2026
+
+Сессии 79–80 (PR #113): режим сбоев демо-стенда и действия кнопок реакции для пульта DEMO-2 приложения по передаче #112 — РП75 (нюансы К2.1–К3.2). Минорная версия: новая опция `createStand({ demo })`, поле `stand.demo`, необязательное поле `StandCall.fault`, новый ключ параметров `demo_order_hold_sec`; без `demo` стенд ведёт себя как в v0.42.0.
+
+- **ПАО** — по-прежнему 1.4.0, `agent-protocol.yaml` не менялся, `PAO_SPEC_SHA256` прежний (`48bd3397…9ad9da`). **ПИ** — `processing-interface.yaml` не менялся. **Ядро** — `#v0.13.0` (без изменений). Зависимостей и миграций нет. `main.ts` и `buildServer` режима не видят — проверяет страж `tests/unit/stand-boundary.test.ts`.
+- **Параметры** (`config/params.stand.json`, PARAMS): `confirmation_remind_extend_sec` = 15 и `demo_order_hold_sec` = 45 — оба только для демо-стенда. Свой файл параметров (`PARAMS_PATH`) без этих ключей не загрузится (загрузчик fail-closed) — добавить оба.
+- **Переход:** приложению — поднять тег стенда до v0.43.0 и включить режим только в демо-стенде. Агенту и ядру — не нужен: режима дефектов у агента нет.
+
+### Тем, кто подключает стенд (приложению)
+
+- **`createStand({ demo: { faults: true } })`** — есть `stand.demo`; иначе (`demo` нет или `faults: false`) — `stand.demo === undefined`. В демо-режиме срок запроса подтверждения и удержания заказа у витрин — `demo_order_hold_sec` (45 с) вместо `order_hold_sec` (900 с).
+- **Сбои вида «П»** — `stand.demo.arm(test, opts?)` / `disarm(test)`: Н-02 (второй реквизит на новый запрос того же заказа, один раз), Н-03 (витрина «оплачено» до решения), Н-04 (`fulfilled_at` до решения), Н-05 (инструкция агенту в описании первой карточки), Н-11 (метка утечки кода УПК, без значения), Н-12 (задержка `delay_ms` или перестановка `reorder` событий `operation.*` в ленте `GET /pao/v1/events`; push не задерживается). Настройки: у Н-03 / Н-04 / Н-05 — `shop_id` или `merchant_id` витрины стенда; у Н-12 — `delay_ms` (1…60 000), `reorder`. Иное — исключение.
+- **Нарушения вида «ПР»** (Н-01, Н-05, Н-06…Н-09) разыгрывает приложение ключом своего агента и ставит `stand.demo.mark(test, ids)`; Н-10 — не воспроизводится (инвариант 1).
+- **Действия кнопок реакции:** `stopPurchase(cart_mandate_id)` — отзыв CART через банк стенда и отказ ожидающих запросов подтверждения по нему, ответ `{statusCode, body, rejected}`; `remindClient(confirmation_id)` — один раз +15 с запросу и удержанию заказа, ответ `{confirmation_id, expires_at, extended}`; `revokeMandate(mandate_id)` — отзыв клиентом; `sendToReview({tx, condition, violator})` — только запись. Неверный аргумент — исключение без записи.
+- **Журнал** `stand.demo.log()` — `{seq, at, kind, test?, what, ids, review?}`, `at` — часы стенда; только коды и идентификаторы (`mandate_id`, `confirmation_id`, `op_ref`, `merchant_id`, `shop_id`, `order_id`, `order_ref`), без тел, реквизитов и кодов подтверждения.
+- **`StandCall.fault?: "Н-02" | "Н-12"`** — у обращения к стенду, ответ на которое изменил сбой; без режима поля нет.
+- **Коды защиты по строкам «ПР»** (РП75 нюансы К3.2): Н-01 — витрина `409 ORDER_NOT_PAYABLE`; Н-06 — реквизит `409 MANDATE_REVOKED`, авторизация — ADP `MANDATE_REVOKED`; Н-07 — `409 PRINCIPAL_SIGNATURE_PENDING`; Н-08 — витрина `409 PACKAGE_MISMATCH`, реквизит сверх CART `409 MANDATE_SCOPE`, авторизация сверх CART — ADP `LIMIT_EXCEEDED`; Н-09 — витрина `409 PACKAGE_MISMATCH`, переписанный пакет — ADP `CREDENTIAL_INVALID`, реквизит на чужого продавца `409 MANDATE_SCOPE`.
+
+### Документы
+
+- DECISIONS РП75 — режим сбоев и действия демо-стенда; нюансы К2.1, К2.2, К2.3, К3.1, К3.2. Р-1347: `MemoryConfirmationStore.extendPending` — только для стенда, не в интерфейсе `ConfirmationStore`. SPEC §9 — абзац о режиме; PARAMS — два ключа; STATUS «Открыто» — ADP не сверяет сумму операции с итогом CART (РП75 п. 9 (а), перед пилотом с банком).
+- README — версия стенда и абзац о демо-режиме.
+
+### Проверено тестами
+
+- `tests/unit/stand-demo.test.ts` (14), `tests/env/merchants-faults.test.ts` (7), `tests/unit/stand-demo-events.test.ts` (8), `tests/unit/stand-demo-credentials.test.ts` (6), `tests/unit/stand-demo-actions.test.ts` (8), `tests/unit/stand-demo-guards.test.ts` (6); страж `tests/unit/stand-boundary.test.ts` — граф `buildServer` без `src/stand`, `extendPending` только в стенде. Поломки по каждому кирпичу — красные своей причиной, откаты точные.
+
 ## v0.42.0 — 06.11.2026
 
 Сессия 75 (PR #108): код агента в журнале обращений стенда по передаче агента #90 (AG-20 ч. 2) — РП25 «Дополнение STAND-69», нюанс #90. Минорная версия: новое необязательное поле в записи `stand.calls()`.
