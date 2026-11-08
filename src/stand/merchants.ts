@@ -13,6 +13,8 @@ import {
   type Shop,
   type ShopListFailure,
 } from "../env/merchants/index.js";
+import type { MerchantFaultPort } from "../env/merchants/server.js";
+import { demoFaultsOf } from "./demo.js";
 import type { Stand } from "./index.js";
 
 export interface MerchantsStandOptions {
@@ -93,6 +95,14 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     skewSec: stand.params.signature_skew_sec,
     now: stand.now,
   });
+  // Сбои витрин демо-стенда (РП75 п. 2–3): только у стенда с режимом сбоев — его журнал и его включённые сбои.
+  const demo = demoFaultsOf(stand.demo);
+  const faults: MerchantFaultPort | undefined = demo && {
+    active: (test, shop) => demo.armedFor(test, shop),
+    fired: (test, what, ids) => demo.fired(test, what, ids),
+    // «Напомнить клиенту» (РП75 п. 6) продлевает и удержание заказа у витрины.
+    holdExtensionMs: (merchant_id, order_id) => demo.holdExtensionMs(merchant_id, order_id),
+  };
   let shopListFailure: ShopListFailure | null = null;
   let orderReplyFailure: OrderReplyFailure | null = null;
   const app = buildMerchantsServer({
@@ -105,6 +115,7 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     orderReplyFailure: () => orderReplyFailure,
     now: stand.now,
     shops,
+    ...(faults ? { faults } : {}),
   });
   return {
     app,

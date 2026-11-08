@@ -4,6 +4,7 @@
 // заголовкам клиента.
 import { Socket } from "node:net";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { DemoTest } from "./demo.js";
 
 export interface StandCall {
   readonly method: string;
@@ -25,6 +26,11 @@ export interface StandCall {
   readonly idempotency_key?: string;
   /** network — по сети (сокет Node, TCP или TLS); inject — app.inject: участники самого стенда и тестовая поддержка. */
   readonly source: "network" | "inject";
+  /**
+   * Только демо-стенд с режимом сбоев (РП75 п. 5): тест пульта, сбой которого изменил ответ на это обращение (Н-02 —
+   * второй реквизит, Н-12 — лента с задержанным событием итога). Без режима и без сбоя поля нет.
+   */
+  readonly fault?: DemoTest;
 }
 
 const KEYID = /;keyid="([^"]+)"/;
@@ -49,7 +55,10 @@ function errorCode(payload: unknown): string | undefined {
  * Хуки журнала — до загрузки приложения (в createStand сразу после buildServer). onSend берёт code из тела ответа,
  * onResponse пишет запись; отказы транспорта (404 / 413 / 414 Fastify) проходят те же хуки. Наружу — копия журнала.
  */
-export function attachCallJournal(app: FastifyInstance): () => readonly StandCall[] {
+export function attachCallJournal(
+  app: FastifyInstance,
+  faultOf?: (req: FastifyRequest) => DemoTest | undefined,
+): () => readonly StandCall[] {
   const calls: StandCall[] = [];
   const codes = new WeakMap<FastifyRequest, string>();
   app.addHook("onSend", async (req, reply, payload) => {
@@ -65,6 +74,7 @@ export function attachCallJournal(app: FastifyInstance): () => readonly StandCal
     const nonce = header(req, "x-nonce");
     const idempotency_key = header(req, "idempotency-key");
     const code = codes.get(req);
+    const fault = faultOf?.(req);
     calls.push(
       Object.freeze({
         method: req.method,
@@ -76,6 +86,7 @@ export function attachCallJournal(app: FastifyInstance): () => readonly StandCal
         ...(nonce === undefined ? {} : { nonce }),
         ...(idempotency_key === undefined ? {} : { idempotency_key }),
         source: req.raw.socket instanceof Socket ? "network" : "inject",
+        ...(fault === undefined ? {} : { fault }),
       }),
     );
   });

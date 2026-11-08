@@ -110,6 +110,22 @@ export class MemoryConfirmationStore implements ConfirmationStore {
     return r && structuredClone(r);
   }
 
+  /**
+   * Только демо-стенд — действие «Напомнить клиенту» (РП75 п. 6, Р-1347): срок PENDING-запроса до истечения сдвигается на
+   * by_sec. Меняется только expires_at: итоговые значения, totals_hash и confirmation_ref — нет (инвариант 7); события нет
+   * (в ПАО такого типа нет — новый срок агент видит в GET). Не в интерфейсе ConfirmationStore и не у PgConfirmationStore:
+   * рабочему серверу и песочнице метод недоступен (страж — tests/unit/stand-boundary.test.ts). Однократность держит стенд.
+   * Не PENDING или срок вышел — undefined, запись не меняется.
+   */
+  async extendPending(confirmation_id: string, by_sec: number, now: string): Promise<ConfirmationRecord | undefined> {
+    if (!Number.isSafeInteger(by_sec) || by_sec < 1) throw new Error("confirmations: by_sec — целое ≥ 1");
+    const r = this.#rows.get(confirmation_id);
+    if (!r || r.status !== "PENDING" || !(r.expires_at > now)) return undefined;
+    const next: ConfirmationRecord = { ...r, expires_at: new Date(Date.parse(r.expires_at) + by_sec * 1000).toISOString() };
+    this.#rows.set(confirmation_id, structuredClone(next));
+    return next;
+  }
+
   async expire(confirmation_id: string, now: string): Promise<boolean> {
     // agent_code запроса не меняется: строка push — по нему, до проверки состояния.
     const agent_code = this.#rows.get(confirmation_id)?.agent_code;
