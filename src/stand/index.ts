@@ -57,7 +57,7 @@ import { buildServer } from "../server.js";
 import { loadParams, type Params } from "../shared/config.js";
 import { holdLedger, StateService } from "../state/index.js";
 import { attachCallJournal, type StandCall } from "./calls.js";
-import { createDemo, delayedFeed, type StandDemo } from "./demo.js";
+import { createDemo, delayedFeed, demoKind, type DemoOptions, type StandDemo } from "./demo.js";
 import { demoCredentials } from "./demo-credentials.js";
 import { demoActions } from "./demo-actions.js";
 import { createStandDns, type StandDns } from "./dns.js";
@@ -72,6 +72,7 @@ export {
   type DemoGatewayReply,
   type DemoIds,
   type DemoLogEntry,
+  type DemoOptions,
   type DemoReview,
   type DemoTest,
   type DemoViolator,
@@ -203,11 +204,12 @@ export interface StandOptions {
    */
   readonly shops?: readonly Shop[];
   /**
-   * Режим сбоев демо-стенда для пульта DEMO-2 (РП75): только `faults: true` — иначе `stand.demo` нет. В демо-режиме срок
-   * запроса подтверждения и удержания заказа — `demo_order_hold_sec` вместо `order_hold_sec` (РП75 п. 7а), в том числе
-   * в `stand.params`.
+   * Режим демо-стенда для пульта DEMO-2 (РП75, дополнение #115): `faults: true` — сбои и действия кнопок реакции;
+   * `actions: true` без `faults` — только действия, сбои не подключаются; иначе `stand.demo` нет. `faults: true` при
+   * `actions: false` — исключение. Только при `faults: true` срок запроса подтверждения и удержания заказа —
+   * `demo_order_hold_sec` вместо `order_hold_sec` (РП75 п. 7а), в том числе в `stand.params`.
    */
-  readonly demo?: { readonly faults: boolean };
+  readonly demo?: DemoOptions;
 }
 
 export interface IssuerConfirmOptions {
@@ -314,27 +316,44 @@ export interface Stand {
   /** Запуск на 127.0.0.1 и свободном порту; возвращает базовый адрес для клиента ПАО. */
   listen(): Promise<string>;
   close(): Promise<void>;
-  /** Режим сбоев демо-стенда (РП75): есть только при `createStand({ demo: { faults: true } })`. */
+  /** Режим демо-стенда (РП75, дополнение #115): есть только при `demo: { faults: true }` или `demo: { actions: true }`. */
   readonly demo?: StandDemo;
 }
 
 // Хранилище и проверка подписи наружу не отдаются: через хранилище тест мог бы записать агента в обход допуска
 // (инвариант 5). Параметры — только config/params.stand.json Платформы или PARAMS_PATH (РП25 п. 4).
 export function createStand(opts: StandOptions = {}): Stand {
-  // Демо-режим (РП75 п. 1, 7а): только faults: true. Срок подтверждения и удержания заказа — короткий параметр стенда,
-  // подменённый здесь один раз: его читают ADP (ниже) и витрины (createMerchants — из stand.params).
-  const demoOn = opts.demo?.faults === true;
+  // Демо-режим (РП75 п. 1, 7а, дополнение #115): вид — до всего остального, противоречивые опции — исключение. Короткий
+  // срок подтверждения и удержания заказа — только при сбоях, подменён здесь один раз: его читают ADP (ниже) и витрины
+  // (createMerchants — из stand.params). «Только действия» — order_hold_sec; срок реквизита не короче удержания с
+  // продлением (дополнение #115 п. 4а): продавец повторяет авторизацию прежним реквизитом после подтверждения.
+  const kind = demoKind(opts.demo);
   const loaded = loadParams();
-  const params: Params = demoOn ? Object.freeze({ ...loaded, order_hold_sec: loaded.demo_order_hold_sec }) : loaded;
+  const params: Params =
+    kind === "faults"
+      ? Object.freeze({
+          ...loaded,
+          order_hold_sec: loaded.demo_order_hold_sec,
+          confirmation_remind_extend_sec: loaded.demo_confirmation_remind_extend_sec,
+        })
+      : kind === "actions"
+        ? Object.freeze({
+            ...loaded,
+            cryptogram_ttl_sec: Math.max(loaded.cryptogram_ttl_sec, loaded.order_hold_sec + loaded.confirmation_remind_extend_sec),
+          })
+        : loaded;
   // Один источник витрин стенда (РП25 дополнение #106 п. 2): справочник, эквайрер, знаки и createMerchants. Сверка
   // (п. 4) — по замороженной копии, той самой, что пойдёт в стенд; неверный набор — исключение, стенд не создаётся.
   const shops = frozenShopSet(opts.shops ?? SHOPS);
   validateShopSet(shops);
   let clock: Date | undefined;
   const now = (): Date => clock ?? new Date();
-  const demoMode = demoOn
-    ? createDemo(now, { shop_ids: new Set(shops.map((s) => s.id)), merchant_ids: new Set(shops.map((s) => s.merchant_id)) })
+  const demoMode = kind
+    ? createDemo(now, { shop_ids: new Set(shops.map((s) => s.id)), merchant_ids: new Set(shops.map((s) => s.merchant_id)) }, kind === "faults")
     : undefined;
+  // Сбои стенда (Н-02, Н-11, Н-12, StandCall.fault) — только при faults: true; «только действия» собирается без обёрток
+  // сбоев, как стенд без режима (дополнение #115 п. 2).
+  const demoFaults = demoMode?.faults.on ? demoMode : undefined;
   const store = new InMemoryAgentRegistryStore();
   // УЦ стенда — в памяти, CSR необязателен (РП65 п. 1): агент на стенде CSR не шлёт. Срок УЦ отсчитывается от часов при
   // создании стенда: допуск с CSR при часах раньше этого — исключение УЦ «вне срока».
@@ -391,7 +410,7 @@ export function createStand(opts: StandOptions = {}): Stand {
   // Н-12 (РП75 п. 3): в демо-режиме журнал согласий читает ленту агента через задержку итогов; остальные читатели
   // хранилища (доставка, итоги, исполнение) — без неё. Вне демо-режима — то же хранилище без обёртки.
   // Одна обёртка на стенд: её состояние (отпущенные и записанные события) живёт между чтениями ленты.
-  const demoFeed = demoMode && delayedFeed(consentStore.listEvents.bind(consentStore), demoMode.faults, now, params.event_reorder_window_ms);
+  const demoFeed = demoFaults && delayedFeed(consentStore.listEvents.bind(consentStore), demoFaults.faults, now, params.event_reorder_window_ms);
   const journalStore: MemoryConsentStore = demoFeed
     ? new Proxy(consentStore, {
         get(target, prop) {
@@ -475,7 +494,7 @@ export function createStand(opts: StandOptions = {}): Stand {
   // Н-02 (РП75 п. 3): в демо-режиме — хранилище П5 с подменой «второй реквизит на повтор»; его видят все читатели
   // стенда (выдача, ADP, сверка). Вне демо-режима — хранилище в памяти без обёртки.
   const rawCredentialStore = new MemoryCredentialStore();
-  const demoCreds = demoMode && demoCredentials(rawCredentialStore, demoMode.faults);
+  const demoCreds = demoFaults && demoCredentials(rawCredentialStore, demoFaults.faults);
   const credentialStore: CredentialStore = demoCreds ? demoCreds.store : rawCredentialStore;
   // Подтверждение человеком (П6, РП50): запросы ADP и решения банка стенда — одно хранилище в памяти; переходы пишут
   // события confirmation.* в ленту журнала стенда (РП51 п. 1–3), push — по тому же правилу, что у мандатов.
@@ -587,7 +606,7 @@ export function createStand(opts: StandOptions = {}): Stand {
   });
   // Журнал обращений (STAND-69) — до первого app.inject (подача знаков ниже): хуки регистрируются до загрузки приложения.
   // Пометка сбоя у обращения (РП75 п. 5) — только в демо-режиме: контекст обращения ставит режим сбоев.
-  const calls = attachCallJournal(app, demoMode?.attachCalls(app));
+  const calls = attachCallJournal(app, demoFaults?.attachCalls(app));
   const issuer: StandIssuer = {
     participant_code: emulator.participant_code,
     trustedKey: emulator.trustedKey,
@@ -689,7 +708,7 @@ export function createStand(opts: StandOptions = {}): Stand {
       if (!r) return undefined;
       const code = upkCodes.issue(confirmationId, r.expires_at);
       // Н-11 (РП75 п. 3, В3 (б)): банк «утекает» код — в журнал только метка, без значения кода (инвариант 7).
-      if (demoMode?.faults.armed("Н-11")) demoMode.faults.fired("Н-11", "UPK_CODE_LEAKED", { confirmation_id: confirmationId });
+      if (demoFaults?.faults.armed("Н-11")) demoFaults.faults.fired("Н-11", "UPK_CODE_LEAKED", { confirmation_id: confirmationId });
       return code;
     },
   };

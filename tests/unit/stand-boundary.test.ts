@@ -105,6 +105,20 @@ describe("РП25: граница «стенд ≠ рабочий сервер»"
     expect([...files].filter(inStand)).toEqual([]);
   });
 
+  // РП75 дополнение #115 п. 5: вид «только действия» (demo: { actions: true }) живёт в тех же модулях режима — ни
+  // src/main.ts, ни buildServer не видят ни их, ни выбора вида (demoKind).
+  it("«только действия»: модули режима и demoKind — вне графов src/main.ts и src/server.ts", () => {
+    const mode = ["src/stand/demo.ts", "src/stand/demo-actions.ts"];
+    for (const root of ["src/main.ts", "src/server.ts"]) {
+      const { files } = importGraph(root);
+      expect(mode.filter((f) => files.has(f))).toEqual([]);
+      const own = [...files].filter((f) => f.startsWith("src/") && readFileSync(resolve(ROOT, f), "utf8").includes("demoKind"));
+      expect(own).toEqual([]);
+    }
+    // Контроль самой проверки: вид выбирается в сборке стенда.
+    expect(readFileSync(resolve(ROOT, "src/stand/index.ts"), "utf8")).toContain("demoKind(opts.demo)");
+  });
+
   it("обход видит стенд, если он импортирован (контроль самой проверки)", () => {
     expect([...importGraph("tests/support/stand.ts").files].filter(inStand).sort()).toEqual([
       "src/stand/calls.ts",

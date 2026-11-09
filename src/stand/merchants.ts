@@ -95,11 +95,15 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     skewSec: stand.params.signature_skew_sec,
     now: stand.now,
   });
-  // Сбои витрин демо-стенда (РП75 п. 2–3): только у стенда с режимом сбоев — его журнал и его включённые сбои.
+  // Сбои витрин демо-стенда (РП75 п. 2–3): только у стенда с режимом сбоев — его журнал и его включённые сбои. «Только
+  // действия» (дополнение #115 п. 2): сбои витрин не подключаются, остаётся продление удержания.
   const demo = demoFaultsOf(stand.demo);
   const faults: MerchantFaultPort | undefined = demo && {
-    active: (test, shop) => demo.armedFor(test, shop),
-    fired: (test, what, ids) => demo.fired(test, what, ids),
+    active: (test, shop) => demo.on && demo.armedFor(test, shop),
+    fired: (test, what, ids) => {
+      if (!demo.on) throw new Error("demo: сбои витрин выключены (РП75 дополнение #115)");
+      demo.fired(test, what, ids);
+    },
     // «Напомнить клиенту» (РП75 п. 6) продлевает и удержание заказа у витрины.
     holdExtensionMs: (merchant_id, order_id) => demo.holdExtensionMs(merchant_id, order_id),
   };
