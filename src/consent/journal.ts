@@ -382,7 +382,7 @@ export class ConsentJournal {
   async revoke(
     d: MandateRevocationPayload,
     verifySignature: (d: MandateRevocationPayload) => boolean,
-  ): Promise<{ readonly id: string; readonly status: MandateStatus; readonly replayed: boolean }> {
+  ): Promise<{ readonly id: string; readonly status: MandateStatus; readonly replayed: boolean; readonly agent_code: string }> {
     if (!verifySignature(d)) throw new ConsentSignRejected("SIGNATURE_INVALID", d.mandate_id);
     return this.locked(d.mandate_id, async () => {
       const id = d.mandate_id;
@@ -390,9 +390,11 @@ export class ConsentJournal {
       const m = row && (await this.load(id, row.agent_code));
       if (!row || !m) throw new ConsentSignRejected("MANDATE_NOT_FOUND", id);
       if (d.mandate_hash !== m.head.hash) throw new ConsentSignRejected("MANDATE_HASH_MISMATCH", id);
-      if (!revocable(m.status)) return { id, status: m.status, replayed: true };
+      // agent_code — для закрытия запросов подтверждения агента после отзыва (РП76 п. 1); банку не отдаётся.
+      const agent_code = row.agent_code;
+      if (!revocable(m.status)) return { id, status: m.status, replayed: true, agent_code };
       await (await this.chainJournal(row.chain, undefined, mandateEvent(row.agent_code, "MANDATE_REVOKED", id))).append("MANDATE_REVOKED", id, d, id);
-      return { id, status: await this.statusAfterWrite(id, row.agent_code), replayed: false };
+      return { id, status: await this.statusAfterWrite(id, row.agent_code), replayed: false, agent_code };
     });
   }
 
@@ -407,7 +409,14 @@ export class ConsentJournal {
   async revokeAll(
     d: PrincipalRevocationPayload,
     verifySignature: (d: PrincipalRevocationPayload) => boolean,
-  ): Promise<{ readonly principal_ref: string; readonly revocation_ref: string; readonly revoked: number; readonly replayed: boolean }> {
+  ): Promise<{
+    readonly principal_ref: string;
+    readonly revocation_ref: string;
+    readonly revoked: number;
+    readonly replayed: boolean;
+    /** Агенты мандатов пары до метки — для закрытия их запросов подтверждения (РП76 п. 1); банку не отдаётся. */
+    readonly agent_codes: readonly string[];
+  }> {
     if (!verifySignature(d)) throw new ConsentSignRejected("SIGNATURE_INVALID", d.principal_ref);
     const pair: PrincipalPair = { participant_code: d.participant_code, principal_ref: d.principal_ref };
     const record = canonicalJson(d);
@@ -445,7 +454,9 @@ export class ConsentJournal {
       },
       this.now().toISOString(),
     );
-    return { principal_ref: d.principal_ref, revocation_ref: d.revocation_ref, revoked, replayed };
+    // Все агенты пары до метки, а не только записанных этим вызовом: повтор после сбоя прохода доотклоняет (РП76 п. 6).
+    const agent_codes = [...new Set(loaded.map((m) => m.row.agent_code))];
+    return { principal_ref: d.principal_ref, revocation_ref: d.revocation_ref, revoked, replayed, agent_codes };
   }
 
   /**

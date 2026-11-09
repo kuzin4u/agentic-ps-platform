@@ -130,7 +130,8 @@ describe("stopPurchase (В5): отзыв CART через банк стенда �
     const events = await t.feed();
     expect(events.filter((e) => e.type === "mandate.revoked" && e.data.mandate_id === a.cartId)).toHaveLength(1);
     expect(events.filter((e) => e.type === "confirmation.rejected" && e.data.confirmation_id === a.confirmation_id)).toHaveLength(1);
-    expect((await t.s.confirmations.get(a.confirmation_id))?.status).toBe("REJECTED");
+    // Закрыл сам отзыв (РП76 п. 8): без решения банка, с closed — своего отказа у stopPurchase нет.
+    expect(await t.s.confirmations.get(a.confirmation_id)).toMatchObject({ status: "REJECTED", decision: null, closed: { reason: "MANDATE_REVOKED" } });
     const d = await t.authorize(a.cred, a.order_id, `OPKC-${a.order_id}-stop`);
     expect(d).toMatchObject({ decision: "DECLINE", reason: "MANDATE_REVOKED" });
     expect(t.actions().map((e) => [e.what, e.ids])).toEqual([

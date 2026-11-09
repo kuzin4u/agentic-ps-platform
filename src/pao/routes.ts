@@ -16,6 +16,7 @@ import { ADDRESS_RATE_IPV6_SUBNET, ADDRESS_RATE_WINDOW_MS, rateLimitKey, retryAf
 import type { AgentSelf, Credential } from "../shared/pao.js";
 import { CONFIRMATION_ID, type ConfirmationRecord } from "../confirm/model.js";
 import type { ConfirmationStore } from "../confirm/store.js";
+import { ConfirmationsNotClosed, type CloseRevoked } from "../confirm/revoked.js";
 import { CREDENTIAL_REF } from "../credentials/model.js";
 import type { Credentials } from "../credentials/service.js";
 import { operationFor, operationsFor, type OperationViewDeps } from "../fulfilment/view.js";
@@ -75,6 +76,11 @@ export interface PaoDeps {
     readonly now: () => Date;
     readonly upk_page_base_url: string;
   };
+  /**
+   * Закрытие ожидающих запросов подтверждения агента после отказа от полномочий (РП76 п. 1, 6) — и при повторе по уже
+   * отозванному. Без П6 — нет. Сбой — 503 STATE_UNAVAILABLE: под ключом не сохраняется (РП30 п. 3), повтор доотклоняет.
+   */
+  readonly closeRevoked?: CloseRevoked;
   /**
    * Записи операций ADP и итоги П8 (РП52 п. 10, РП53 п. 10); без них GET /pao/v1/operations/{op_ref} не регистрируется:
    * ADP в рабочем сервере не подключена — только стенд и тесты.
@@ -643,9 +649,15 @@ export async function paoRoutes(app: FastifyInstance, deps: PaoDeps): Promise<vo
       try {
         const m = await deps.consent.relinquish(id, agent.agent_code, req.paoKid as string);
         if (!m) return reply4xx(paoError("MANDATE_NOT_FOUND", "A7 п. 9.1"));
+        // После записи и при повторе по уже отозванному — закрыть ожидающие запросы подтверждения агента (РП76 п. 1).
+        if (m.status === "REVOKED" && deps.closeRevoked) await deps.closeRevoked(agent.agent_code);
         req.log.info({ agent_code: agent.agent_code, mandate_id: id, status: m.status }, "ПАО: отказ агента от полномочий");
         return { status: 200, body: m };
       } catch (err) {
+        if (err instanceof ConfirmationsNotClosed) {
+          req.log.error({ err: err.cause, agent_code: agent.agent_code, mandate_id: id }, "ПАО: отказ записан, запросы подтверждения не закрыты — повтор доотклонит");
+          return reply4xx(paoError("STATE_UNAVAILABLE", "A7 п. 6"));
+        }
         const e = consentErrorReply(err);
         if (!e) throw err;
         req.log.error({ err, agent_code: agent.agent_code }, "ПАО: журнал согласий — состояние не подтверждено");

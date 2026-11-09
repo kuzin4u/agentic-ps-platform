@@ -8,10 +8,8 @@ import type { DemoActionSink, DemoActions, DemoGatewayReply } from "./demo.js";
 export interface DemoActionDeps {
   /** Тип мандата по журналу согласий; неизвестный — undefined. */
   readonly mandateType: (mandate_id: string) => Promise<string | undefined>;
-  /** Отзыв мандата клиентом через банк стенда (ПИ-8 revoke, РП38). */
+  /** Отзыв мандата клиентом через банк стенда (ПИ-8 revoke, РП38): закрывает и ожидающие запросы подтверждения (РП76). */
   readonly revoke: (mandate_id: string) => Promise<DemoGatewayReply>;
-  /** Отказ клиента по запросу подтверждения через банк стенда (ПИ-8, РП50 п. 4). */
-  readonly reject: (confirmation_id: string) => Promise<DemoGatewayReply>;
   readonly confirmations: Pick<MemoryConfirmationStore, "get" | "confirmationIds" | "extendPending">;
   /** confirmation_remind_extend_sec. */
   readonly remindExtendSec: number;
@@ -31,18 +29,22 @@ export function demoActions(deps: DemoActionDeps, sink: DemoActionSink): Omit<De
       const type = await deps.mandateType(cart_mandate_id);
       if (type === undefined) throw new Error(`demo: мандат ${cart_mandate_id} не найден`);
       if (type !== "CART") throw new Error(`demo: остановить покупку — только CART, у ${cart_mandate_id} ${type}`);
-      const res = await revokeAs(cart_mandate_id, "PURCHASE_STOPPED");
-      if (res.statusCode !== 200) return { ...res, rejected: [] };
-      // Ожидающие запросы по CART — отказ клиента тем же действием (РП75 п. 6): агент получает confirmation.rejected.
-      const rejected: string[] = [];
+      // Ожидающие запросы по CART до отзыва: их закрывает сам отзыв (РП76 п. 1, 8) — своего отказа нет, событие одно.
       const at = deps.now().toISOString();
+      const pending: string[] = [];
       for (const id of deps.confirmations.confirmationIds()) {
         const r = await deps.confirmations.get(id);
-        if (!r || r.mandate_id !== cart_mandate_id || r.status !== "PENDING" || !(r.expires_at > at)) continue;
-        const d = await deps.reject(id);
-        const ok = d.statusCode === 200;
-        if (ok) rejected.push(id);
-        sink.acted(ok ? "CONFIRMATION_REJECTED" : "ACTION_REFUSED", { mandate_id: cart_mandate_id, confirmation_id: id });
+        if (r && r.mandate_id === cart_mandate_id && r.status === "PENDING" && r.expires_at > at) pending.push(id);
+      }
+      const res = await revokeAs(cart_mandate_id, "PURCHASE_STOPPED");
+      if (res.statusCode !== 200) return { ...res, rejected: [] };
+      // Закрытые отзывом — REJECTED с closed (РП76 п. 3): по записи CONFIRMATION_REJECTED на запрос.
+      const rejected: string[] = [];
+      for (const id of pending) {
+        const r = await deps.confirmations.get(id);
+        if (r?.status !== "REJECTED" || r.closed === undefined) continue;
+        rejected.push(id);
+        sink.acted("CONFIRMATION_REJECTED", { mandate_id: cart_mandate_id, confirmation_id: id });
       }
       return { ...res, rejected };
     },
