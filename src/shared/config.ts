@@ -37,6 +37,8 @@ export interface Params {
   readonly confirmation_remind_extend_sec: number;
   /** Только демо-стенд (РП75 п. 7а): срок подтверждения и удержания заказа вместо order_hold_sec. */
   readonly demo_order_hold_sec: number;
+  /** Только демо-стенд с режимом сбоев (РП75 дополнение #115 п. 4): продление вместо confirmation_remind_extend_sec. */
+  readonly demo_confirmation_remind_extend_sec: number;
   readonly confirm_above_kop: number;
   readonly split_window_sec: number;
   readonly split_min_ops: number;
@@ -187,6 +189,7 @@ const RULES: Record<keyof Params, Rule> = {
   order_hold_sec: int(1),
   confirmation_remind_extend_sec: int(1),
   demo_order_hold_sec: int(1),
+  demo_confirmation_remind_extend_sec: int(1),
   confirm_above_kop: int(1),
   split_window_sec: int(1),
   split_min_ops: int(2),

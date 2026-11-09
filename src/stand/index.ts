@@ -331,7 +331,11 @@ export function createStand(opts: StandOptions = {}): Stand {
   const loaded = loadParams();
   const params: Params =
     kind === "faults"
-      ? Object.freeze({ ...loaded, order_hold_sec: loaded.demo_order_hold_sec })
+      ? Object.freeze({
+          ...loaded,
+          order_hold_sec: loaded.demo_order_hold_sec,
+          confirmation_remind_extend_sec: loaded.demo_confirmation_remind_extend_sec,
+        })
       : kind === "actions"
         ? Object.freeze({
             ...loaded,

@@ -75,6 +75,17 @@ describe("РП75 дополнение #115 п. 1: опции actions / faults", 
     expect(s.params.cryptogram_ttl_sec).toBe(s.params.order_hold_sec + s.params.confirmation_remind_extend_sec);
     expect(Object.isFrozen(s.params)).toBe(true);
   });
+
+  it("п. 4: продление — 300 с без режима и при «только действия» (реквизит 1 200 с); при faults — demo_confirmation_remind_extend_sec (15 с)", () => {
+    expect(open().params.confirmation_remind_extend_sec).toBe(300);
+    const only = open({ demo: { actions: true } });
+    expect(only.params.confirmation_remind_extend_sec).toBe(300);
+    expect(only.params.cryptogram_ttl_sec).toBe(1_200);
+    const f = open({ demo: { faults: true } });
+    expect(f.params.demo_confirmation_remind_extend_sec).toBe(15);
+    expect(f.params.confirmation_remind_extend_sec).toBe(f.params.demo_confirmation_remind_extend_sec);
+    expect(f.params.cryptogram_ttl_sec).toBe(900);
+  });
 });
 
 describe("РП75 п. 2–4: arm / disarm / mark / log", () => {
