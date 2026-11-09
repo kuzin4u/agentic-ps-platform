@@ -21,4 +21,7 @@ $$;
 ALTER TABLE confirmations
   -- Причина и момент закрытия — заданы оба или ни один; только у REJECTED.
   ADD CONSTRAINT confirmations_closed_pair CHECK ((closed_reason IS NULL) = (closed_at IS NULL)),
-  ADD CONSTRAINT confirmations_closed_rejected CHECK (closed_reason IS NULL OR status = 'REJECTED');
+  ADD CONSTRAINT confirmations_closed_rejected CHECK (closed_reason IS NULL OR status = 'REJECTED'),
+  -- Запись решения обязательна у APPROVED, USED и у REJECTED без closed_reason; запрещена, если closed_reason задан.
+  ADD CONSTRAINT confirmations_decision_or_closed
+    CHECK ((decision IS NOT NULL) = (status IN ('APPROVED', 'USED') OR (status = 'REJECTED' AND closed_reason IS NULL)));
