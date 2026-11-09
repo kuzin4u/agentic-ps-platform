@@ -17,6 +17,8 @@ let seq = 0;
 interface World {
   c: Ctx;
   store: CredentialStore;
+  /** Служба П5 — её get отдаёт маршрут GET /pao/v1/credentials/{ref} как есть (src/pao/routes.ts). */
+  credentials: Credentials;
   adp: Adp;
   parent: string;
   cart: string;
@@ -114,7 +116,7 @@ async function world(
     return r.credential;
   };
   const adpWith = (over: Partial<Pick<AdpOptions, "credentials" | "mandates" | "agents">>) => new Adp({ ...adpOpts, ...over });
-  return { c, store, adp, parent: p.id, cart: cart.id, issue, logs, setNow: (t) => (now = t), adpWith, reserves: () => reserves, records };
+  return { c, store, credentials, adp, parent: p.id, cart: cart.id, issue, logs, setNow: (t) => (now = t), adpWith, reserves: () => reserves, records };
 }
 
 const auth = (w: World, cred: Credential, over: Partial<CanonicalMessage> = {}, amount = 20_000): CanonicalMessage => ({
@@ -170,6 +172,51 @@ describe("ADP п. 2 и 4: агентский токен (РП47 п. 6–8)", () 
     expect(w.logs.filter((l) => l.startsWith("ADP: криптограмма уже погашена другой авторизацией"))).toHaveLength(1);
     expect(await left(w, w.cart)).toBe(20_000);
     expect(await left(w, w.parent)).toBe(40_000);
+  });
+
+  // #92 (б), РП58 дополнение #92 п. 6 (Р-1399 п. 2): ответ агенту — тестом, а не по тексту РП47. Ворота перед погашением
+  // (РП71 нюанс 5): обе авторизации прошли резерв и стоят перед условной записью ISSUED → USED.
+  it("#92: вторая авторизация тем же реквизитом во время первой не отклоняется до погашения — обе резервируют; GET во время резерва — ISSUED; побеждает погасившая первой", async () => {
+    const w = await world();
+    const cred = await w.issue();
+    const gate = () => {
+      let open!: () => void;
+      let reached!: () => void;
+      const opened = new Promise<void>((r) => (open = r));
+      const atConsume = new Promise<void>((r) => (reached = r));
+      const adp = w.adpWith({ credentials: delegate(w.store, { consume: async (c, o) => (reached(), await opened, w.store.consume(c, o)) }) });
+      return { adp, open, atConsume };
+    };
+    const g1 = gate();
+    const g2 = gate();
+    const m1 = auth(w, cred, {}, 10_000);
+    const m2 = auth(w, cred, {}, 10_000);
+    const first = g1.adp.decide(m1);
+    await g1.atConsume;
+    const second = g2.adp.decide(m2);
+    await g2.atConsume;
+    // Обе стоят перед погашением: вторая не отклонена, обе зарезервировали — бюджет CART занят дважды, но не превышен.
+    // По два резерва на авторизацию (CART и родитель).
+    expect(w.reserves()).toBe(4);
+    expect(await left(w, w.cart)).toBe(10_000);
+    expect(await left(w, w.parent)).toBe(30_000);
+    // (б) Реквизит во время резерва не погашен: GET /pao/v1/credentials/{ref} — ISSUED, без op_ref.
+    const during = await w.credentials.get(A, cred.credential_ref);
+    expect(during).toMatchObject({ ok: true, credential: { credential_ref: cred.credential_ref, status: "ISSUED" } });
+    expect(await w.store.credentialByOrder(A, w.cart, "ORD-1")).toMatchObject({ status: "ISSUED", op_ref: null });
+    // (а) Погашает первой первая — APPROVE; вторая проигрывает на условной записи — CREDENTIAL_INVALID, удержания освобождены.
+    // Порядок погашения задан тестом: вторые ворота — после решения по первой.
+    g1.open();
+    expect(parseDecision(await first, "adp").decision).toBe("APPROVE");
+    g2.open();
+    const [settled] = await Promise.allSettled([second]);
+    expect(settled.status).toBe("fulfilled");
+    expect(parseDecision((settled as PromiseFulfilledResult<Awaited<typeof second>>).value, "adp").reason).toBe("CREDENTIAL_INVALID");
+    expect(await left(w, w.cart)).toBe(20_000);
+    expect(await left(w, w.parent)).toBe(40_000);
+    const after = await w.credentials.get(A, cred.credential_ref);
+    expect(after).toMatchObject({ ok: true, credential: { status: "USED" } });
+    expect(await w.store.credentialByOrder(A, w.cart, "ORD-1")).toMatchObject({ status: "USED", op_ref: m1.op_ref });
   });
 
   it("токена нет в хранилище — CREDENTIAL_INVALID; token_ref пуст — CREDENTIAL_INVALID", async () => {

@@ -554,6 +554,112 @@ describe("#62 (РП58 п. 1–4): чтение заказа агентом и у
   });
 });
 
+describe("#92 (РП58 дополнение #92): сбой ответа на оплату — failPaymentReply", () => {
+  const pay = (app: Stand["app"], who: object, id: string, body: object = pkg(id)) =>
+    merchantCall(app, { ...who, path: `/v1/shops/SHOP-1042/orders/${id}/payment`, body });
+  const read = async (app: Stand["app"], who: object, id: string) =>
+    (await merchantCall(app, { ...who, path: `/v1/shops/SHOP-1042/orders/${id}` })).json();
+
+  it("RESET_BEFORE: соединение закрыто до приёма пакета — заказ CREATED, авторизации нет; однократно — повтор оплачивает", async () => {
+    const { app, m, asA } = await setup();
+    const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    m.failPaymentReply("RESET_BEFORE");
+    await expect(pay(app, asA(), o.id)).rejects.toThrow();
+    expect(await read(app, asA(), o.id)).toMatchObject({ status: "CREATED", payment: null });
+    expect(m.opkc.messages).toHaveLength(0);
+    const again = await pay(app, asA(), o.id);
+    expect([again.statusCode, again.json().status]).toEqual([200, "PAID"]);
+    expect(m.opkc.messages).toHaveLength(1);
+  });
+
+  it("RESET_AFTER: авторизация проведена, заказ PAID, ответа нет; повтор тем же пакетом — ORDER_NOT_PAYABLE, второй авторизации нет", async () => {
+    const { m, asA } = await setup();
+    const base = await m.listen();
+    const o = (await order(m.app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    m.failPaymentReply("RESET_AFTER");
+    await expect(merchantFetch(base, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.id}/payment`, body: pkg(o.id) })).rejects.toThrow();
+    expect(await read(m.app, asA(), o.id)).toMatchObject({ status: "PAID", payment: { approved: true } });
+    expect(m.opkc.messages).toHaveLength(1);
+    expect(m.opkc.messages[0]).toMatchObject({ order_ref: o.id });
+    const again = await pay(m.app, asA(), o.id);
+    expect([again.statusCode, again.json()]).toEqual([409, { code: "ORDER_NOT_PAYABLE" }]);
+    expect(m.opkc.messages).toHaveLength(1);
+  });
+
+  it("GARBLED: 200 application/json с обрезанным телом заказа; заказ PAID, операция есть", async () => {
+    const { app, m, asA } = await setup();
+    const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    m.failPaymentReply("GARBLED");
+    const r = await pay(app, asA(), o.id);
+    expect(r.statusCode).toBe(200);
+    expect(r.headers["content-type"]).toMatch(/^application\/json/);
+    expect(() => JSON.parse(r.body)).toThrow();
+    const stored = await read(app, asA(), o.id);
+    expect(stored.status).toBe("PAID");
+    expect(r.body.length).toBeGreaterThan(0);
+    expect(JSON.stringify(stored).startsWith(r.body)).toBe(true);
+    expect(m.opkc.messages).toHaveLength(1);
+  });
+
+  it("5XX: 502 без тела и без content-type; отказ эмитента — заказ DECLINED, операция есть", async () => {
+    const { app, m, asA } = await setup({ decide: () => ({ approved: false, reason: "LIMIT_EXCEEDED" }) });
+    const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    m.failPaymentReply("5XX");
+    const r = await pay(app, asA(), o.id);
+    expect([r.statusCode, r.body, r.headers["content-type"]]).toEqual([502, "", undefined]);
+    expect(await read(app, asA(), o.id)).toMatchObject({ status: "DECLINED", payment: { approved: false } });
+    expect(m.opkc.messages).toHaveLength(1);
+  });
+
+  it("times: 2 — сбой на двух применимых обращениях подряд, третье — как обычно (ветка «второй неизвестный исход»)", async () => {
+    const { app, m, asA } = await setup();
+    const ids = [];
+    for (const sku of ["BRD-1042-01", "BRD-1042-02", "BRD-1042-01"]) ids.push((await order(app, asA(), "SHOP-1042", sku)).json().id);
+    m.failPaymentReply("5XX", { times: 2 });
+    expect((await pay(app, asA(), ids[0])).statusCode).toBe(502);
+    expect((await pay(app, asA(), ids[1])).statusCode).toBe(502);
+    const third = await pay(app, asA(), ids[2]);
+    expect([third.statusCode, third.json().status]).toEqual([200, "PAID"]);
+  });
+
+  it("отказы витрины сбой не расходуют; RESET_BEFORE не срабатывает на этапе после авторизации и наоборот", async () => {
+    const { app, m, asA } = await setup();
+    const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    m.failPaymentReply("GARBLED");
+    expect((await pay(app, asA(), "ORD-unknown")).json()).toEqual({ code: "ORDER_NOT_FOUND" });
+    expect((await pay(app, asA(), o.id, pkg("ORD-other"))).json()).toEqual({ code: "PACKAGE_MISMATCH" });
+    // Сбой взведён до первого ответа 200 Order.
+    const garbled = (await pay(app, asA(), o.id)).body;
+    expect(() => JSON.parse(garbled)).toThrow();
+    const o2 = (await order(app, asA(), "SHOP-1042", "BRD-1042-02")).json();
+    expect((await pay(app, asA(), o2.id)).json().status).toBe("PAID");
+  });
+
+  it("null снимает сбой, который ещё не сработал; неизвестный вид и times не целое ≥ 1 — исключение, прежний сбой не тронут", async () => {
+    const { app, m, asA } = await setup();
+    const o = (await order(app, asA(), "SHOP-1042", "BRD-1042-01")).json();
+    m.failPaymentReply("5XX");
+    m.failPaymentReply(null);
+    expect((await pay(app, asA(), o.id)).json().status).toBe("PAID");
+    m.failPaymentReply("5XX");
+    for (const times of [0, -1, 1.5, Number.NaN]) {
+      expect(() => m.failPaymentReply("RESET_AFTER", { times })).toThrow(/times/);
+    }
+    expect(() => m.failPaymentReply("RESET" as never)).toThrow(/неизвестный сбой/);
+    const o2 = (await order(app, asA(), "SHOP-1042", "BRD-1042-02")).json();
+    expect((await pay(app, asA(), o2.id)).statusCode).toBe(502);
+  });
+
+  it("обрыв ответа на заказ и чтение заказа сбоем оплаты не затронуты", async () => {
+    const { app, m, asA } = await setup();
+    m.failPaymentReply("RESET_BEFORE");
+    const o = await order(app, asA(), "SHOP-1042", "BRD-1042-01");
+    expect(o.statusCode).toBe(201);
+    expect((await merchantCall(app, { ...asA(), path: `/v1/shops/SHOP-1042/orders/${o.json().id}` })).statusCode).toBe(200);
+    await expect(pay(app, asA(), o.json().id)).rejects.toThrow();
+  });
+});
+
 describe("Заказ и пакет: привязка к агенту", () => {
   it("в заказе — мандат корзины cart_mandate_id; без него (в том числе со старым mandate_id) — ITEM_INVALID", async () => {
     const { app, asA } = await setup();

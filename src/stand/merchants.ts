@@ -7,8 +7,10 @@ import { Acquirer, OpkcStub } from "../env/acquirer/index.js";
 import {
   MerchantAgentVerifier,
   buildMerchantsServer,
+  PAYMENT_REPLY_FAILURES,
   type OrderReplyFailure,
   type PackageMetadata,
+  type PaymentReplyFailure,
   type ReconciliationPort,
   type Shop,
   type ShopListFailure,
@@ -64,6 +66,13 @@ export interface MerchantsStand {
    * 201 с обрезанным телом; действует до снятия (null). Сверка — чтением заказа по cart_mandate_id или номеру.
    */
   failOrderReply(failure: OrderReplyFailure | null): void;
+  /**
+   * Сбой ответа на POST …/payment (#92, РП58 дополнение #92): RESET_BEFORE — до приёма пакета, операции нет; RESET_AFTER,
+   * GARBLED, 5XX — после авторизации, операция есть. В отличие от failOrderReply — по умолчанию однократно: срабатывает на
+   * `times` применимых обращениях подряд (целое ≥ 1, по умолчанию 1), затем снимается; отказы витрины его не расходуют.
+   * null — снять сбой, который ещё не сработал. В stand.calls() не пишется: журнал — приложения Платформы.
+   */
+  failPaymentReply(failure: PaymentReplyFailure | null, opts?: { readonly times?: number }): void;
   listen(): Promise<string>;
   close(): Promise<void>;
 }
@@ -109,6 +118,14 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
   };
   let shopListFailure: ShopListFailure | null = null;
   let orderReplyFailure: OrderReplyFailure | null = null;
+  // Взведённый сбой ответа на оплату и остаток срабатываний (дополнение #92 п. 2).
+  let paymentFailure: { readonly failure: PaymentReplyFailure; left: number } | null = null;
+  const takePaymentFailure = (stage: "BEFORE" | "AFTER"): PaymentReplyFailure | null => {
+    if (!paymentFailure || (stage === "BEFORE") !== (paymentFailure.failure === "RESET_BEFORE")) return null;
+    const { failure } = paymentFailure;
+    if (--paymentFailure.left === 0) paymentFailure = null;
+    return failure;
+  };
   const app = buildMerchantsServer({
     verifier,
     acquirer,
@@ -117,6 +134,7 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     orderHoldSec: stand.params.order_hold_sec,
     shopListFailure: () => shopListFailure,
     orderReplyFailure: () => orderReplyFailure,
+    paymentReplyFailure: takePaymentFailure,
     now: stand.now,
     shops,
     ...(faults ? { faults } : {}),
@@ -130,6 +148,19 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     verifier,
     failShopList: (failure) => void (shopListFailure = failure),
     failOrderReply: (failure) => void (orderReplyFailure = failure),
+    failPaymentReply(failure, o = {}) {
+      if (failure === null) {
+        paymentFailure = null;
+        return;
+      }
+      // Неизвестный вид или times не целое ≥ 1 — исключение, сбой не взводится (как настройки arm, РП75).
+      if (!(PAYMENT_REPLY_FAILURES as readonly string[]).includes(failure)) {
+        throw new Error(`failPaymentReply: неизвестный сбой ${String(failure)}`);
+      }
+      const times = o.times ?? 1;
+      if (!Number.isSafeInteger(times) || times < 1) throw new Error("failPaymentReply: times — целое ≥ 1");
+      paymentFailure = { failure, left: times };
+    },
     async listen() {
       await app.listen({ host: "127.0.0.1", port: 0 });
       const addr = app.server.address();
