@@ -52,10 +52,23 @@ export interface ConfirmationRecord extends ConfirmationTotals {
   readonly expires_at: string;
   /** Выдаётся при APPROVE (п. 6); у остальных — null. */
   readonly confirmation_ref: string | null;
-  /** Решение участника; у PENDING и EXPIRED без решения — null. */
+  /** Решение участника; у PENDING, EXPIRED и закрытого Платформой REJECTED (closed) — null. */
   readonly decision: ConfirmationDecision | null;
   /** Операция, погасившая ссылку (п. 10); у USED — обязательна. */
   readonly op_ref: string | null;
+  /**
+   * Закрытие Платформой (РП76 п. 3): только у REJECTED без решения банка — после отзыва мандата. Причина — из закрытого
+   * перечня, момент — по часам Платформы; доказательство — подписанный отзыв в выписке мандата. У прочих записей поля нет.
+   */
+  readonly closed?: ConfirmationClosed;
+}
+
+/** Причины закрытия запроса Платформой (РП76 п. 3) — закрытый перечень, как CHECK sql/123. */
+export type ConfirmationClosedReason = "MANDATE_REVOKED";
+
+export interface ConfirmationClosed {
+  readonly reason: ConfirmationClosedReason;
+  readonly at: string;
 }
 
 /** Метка подписи участника над решением человека (РП50 п. 4): подпись мандата или отзыва не подходит. */

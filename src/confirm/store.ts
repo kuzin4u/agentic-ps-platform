@@ -28,6 +28,14 @@ export interface ConfirmationStore {
   decide(confirmation_id: string, d: ConfirmationDecision, confirmation_ref: string | null, now: string): Promise<ConfirmationRecord | undefined>;
   /** APPROVED и now < expires_at → USED с op_ref (п. 10): true — погасил этот вызов. */
   consume(confirmation_ref: string, op_ref: string, now: string): Promise<boolean>;
+  /** Запросы агента в PENDING и now < expires_at — для закрытия после отзыва мандата (РП76 п. 2); по порядку записи. */
+  pendingByAgent(agent_code: string, now: string): Promise<ConfirmationRecord[]>;
+  /**
+   * Закрытие Платформой после отзыва мандата (РП76 п. 3–4): PENDING и now < expires_at → REJECTED без решения банка, с
+   * closed {MANDATE_REVOKED, now} и событием confirmation.rejected той же записью; иначе — undefined, запись не меняется.
+   * Статус мандата проверяет вызывающий (src/confirm/revoked.ts).
+   */
+  closeRevoked(confirmation_id: string, now: string): Promise<ConfirmationRecord | undefined>;
 }
 
 /**
@@ -158,6 +166,23 @@ export class MemoryConfirmationStore implements ConfirmationStore {
     this.#rows.set(r.confirmation_id, { ...r, status: "USED", op_ref });
     return true;
   }
+
+  async pendingByAgent(agent_code: string, now: string): Promise<ConfirmationRecord[]> {
+    return [...this.#rows.values()]
+      .filter((r) => r.agent_code === agent_code && r.status === "PENDING" && r.expires_at > now)
+      .map((r) => structuredClone(r));
+  }
+
+  async closeRevoked(confirmation_id: string, now: string): Promise<ConfirmationRecord | undefined> {
+    const agent_code = this.#rows.get(confirmation_id)?.agent_code;
+    if (agent_code === undefined) return undefined;
+    const push = await pushOf(this.opts.pushFor, agent_code, "confirmation.rejected");
+    const r = this.#rows.get(confirmation_id);
+    if (!r || r.status !== "PENDING" || !(r.expires_at > now)) return undefined;
+    const next: ConfirmationRecord = { ...r, status: "REJECTED", closed: { reason: "MANDATE_REVOKED", at: now } };
+    this.#transit(next, "confirmation.rejected", now, push);
+    return structuredClone(next);
+  }
 }
 
 interface Row extends Record<string, unknown> {
@@ -181,11 +206,14 @@ interface Row extends Record<string, unknown> {
   signature: string | null;
   op_ref: string | null;
   instrument_chosen: "CARD" | "SBP" | null;
+  closed_reason: "MANDATE_REVOKED" | null;
+  closed_at: string | null;
 }
 
 const COLS =
   "confirmation_id, agent_code, mandate_id, merchant_id, amount, currency, order_ref, split_detected, status, created_at, " +
-  "expires_at, confirmation_ref, participant_code, kid, decision, totals_hash, decided_at, signature, op_ref, instrument_chosen";
+  "expires_at, confirmation_ref, participant_code, kid, decision, totals_hash, decided_at, signature, op_ref, instrument_chosen, " +
+  "closed_reason, closed_at";
 
 /** bigint приходит строкой: вне точного диапазона — не подтверждено (инвариант 3), а не округление. */
 function recordOf(row: Row): ConfirmationRecord {
@@ -218,6 +246,8 @@ function recordOf(row: Row): ConfirmationRecord {
     confirmation_ref: row.confirmation_ref,
     decision,
     op_ref: row.op_ref,
+    // Пара — CHECK sql/123: заданы оба или ни один.
+    ...(row.closed_reason === null ? {} : { closed: { reason: row.closed_reason, at: row.closed_at as string } }),
   };
 }
 
@@ -352,5 +382,31 @@ export class PgConfirmationStore implements ConfirmationStore {
       [confirmation_ref, op_ref, now],
     );
     return r.rows.length === 1;
+  }
+
+  async pendingByAgent(agent_code: string, now: string): Promise<ConfirmationRecord[]> {
+    const r = await this.client.query<Row>(
+      `SELECT ${COLS} FROM confirmations WHERE agent_code = $1 AND status = 'PENDING' AND expires_at > $2 ORDER BY created_at, confirmation_id`,
+      [agent_code, now],
+    );
+    return r.rows.map(recordOf);
+  }
+
+  /** Как decide: строка push — до BEGIN; переход и событие — одна транзакция (РП51 п. 3); прошёл другой — undefined. */
+  async closeRevoked(confirmation_id: string, now: string): Promise<ConfirmationRecord | undefined> {
+    const cur = await this.get(confirmation_id);
+    if (!cur) return undefined;
+    const push = await pushOf(this.opts.pushFor, cur.agent_code, "confirmation.rejected");
+    return this.tx(async (tx) => {
+      const r = await tx.query<Row>(
+        `UPDATE confirmations SET status = 'REJECTED', closed_reason = 'MANDATE_REVOKED', closed_at = $2
+         WHERE confirmation_id = $1 AND status = 'PENDING' AND expires_at > $2 RETURNING ${COLS}`,
+        [confirmation_id, now],
+      );
+      if (!r.rows[0]) return undefined;
+      const next = recordOf(r.rows[0]);
+      await insertConfirmationEventTx(tx, draftOf(next, "confirmation.rejected", push), now);
+      return next;
+    });
   }
 }
