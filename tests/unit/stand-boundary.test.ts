@@ -162,6 +162,26 @@ describe("РП25: граница «стенд ≠ рабочий сервер»"
     expect(users).toContain("src/stand/demo-actions.ts");
   });
 
+  // РП58 дополнение #92 п. 5: сбой ответа на оплату — только у сервера витрин и стенда. Сервер витрин вне графов
+  // src/main.ts и buildServer; упоминание сбоя вне двух файлов — нарушение (fail-closed: комментарий тоже).
+  it("failPaymentReply / paymentReplyFailure: только src/env/merchants/server.ts и src/stand/merchants.ts, вне графов main и buildServer", () => {
+    for (const root of ["src/main.ts", "src/server.ts"]) {
+      expect([...importGraph(root).files].filter((f) => f.startsWith("src/env/merchants/")), root).toEqual([]);
+    }
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(p);
+        else if (p.endsWith(".ts")) files.push(p);
+      }
+    };
+    walk("src");
+    const users = files.filter((f) => /failPaymentReply|paymentReplyFailure/.test(readFileSync(resolve(ROOT, f), "utf8")));
+    // Контроль самой проверки: оба места найдены, других нет.
+    expect(users.sort()).toEqual(["src/env/merchants/server.ts", "src/stand/merchants.ts"]);
+  });
+
   describe("контроль: обходы границы — нарушение, а не пропуск", () => {
     const cases: [string, string][] = [
       ["самоссылка на пакет", `import { createStand } from "${PACKAGE_NAME}/stand";`],

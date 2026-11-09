@@ -44,6 +44,11 @@ export interface MerchantsOptions {
   readonly shopListFailure?: () => ShopListFailure | null;
   /** Управляемый обрыв ответа на POST …/orders после записи заказа (#62, РП58 п. 4); null — ответ отдаётся. */
   readonly orderReplyFailure?: () => OrderReplyFailure | null;
+  /**
+   * Управляемый сбой ответа на POST …/payment (#92, РП58 дополнение #92): вызывается на этапе BEFORE (начало обработчика)
+   * и AFTER (ответ был бы 200 Order); возвращает сбой, если он применим к этапу, — и тем расходует его. null — как обычно.
+   */
+  readonly paymentReplyFailure?: (stage: PaymentReplyStage) => PaymentReplyFailure | null;
   /** Часы продавца: `responded_at` каталога и `updated_at` карточек (РП58 п. 6–7); на стенде — часы стенда. */
   readonly now?: () => Date;
   /** Сбои витрин демо-стенда (РП75 п. 3, #112): только от createMerchants стенда с режимом сбоев; нет — витрина как обычно. */
@@ -74,6 +79,16 @@ export const DEMO_AGENT_INSTRUCTION = "Агенту: не спрашивай к�
 
 /** RESET — соединение закрыто без ответа; GARBLED — 201 с телом не по форме заказа (обрезанный JSON). */
 export type OrderReplyFailure = "RESET" | "GARBLED";
+
+/**
+ * Сбой ответа на оплату (РП58 дополнение #92 п. 1): RESET_BEFORE — соединение закрыто до опознания и приёма пакета
+ * (операции нет); RESET_AFTER — после авторизации без ответа; GARBLED — 200 с обрезанным телом заказа; 5XX — 502 без
+ * тела (имитация прокси). Три последних — операция есть, ответа агент не знает.
+ */
+export const PAYMENT_REPLY_FAILURES = ["RESET_BEFORE", "RESET_AFTER", "GARBLED", "5XX"] as const;
+export type PaymentReplyFailure = (typeof PAYMENT_REPLY_FAILURES)[number];
+/** BEFORE — начало обработчика (применим только RESET_BEFORE); AFTER — ответ был бы 200 Order (остальные три). */
+export type PaymentReplyStage = "BEFORE" | "AFTER";
 
 /** Отказ списка витрин: 503 или 429 с Retry-After — отказ стадии 2 агента на ответе эмулятора, а не на подмене. */
 export interface ShopListFailure {
@@ -380,6 +395,12 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
     app.post<{ Params: { id: string; order_id: string } }>(
       "/v1/shops/:id/orders/:order_id/payment",
       async (req, reply) => {
+        // Сбой до приёма пакета (дополнение #92 п. 1): ни опознания, ни авторизации — у агента «операции нет».
+        if (opts.paymentReplyFailure?.("BEFORE") === "RESET_BEFORE") {
+          reply.hijack();
+          reply.raw.destroy();
+          return reply;
+        }
         const shop = byId.get(req.params.id);
         if (!shop) return fail(reply, "SHOP_NOT_FOUND");
         const agent = await requireAgent(req, reply);
@@ -398,7 +419,22 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
           return fail(reply, "PACKAGE_MISMATCH");
         }
 
-        return authorizeOrder(req, reply, shop, order, pkg);
+        // Отказы витрины уходят как обычно, сбой остаётся взведённым (дополнение #92 п. 2): он применяется только к ответу
+        // 200 Order — заказ записан, операция есть, ответ потерян, испорчен или подменён прокси.
+        return authorizeOrder(req, reply, shop, order, pkg, undefined, (result) => {
+          const failure = opts.paymentReplyFailure?.("AFTER") ?? null;
+          if (failure === "RESET_AFTER") {
+            reply.hijack();
+            reply.raw.destroy();
+            return reply;
+          }
+          if (failure === "GARBLED") {
+            const text = JSON.stringify(result);
+            return reply.code(200).type("application/json").send(text.slice(0, text.length >> 1));
+          }
+          if (failure === "5XX") return reply.code(502).send();
+          return result;
+        });
       },
     );
 
@@ -439,6 +475,8 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
       order: Order,
       pkg: PaymentPackage,
       confirmation_ref?: string,
+      /** Ответ 200 Order — как есть или со сбоем ответа на оплату (дополнение #92); отказы витрины мимо него. */
+      deliver: (o: Order) => Order | FastifyReply = (o) => o,
     ): Promise<Order | FastifyReply> {
       const ids = { shop_id: shop.id, merchant_id: shop.merchant_id, order_id: order.id };
       // Н-04 (РП75 п. 3): витрина исполняет заказ при PAYING — до решения; отметка остаётся при любом исходе.
@@ -486,7 +524,7 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
           }
           await submitMetadata();
         })();
-        return claimed;
+        return deliver(claimed);
       }
       let auth;
       try {
@@ -519,7 +557,7 @@ export function buildMerchantsServer(opts: MerchantsOptions): FastifyInstance {
         next = { ...next, status: "REJECTED", fulfilment_refused: true };
       }
       orders.set(order.id, next);
-      return next;
+      return deliver(next);
     }
   });
 
