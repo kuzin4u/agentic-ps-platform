@@ -19,6 +19,16 @@ export class ConfirmationsNotClosed extends Error {
 /** Проход для одного агента; сбой — ConfirmationsNotClosed (причина — в cause). */
 export type CloseRevoked = (agent_code: string) => Promise<readonly string[]>;
 
+/**
+ * Запасная проверка при старте маршрутов ПИ-8 и ПАО (Р-1374): П6 передано — передан и проход; иначе исключение.
+ * Основная — тип: closeRevoked — обязательное поле рядом с хранилищем П6.
+ */
+export function assertCloseRevoked(confirmations: { readonly closeRevoked?: unknown } | undefined, where: string): void {
+  if (confirmations && typeof confirmations.closeRevoked !== "function") {
+    throw new Error(`${where}: хранилище П6 без прохода закрытия после отзыва (РП76) — сборка не стартует`);
+  }
+}
+
 /** Проход п. 1 с зависимостями, для маршрутов ПИ-8 и ПАО. */
 export const closeRevokedFor =
   (deps: RevokedSweepDeps): CloseRevoked =>

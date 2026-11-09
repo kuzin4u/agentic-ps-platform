@@ -78,7 +78,8 @@ async function setup(over: Partial<ConfirmationStore> = {}): Promise<Ctx> {
     consent,
     params: { qualified_signature_above_kop: 5_000_000, qualified_signature_above_days: 30, unavailable_retry_after_sec: 1, participant_rate_limit_per_30s: 6_000 },
     now: () => new Date(t),
-    confirmations: { store: wrapped, skewSec: SKEW_SEC },
+    // Проход РП76 здесь не проверяется (отзыва в этих тестах нет) — нужен, чтобы маршруты с П6 собирались (Р-1374).
+    confirmations: { store: wrapped, skewSec: SKEW_SEC, closeRevoked: async () => [] },
   });
   await app.ready();
   return { app, store, logs, setNow: (ms) => (t = ms), mandate };

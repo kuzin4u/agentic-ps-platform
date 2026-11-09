@@ -510,8 +510,7 @@ export function createStand(opts: StandOptions = {}): Stand {
       subscriptions,
       credentials: demoCreds ? demoCreds.wrap(credentials) : credentials,
       // Запрос подтверждения агенту (РП51 п. 8–10): то же хранилище П6, часы стенда, link — на страницу УПК.
-      confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url },
-      closeRevoked,
+      confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url, closeRevoked },
       // Операция агенту (РП52 п. 10): записи ADP и итоги П8 — те же хранилища в памяти, что у ADP и ПИ-3.
       operations: { operations, outcomes: outcomeStore, fulfilments: fulfilmentStore, reversals: reversalStore, refunds: refundStore, list: operations },
       // Знак готовности агенту (РП57 п. 3–4): то же хранилище, что у ПИ-8 и API продавцов.
@@ -531,8 +530,7 @@ export function createStand(opts: StandOptions = {}): Stand {
       requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, now }),
       notifications,
       // Решение человека по подтверждению (РП50 п. 4–5): то же хранилище П6, что у ADP; допуск часов — окно подписи.
-      confirmations: { store: confirmationStore, skewSec: params.signature_skew_sec },
-      closeRevoked,
+      confirmations: { store: confirmationStore, skewSec: params.signature_skew_sec, closeRevoked },
       // Знак готовности (РП57 п. 2): записи эквайрера стенда; допуск часов issued_at — окно подписи.
       readiness: { store: readinessStore, skewSec: params.signature_skew_sec },
       // Метаданные пакета и сверка (РП57 п. 5): записи реквизитов — то же хранилище П5, мандат — журнал, отсечка — реестр.
