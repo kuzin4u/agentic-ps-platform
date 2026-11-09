@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.43.0** (режим сбоев демо-стенда и действия кнопок реакции для пульта DEMO-2 — РП75, #112; только `createStand({ demo: { faults: true } })`, без него стенд как в v0.42.0; агенту и ядру обязательного нет; ПАО — по-прежнему 1.4.0). Подробности —
+Текущая версия — **v0.44.0** (отзыв мандата закрывает ожидающие запросы подтверждения — РП76: `revoke`, `revoke-all`, `relinquish` дают `REJECTED` и `confirmation.rejected`; миграция `sql/123`; агенту и ядру обязательного нет; ПАО — по-прежнему 1.4.0). Подробности —
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.43.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.44.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —

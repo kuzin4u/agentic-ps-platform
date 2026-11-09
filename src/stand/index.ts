@@ -23,6 +23,7 @@ import { MemoryPaymentMetadataStore } from "../participants/payments.js";
 import { Credentials, MemoryCredentialStore } from "../credentials/index.js";
 import type { CredentialStore } from "../credentials/store.js";
 import { MemoryConfirmationStore, totalsHash, type ConfirmationStore } from "../confirm/index.js";
+import { closeRevokedFor } from "../confirm/revoked.js";
 import { createIssuerWebhookReceiver, STAND_ISSUER_NOTIFY_URL, type IssuerWebhookReceiver } from "../env/issuer/webhook.js";
 import { MemoryOutcomeStore, OperationOutcomeCollector, type CollectorResult } from "../fulfilment/outcomes.js";
 import { MemoryFulfilmentStore } from "../fulfilment/records.js";
@@ -479,6 +480,13 @@ export function createStand(opts: StandOptions = {}): Stand {
   // Подтверждение человеком (П6, РП50): запросы ADP и решения банка стенда — одно хранилище в памяти; переходы пишут
   // события confirmation.* в ленту журнала стенда (РП51 п. 1–3), push — по тому же правилу, что у мандатов.
   const confirmationStore = new MemoryConfirmationStore({ events: consentStore, pushFor });
+  // Отзыв мандата закрывает ожидающие запросы подтверждения (РП76 п. 1–3): общий путь ПИ-8 revoke, revoke-all и ПАО
+  // relinquish; статус — той же свёрткой, что у ADP.
+  const closeRevoked = closeRevokedFor({
+    store: confirmationStore,
+    mandateStatus: async (id, agent_code) => (await consent.adpMandate(id, agent_code))?.status,
+    now,
+  });
   const credentials = new Credentials({
     mandates: { get: (id, agent_code) => consent.credentialMandate(id, agent_code) },
     store: credentialStore,
@@ -502,7 +510,7 @@ export function createStand(opts: StandOptions = {}): Stand {
       subscriptions,
       credentials: demoCreds ? demoCreds.wrap(credentials) : credentials,
       // Запрос подтверждения агенту (РП51 п. 8–10): то же хранилище П6, часы стенда, link — на страницу УПК.
-      confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url },
+      confirmations: { store: confirmationStore, now, upk_page_base_url: params.upk_page_base_url, closeRevoked },
       // Операция агенту (РП52 п. 10): записи ADP и итоги П8 — те же хранилища в памяти, что у ADP и ПИ-3.
       operations: { operations, outcomes: outcomeStore, fulfilments: fulfilmentStore, reversals: reversalStore, refunds: refundStore, list: operations },
       // Знак готовности агенту (РП57 п. 3–4): то же хранилище, что у ПИ-8 и API продавцов.
@@ -522,7 +530,7 @@ export function createStand(opts: StandOptions = {}): Stand {
       requests: new ParticipantRequestVerifier(trusted, { skewSec: params.signature_skew_sec, now }),
       notifications,
       // Решение человека по подтверждению (РП50 п. 4–5): то же хранилище П6, что у ADP; допуск часов — окно подписи.
-      confirmations: { store: confirmationStore, skewSec: params.signature_skew_sec },
+      confirmations: { store: confirmationStore, skewSec: params.signature_skew_sec, closeRevoked },
       // Знак готовности (РП57 п. 2): записи эквайрера стенда; допуск часов issued_at — окно подписи.
       readiness: { store: readinessStore, skewSec: params.signature_skew_sec },
       // Метаданные пакета и сверка (РП57 п. 5): записи реквизитов — то же хранилище П5, мандат — журнал, отсечка — реестр.
@@ -691,7 +699,6 @@ export function createStand(opts: StandOptions = {}): Stand {
       {
         mandateType: async (id) => (await consent.signingView(id))?.type,
         revoke: (id) => issuer.revoke(id),
-        reject: (id) => issuer.confirm(id, { decision: "REJECT" }),
         confirmations: confirmationStore,
         remindExtendSec: params.confirmation_remind_extend_sec,
         now,

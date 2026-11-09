@@ -105,8 +105,8 @@ export interface DemoGatewayReply {
  */
 export interface DemoActions {
   /**
-   * «Остановить покупку»: отзыв CART через банк стенда (ПИ-8 revoke, как клиент в приложении банка); затем каждый
-   * ожидающий запрос подтверждения по CART отклоняется решением банка (REJECT). rejected — их confirmation_id.
+   * «Остановить покупку»: отзыв CART через банк стенда (ПИ-8 revoke, как клиент в приложении банка); ожидающие запросы
+   * подтверждения по CART закрывает сам отзыв (РП76: REJECTED с closed MANDATE_REVOKED). rejected — их confirmation_id.
    */
   stopPurchase(cart_mandate_id: string): Promise<DemoGatewayReply & { readonly rejected: readonly string[] }>;
   /**

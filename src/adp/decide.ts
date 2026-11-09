@@ -73,7 +73,7 @@ export type AdpCredentials = Pick<CredentialStore, "tokenByRef" | "credentialByC
  * подключено — как до PS-19: ссылка не проверяется, запроса нет (РП43 п. 7). Сбой хранилища — исключение.
  */
 export interface AdpConfirmations {
-  readonly store: Pick<ConfirmationStore, "byKey" | "create" | "byRef" | "expire" | "consume">;
+  readonly store: Pick<ConfirmationStore, "byKey" | "create" | "byRef" | "expire" | "consume" | "closeRevoked">;
   /** Срок запроса (РП50 п. 1). */
   readonly order_hold_sec: number;
 }
@@ -689,7 +689,7 @@ export class Adp {
         this.log("info", { op_ref: msg.op_ref, mandate_id, statuses }, "ADP: заказ закрыт для подтверждения — нового запроса нет");
         return undefined;
       }
-      await c.store.create({
+      const rec = await c.store.create({
         ...key,
         agent_code,
         confirmation_id: newConfirmationId(),
@@ -701,6 +701,13 @@ export class Adp {
         decision: null,
         op_ref: null,
       });
+      // Проверка после создания запроса (РП76 п. 10): отзыв записан между чтением мандата (п. 5) и записью запроса — проход
+      // отзыва мог пройти раньше; статус перечитывается, REVOKED — запрос закрывается тем же переходом. Решение — прежнее.
+      if (rec.status === "PENDING") {
+        const after = await this.mandate(mandate_id, agent_code, msg.op_ref);
+        if (after === "unavailable") return "unavailable";
+        if (after?.status === "REVOKED") await c.store.closeRevoked(rec.confirmation_id, at);
+      }
       return undefined;
     } catch {
       this.log("warn", { op_ref: msg.op_ref, mandate_id }, "ADP: запрос подтверждения не записан");

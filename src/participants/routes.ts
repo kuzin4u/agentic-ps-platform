@@ -23,6 +23,7 @@ import {
   type ConfirmationRecord,
   type ConfirmationStore,
 } from "../confirm/index.js";
+import { assertCloseRevoked, ConfirmationsNotClosed, type CloseRevoked } from "../confirm/revoked.js";
 import type { StateService } from "../state/service.js";
 import { limitsBody, type LimitsStore } from "./limits.js";
 import { NOTIFICATION_ID, NotificationCursorUnknown, type ParticipantNotificationStore } from "./notifications.js";
@@ -52,7 +53,16 @@ export interface ParticipantDeps {
    * П6 (РП50 п. 4–5): решение человека по запросу подтверждения; без хранилища маршрута нет. skewSec — допуск часов
    * для decided_at (signature_skew_sec).
    */
-  readonly confirmations?: { readonly store: Pick<ConfirmationStore, "get" | "decide" | "expire">; readonly skewSec: number };
+  readonly confirmations?: {
+    readonly store: Pick<ConfirmationStore, "get" | "decide" | "expire">;
+    readonly skewSec: number;
+    /**
+     * Закрытие ожидающих запросов подтверждения агента после отзыва (РП76 п. 1, 6): revoke и revoke-all — после записи и
+     * при повторе по уже отозванному. Одно поле с П6 (Р-1374): П6 без прохода не собирается; при старте — проверка
+     * запасная. Сбой — 503 STATE_UNAVAILABLE, повтор того же запроса доотклоняет.
+     */
+    readonly closeRevoked: CloseRevoked;
+  };
   /**
    * Знак готовности продавца (РП57 п. 2–3): записи эквайрера; без хранилища маршрутов знака нет. skewSec — допуск часов
    * для issued_at (signature_skew_sec). GET — с подписью запроса участника роли ACQUIRER (requests).
@@ -180,6 +190,8 @@ function revokeAllBody(principal_ref: string, v: unknown): PrincipalRevocationPa
 }
 
 export async function participantRoutes(app: FastifyInstance, deps: ParticipantDeps): Promise<void> {
+  // П6 без прохода РП76 — исключение при старте (Р-1374, fail-closed): запросы по отозванному мандату остались бы PENDING.
+  assertCloseRevoked(deps.confirmations, "participantRoutes");
   // Грубый лимит по адресу (РП73 п. 1–2): свой счётчик контекста, до маршрутов — тело и подпись участника до него не
   // читаются; предел больше, чем у API продавцов (банки за NAT, пачки; Р-1086).
   await addressRateLimit(app, deps.params.participant_rate_limit_per_30s, "participant_rate_limit_per_30s");
@@ -221,6 +233,10 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
         req.log.error({ err, mandate_id: id }, "ПИ-8: журнал согласий — состояние не подтверждено");
         return fail("STATE_UNAVAILABLE");
       }
+      if (err instanceof ConfirmationsNotClosed) {
+        req.log.error({ err: err.cause, mandate_id: id }, "ПИ-8: отзыв записан, запросы подтверждения не закрыты — повтор доотклонит");
+        return fail("STATE_UNAVAILABLE");
+      }
       req.log.error({ err, mandate_id: id }, "ПИ-8: сбой журнала согласий");
       return fail("UPSTREAM_UNAVAILABLE");
     }
@@ -252,9 +268,12 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       req,
       reply,
       revokeBody,
-      (d) => {
+      async (d) => {
         const { signature, ...record } = d;
-        return deps.consent.revoke(d, () => deps.trusted.verifyRevocation(record, signature));
+        const r = await deps.consent.revoke(d, () => deps.trusted.verifyRevocation(record, signature));
+        // После записи и при повторе по уже отозванному — закрыть ожидающие запросы подтверждения агента (РП76 п. 1).
+        if (r.status === "REVOKED" && deps.confirmations) await deps.confirmations.closeRevoked(r.agent_code);
+        return r;
       },
       {
         done: "ПИ-8: отзыв клиентом записан",
@@ -278,6 +297,8 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
     const fields = { participant_code: d.participant_code, principal_ref: d.principal_ref, revocation_ref: d.revocation_ref };
     try {
       const r = await deps.consent.revokeAll(d, ({ signature, ...record }) => deps.trusted.verifyPrincipalRevocation(record, signature));
+      // Агенты мандатов пары до метки — закрыть их ожидающие запросы подтверждения по отозванным мандатам (РП76 п. 1).
+      if (deps.confirmations) for (const agent_code of r.agent_codes) await deps.confirmations.closeRevoked(agent_code);
       req.log.info({ ...fields, revoked: r.revoked }, r.replayed ? "ПИ-8: revoke-all — тот же revocation_ref с другой записью, метка прежняя" : "ПИ-8: revoke-all записан");
       return reply.code(200).send({ principal_ref: r.principal_ref, revocation_ref: r.revocation_ref, revoked: r.revoked });
     } catch (err) {
@@ -287,6 +308,10 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       }
       if (err instanceof ConsentIntegrityError || err instanceof ConsentStateUnknown) {
         req.log.error({ err, ...fields }, "ПИ-8: revoke-all — состояние мандата не подтверждено");
+        return fail("STATE_UNAVAILABLE");
+      }
+      if (err instanceof ConfirmationsNotClosed) {
+        req.log.error({ err: err.cause, ...fields }, "ПИ-8: revoke-all записан, запросы подтверждения не закрыты — повтор доотклонит");
         return fail("STATE_UNAVAILABLE");
       }
       req.log.error({ err, ...fields }, "ПИ-8: revoke-all — сбой журнала согласий");
