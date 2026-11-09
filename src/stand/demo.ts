@@ -1,5 +1,6 @@
-// Режим сбоев демо-стенда для пульта DEMO-2 (РП75, #112). Только createStand({ demo: { faults: true } }): без этого
-// stand.demo нет. Рабочий сервер (src/main.ts, buildServer) модуль не импортирует — tests/unit/stand-boundary.test.ts.
+// Режим демо-стенда для пульта DEMO-2 (РП75, #112, дополнение #115). createStand({ demo: { faults: true } }) — сбои и
+// действия; { actions: true } — только действия, сбои не подключаются; иначе stand.demo нет. Рабочий сервер
+// (src/main.ts, buildServer) модуль не импортирует — tests/unit/stand-boundary.test.ts.
 // Журнал — коды, идентификаторы и время по часам стенда; тел, реквизитов, кодов подтверждения и текста для человека нет
 // (инварианты 1, 7; правило совместимости 3).
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -132,8 +133,29 @@ export interface StandDemo extends DemoActions {
   log(): readonly DemoLogEntry[];
 }
 
+/** Опции режима у createStand (РП75 дополнение #115 п. 1). */
+export interface DemoOptions {
+  readonly actions?: boolean;
+  readonly faults?: boolean;
+}
+
+/**
+ * Вид режима по опциям (РП75 дополнение #115 п. 1): "faults" — сбои и действия, "actions" — только действия, undefined —
+ * режима нет. faults: true при actions: false — исключение (fail-closed, Р-1387): сбоев без действий не бывает.
+ */
+export function demoKind(o: DemoOptions | undefined): "faults" | "actions" | undefined {
+  if (o === undefined) return undefined;
+  if (o.faults === true) {
+    if (o.actions === false) throw new Error("demo: faults: true при actions: false — сбоев без действий нет (РП75 дополнение #115)");
+    return "faults";
+  }
+  return o.actions === true ? "actions" : undefined;
+}
+
 /** Для сборки стенда: включён ли сбой и с какими настройками; сбой «один раз» снимается при срабатывании. */
 export interface DemoFaults {
+  /** Сбои подключены (вид "faults"); при «только действия» — false: сборка стенда без обёрток сбоев (дополнение #115 п. 2). */
+  readonly on: boolean;
   armed(test: DemoTest): DemoFaultOptions | undefined;
   /** Сбой витрины включён для этой витрины: без выбора — для всех, с выбором — только для выбранной (РП75 п. 3). */
   armedFor(test: DemoTest, shop: { readonly id: string; readonly merchant_id: string }): boolean;
@@ -287,10 +309,14 @@ function checkOptions(test: DemoTest, opts: unknown, shops: DemoShops): DemoFaul
   return Object.freeze({ ...(o as DemoFaultOptions) });
 }
 
-/** Режим сбоев стенда: публичная часть (stand.demo) и часть для сборки стенда (сбои). */
+/**
+ * Режим стенда: публичная часть (stand.demo) и часть для сборки стенда (сбои). faultsOn: false — «только действия»
+ * (дополнение #115 п. 2): arm / disarm / mark — исключение без записи.
+ */
 export function createDemo(
   now: () => Date,
   shops: DemoShops,
+  faultsOn: boolean,
 ): {
   demo: StandDemo;
   faults: DemoFaults;
@@ -324,20 +350,26 @@ export function createDemo(
     entries.push(e);
     return e;
   };
+  const faultsOnly = (): void => {
+    if (!faultsOn) throw new Error("demo: сбои выключены — createStand({ demo: { faults: true } }) (РП75 дополнение #115)");
+  };
   const demo: StandDemo = {
     arm(test, opts) {
+      faultsOnly();
       const t = checkTest(test);
       if (!ARMABLE.has(t)) throw new Error(`demo: ${t} — не сбой Платформы (РП75 п. 3)`);
       armed.set(t, checkOptions(t, opts, shops));
       write("fault", t, "ARMED", Object.freeze({}));
     },
     disarm(test) {
+      faultsOnly();
       const t = checkTest(test);
       if (!armed.delete(t)) return false;
       write("fault", t, "DISARMED", Object.freeze({}));
       return true;
     },
     mark(test, ids) {
+      faultsOnly();
       const t = checkTest(test);
       if (!MARKABLE.has(t)) throw new Error(`demo: ${t} — пометка только у нарушений, которые разыгрывает приложение (РП75 п. 3)`);
       write("fault", t, "MARKED", checkIds(ids));
@@ -356,6 +388,7 @@ export function createDemo(
     },
   };
   const faults: DemoFaults = {
+    on: faultsOn,
     armed: (test) => armed.get(test),
     armedFor(test, shop) {
       const o = armed.get(test);

@@ -27,8 +27,8 @@ afterEach(async () => {
 
 const at = (sec: number): Date => new Date(T0.getTime() + sec * 1000);
 
-async function setup() {
-  const s = createStand({ demo: { faults: true } });
+async function setup(demo: NonNullable<Parameters<typeof createStand>[0]>["demo"] = { faults: true }) {
+  const s = createStand({ demo });
   st = s;
   s.setClock(T0);
   const side = newAgentSide();
@@ -197,6 +197,58 @@ describe("remindClient (В6): один раз +confirmation_remind_extend_sec з
     await expect(t.s.demo!.remindClient(a.confirmation_id)).rejects.toThrow(/не ожидает решения/);
     await expect(t.s.demo!.remindClient("cnf_unknown")).rejects.toThrow(/не найден/);
     expect(t.actions()).toEqual([]);
+  });
+});
+
+describe("РП75 дополнение #115: «только действия» — demo: { actions: true }, срок order_hold_sec, сбоев нет", () => {
+  const ONLY = { actions: true } as const;
+
+  it("срок запроса и удержания — 900 с; на 50-й секунде заказ ждёт; arm / disarm / mark — исключение без записи", async () => {
+    const t = await setup(ONLY);
+    expect(t.s.params.order_hold_sec).toBe(900);
+    const a = await t.awaiting();
+    expect((await t.s.confirmations.get(a.confirmation_id))!.expires_at).toBe(at(900).toISOString());
+    t.s.setClock(at(50));
+    expect((await t.order(a.order_id)).status).toBe("AWAITING_CONFIRMATION");
+    const d = t.s.demo!;
+    expect(() => d.arm("Н-12")).toThrow(/сбои выключены/);
+    expect(() => d.disarm("Н-12")).toThrow(/сбои выключены/);
+    expect(() => d.mark("Н-01", { order_id: a.order_id })).toThrow(/сбои выключены/);
+    expect(d.log()).toEqual([]);
+    // Сбои не подключены: обращений с пометкой сбоя нет (РП75 п. 5 — поле только при faults).
+    expect(t.s.calls().filter((c) => "fault" in c)).toEqual([]);
+  });
+
+  it("stopPurchase: отзыв закрывает запрос (РП76), одно confirmation.rejected; (d) заказ ждёт до конца удержания, затем DECLINED", async () => {
+    const t = await setup(ONLY);
+    const a = await t.awaiting();
+    const r = await t.s.demo!.stopPurchase(a.cartId);
+    expect(r.statusCode).toBe(200);
+    expect(r.rejected).toEqual([a.confirmation_id]);
+    expect((await t.feed()).filter((e) => e.type === "confirmation.rejected" && e.data.confirmation_id === a.confirmation_id)).toHaveLength(1);
+    expect(await t.s.confirmations.get(a.confirmation_id)).toMatchObject({ status: "REJECTED", decision: null, closed: { reason: "MANDATE_REVOKED" } });
+    expect(t.s.demo!.log().map((e) => [e.kind, e.what])).toEqual([
+      ["action", "PURCHASE_STOPPED"],
+      ["action", "CONFIRMATION_REJECTED"],
+    ]);
+    t.s.setClock(at(899));
+    expect((await t.order(a.order_id)).status).toBe("AWAITING_CONFIRMATION");
+    t.s.setClock(at(901));
+    expect((await t.order(a.order_id)).status).toBe("DECLINED");
+  });
+
+  it("remindClient: +confirmation_remind_extend_sec к 900 с у запроса и у витрины; после 900 с подтверждение проходит, заказ PAID", async () => {
+    const t = await setup(ONLY);
+    const ext = t.s.params.confirmation_remind_extend_sec;
+    const a = await t.awaiting();
+    t.s.setClock(at(10));
+    expect(await t.s.demo!.remindClient(a.confirmation_id)).toEqual({ confirmation_id: a.confirmation_id, expires_at: at(900 + ext).toISOString(), extended: true });
+    t.s.setClock(at(900 + ext - 1));
+    expect((await t.order(a.order_id)).status).toBe("AWAITING_CONFIRMATION");
+    expect((await t.s.issuer.confirm(a.confirmation_id)).statusCode).toBe(200);
+    const { confirmation_ref } = (await t.pao("GET", `/pao/v1/confirmations/${a.confirmation_id}`)).json() as { confirmation_ref: string };
+    expect((await t.shop(`/v1/shops/SHOP-1042/orders/${a.order_id}/confirmation`, { confirmation_ref })).json()).toMatchObject({ status: "PAID" });
+    expect(t.actions().map((e) => e.what)).toEqual(["CLIENT_REMINDED"]);
   });
 });
 

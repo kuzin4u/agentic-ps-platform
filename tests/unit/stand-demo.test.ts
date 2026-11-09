@@ -34,10 +34,45 @@ describe("РП75 п. 1: режим только при createStand({ demo: { fau
   });
 
   it("faults: true — stand.demo есть, журнал пуст; срок подтверждения и удержания — demo_order_hold_sec (п. 7а)", () => {
-    const s = open({ demo: { faults: true } });
-    expect(demoOf(s).log()).toEqual([]);
-    expect(s.params.order_hold_sec).toBe(s.params.demo_order_hold_sec);
-    expect(s.params.demo_order_hold_sec).toBe(45);
+    for (const s of [open({ demo: { faults: true } }), open({ demo: { faults: true, actions: true } })]) {
+      expect(demoOf(s).log()).toEqual([]);
+      expect(s.params.order_hold_sec).toBe(s.params.demo_order_hold_sec);
+      expect(s.params.demo_order_hold_sec).toBe(45);
+      expect(Object.isFrozen(s.params)).toBe(true);
+    }
+  });
+});
+
+describe("РП75 дополнение #115 п. 1: опции actions / faults", () => {
+  it("demo: {}, { actions: false }, { actions: false, faults: false } — stand.demo нет, срок — order_hold_sec", () => {
+    for (const s of [open({ demo: {} }), open({ demo: { actions: false } }), open({ demo: { actions: false, faults: false } })]) {
+      expect(s.demo).toBeUndefined();
+      expect("demo" in s).toBe(false);
+      expect(s.params.order_hold_sec).toBe(900);
+    }
+  });
+
+  it("faults: true при actions: false — исключение при сборке, стенд не создаётся (Р-1387)", () => {
+    expect(() => open({ demo: { faults: true, actions: false } })).toThrow(/сбоев без действий нет/);
+  });
+
+  it("actions: true — stand.demo с действиями, срок — order_hold_sec (900 с); arm / disarm / mark — исключение, записи нет", () => {
+    const s = open({ demo: { actions: true } });
+    const d = demoOf(s);
+    expect(s.params.order_hold_sec).toBe(900);
+    for (const m of ["stopPurchase", "remindClient", "revokeMandate", "sendToReview", "log"] as const) expect(typeof d[m]).toBe("function");
+    expect(() => d.arm("Н-02")).toThrow(/сбои выключены/);
+    expect(() => d.disarm("Н-02")).toThrow(/сбои выключены/);
+    expect(() => d.mark("Н-06", { mandate_id: "mnd_1" })).toThrow(/сбои выключены/);
+    expect(d.log()).toEqual([]);
+  });
+
+  it("п. 4а: «только действия» — cryptogram_ttl_sec = order_hold_sec + confirmation_remind_extend_sec; сбои и без режима — прежний", () => {
+    const plain = open();
+    expect(plain.params.cryptogram_ttl_sec).toBe(900);
+    expect(open({ demo: { faults: true } }).params.cryptogram_ttl_sec).toBe(900);
+    const s = open({ demo: { actions: true } });
+    expect(s.params.cryptogram_ttl_sec).toBe(s.params.order_hold_sec + s.params.confirmation_remind_extend_sec);
     expect(Object.isFrozen(s.params)).toBe(true);
   });
 });
