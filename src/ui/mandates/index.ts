@@ -12,7 +12,7 @@ import { withRequestSerializer } from "../../http/request-log.js";
 import { ADDRESS_RATE_LIMITED, addressRateLimit, retryAfterSec } from "../../shared/rate-limit.js";
 import { MANDATE_ID } from "../../consent/model.js";
 import { CONFIRMATION_ID } from "../../confirm/model.js";
-import { checkUiSettings, esc, formParser, htmlHeaders, langOf, money, pageHtml, type UiLang, type UiSettings } from "../shared/index.js";
+import { checkUiSettings, esc, formParser, htmlHeaders, langOf, money, pageHtml, uiTime, type UiLang, type UiSettings } from "../shared/index.js";
 import type { MandatesScreenPort, ScreenConfirmation, ScreenMandate } from "./port.js";
 import { CLEAR_COOKIE, ScreenSessions, sessionCookie, setCookie, type ScreenSession, type ScreenSessionTtl } from "./session.js";
 import { TEXT } from "./text.js";
@@ -51,6 +51,8 @@ class Unavailable extends Error {}
 
 export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
   const settings = checkUiSettings(deps.settings ?? MANDATES_DEFAULT_SETTINGS, "экран мандатов");
+  /** Время для человека — по языку страницы, в поясе экрана (РП36 «Нюанс UI-К2 — З9» п. 1); готовый HTML `<time>`. */
+  const time = uiTime(settings.time_zone);
   const sessions = new ScreenSessions(deps.ttl, deps.now);
   const port = deps.port;
   const app = Fastify({ logger: withRequestSerializer(deps.logger ?? false) });
@@ -200,7 +202,7 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
       const ref =
         (n.mandate_id && MANDATE_ID.test(n.mandate_id) ? ` · <a href="/m/${esc(n.mandate_id)}?lang=${lang}">${esc(n.mandate_id)}</a>` : "") +
         (n.agent_code ? ` · ${esc(n.agent_code)}` : "");
-      return `<li data-notification="${esc(n.type)}"><time>${esc(n.at)}</time> — ${what}${ref}</li>`;
+      return `<li data-notification="${esc(n.type)}">${time(n.at, lang)} — ${what}${ref}</li>`;
     });
     const body = rows.length === 0 ? `<p data-empty>${esc(t.notificationsEmpty)}</p>` : `<ul data-notifications>${rows.join("")}</ul>`;
     return page(reply, 200, lang, t.notifications, body + backLink(lang));
@@ -220,7 +222,7 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
       const rows = list.map((e) => {
         const limit = e.amount_limit !== undefined && e.currency !== undefined ? ` · ${esc(sum(e.amount_limit, e.currency, lang))}` : "";
         const other = e.mandate_id !== id ? ` · ${esc(t.historyOther)} ${esc(e.mandate_id)}` : "";
-        return `<li data-entry="${esc(e.kind)}"><time>${esc(e.at)}</time> — ${esc(t.kinds[e.kind] ?? e.kind)}${limit}${other}</li>`;
+        return `<li data-entry="${esc(e.kind)}">${time(e.at, lang)} — ${esc(t.kinds[e.kind] ?? e.kind)}${limit}${other}</li>`;
       });
       body = rows.length === 0 ? `<p data-empty>${esc(t.historyEmpty)}</p>` : `<ol data-history>${rows.join("")}</ol>`;
     } catch {
@@ -280,7 +282,7 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
         row(t.agent, "agent", c.agent_code) +
         row(t.byMandate, "mandate", c.mandate_id) +
         row(t.status, "status", confirmStatusText(t, c)) +
-        row(t.decideUntil, "until", c.expires_at) +
+        `<dt>${esc(t.decideUntil)}</dt><dd data-until>${time(c.expires_at, lang)}</dd>` +
         `</dl>`;
       if (awaiting(c)) {
         body += await agentHint(t, c.agent_code);
@@ -339,7 +341,7 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
     try {
       const m = MANDATE_ID.test(req.params.id) ? await port.mandate(cur.s.principal_ref, req.params.id) : undefined;
       if (!m) return message(reply, 404, lang, t.notFound, backLink(lang));
-      body = mandateHtml(m, t, lang, sum, statusText);
+      body = mandateHtml(m, t, lang, sum, statusText, time);
       if (pending(m)) {
         body +=
           `<form method="post" action="/m/${esc(m.id)}/decision"><input type="hidden" name="lang" value="${lang}">` +
@@ -499,6 +501,7 @@ function mandateHtml(
   lang: UiLang,
   sum: (amount: number, currency: string, lang: UiLang) => string,
   statusText: (t: Text, s: string) => string,
+  time: (iso: string, lang: UiLang) => string,
 ): string {
   const row = (name: string, attr: string, value: string) => `<dt>${esc(name)}</dt><dd data-${attr}>${value}</dd>`;
   let dl =
@@ -506,7 +509,7 @@ function mandateHtml(
     row(t.type, "type", esc(t.types[m.type] ?? m.type)) +
     row(t.status, "status", esc(statusText(t, m.status))) +
     row(t.limit, "limit", esc(sum(m.amount_limit, m.currency, lang))) +
-    row(t.until, "until", esc(m.valid_to)) +
+    row(t.until, "until", time(m.valid_to, lang)) +
     row(t.merchants, "merchants", esc(m.merchant_scope.join(", "))) +
     row(t.subject, "subject", esc(m.subject));
   if (m.parent_id) dl += row(t.parent, "parent", esc(m.parent_id));

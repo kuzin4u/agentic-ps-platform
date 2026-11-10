@@ -3,6 +3,7 @@
 // валюты (правило совместимости 2), заголовки безопасности и оболочка страницы. Страница УПК (`src/env/upk/page.ts`)
 // пока держит свою копию — перевод на этот модуль в STATUS «Открыто» (решение владельца 02.11, UI-К2 ч. 1).
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { parseRfc3339 } from "../../consent/model.js";
 
 export type UiLang = "ru" | "en";
 export const UI_LANGS: readonly UiLang[] = ["ru", "en"];
@@ -18,6 +19,8 @@ export interface UiSettings {
   /** Язык по умолчанию; переключение — `?lang=` или поле формы `lang`. */
   readonly lang: UiLang;
   readonly brand: UiBrand;
+  /** Пояс времени для человека (имя IANA, например `Europe/Moscow`); не задан — пояс процесса (РП36 «Нюанс UI-К2 — З9» п. 1). */
+  readonly time_zone?: string;
 }
 
 const COLOR = /^#[0-9a-fA-F]{6}$/;
@@ -31,7 +34,31 @@ export function checkUiSettings(s: UiSettings, what: string): UiSettings {
   if (s.brand.logo_url !== undefined && (typeof s.brand.logo_url !== "string" || !LOGO.test(s.brand.logo_url))) {
     throw new Error(`${what}: логотип — ссылка https://`);
   }
+  if (s.time_zone !== undefined) {
+    let ok = typeof s.time_zone === "string" && s.time_zone !== "" && s.time_zone.length <= 64;
+    try {
+      if (ok) new Intl.DateTimeFormat("en", { timeZone: s.time_zone });
+    } catch {
+      ok = false;
+    }
+    if (!ok) throw new Error(`${what}: пояс времени — имя IANA`);
+  }
   return s;
+}
+
+/**
+ * Время для человека (РП36 «Нюанс UI-К2 — З9» п. 1): по языку страницы — `ru` «ДД.ММ.ГГГГ, ЧЧ:ММ», `en` «DD/MM/YYYY, HH:MM»,
+ * в поясе экрана; не задан — пояс процесса при создании. Машинное значение — в `<time datetime>`. Неразборчивая строка
+ * (не RFC 3339) — как есть, экранированной: экран только показывает и ничего не решает.
+ */
+export function uiTime(time_zone: string | undefined): (iso: string, lang: UiLang) => string {
+  const timeZone = time_zone ?? new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const opts = { timeZone, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
+  const fmt: Record<UiLang, Intl.DateTimeFormat> = { ru: new Intl.DateTimeFormat("ru-RU", opts), en: new Intl.DateTimeFormat("en-GB", opts) };
+  return (iso, lang) => {
+    const ms = parseRfc3339(iso);
+    return Number.isNaN(ms) ? `<time>${esc(iso)}</time>` : `<time datetime="${esc(iso)}">${esc(fmt[lang].format(ms))}</time>`;
+  };
 }
 
 /** Язык из запроса: только ru / en, иначе — язык настройки. */
