@@ -128,6 +128,8 @@ describe("РП25: граница «стенд ≠ рабочий сервер»"
       "src/stand/dns.ts",
       "src/stand/index.ts",
       "src/stand/merchants.ts",
+      "src/stand/showcase-text.ts",
+      "src/stand/showcase.ts",
     ]);
   });
 
@@ -180,6 +182,31 @@ describe("РП25: граница «стенд ≠ рабочий сервер»"
     const users = files.filter((f) => /failPaymentReply|paymentReplyFailure/.test(readFileSync(resolve(ROOT, f), "utf8")));
     // Контроль самой проверки: оба места найдены, других нет.
     expect(users.sort()).toEqual(["src/env/merchants/server.ts", "src/stand/merchants.ts"]);
+  });
+
+  // РП58 дополнение З12 п. 1: страница витрин — только у сервера витрин стенда. Модули страницы вне графов src/main.ts и
+  // buildServer; регистрирует их только createMerchants, сервер витрин (src/env/merchants) о них не знает (fail-closed:
+  // упоминание вне двух файлов, комментарий тоже, — нарушение).
+  it("страница витрин (showcase): только src/stand/showcase*.ts и src/stand/merchants.ts, вне графов main и buildServer", () => {
+    const page = ["src/stand/showcase.ts", "src/stand/showcase-text.ts"];
+    for (const root of ["src/main.ts", "src/server.ts"]) {
+      const { files, violations } = importGraph(root);
+      expect(violations, root).toEqual([]);
+      expect(page.filter((f) => files.has(f)), root).toEqual([]);
+    }
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(p);
+        else if (p.endsWith(".ts")) files.push(p);
+      }
+    };
+    walk("src");
+    const users = files.filter((f) => /showcase|registerShowcase/i.test(readFileSync(resolve(ROOT, f), "utf8")));
+    // Контроль самой проверки: регистрация найдена в стенде; в src/env/merchants и прочих — нет.
+    expect(users.filter((f) => !page.includes(f)).sort()).toEqual(["src/stand/merchants.ts"]);
+    expect(readFileSync(resolve(ROOT, "src/stand/merchants.ts"), "utf8")).toContain("registerShowcase(app,");
   });
 
   describe("контроль: обходы границы — нарушение, а не пропуск", () => {

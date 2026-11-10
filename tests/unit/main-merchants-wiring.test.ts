@@ -57,6 +57,9 @@ describe("src/main.ts: API продавцов и маршруты эквайре
       expect((await get("/pao/v1/no-such-route")).status).toBe(404);
       // Метаданные и сверка — только стенд (РП57 доп. 5): в рабочем сервере маршрутов нет.
       expect((await post("/participants/v1/merchants/MER-1042/payments")).status).toBe(404);
+      // Страница витрин — только стенд (РП58 дополнение З12 п. 1): в рабочем сервере её нет.
+      expect((await get("/shops")).status).toBe(404);
+      expect((await get("/shops/SHOP-1042")).status).toBe(404);
     } finally {
       child.kill("SIGTERM");
     }
