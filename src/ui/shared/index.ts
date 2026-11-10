@@ -95,12 +95,22 @@ export function htmlHeaders(reply: FastifyReply, code: number): FastifyReply {
     .header("x-content-type-options", "nosniff");
 }
 
-/** Оболочка страницы: шапка с брендом и переключателем языка; `body` — уже экранированный HTML. */
-export function pageHtml(o: { readonly lang: UiLang; readonly title: string; readonly brand: UiBrand; readonly body: string }): string {
+/**
+ * Оболочка страницы: шапка с брендом и переключателем языка; `body` — уже экранированный HTML. `refresh_sec` — мета-обновление
+ * страницы без скриптов (РП36 «Нюанс UI-К2 — З9» п. 2: CSP мета-обновление не регулирует); целое проверяет вызывающий.
+ */
+export function pageHtml(o: {
+  readonly lang: UiLang;
+  readonly title: string;
+  readonly brand: UiBrand;
+  readonly body: string;
+  readonly refresh_sec?: number;
+}): string {
   const b = o.brand;
   const other: UiLang = o.lang === "ru" ? "en" : "ru";
+  const refresh = o.refresh_sec === undefined ? "" : `<meta http-equiv="refresh" content="${Math.trunc(o.refresh_sec)}">`;
   return (
-    `<!doctype html><html lang="${o.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<!doctype html><html lang="${o.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${refresh}` +
     `<title>${esc(o.title)} — ${esc(b.name)}</title>` +
     `<style>body{font-family:system-ui,sans-serif;margin:0;background:#fff;color:#1b1b1b}header{background:${b.color};color:#fff;padding:12px 16px;display:flex;gap:12px;align-items:center}` +
     `main{max-width:560px;margin:0 auto;padding:16px}dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px}dt{color:#555}button{background:${b.color};color:#fff;border:0;padding:10px 16px;margin-right:8px}` +

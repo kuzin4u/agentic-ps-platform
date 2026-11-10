@@ -36,6 +36,11 @@ export interface MandatesScreenDeps {
    * ссылки и cookie. Не задан — журнала нет.
    */
   readonly logger?: FastifyServerOptions["logger"];
+  /**
+   * Обновление главной без F5, секунд (РП36 «Нюанс UI-К2 — З9» п. 2): целое 2…60; не задано — обновления нет (модуль
+   * банка по умолчанию без него). Только стенд: задаёт `src/stand` (страж — `tests/unit/stand-boundary.test.ts`).
+   */
+  readonly refresh_sec?: number;
 }
 
 export interface MandatesScreen {
@@ -58,6 +63,10 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
   const app = Fastify({ logger: withRequestSerializer(deps.logger ?? false) });
   // Предел проверяется сразу (отказ запуска), лимит регистрируется в плагине маршрутов ниже — до их объявления.
   if (!Number.isSafeInteger(deps.rate_limit_per_30s) || deps.rate_limit_per_30s < 1) throw new Error("экран мандатов: rate_limit_per_30s — целое ≥ 1");
+  const refresh_sec = deps.refresh_sec;
+  if (refresh_sec !== undefined && (!Number.isSafeInteger(refresh_sec) || refresh_sec < 2 || refresh_sec > 60)) {
+    throw new Error("экран мандатов: refresh_sec — целое 2…60");
+  }
   app.setErrorHandler((err, req, reply) => {
     const lang = queryLang(req);
     if (err === ADDRESS_RATE_LIMITED) {
@@ -181,7 +190,10 @@ export function createMandatesScreen(deps: MandatesScreenDeps): MandatesScreen {
     }
     const agentsLink = `<p><a href="/agents?lang=${lang}" data-agents-link>${esc(t.agents)}</a></p>`;
     const notificationsLink = `<p><a href="/notifications?lang=${lang}" data-notifications-link>${esc(t.notifications)}</a></p>`;
-    return page(reply, 200, lang, t.title, purchases + rows + revokeAllLink + agentsLink + notificationsLink + logoutForm(lang, cur.s.csrf));
+    // Обновление без F5 — только здесь и только при 200 (З9 п. 2): на страницах решения и в формах его нет; после срока
+    // сессии главная отвечает 401 без мета-тега, и обновление останавливается.
+    const body = purchases + rows + revokeAllLink + agentsLink + notificationsLink + logoutForm(lang, cur.s.csrf);
+    return htmlHeaders(reply, 200).send(pageHtml({ lang, title: t.title, brand: settings.brand, body, ...(refresh_sec === undefined ? {} : { refresh_sec }) }));
   });
 
   // Уведомления клиента (ПИ-8 лента участника, отбор по principal_ref — порт банка; РП46 (б), A3 п. 5.3): только коды из
