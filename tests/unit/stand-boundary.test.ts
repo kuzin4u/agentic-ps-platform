@@ -128,6 +128,8 @@ describe("РП25: граница «стенд ≠ рабочий сервер»"
       "src/stand/dns.ts",
       "src/stand/index.ts",
       "src/stand/merchants.ts",
+      "src/stand/showcase-text.ts",
+      "src/stand/showcase.ts",
     ]);
   });
 

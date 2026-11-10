@@ -16,8 +16,10 @@ import {
   type ShopListFailure,
 } from "../env/merchants/index.js";
 import type { MerchantFaultPort } from "../env/merchants/server.js";
+import type { UiSettings } from "../ui/shared/index.js";
 import { demoFaultsOf } from "./demo.js";
 import type { Stand } from "./index.js";
+import { registerShowcase, showcaseSettings } from "./showcase.js";
 
 export interface MerchantsStandOptions {
   /** false — эквайрер без поддержки aoi (РП22 п. 6). По умолчанию true. */
@@ -38,6 +40,11 @@ export interface MerchantsStandOptions {
    * нет — только `createStand({ shops })` (РП25 дополнение #106 п. 3).
    */
   readonly paymentMethods?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Страница витрин для человека (РП58 дополнение З12 п. 8): язык по умолчанию и бренд; по умолчанию —
+   * `SHOWCASE_DEFAULT_SETTINGS`. Неверная настройка — исключение при создании.
+   */
+  readonly showcaseUi?: UiSettings;
 }
 
 /** Витрины стенда с заменой `payment_methods` (#86); `stand.shops` не меняется. */
@@ -79,6 +86,7 @@ export interface MerchantsStand {
 
 export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}): MerchantsStand {
   const shops = opts.paymentMethods ? shopsWithMethods(stand.shops, opts.paymentMethods) : stand.shops;
+  const showcaseUi = showcaseSettings(opts.showcaseUi);
   const opkc = new OpkcStub(opts.decide);
   const aoiSupport = opts.aoiSupport ?? true;
   const acquirer = new Acquirer({ acquirer_id: "ACQ-01", aoiSupport, opkc, now: stand.now });
@@ -139,6 +147,8 @@ export function createMerchants(stand: Stand, opts: MerchantsStandOptions = {}):
     shops,
     ...(faults ? { faults } : {}),
   });
+  // Человеческий вид витрин (РП58 дополнение З12) — только у сервера витрин стенда, после его маршрутов /v1 и лимита.
+  registerShowcase(app, { shops, settings: showcaseUi, now: stand.now });
   return {
     app,
     acquirer,
