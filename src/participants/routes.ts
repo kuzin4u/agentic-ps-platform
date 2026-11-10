@@ -362,7 +362,8 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
 
   // Решение человека по запросу подтверждения (ПИ-8, РП50 п. 4–5; Дополнения п. 3): тело → подпись банка или UPK (401 до
   // хранилища) → UPK без instrument_chosen (400 — после подписи: роль без проверенной подписи не раскрывается, РП51 п. 13) → запрос (404) → банк клиента корневого INTENT или UPK (401, РП51 п. 12) → decided_at не в будущем сверх допуска (401) →
-  // повтор той же записи (200) → totals_hash (409) → срок и статус (409) → условная запись. Ссылка — при APPROVE.
+  // повтор той же записи (200) → totals_hash (409) → срок и статус (409) → APPROVE при отозванном мандате — проход отзыва и
+  // 409 (РП76 «Дополнение — второй барьер ПИ-8») → условная запись. Ссылка — при APPROVE.
   const confirmations = deps.confirmations;
   if (confirmations) {
     app.post<{ Params: { id: string } }>("/participants/v1/confirmations/:id", async (req, reply) => {
@@ -390,12 +391,15 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
       const at = now.toISOString();
       let r: ConfirmationRecord | undefined;
       let bank: string | null | undefined;
+      let mandateStatus: string | undefined;
       try {
         r = await confirmations.store.get(id);
         if (!r) return fail("CONFIRMATION_NOT_FOUND");
-        // Банк клиента — из журнала (подпись корня), а не со слов участника (инвариант 5, РП45).
+        // Банк клиента — из журнала (подпись корня), а не со слов участника (инвариант 5, РП45). Тем же чтением — статус
+        // мандата для второго барьера (у CART — со статусом родителя, РП35).
         const m = await deps.consent.adpMandate(r.mandate_id, r.agent_code);
         bank = m ? (m.client?.participant_code ?? null) : undefined;
+        mandateStatus = m?.status;
       } catch (err) {
         req.log.error({ err, confirmation_id: id }, "ПИ-8: запрос подтверждения или мандат не прочитаны");
         return fail("STATE_UNAVAILABLE");
@@ -425,6 +429,18 @@ export async function participantRoutes(app: FastifyInstance, deps: ParticipantD
         if (!(decided <= Date.parse(r.expires_at)) || !(at < r.expires_at)) {
           await confirmations.store.expire(id, at);
           return fail("CONFIRMATION_NOT_PENDING", { status: "EXPIRED" });
+        }
+        // Второй барьер (РП76 «Дополнение — второй барьер ПИ-8»): APPROVE при отозванном мандате не пишется — проход п. 2
+        // закрывает запрос (REJECTED, closed_reason, confirmation.rejected), ответ — 409 с текущим статусом. REJECT и
+        // прочие не ACTIVE — как прежде. Окно «чтение мандата → запись решения» остаётся: ссылку отклонит ADP (п. 9).
+        if (d.decision === "APPROVE" && mandateStatus === "REVOKED") {
+          await confirmations.closeRevoked(r.agent_code);
+          const cur = await confirmations.store.get(id);
+          req.log.info({ participant_code: d.participant_code, confirmation_id: id, status: cur?.status }, "ПИ-8: одобрение по отозванному мандату не записано");
+          if (cur?.decision && sameDecision(cur.decision, d)) return reply.code(200).send(confirmationView(cur));
+          // Проход не закрыл запрос — состояние не подтверждено (инвариант 3): 503, повтор того же решения.
+          if (!cur || cur.status === "PENDING") return fail("STATE_UNAVAILABLE");
+          return fail("CONFIRMATION_NOT_PENDING", { status: cur.status });
         }
         const done = await confirmations.store.decide(id, d, d.decision === "APPROVE" ? newConfirmationRef() : null, at);
         if (done) {

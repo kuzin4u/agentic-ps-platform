@@ -990,7 +990,7 @@ paths:
         '404':
           description: "`CONFIRMATION_NOT_FOUND`"
         '409':
-          description: "`CONFIRMATION_TOTALS_MISMATCH`; `CONFIRMATION_NOT_PENDING` с текущим `status` — другое решение, ссылка использована, срок вышел (`EXPIRED`)"
+          description: "`CONFIRMATION_TOTALS_MISMATCH`; `CONFIRMATION_NOT_PENDING` с текущим `status` — другое решение, ссылка использована, срок вышел (`EXPIRED`), `APPROVE` при отозванном мандате — запрос закрыт Платформой (`REJECTED`, РП76 «Дополнение — второй барьер ПИ-8»)"
         '503':
           description: "`STATE_UNAVAILABLE`, Retry-After"
         '429':

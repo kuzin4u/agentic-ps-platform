@@ -209,6 +209,30 @@ describe("РП25: граница «стенд ≠ рабочий сервер»"
     expect(readFileSync(resolve(ROOT, "src/stand/merchants.ts"), "utf8")).toContain("registerShowcase(app,");
   });
 
+  // РП36 «Нюанс UI-К2 — З9» п. 3 (как РП75): обновление главной экрана мандатов без F5 — только стенд. Экран мандатов и
+  // эмулятор эмитента вне графов src/main.ts и buildServer; refresh_sec — только у модуля экрана, оболочки страницы,
+  // проброса эмулятора эмитента и сборки стенда (fail-closed: упоминание в другом файле, комментарий тоже, — нарушение).
+  it("обновление экрана мандатов (refresh_sec): только src/ui/mandates, src/ui/shared, src/env/issuer/screen.ts и src/stand/index.ts, экран вне графов main и buildServer", () => {
+    for (const root of ["src/main.ts", "src/server.ts"]) {
+      const { files, violations } = importGraph(root);
+      expect(violations, root).toEqual([]);
+      expect([...files].filter((f) => f.startsWith("src/ui/mandates/") || f === "src/env/issuer/screen.ts"), root).toEqual([]);
+    }
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(p);
+        else if (p.endsWith(".ts")) files.push(p);
+      }
+    };
+    walk("src");
+    const users = files.filter((f) => /refresh_sec|http-equiv="refresh"/.test(readFileSync(resolve(ROOT, f), "utf8")));
+    // Контроль самой проверки: все четыре места найдены, других нет; значение задаёт сборка стенда.
+    expect(users.sort()).toEqual(["src/env/issuer/screen.ts", "src/stand/index.ts", "src/ui/mandates/index.ts", "src/ui/shared/index.ts"]);
+    expect(readFileSync(resolve(ROOT, "src/stand/index.ts"), "utf8")).toContain("refresh_sec: 5,");
+  });
+
   describe("контроль: обходы границы — нарушение, а не пропуск", () => {
     const cases: [string, string][] = [
       ["самоссылка на пакет", `import { createStand } from "${PACKAGE_NAME}/stand";`],

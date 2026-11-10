@@ -32,6 +32,8 @@ export const STAND_SCREEN_RATE_LIMIT_PER_30S = 600;
 export interface IssuerScreenDeps {
   readonly now: () => Date;
   readonly settings?: UiSettings;
+  /** Обновление главной экрана без F5, секунд (РП36 «Нюанс UI-К2 — З9» п. 2) — задаёт только стенд. */
+  readonly refresh_sec?: number;
   /** id мандатов стенда по порядку записи (MemoryConsentStore.mandateIds — только стенд). */
   readonly mandateIds: () => readonly string[];
   /** Экран мандата журнала (ConsentJournal.signingView). */
@@ -232,5 +234,6 @@ export function createIssuerScreen(deps: IssuerScreenDeps): MandatesScreen {
     rate_limit_per_30s: STAND_SCREEN_RATE_LIMIT_PER_30S,
     now: deps.now,
     ...(deps.settings ? { settings: deps.settings } : {}),
+    ...(deps.refresh_sec === undefined ? {} : { refresh_sec: deps.refresh_sec }),
   });
 }

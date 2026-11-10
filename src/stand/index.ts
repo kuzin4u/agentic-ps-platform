@@ -770,6 +770,8 @@ export function createStand(opts: StandOptions = {}): Stand {
     journal: (id, agent_code) => consent.evidence(id, agent_code),
     notificationsPage: (after) => issuer.getNotifications(after),
     ...(opts.bankApp ? { settings: opts.bankApp } : {}),
+    // Список обновляется без F5 (РП36 «Нюанс UI-К2 — З9» п. 2): 5 с — 6 обращений за 30 с при лимите экрана 600.
+    refresh_sec: 5,
   });
   const bankApp: StandBankApp = {
     app: bankScreen.app,

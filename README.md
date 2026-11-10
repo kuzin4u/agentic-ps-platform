@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.47.0** (эмулятор продавцов: человеческий вид витрин — HTML-страницы `/shops` и `/shops/{id}` у сервера `createMerchants`, `?lang=ru|en`, пометка учебных витрин; РП58 «Дополнение З12»; JSON `/v1` не менялся; агенту и ядру обязательного нет; ПАО — по-прежнему 1.4.0). Подробности —
+Текущая версия — **v0.48.0** (экран мандатов банка стенда: время для человека по языку страницы и пояс `time_zone`, главная обновляется без F5 каждые 5 с — только стенд, РП36 «Нюанс UI-К2 — З9»; ПИ-8: `APPROVE` по отозванному мандату — 409 `CONFIRMATION_NOT_PENDING` со статусом `REJECTED`, РП76 «Дополнение — второй барьер ПИ-8»; агенту и ядру обязательного нет; ПАО — по-прежнему 1.4.0). Подробности —
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.47.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.48.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —
