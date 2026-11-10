@@ -26,11 +26,11 @@ npm run dev                  # то же с перезапуском при из
 
 ## Версии и стенд для агента
 
-Текущая версия — **v0.46.0** (эмулятор продавцов: сбой ответа на оплату — `createMerchants(stand).failPaymentReply`, `RESET_BEFORE` / `RESET_AFTER` / `GARBLED` / `5XX`, по умолчанию однократно; РП58 «Дополнение #92»; приложению и ядру обязательного нет; ПАО — по-прежнему 1.4.0). Подробности —
+Текущая версия — **v0.47.0** (эмулятор продавцов: человеческий вид витрин — HTML-страницы `/shops` и `/shops/{id}` у сервера `createMerchants`, `?lang=ru|en`, пометка учебных витрин; РП58 «Дополнение З12»; JSON `/v1` не менялся; агенту и ядру обязательного нет; ПАО — по-прежнему 1.4.0). Подробности —
 [`CHANGELOG.md`](CHANGELOG.md). Стенд и фикстуры подключаются по тегу:
 
 ```
-npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.46.0"
+npm i -D "agentic-ps-platform@git+https://github.com/kuzin4u/agentic-ps-platform.git#v0.47.0"
 ```
 
 `createStand()` из `agentic-ps-platform/stand`, фикстуры — `agentic-ps-platform/fixtures`. Журнал обращений стенда —
@@ -50,6 +50,12 @@ const bakery: Shop = { id: "SHOP-9001", merchant_id: "MER-9001", /* … */ readi
 const stand = createStand({ shops: [...SHOPS, bakery] }); // только свои витрины — { shops: [bakery] }
 const merchants = createMerchants(stand); // витрины — stand.shops
 ```
+
+Витрины для человека (РП58, дополнение З12) — у того же сервера витрин стенда: `GET /shops` — карточки магазинов
+(название, id, что продаёт, число товаров, контур), `GET /shops/{id}` — карточки товаров (название, цена, наличие); язык —
+`?lang=ru|en`, бренд — `createMerchants(stand, { showcaseUi })`. Учебные витрины (SHOP-3301, 3302, 3303, 4401, 5501) и
+витрины без знака готовности (MKT-77) — с пометкой «учебная — нарочно не так» и строкой о том, что не так. JSON `/v1/…` для
+агента и тестов не меняется; в песочнице и `main.ts` страниц нет.
 
 Демо-стенд для пульта DEMO-2 (РП75, #112) — режим сбоев и действия кнопок реакции, только в демо-стенде приложения
 (не в песочнице и не в пилоте): `createStand({ demo: { faults: true } })` даёт `stand.demo` — `arm` / `disarm` сбоев
