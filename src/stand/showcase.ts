@@ -24,10 +24,31 @@ export interface ShowcaseDeps {
 
 type Text = (typeof SHOWCASE_TEXT)[UiLang];
 
+/**
+ * Учебные поведения (п. 4, В1 (а)): закрытый перечень — только те, у которых строка «что не так» есть в фикстуре.
+ * `REJECTS_FULFILMENT` (SHOP-2210), `OUT_OF_CATEGORY` (SHOP-5003), `READ_ONLY` и `NORMAL` сюда не входят.
+ */
+export const TRAINING_BEHAVIOURS = ["CONTRADICTORY", "INJECTION", "DUAL_PRICE", "REJECTS_UNIDENTIFIED", "INCOMPLETE"] as const satisfies readonly Shop["behaviour"][];
+export type TrainingKey = (typeof TRAINING_BEHAVIOURS)[number] | "OUTSIDE";
+
+/** Ключ пометки: поведение из перечня, иначе вне контура (знака нет), иначе пометки нет. Обе причины — строка поведения. */
+export function trainingKey(shop: Pick<Shop, "behaviour" | "readiness_mark">): TrainingKey | null {
+  const b = TRAINING_BEHAVIOURS.find((x) => x === shop.behaviour);
+  if (b) return b;
+  return zoneOf(shop) === "OUTSIDE" ? "OUTSIDE" : null;
+}
+
+/** Пометка «учебная — нарочно не так» и одна строка «что не так» (п. 4); у витрины без пометки — пусто. */
+function trainingMark(shop: Shop, t: Text): string {
+  const key = trainingKey(shop);
+  if (!key) return "";
+  return `<p class="mark" data-training="${key}"><strong>${esc(t.training)}</strong>: <span data-training-note>${esc(t.trainingNotes[key])}</span></p>`;
+}
+
 /** Карточки — свои стили в теле страницы (CSP: `style-src 'unsafe-inline'`); ничего внешнего. */
 const STYLE =
   "<style>.cards{list-style:none;padding:0}.card{border:1px solid #ddd;border-radius:8px;padding:12px;margin:12px 0}" +
-  ".card h2{font-size:1.1em;margin:0 0 6px}.lead{color:#555}</style>";
+  ".card h2{font-size:1.1em;margin:0 0 6px}.lead{color:#555}.mark{background:#fff3e0;border-left:4px solid #e65100;padding:6px 8px}</style>";
 
 /** Цена для человека (п. 3): минимальные единицы и валюта; нет цены или валюты — «цена не указана». */
 function priceText(item: ShopItem, now: Date, lang: UiLang, t: Text): string {
@@ -67,6 +88,7 @@ export function registerShowcase(app: FastifyInstance, deps: ShowcaseDeps): void
           return (
             `<li class="card" data-shop="${esc(s.id)}">` +
             `<h2><a href="/shops/${esc(encodeURIComponent(s.id))}?lang=${lang}">${esc(s.name)}</a></h2>` +
+            trainingMark(s, t) +
             `<dl><dt>${esc(t.shopId)}</dt><dd data-id>${esc(s.id)}</dd>` +
             `<dt>${esc(t.sells)}</dt><dd data-sells>${esc(s.category)}</dd>` +
             `<dt>${esc(t.items)}</dt><dd data-count>${s.items.length}</dd>` +
@@ -94,7 +116,8 @@ export function registerShowcase(app: FastifyInstance, deps: ShowcaseDeps): void
       const zone = zoneOf(shop);
       const head =
         `<p data-shop="${esc(shop.id)}">${esc(shop.id)} · ${esc(shop.category)} · ` +
-        `<span data-zone="${zone}">${esc(t.zones[zone])}</span></p>`;
+        `<span data-zone="${zone}">${esc(t.zones[zone])}</span></p>` +
+        trainingMark(shop, t);
       const list = shop.items.length > 0 ? `<ul class="cards">${cards}</ul>` : `<p data-empty>${esc(t.empty)}</p>`;
       return page(reply, 200, lang, shop.name, `${head}${list}${backLink(lang)}`);
     });

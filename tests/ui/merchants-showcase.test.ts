@@ -115,6 +115,70 @@ describe("З12: каталог витрины", () => {
   });
 });
 
+describe("З12: пометка учебных витрин (п. 4, В1 (а), В2 (а))", () => {
+  /** Набор по умолчанию: витрина → ключ строки; прочие — без пометки. */
+  const MARKED: Readonly<Record<string, string>> = {
+    "SHOP-3301": "CONTRADICTORY",
+    "SHOP-3302": "INJECTION",
+    "SHOP-3303": "DUAL_PRICE",
+    "SHOP-4401": "REJECTS_UNIDENTIFIED",
+    "SHOP-5501": "INCOMPLETE",
+    "MKT-77": "OUTSIDE",
+  };
+  const NOTES_RU: Readonly<Record<string, string>> = {
+    CONTRADICTORY: "В описании товара одна цена, в поле цены — другая",
+    INJECTION: "В описании товара — инструкция агенту",
+    DUAL_PRICE: "Опознанному агенту показывает цену ниже, чем человеку (A5 п. 1.2)",
+    REJECTS_UNIDENTIFIED: "Без подписи агента каталог не отдаёт",
+    INCOMPLETE: "Карточки неполные: нет цены, наличия, условий доставки и возврата (A5 п. 1.1)",
+    OUTSIDE: "Нет знака готовности — витрина вне контура (A5 п. 5)",
+  };
+  const mark = (key: string, label: string, note: string) =>
+    `<p class="mark" data-training="${key}"><strong>${label}</strong>: <span data-training-note>${note}</span></p>`;
+
+  it("список: пометка ровно у SHOP-3301, 3302, 3303, 4401, 5501 и MKT-77, строка своего ключа; у прочих — нет", async () => {
+    const r = await get(setup(), "/shops");
+    for (const s of SHOPS) {
+      const c = card(r.body, "data-shop", s.id);
+      const key = MARKED[s.id];
+      if (key) expect(c, s.id).toContain(mark(key, "учебная — нарочно не так", NOTES_RU[key]!));
+      else expect(c, s.id).not.toContain("data-training");
+    }
+    // Ровно шесть пометок: SHOP-1042, SHOP-2210 (REJECTS_FULFILMENT), SHOP-5003 (OUT_OF_CATEGORY) — без пометки.
+    expect([...r.body.matchAll(/data-training="/g)].length).toBe(6);
+    expect(Object.keys(MARKED).sort()).toEqual(SORTED.filter((id) => !["SHOP-1042", "SHOP-2210", "SHOP-5003"].includes(id)));
+  });
+
+  it("каталог: пометка в шапке у учебной витрины; у SHOP-1042 — нет; en — английская строка", async () => {
+    const mm = setup();
+    for (const [id, key] of Object.entries(MARKED)) {
+      const r = await get(mm, `/shops/${id}`);
+      expect(r.body, id).toContain(mark(key, "учебная — нарочно не так", NOTES_RU[key]!));
+      expect([...r.body.matchAll(/data-training="/g)].length, id).toBe(1);
+    }
+    expect((await get(mm, "/shops/SHOP-1042")).body).not.toContain("data-training");
+    const en = await get(mm, "/shops/SHOP-3303?lang=en");
+    expect(en.body).toContain(mark("DUAL_PRICE", "training — wrong on purpose", "Shows an identified agent a lower price than a person (A5 p. 1.2)"));
+    const out = await get(mm, "/shops?lang=en");
+    expect(card(out.body, "data-shop", "MKT-77")).toContain(mark("OUTSIDE", "training — wrong on purpose", "No readiness mark — the shop is outside the contour (A5 p. 5)"));
+  });
+
+  it("свой набор: NORMAL без знака — «вне контура»; поведение из перечня без знака — строка поведения (одна); REJECTS_FULFILMENT со знаком — без пометки", async () => {
+    const base = SHOPS.find((s) => s.id === "SHOP-1042")!;
+    const own: Shop[] = [
+      { ...base, id: "OWN-1", merchant_id: "MER-OWN-1", readiness_mark: false, behaviour: "NORMAL" },
+      { ...base, id: "OWN-2", merchant_id: "MER-OWN-2", readiness_mark: false, behaviour: "INJECTION" },
+      { ...base, id: "OWN-3", merchant_id: "MER-OWN-3", readiness_mark: true, behaviour: "REJECTS_FULFILMENT" },
+    ];
+    const r = await get(setup({ shops: own }), "/shops");
+    expect(card(r.body, "data-shop", "OWN-1")).toContain('data-training="OUTSIDE"');
+    const two = card(r.body, "data-shop", "OWN-2");
+    expect(two).toContain('data-training="INJECTION"');
+    expect([...two.matchAll(/data-training="/g)].length).toBe(1);
+    expect(card(r.body, "data-shop", "OWN-3")).not.toContain("data-training");
+  });
+});
+
 describe("З12: безопасность и граница с JSON", () => {
   const EVIL: Shop = {
     ...SHOPS[0]!,
